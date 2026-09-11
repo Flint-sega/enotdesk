@@ -2,23 +2,35 @@
 
 Portable-клиент EnotDesk собирается `electron-builder` из корня репозитория. Артефакты складываются в `dist/` и отдаются сервером на странице `/downloads` (только реально собранные файлы).
 
+## Структура
+
+```
+build/electron-builder.yml   параметры упаковки (единственное место)
+build/README.md              краткое описание конфигурации
+client/                      исходники клиента: main.mjs, preload.cjs, lib/, renderer/, test/
+assets/                      маскоты, иконки (icon.* — для упаковщика), mascot-site.png — для сервера
+dist/                        результат сборки (EnotDesk-mac-arm64.zip и распакованный .app)
+```
+
+Внутрь приложения (`app.asar`) попадают только `client/**` без `client/test/**`, рантайм-ассеты (`enot-icon.svg`, `enot-mascot.svg`, `mascot-app.png`), `package.json` и продовые зависимости `koffi`/`ws`. `koffi` распакован из asar (`asarUnpack`). Тесты, README, `icon-source.png`, `icon.*` и `mascot-site.png` в рантайме отсутствуют.
+
 ## Общие требования
 
 - Node.js ≥ 24.12 и npm (проверка: `node -v`).
 - `npm ci` из корня репозитория — ставит `electron` 44.3.0 и `electron-builder` 26.15.3 по lockfile.
 - Сборка идёт на целевой ОС: macOS-артефакты — на macOS, Windows — на Windows, Linux — на Linux.
 - При первой сборке electron-builder скачивает Electron и свои инструменты — нужен интернет.
-- Необязательно, но полезно перед сборкой: `npm test` (46 тестов сервера и client-швов).
+- Необязательно, но полезно перед сборкой: `npm test` (84 теста: серверные HTTP/WS + client-швы; фактически зелёные).
 - Иконки уже лежат в `assets/` (`icon.icns`/`icon.ico`/`icon.png`); перегенерировать можно `npm run icons` — скрипт использует macOS-утилиты `sips`/`iconutil` и работает только на macOS.
 
 ## Сборка по ОС
 
 | ОС | Команды | Артефакт | Статус |
 |---|---|---|---|
-| macOS (arm64) | `npm ci && npm run pack:mac` | `dist/EnotDesk-mac-arm64.zip` (внутри portable `EnotDesk.app`) | **Проверено на macOS arm64**: сборка, запуск, смоук-скриншот |
+| macOS (arm64) | `npm ci && npm run pack:mac` | `dist/EnotDesk-mac-arm64.zip` (внутри portable `EnotDesk.app`) | **Проверено на macOS arm64**: сборка и запуск |
 | macOS (Intel) | `npm ci && npm run pack:mac` | `dist/EnotDesk-mac-x64.zip` | Не прогонялось (та же конфигурация) |
-| Windows (x64) | `npm ci`, затем `npm run pack:win` | `dist/EnotDesk-win-x64.exe` (portable) | **Не прогонялось — нужна Windows-машина** |
-| Linux (x64) | `npm ci && npm run pack:linux` | `dist/EnotDesk-linux-x64.AppImage` | **Не прогонялось — нужна Linux-машина или CI** |
+| Windows (x64) | `npm ci`, затем `npm run pack:win` | `dist/EnotDesk-win-x64.exe` (portable) | **Не прогонялось — нужна Windows-машина** (конфигурация готова) |
+| Linux (x64) | `npm ci && npm run pack:linux` | `dist/EnotDesk-linux-x64.AppImage` | **Не прогонялось — нужна Linux-машина или CI** (конфигурация готова) |
 
 В PowerShell/cmd команды выполняются по одной (разделитель `;` там тоже работает, но `npm ci` должен завершиться успешно до `pack:win`):
 
@@ -33,6 +45,27 @@ Linux: инструменты сборки AppImage electron-builder скачи�
 chmod +x dist/EnotDesk-linux-x64.AppImage
 ./dist/EnotDesk-linux-x64.AppImage --appimage-extract-and-run
 ```
+
+## Вес и старт (фактические замеры)
+
+Замеры на macOS arm64, сборка T05 (`compression: maximum`, `electronLanguages: [ru, en]`, рантайм-only `files`):
+
+| Метрика | До (T01) | После (T05) | Δ |
+|---|---|---|---|
+| `stat -f%z dist/EnotDesk-mac-arm64.zip` | 129 691 163 B (123,7 МиБ) | 117 565 087 B (112,1 МиБ) | **−12 126 076 B (−9,35 %)** |
+| `EnotDesk.app` (распакованный) | 291 МиБ | 245 МиБ | −46 МиБ |
+| Языковых ресурсов `*.lproj` (ru/en) | ~55 | 2 | — |
+
+Упёрлось в Electron-ядро: ~112 МиБ zip — это сам рантайм Electron 44.3.0 плюс `koffi`/`ws`; исходники клиента после чистки весят единицы мегабайт. Дальнейшее заметное снижение — только смена рантайма (вне рамок).
+
+Старт (метод: внешний таймер — `node -p Date.now()` до запуска и опрос лог-файла; команда `EDESK_SMOKE=1 npx electron@44.3.0 client/main.mjs --no-sandbox`; 3 прогона, T05):
+
+| Точка | run1 | run2 | run3 | Медиана |
+|---|---|---|---|---|
+| первая строка `SMOKE window:` | 3500 мс | 3662 мс | 4996 мс | **3662 мс** |
+| `SMOKE OK` (после скриншота) | 3782 мс | 3949 мс | 5216 мс | **3949 мс** |
+
+Первая SMOKE-строка печатается не раньше чем через 2500 мс после `app.whenReady()` (фиксированный `setTimeout` в `client/main.mjs`), поэтому время до окна ≈ медиана − 2500 мс ≈ 1,2 с (включая запуск `npx`). Предыдущее значение не зафиксировано до правок; конфигурация упаковки на старт из исходников не влияет, а ленивая загрузка koffi (T03) убирает его загрузку из холодного старта — регрессии не ожидается. Повторить: 3 прогона и взять медиану.
 
 ## macOS: разрешения при первом запуске
 

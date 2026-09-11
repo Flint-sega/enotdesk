@@ -9,7 +9,7 @@ window.STATE =
   "briefFile": "2026-09-11-brief.md",
   "memoryFile": "AGENTS.md",
   "startedAt": "2026-09-11T16:53:58+03:00",
-  "updatedAt": "2026-09-11T17:09:01+03:00",
+  "updatedAt": "2026-09-11T17:23:41+03:00",
   "finishedAt": null,
   "stages": [
     {
@@ -48,7 +48,7 @@ window.STATE =
       "id": "build",
       "status": "active",
       "startedAt": "2026-09-11T16:57:12+03:00",
-      "note": "2 из 6 тасков готовы; волна 2 (03,04) в работе"
+      "note": "4 из 6 тасков готовы; волна 3 (05) в работе"
     },
     {
       "id": "review",
@@ -144,11 +144,17 @@ window.STATE =
       "zone": [
         "client/"
       ],
-      "status": "in-progress",
+      "status": "done",
       "retries": 0,
-      "repairs": 0,
-      "handoffs": 0,
-      "startedAt": "2026-09-11T17:09:01+03:00"
+      "repairs": 2,
+      "handoffs": 1,
+      "startedAt": "2026-09-11T17:09:01+03:00",
+      "finishedAt": "2026-09-11T17:23:41+03:00",
+      "commit": "T03",
+      "tests": {
+        "passed": 84,
+        "failed": 0
+      }
     },
     {
       "id": "04",
@@ -168,11 +174,17 @@ window.STATE =
         "server/app.mjs",
         "server/test/"
       ],
-      "status": "in-progress",
+      "status": "done",
       "retries": 0,
-      "repairs": 0,
-      "handoffs": 0,
-      "startedAt": "2026-09-11T17:09:01+03:00"
+      "repairs": 1,
+      "handoffs": 1,
+      "startedAt": "2026-09-11T17:09:01+03:00",
+      "finishedAt": "2026-09-11T17:23:41+03:00",
+      "commit": "T04",
+      "tests": {
+        "passed": 84,
+        "failed": 0
+      }
     },
     {
       "id": "05",
@@ -191,10 +203,11 @@ window.STATE =
         "docs/BUILD.md",
         "README.md"
       ],
-      "status": "pending",
+      "status": "in-progress",
       "retries": 0,
       "repairs": 0,
-      "handoffs": 0
+      "handoffs": 0,
+      "startedAt": "2026-09-11T17:23:41+03:00"
     },
     {
       "id": "06",

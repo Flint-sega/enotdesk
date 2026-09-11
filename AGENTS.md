@@ -8,7 +8,7 @@ Working MVP: Node server (control plane + WS signaling) and Electron desktop cli
 
 ## Commands
 - `npm install` — deps (node>=24.12; koffi, ws exact-pinned; electron, electron-builder dev).
-- `npm test` — node:test, 76 tests, server+client, no Electron needed.
+- `npm test` — node:test, 84 tests, server+client, no Electron needed.
 - `npm run server` — server on `127.0.0.1:8080`; `GET /api/v1/health` → `{ok:true}`.
 - `npm run bootstrap` — interactive CLI creating first admin (refuses to overwrite existing); DB = `ENOT_DB` or `enotdesk.db`.
 - `npm start` — Electron client (`EDESK_SMOKE=1 npx electron@44.3.0 client/main.mjs --no-sandbox` for smoke run).
