@@ -9,13 +9,25 @@ import { createRequire } from 'node:module';
 import { createApi, sanitizeForRenderer } from './lib/api.mjs';
 import { createSignalClient } from './lib/signal.mjs';
 import { createInputGate } from './lib/protocol.mjs';
-import { createNativeInput } from './lib/native-input.mjs';
+import { createNativeInput, loadPlatformAdapter } from './lib/native-input.mjs';
 import { createInputPipeline } from './lib/input-pipeline.mjs';
 import { INPUT_KEYS } from './lib/protocol.mjs';
 import { normalizeServerUrl } from './lib/server-url.mjs';
 
 const SMOKE = process.env.EDESK_SMOKE === '1';
 const DEFAULT_SERVER_URL = 'http://127.0.0.1:8080';
+
+// Версия продукта: в упаковке — app.getVersion(); в dev Electron отдаёт свою версию,
+// поэтому один раз при старте читаем фактическую из корневого package.json.
+const pkg = (() => {
+  try {
+    return createRequire(import.meta.url)('../package.json');
+  } catch (e) {
+    // не выдумываем версию: футер просто не покажется, но сбой виден в логе
+    console.error('Не удалось прочитать версию из корневого package.json (футер останется без версии):', e.message);
+    return {};
+  }
+})();
 
 let win = null;
 let settingsPath = null;
@@ -29,10 +41,15 @@ let signal = null;
 let heartbeatTimer = null;
 const gate = createInputGate();
 let signalRole = null;
-// koffi подключается лениво по наличию пакета: нет пакета — честный инертный режим
-let koffi = null;
-try { koffi = createRequire(import.meta.url)('koffi'); } catch { koffi = null; }
-const nativeInput = createNativeInput({ koffi });
+// koffi грузится лениво: permissions()/status() его не трогают, только старт host-сеанса
+// или первый реальный ввод; нет пакета — честный инертный режим.
+const nativeInput = createNativeInput({
+  getAdapter: () => {
+    let koffi = null;
+    try { koffi = createRequire(import.meta.url)('koffi'); } catch { koffi = null; }
+    return loadPlatformAdapter(koffi);
+  },
+});
 // Единая проводка ввода: те же ворота и диспетчер, что проверяет тест шва
 const inputPipeline = createInputPipeline({ gate, nativeInput });
 let selectedSource = null; // {id, name, bounds:{width,height}} физические пиксели
@@ -78,6 +95,7 @@ function startSignal(params) {
   }
   stopSignal();
   signalRole = role;
+  if (role === 'host') nativeInput.load(); // подготовка нативного ввода к реальному сеансу
   signal = createSignalClient({ url: new URL('/signal', settings.serverUrl).toString().replace(/^http/, 'ws') });
   signal.onMessage((msg) => {
     gate.onSignal(msg);
@@ -150,7 +168,7 @@ function registerIpc() {
     if (!fromOurRenderer(e)) throw new Error('Доступ запрещён: недоверенный отправитель');
   };
 
-  ipcMain.handle('enot:getSettings', (e) => { guard(e); return { serverUrl: settings.serverUrl, allowInsecureHttp: settings.allowInsecureHttp, firstRun: !fs.existsSync(settingsPath) }; });
+  ipcMain.handle('enot:getSettings', (e) => { guard(e); return { serverUrl: settings.serverUrl, allowInsecureHttp: settings.allowInsecureHttp, firstRun: !fs.existsSync(settingsPath), version: app.isPackaged ? app.getVersion() : pkg.version }; });
 
   ipcMain.handle('enot:setServerUrl', (e, url, opts = {}) => {
     guard(e);

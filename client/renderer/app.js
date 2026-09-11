@@ -872,7 +872,8 @@ $('btn-settings-save').addEventListener('click', async () => {
     const notes = [];
     if (perms.platform === 'darwin' && perms.screenCapture !== 'granted') notes.push('Запись экрана на macOS не разрешена — разрешите в Системных настройках.');
     if (perms.wayland) notes.push(perms.controlNote);
-    if (perms.nativeInput && !perms.nativeInput.available) notes.push('Нативный ввод недоступен: управление мышью/клавиатурой работать не будет.');
+    // nativeInput проверяется лениво: «не проверено» — не повод заявлять недоступность
+    if (perms.nativeInput?.checked && !perms.nativeInput.available) notes.push('Нативный ввод недоступен: управление мышью/клавиатурой работать не будет.');
     text($('perm-report'), notes.join(' '));
   } catch (e) {
     text($('settings-error'), `Сервер недоступен: ${e.message}`);
@@ -885,5 +886,9 @@ $('btn-settings-save').addEventListener('click', async () => {
 
 (async function boot() {
   const s = await enot.getSettings();
+  if (s.version) { // футер только с фактической версией — без выдуманных чисел
+    text($('app-version'), s.version);
+    show($('app-footer'));
+  }
   if (s.firstRun) openSettings(); // первый запуск: экран адреса сервера
 })();
