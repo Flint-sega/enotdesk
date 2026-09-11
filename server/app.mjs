@@ -378,6 +378,26 @@ export function createServer(opts = {}) {
       const u = db.prepare('SELECT id, login, name, role, active FROM users WHERE id = ?').get(target.id);
       return ok(res, 200, { user: { ...u, active: !!u.active } });
     }
+    if (m && req.method === 'DELETE') {
+      if (!user) return err(res, 401, 'unauthorized', 'Требуется авторизация');
+      if (user.role !== 'admin') return err(res, 403, 'forbidden', 'Недостаточно прав');
+      const target = db.prepare('SELECT * FROM users WHERE id = ?').get(m[1]);
+      if (!target) return err(res, 404, 'not_found', 'Участник не найден');
+      if (target.id === user.id) return err(res, 409, 'self_delete', 'Нельзя удалить собственную учётную запись');
+      if (target.role === 'admin' && !!target.active) {
+        const admins = db.prepare(
+          "SELECT count(*) c FROM users WHERE role='admin' AND active=1 AND id != ?"
+        ).get(target.id).c;
+        if (admins === 0) return err(res, 409, 'last_admin', 'Нельзя удалить последнего активного администратора');
+      }
+      for (const [sid, rt] of live) {
+        if (rt.operatorUserId === target.id) endSession(sid, 'operator-revoked');
+      }
+      db.prepare('DELETE FROM auth_tokens WHERE user_id = ?').run(target.id);
+      db.prepare('DELETE FROM users WHERE id = ?').run(target.id);
+      auditLog(db, user.id, 'member.delete', target.id, { login: target.login, role: target.role });
+      return ok(res, 200, { ok: true });
+    }
 
     // ---- invites ----
     if (p === '/invites' && req.method === 'GET') {

@@ -2,6 +2,7 @@
 // Вся сеть и нативный ввод — через window.enot (context-isolated мост).
 
 import { parseCredentials } from '../lib/credentials.mjs';
+import { inviteStatus } from '../lib/invites.mjs';
 
 const $ = (id) => document.getElementById(id);
 const enot = window.enot;
@@ -684,6 +685,18 @@ async function renderTeam() {
         toggle.textContent = m.active ? 'Отключить' : 'Включить';
         toggle.addEventListener('click', () => patchMember(m, { active: !m.active }));
         item.append(roleSel, toggle);
+        if (state.me?.id !== m.id) {
+          const del = document.createElement('button');
+          del.className = 'btn small danger-ghost';
+          del.textContent = 'Удалить';
+          del.addEventListener('click', async () => {
+            if (del.textContent !== 'Точно удалить?') { del.textContent = 'Точно удалить?'; return; }
+            const res = await enot.request('members.delete', { id: m.id });
+            if (res.status !== 200) text($('team-error'), res.body?.error?.message ?? 'Не удалось удалить участника');
+            else renderTeam();
+          });
+          item.appendChild(del);
+        }
       }
       box.appendChild(item);
     }
@@ -701,16 +714,20 @@ async function renderTeam() {
       main.className = 'grow';
       main.innerHTML = '<div class="title"></div><div class="sub"></div>';
       main.querySelector('.title').textContent = `Приглашение на роль: ${roleName(inv.role)}`;
-      main.querySelector('.sub').textContent = `действует до ${new Date(inv.expiresAt).toLocaleString('ru')}`;
-      const revoke = document.createElement('button');
-      revoke.className = 'btn small danger-ghost';
-      revoke.textContent = 'Отозвать';
-      revoke.addEventListener('click', async () => {
-        const res = await enot.request('invites.revoke', { id: inv.id });
-        if (res.status !== 200) text($('team-error'), res.body?.error?.message ?? 'Не удалось отозвать');
-        else renderTeam();
-      });
-      item.append(main, revoke);
+      const status = inviteStatus(inv);
+      main.querySelector('.sub').textContent = status.label;
+      item.append(main);
+      if (status.state === 'active') {
+        const revoke = document.createElement('button');
+        revoke.className = 'btn small danger-ghost';
+        revoke.textContent = 'Отозвать';
+        revoke.addEventListener('click', async () => {
+          const res = await enot.request('invites.revoke', { id: inv.id });
+          if (res.status !== 200) text($('team-error'), res.body?.error?.message ?? 'Не удалось отозвать');
+          else renderTeam();
+        });
+        item.appendChild(revoke);
+      }
       ibox.appendChild(item);
     }
     text($('team-status'), '');
@@ -776,7 +793,7 @@ async function renderHistory() {
       'История пуста. Здесь появятся завершённые сеансы помощи.',
       {
         title: (it) => `Сеанс ${it.sessionId} — ${it.state}`,
-        sub: (it) => `${it.operatorName ?? '—'} · ${new Date(it.createdAt).toLocaleString('ru')} · причина: ${it.endReason ?? '—'}`,
+        sub: (it) => `${it.operatorName ?? 'удалённый сотрудник'} · ${new Date(it.createdAt).toLocaleString('ru')} · причина: ${it.endReason ?? '—'}`,
       });
     text($('history-page'), `Стр. ${state.pages.history + 1}, всего ${body.total}`);
     $('history-prev').disabled = state.pages.history === 0;
