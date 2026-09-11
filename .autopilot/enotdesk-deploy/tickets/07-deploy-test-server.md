@@ -29,3 +29,15 @@
 ## Ход
 
 Результаты выполнения дописываются в этот файл в конец секции «Фактические результаты» (без секретов).
+
+## Фактические результаты (2026-09-11)
+
+- Деплой: `deploy-server.sh` → nohup-установка, `health` `{"ok":true,"version":"0.1.0"}` на 127.0.0.1 и снаружи. Ubuntu 24.04, Node v24.12.0 tarball-ом (D01), сервис `enotdesk.service` от пользователя `enotdesk`.
+- Администратор создан (логин `admin`; пароль — только в локальном `.env`, в отчёте/коммитах не хранится).
+- `smoke-remote.mjs` против `http://89.125.214.92:8080`: **SMOKE PASS** (invite/accept → сессия ID 961233253 → claim оператором → consent → relay offer/answer → end). Повторно подтверждён после обновления и после reboot.
+- Страницы: `/downloads` 200, `/invite` 200; `/api/v1/health` 200.
+- Идемпотентность/обновление: повторный деплой → 2 релиза, `current` переключён атомарно, БД сохранена (smoke с тем же админом PASS).
+- Удаление: `--uninstall` → сервис inactive/not-found, БД `/var/lib/enotdesk/enotdesk.db` на месте; повторная установка → active/enabled, health ok.
+- Firewall: `--open-firewall` при неактивном ufw → честное сообщение «правило не добавлено», ufw не изменён (Status: inactive).
+- Перезагрузка: `reboot` → SSH вернулся ~40 c, `is-active`=active, `is-enabled`=enabled, health ok, `uptime -p` = 0 минут.
+- Секреты: в репозитории/выводе/отчёте нет значений; `deploy.env` 0600 на сервере удаляется; вход по SSH-ключу.
