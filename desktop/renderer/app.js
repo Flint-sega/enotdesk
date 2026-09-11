@@ -803,6 +803,7 @@ $('btn-settings-close').addEventListener('click', () => hide($('settings-overlay
 async function openSettings() {
   const s = await enot.getSettings();
   $('settings-url').value = s.serverUrl;
+  $('settings-insecure').checked = !!s.allowInsecureHttp;
   text($('settings-status'), s.firstRun ? 'Первый запуск: укажите адрес сервера ЕнотDesk.' : '');
   text($('settings-error'), '');
   text($('perm-report'), '');
@@ -815,7 +816,7 @@ $('btn-settings-save').addEventListener('click', async () => {
   setBusy(btn, true, 'Проверяем…');
   text($('settings-error'), ''); text($('settings-status'), '');
   try {
-    const r = await enot.setServerUrl($('settings-url').value.trim());
+    const r = await enot.setServerUrl($('settings-url').value.trim(), { allowInsecureHttp: $('settings-insecure').checked });
     if (!r.ok) throw new Error(r.error ?? 'Не удалось сохранить');
     const health = await enot.request('health', {});
     if (health.status !== 200) throw new Error('Сервер ответил ошибкой — проверьте адрес');

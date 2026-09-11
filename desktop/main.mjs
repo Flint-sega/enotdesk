@@ -12,13 +12,14 @@ import { createInputGate } from './lib/protocol.mjs';
 import { createNativeInput } from './lib/native-input.mjs';
 import { createInputPipeline } from './lib/input-pipeline.mjs';
 import { INPUT_KEYS } from './lib/protocol.mjs';
+import { normalizeServerUrl } from './lib/server-url.mjs';
 
 const SMOKE = process.env.EDESK_SMOKE === '1';
 const DEFAULT_SERVER_URL = 'http://127.0.0.1:8080';
 
 let win = null;
 let settingsPath = null;
-let settings = { serverUrl: DEFAULT_SERVER_URL };
+let settings = { serverUrl: DEFAULT_SERVER_URL, allowInsecureHttp: false };
 
 // Токены живут только здесь (main). Рендереру не возвращаются.
 let api = createApi({ baseUrl: settings.serverUrl });
@@ -41,6 +42,7 @@ function loadSettings() {
     settingsPath = path.join(app.getPath('userData'), 'settings.json');
     const raw = JSON.parse(fs.readFileSync(settingsPath, 'utf8'));
     if (typeof raw.serverUrl === 'string' && raw.serverUrl) settings.serverUrl = raw.serverUrl;
+    settings.allowInsecureHttp = raw.allowInsecureHttp === true;
   } catch {
     // первый запуск — файл настроек ещё не существует
   }
@@ -145,18 +147,20 @@ function registerIpc() {
     if (!fromOurRenderer(e)) throw new Error('Доступ запрещён: недоверенный отправитель');
   };
 
-  ipcMain.handle('enot:getSettings', (e) => { guard(e); return { serverUrl: settings.serverUrl, firstRun: !fs.existsSync(settingsPath) }; });
+  ipcMain.handle('enot:getSettings', (e) => { guard(e); return { serverUrl: settings.serverUrl, allowInsecureHttp: settings.allowInsecureHttp, firstRun: !fs.existsSync(settingsPath) }; });
 
-  ipcMain.handle('enot:setServerUrl', (e, url) => {
+  ipcMain.handle('enot:setServerUrl', (e, url, opts = {}) => {
     guard(e);
-    if (typeof url !== 'string') throw new Error('Некорректный адрес сервера');
-    let parsed;
-    try { parsed = new URL(url); } catch { throw new Error('Некорректный адрес сервера'); }
-    const loopback = ['127.0.0.1', 'localhost', '[::1]'].includes(parsed.hostname);
-    if (parsed.protocol !== 'https:' && !(parsed.protocol === 'http:' && loopback)) {
-      throw new Error('Для внешних адресов требуется HTTPS; HTTP разрешён только для 127.0.0.1/localhost');
+    const allowInsecureHttp = opts?.allowInsecureHttp === true;
+    const result = normalizeServerUrl(url, { allowInsecureHttp });
+    if (!result.ok) {
+      if (result.reason === 'https-required') {
+        throw new Error('Для внешних адресов нужен HTTPS. Для тестового сервера включите галочку "Разрешить HTTP без шифрования".');
+      }
+      throw new Error('Некорректный адрес сервера');
     }
-    settings.serverUrl = url.replace(/\/$/, '');
+    settings.serverUrl = result.url;
+    settings.allowInsecureHttp = allowInsecureHttp;
     const saved = saveSettings();
     api = createApi({ baseUrl: settings.serverUrl });
     return { ...saved, serverUrl: settings.serverUrl };
