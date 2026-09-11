@@ -1,6 +1,8 @@
 // Рендерер ЕнотDesk: только UI, media-треки и RTCPeerConnection.
 // Вся сеть и нативный ввод — через window.enot (context-isolated мост).
 
+import { parseCredentials } from '../lib/credentials.mjs';
+
 const $ = (id) => document.getElementById(id);
 const enot = window.enot;
 
@@ -310,7 +312,27 @@ enot.onSignal(async (msg) => {
 
 // ---------- оператор ----------
 
-function showConnectForm() { show($('op-connect-form')); hide($('op-waiting')); hide($('op-remote')); }
+const PASTE_HINT_DEFAULT = 'Можно вставить данные доступа целиком — ID и пароль подставятся сами';
+const PASTE_HINT_DONE = 'ID и пароль заполнены — проверьте и нажмите «Подключиться»';
+
+function showConnectForm() {
+  show($('op-connect-form')); hide($('op-waiting')); hide($('op-remote'));
+  text($('conn-paste-hint'), PASTE_HINT_DEFAULT);
+  hide($('conn-paste-hint'));
+}
+
+function handleCredentialPaste(e) {
+  const parsed = parseCredentials(e.clipboardData?.getData('text') ?? '');
+  if (!parsed) return; // обычная вставка — не мешаем
+  e.preventDefault();
+  if (parsed.sessionId) $('conn-session-id').value = parsed.sessionId;
+  if (parsed.password) $('conn-password').value = parsed.password;
+  text($('conn-error'), '');
+  text($('conn-paste-hint'), parsed.sessionId && parsed.password ? PASTE_HINT_DONE : PASTE_HINT_DEFAULT);
+  show($('conn-paste-hint'));
+}
+$('conn-session-id').addEventListener('paste', handleCredentialPaste);
+$('conn-password').addEventListener('paste', handleCredentialPaste);
 
 $('form-login').addEventListener('submit', async (e) => {
   e.preventDefault();
@@ -374,9 +396,17 @@ $('btn-connect').addEventListener('click', async () => {
   setBusy(btn, true, 'Подключаемся…');
   text($('conn-error'), '');
   try {
+    const idEl = $('conn-session-id');
+    const passEl = $('conn-password');
+    // запасной путь: вставленные целиком данные, метки или нецифровой мусор
+    if (/\D/.test(idEl.value) || !passEl.value) {
+      const parsed = parseCredentials(`${idEl.value}\n${passEl.value}`);
+      if (parsed?.sessionId) idEl.value = parsed.sessionId;
+      if (parsed?.password) passEl.value = parsed.password;
+    }
     const res = await enot.request('session.claim', {
-      sessionId: $('conn-session-id').value.replace(/\s+/g, ''),
-      password: $('conn-password').value,
+      sessionId: idEl.value.replace(/\D/g, ''),
+      password: passEl.value.trim(),
       contactId: $('conn-contact').value || undefined,
     });
     if (res.status !== 201) throw new Error(res.body?.error?.message ?? 'Не удалось подключиться');
