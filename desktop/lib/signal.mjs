@@ -73,8 +73,12 @@ export function createSignalClient({ url, wsFactory = (u) => new WebSocket(u), a
         });
         ws.on('close', (code, reason) => {
           clearTimeout(timer);
+          if (!ready) {
+            // сокет закрылся до ready: это ошибка подключения (reject), а не конец сеанса
+            if (!closedByUs) fail(new Error(`closed ${code} ${reason?.toString?.() ?? ''}`.trim()));
+            return;
+          }
           emit({ type: 'socket-closed', code, reason: reason?.toString?.() ?? '' });
-          if (!closedByUs) fail(new Error(`closed ${code} ${reason?.toString?.() ?? ''}`.trim()));
         });
         ws.on('error', (e) => {
           clearTimeout(timer);
