@@ -29,7 +29,7 @@ REMOTE_INSTALLER="$REMOTE_DIR/install-server.sh"
 REMOTE_ENVFILE="$REMOTE_DIR/deploy.env"
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-for f in server package.json package-lock.json scripts/install-server.sh; do
+for f in server assets package.json package-lock.json scripts/install-server.sh; do
   [ -e "$ROOT/$f" ] || die "не найден $f — запускайте из корня репозитория EnotDesk"
 done
 command -v curl >/dev/null 2>&1 || die "не найден curl"
@@ -51,8 +51,8 @@ DEST="$DEPLOY_USER@$HOST"
 TMP="$(mktemp -d)"
 trap 'rm -rf "$TMP"' EXIT
 
-info "собираю tarball (server/, package.json, package-lock.json, scripts/install-server.sh)"
-tar -czf "$TMP/app.tar.gz" -C "$ROOT" server package.json package-lock.json scripts/install-server.sh
+info "собираю tarball (server/, assets/, package.json, package-lock.json, scripts/install-server.sh)"
+tar -czf "$TMP/app.tar.gz" -C "$ROOT" server assets package.json package-lock.json scripts/install-server.sh
 
 # Значения ENOT_* уходят на сервер только файлом 0600: в argv ssh/bash их нет.
 ENV_FILE_LOCAL="$TMP/deploy.env"
