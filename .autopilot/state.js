@@ -1,37 +1,37 @@
 window.STATE =
 {
-  "slug": "enotdesk",
-  "title": "EnotDesk — удалённая поддержка",
+  "slug": "enotdesk-deploy",
+  "title": "EnotDesk — развёртывание на сервер и документация",
   "mode": "full",
   "depth": "deep",
   "polish": null,
-  "tier": "T2",
+  "tier": "T1",
   "briefFile": "2026-09-11-brief.md",
   "memoryFile": "AGENTS.md",
-  "startedAt": "2026-09-11T01:26:32+03:00",
-  "updatedAt": "2026-09-11T08:12:32+03:00",
-  "finishedAt": "2026-09-11T09:40:38+03:00",
+  "startedAt": "2026-09-11T11:38:07+03:00",
+  "updatedAt": "2026-09-11T12:29:01+03:00",
+  "finishedAt": null,
   "stages": [
-    {"id":"preflight","status":"done","startedAt":"2026-09-11T01:26:32+03:00","finishedAt":"2026-09-11T01:32:16+03:00"},
-    {"id":"manifest","status":"done","startedAt":"2026-09-11T01:32:16+03:00","finishedAt":"2026-09-11T01:33:14+03:00"},
-    {"id":"briefing","status":"skipped","note":"Полный автомат — самобрифинг; решения в manifest.md"},
-    {"id":"spec","status":"done","startedAt":"2026-09-11T01:33:14+03:00","finishedAt":"2026-09-11T01:36:36+03:00"},
-    {"id":"plan","status":"done","startedAt":"2026-09-11T01:36:36+03:00","finishedAt":"2026-09-11T01:44:28+03:00","note":"4 таска, ярус T2, 3 волны"},
-    {"id":"build","status":"done","startedAt":"2026-09-11T01:44:28+03:00","note":"4 из 4 тасков готовы"},
+    {"id":"preflight","status":"done","startedAt":"2026-09-11T11:30:00+03:00","finishedAt":"2026-09-11T11:38:07+03:00","note":"разведка сервера Ubuntu 24.04, вход по ключу"},
+    {"id":"manifest","status":"done","startedAt":"2026-09-11T11:38:07+03:00","finishedAt":"2026-09-11T11:40:37+03:00"},
+    {"id":"briefing","status":"skipped","note":"полный автомат — самобрифинг"},
+    {"id":"spec","status":"done","startedAt":"2026-09-11T11:40:37+03:00","finishedAt":"2026-09-11T11:40:37+03:00"},
+    {"id":"plan","status":"done","startedAt":"2026-09-11T11:40:37+03:00","finishedAt":"2026-09-11T11:40:37+03:00","note":"3 таска, ярус T1, 2 волны"},
+    {"id":"build","status":"active","startedAt":"2026-09-11T11:40:37+03:00"    ,"note":"0 из 3 тасков готовы"},
     {"id":"review","status":"pending"},
-    {"id":"final","status":"done","startedAt":"2026-09-11T09:40:38+03:00","finishedAt":"2026-09-11T09:40:38+03:00"}
+    {"id":"final","status":"pending"}
   ],
-  "requirements":{"total":19,"done":17,"inTicket":2,"inSpec":0,"placeholder":0,"deferred":0,"dropped":0},
+  "requirements":{"total":5,"done":0,"inTicket":5,"inSpec":0,"placeholder":0,"deferred":0,"dropped":0},
   "tickets":[
-    {"id":"01","title":"Команда и временные сессии","requirements":["R07","R08","R09","R10","R11","R12","R14","R15","R16","R18"],"blockedBy":[],"wave":1,"zone":["server/","package.json",".gitignore",".env.example"],"status":"done","startedAt":"2026-09-11T01:44:28+03:00","finishedAt":"2026-09-11T08:12:32+03:00","retries":0,"repairs":1,"handoffs":0,"files":["server/app.mjs","server/db.mjs","server/crypto.mjs","server/bootstrap.mjs","server/main.mjs"],"tests":{"passed":27,"failed":0},"commit":"f9d1128","concerns":["rate limits in-memory — сброс при рестарте принят"]},
-    {"id":"02","title":"Настольная поддержка и интерфейс","requirements":["R01","R02","R03","R04","R05","R07","R08","R09","R10","R11","R12","R14","R15","R16","R17","R19i"],"blockedBy":["01"],"wave":2,"zone":["desktop/"],"status":"done","startedAt":"2026-09-11T08:12:32+03:00","finishedAt":"2026-09-11T08:50:45+03:00","retries":0,"repairs":1,"handoffs":0,"files":["desktop/main.mjs","desktop/preload.cjs","desktop/lib/","desktop/renderer/"],"tests":{"passed":19,"failed":0},"commit":"dbf2311","concerns":["нативное исполнение инертно до пина koffi в T04; UI-пиксели не скриншотились"]},
-    {"id":"03","title":"Фирменный енот и иконки","requirements":["R03","R04","R05","R06","R13","R17"],"blockedBy":["01"],"wave":2,"zone":["assets/"],"status":"done","startedAt":"2026-09-11T08:12:32+03:00","finishedAt":"2026-09-11T08:12:32+03:00","retries":0,"repairs":0,"handoffs":0,"files":["assets/enot-mascot.svg","assets/enot-icon.svg","assets/icon.png","assets/README.md"],"tests":{"passed":0,"failed":0},"commit":"b9d0b48","concerns":[".icns/.ico сделает T04"]},
-    {"id":"04","title":"Portable, запуск и связная проверка","requirements":["R01","R02","R03","R04","R05","R06","R07","R08","R09","R10","R11","R12","R13","R14","R15","R16","R17","R18","R19i"],"blockedBy":["02","03"],"wave":3,"zone":["package.json","desktop/","server/","docs/","README.md","BRAND.md"],"status":"done","startedAt":"2026-09-11T08:50:45+03:00","finishedAt":"2026-09-11T09:35:16+03:00","retries":0,"repairs":1,"handoffs":1,"files":["package.json","desktop/","scripts/","README.md","docs/"],"tests":{"passed":46,"failed":0},"commit":"d298500","concerns":["инъекция ввода и межмашинное видео — ручная проверка; win/linux сборки — машины владельца"]}
+    {"id":"05","title":"Скрипты установки и деплоя","requirements":["R20","R20.1","R20.2","R20.3","R20.4","R24i"],"blockedBy":[],"wave":1,"zone":["scripts/",".env.example"],"status":"review","startedAt":"2026-09-11T11:40:37+03:00","retries":0,"repairs":0,"handoffs":0},
+    {"id":"06","title":"Документация сервера и сборок","requirements":["R21","R21.1"],"blockedBy":[],"wave":1,"zone":["docs/","README.md"],"status":"review","startedAt":"2026-09-11T11:40:37+03:00","retries":0,"repairs":0,"handoffs":0},
+    {"id":"07","title":"Развёртывание и обкатка на тестовом сервере","requirements":["R22","R23i","R20"],"blockedBy":["08"],"wave":3,"zone":["сервер"],"status":"pending","retries":0,"repairs":0,"handoffs":0},
+    {"id":"08","title":"Node tarball + устойчивый деплой (D01)","requirements":["R20","R22"],"blockedBy":["05"],"wave":2,"zone":["scripts/","docs/SERVER.md"],"status":"in-progress","startedAt":"2026-09-11T12:29:01+03:00","retries":0,"repairs":0,"handoffs":0}
   ],
   "singlePass":null,
-  "tests":{"passed":46,"failed":0},
-  "debt":{"placeholders":[],"assumptions":["Одна команда поддержки; чат существующий внешний"],"emptyEnv":[]},
+  "tests":null,
+  "debt":{"placeholders":[],"assumptions":[],"emptyEnv":["ENOT_DEPLOY_HOST","ENOT_DEPLOY_USER","ENOT_DEPLOY_PASSWORD"]},
   "additions":[],
-  "coverage":{"found":3,"fixed":3,"deferred":0,"note":"Процесс добавлен в §9; серверное противоречие и дополнительный consent явно обозначены допущениями"},
-  "blind":{"verdict":"никакого дрейфа: всё, что запускается, работает; R01/R02 частично только из-за невозможности проверки на одной машине (межмашинное видео, инъекция ввода, win/linux сборки)","drift":0}
+  "coverage":null,
+  "blind":null
 }

@@ -4,12 +4,12 @@
 
 ## Требования
 
-- Ubuntu 22.04+/24.04 или Debian 12+ с `apt`, `systemd` и `curl`.
+- Ubuntu 22.04+/24.04 или Debian 12+ с `systemd`, `curl`, `tar` и `xz` (apt установщику не нужен).
 - Доступ root (или sudo) на сервере.
-- Исходящий интернет: NodeSource (установка Node 24) и npm registry (зависимости).
+- Исходящий интернет: nodejs.org (tarball Node 24) и npm registry (зависимости).
 - Порт сервера: `8080` по умолчанию для тестового HTTP-режима, либо `80`/`443` при TLS через Caddy.
 - Свободное место: ~300 МБ на Node.js + релиз + `node_modules`.
-- Архитектура x86_64 или arm64.
+- Архитектура x86_64 (установщик ставит tarball `linux-x64`; на arm64 Node ставится вручную).
 
 Фиксированные пути (совпадают с тем, что создаёт установщик):
 
@@ -43,7 +43,7 @@ export ENOT_DEPLOY_PROTO=http
 ./scripts/deploy-server.sh
 ```
 
-Скрипт собирает tar.gz (`server/`, `package.json`, `package-lock.json`, `scripts/install-server.sh`), копирует его в `/tmp/enotdesk-install/` на сервере, выполняет установку и ждёт health до 30 с. В конце печатает health-URL и следующую команду — создание администратора (шаг 4).
+Скрипт собирает tar.gz (`server/`, `package.json`, `package-lock.json`, `scripts/install-server.sh`), копирует его в `/tmp/enotdesk-install/` на сервере и запускает установку под `nohup` (лог — `/tmp/enotdesk-install/install.log` на сервере): обрыв SSH установку не прерывает. Локально скрипт опрашивает лог каждые 5 секунд (до 10 минут) и ждёт health. В конце печатает health-URL и следующую команду — создание администратора (шаг 4).
 
 Тот же скрипт, запущенный повторно, ставит свежий релиз и переключает symlink `current`: это и есть обновление. База данных лежит вне релиза и не теряется.
 
@@ -51,13 +51,23 @@ export ENOT_DEPLOY_PROTO=http
 
 ### 2.1. Node.js 24
 
+Node ставится официальным tarball-ом с nodejs.org — без apt и NodeSource. Это важно на серверах, где `apt update` зависает (зеркала отвечают `Ign`): нужны только `curl`, `tar` и `xz`.
+
 ```bash
-apt-get update
-apt-get install -y ca-certificates curl gnupg
-curl -fsSL https://deb.nodesource.com/setup_24.x | bash -
-apt-get install -y nodejs
-node -v    # ожидается v24.x
+NODE_VERSION=24.12.0
+cd /tmp
+curl -fsSLO "https://nodejs.org/dist/v$NODE_VERSION/node-v$NODE_VERSION-linux-x64.tar.xz"
+curl -fsSLO "https://nodejs.org/dist/v$NODE_VERSION/SHASUMS256.txt"
+grep " node-v$NODE_VERSION-linux-x64.tar.xz\$" SHASUMS256.txt | sha256sum -c -
+install -d /opt/node-24
+tar -xJf "node-v$NODE_VERSION-linux-x64.tar.xz" -C /opt/node-24 --strip-components=1
+ln -sfn /opt/node-24/bin/node /usr/local/bin/node
+ln -sfn /opt/node-24/bin/npm  /usr/local/bin/npm
+ln -sfn /opt/node-24/bin/npx  /usr/local/bin/npx
+node -v    # ожидается v24.12.0
 ```
+
+Если `node -v` уже равен нужной версии, шаг можно пропустить. Установщик `install-server.sh` делает то же самое идемпотентно (версия переопределяется `NODE_VERSION`). На arm64 скачайте tarball `linux-arm64` и повторите распаковку/симлинки — автоматически поддерживается только x86_64.
 
 ### 2.2. Пользователь и каталоги
 
@@ -122,7 +132,7 @@ User=enotdesk
 Group=enotdesk
 WorkingDirectory=/opt/enotdesk/current
 EnvironmentFile=/etc/enotdesk/enotdesk.env
-ExecStart=/usr/bin/node server/main.mjs
+ExecStart=/usr/local/bin/node server/main.mjs
 Restart=on-failure
 RestartSec=3
 
