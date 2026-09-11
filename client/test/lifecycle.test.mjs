@@ -7,7 +7,7 @@ import { createApi } from '../lib/api.mjs';
 import { createSignalClient } from '../lib/signal.mjs';
 
 // Шов: «Lifecycle and WS behavior tested against real service» — через собственные
-// сетевые модули desktop (api.mjs/signal.mjs), как их использует main-процесс.
+// сетевые модули client (api.mjs/signal.mjs), как их использует main-процесс.
 
 async function setup(t) {
   const dbPath = tmpDb(t);
@@ -15,7 +15,7 @@ async function setup(t) {
   return { inst, port, base, dbPath };
 }
 
-test('полный жизненный цикл через модули desktop: register → claim → approve → signal → end', async (t) => {
+test('полный жизненный цикл через модули client: register → claim → approve → signal → end', async (t) => {
   const { port, base, dbPath } = await setup(t);
   bootstrapAdmin(dbPath, { login: ADMIN.login, name: 'Главный Енот', password: ADMIN.password });
   const api = createApi({ baseUrl: base });
