@@ -27,6 +27,7 @@ NODE_VERSION="${NODE_VERSION:-24.12.0}"
 PORT="${ENOT_PORT:-8080}"
 BIND="${ENOT_BIND:-0.0.0.0}"
 DB_PATH="${ENOT_DB:-$DATA_DIR/enotdesk.db}"
+DIST_DIR="${ENOT_DIST_DIR:-}"
 PUBLIC_URL=""
 TURN_URLS="${ENOT_TURN_URLS:-}"
 TURN_USERNAME="${ENOT_TURN_USERNAME:-}"
@@ -232,6 +233,10 @@ merge_env_file() {
   if [ -z "${ENOT_DB:-}" ]; then
     old="$(read_env_value ENOT_DB)"; if [ -n "$old" ]; then DB_PATH="$old"; fi
   fi
+  if [ -z "${ENOT_DIST_DIR:-}" ]; then
+    old="$(read_env_value ENOT_DIST_DIR)"; if [ -n "$old" ]; then DIST_DIR="$old"; fi
+  fi
+  if [ -z "$DIST_DIR" ]; then DIST_DIR="$DATA_DIR/dist"; fi
   if [ -z "${ENOT_PUBLIC_URL:-}" ]; then
     old="$(read_env_value ENOT_PUBLIC_URL)"; if [ -n "$old" ]; then PUBLIC_URL="$old"; fi
   fi
@@ -268,6 +273,7 @@ print_plan() {
   echo "  current:            $CURRENT_LINK"
   echo "  пользователь:       $ENOT_USER (system, nologin)"
   echo "  БД:                 $DB_PATH"
+  echo "  артефакты:          $DIST_DIR"
   echo "  env-файл:           $ENV_FILE (0600)"
   echo "  unit:               $UNIT_FILE (Restart=on-failure, EnvironmentFile)"
   echo "  bind/port:          $BIND:$PORT"
@@ -331,7 +337,9 @@ fi
 
 install -d -m 0755 "$OPT_DIR" "$RELEASES_DIR" "$ENV_DIR"
 install -d -m 0750 "$DATA_DIR"
+mkdir -p "$DIST_DIR"
 chown "$ENOT_USER:$ENOT_USER" "$OPT_DIR" "$RELEASES_DIR" "$DATA_DIR"
+chown "$ENOT_USER:$ENOT_USER" "$DIST_DIR"
 
 if [ -f "$RELEASE/server/main.mjs" ]; then
   info "релиз уже распакован: $RELEASE"
@@ -360,6 +368,7 @@ install -m 0600 /dev/null "$ENV_FILE"
   echo "ENOT_HOST=$BIND"
   echo "ENOT_PORT=$PORT"
   echo "ENOT_DB=$DB_PATH"
+  echo "ENOT_DIST_DIR=$DIST_DIR"
   echo "ENOT_PUBLIC_URL=$PUBLIC_URL"
   if [ -n "$TURN_URLS" ]; then echo "ENOT_TURN_URLS=$TURN_URLS"; fi
   if [ -n "$TURN_USERNAME" ]; then echo "ENOT_TURN_USERNAME=$TURN_USERNAME"; fi
