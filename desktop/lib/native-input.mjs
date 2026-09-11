@@ -20,7 +20,8 @@ export function waylandAdapterProbe(env = process.env) {
 // Попытка загрузить koffi и собрать адаптер текущей ОС. Любая неудача — инертный режим.
 function loadPlatformAdapter(koffi) {
   if (!koffi) return inertAdapter();
-  if (waylandAdapterProbe()) return waylandAdapterProbe();
+  const wayland = waylandAdapterProbe();
+  if (wayland) return wayland;
   try {
     if (process.platform === 'darwin') return macAdapter(koffi);
     if (process.platform === 'win32') return winAdapter(koffi);
@@ -34,12 +35,12 @@ function loadPlatformAdapter(koffi) {
 // macOS CoreGraphics: события мыши/клавиатуры в глобальных пикселях.
 function macAdapter(koffi) {
   const cg = koffi.load('/System/Library/Frameworks/CoreGraphics.framework/CoreGraphics');
-  const CGEventCreateMouseEvent = koffi.func('void *CGEventCreateMouseEvent(void *, int, double, double, int)', { library: cg });
-  const CGEventCreateKeyboardEvent = koffi.func('void *CGEventCreateKeyboardEvent(void *, unsigned short, bool)', { library: cg });
-  const CGEventSetFlags = koffi.func('void CGEventSetFlags(void *, unsigned long)', { library: cg });
-  const CGEventPost = koffi.func('void CGEventPost(int, void *)', { library: cg });
-  const CFRelease = koffi.func('void CFRelease(void *)', { library: cg });
-  const CGEventCreateScrollWheelEvent = koffi.func('void *CGEventCreateScrollWheelEvent(void *, int, int, int, int)', { library: cg });
+  const CGEventCreateMouseEvent = cg.func('void *CGEventCreateMouseEvent(void *, int, double, double, int)');
+  const CGEventCreateKeyboardEvent = cg.func('void *CGEventCreateKeyboardEvent(void *, unsigned short, bool)');
+  const CGEventSetFlags = cg.func('void CGEventSetFlags(void *, unsigned long)');
+  const CGEventPost = cg.func('void CGEventPost(int, void *)');
+  const CFRelease = cg.func('void CFRelease(void *)');
+  const CGEventCreateScrollWheelEvent = cg.func('void *CGEventCreateScrollWheelEvent(void *, int, int, int, int)');
   const post = (ev) => { try { CGEventPost(0, ev); } finally { CFRelease(ev); } };
   const held = new Set();
   const lastPx = [0, 0]; // объявлен до использования, обновляется в move()
@@ -101,10 +102,8 @@ function macAdapter(koffi) {
 // Windows SendInput через koffi.
 function winAdapter(koffi) {
   const user32 = koffi.load('user32.dll');
-  koffi.proto('long SendInput(int, INPUT *, int)');
-  const SendInput = koffi.func('unsigned int SendInput(int, void *, int)', { library: user32, stdcall: true });
-  const SetCursorPos = koffi.func('bool SetCursorPos(int, int)', { library: user32, stdcall: true });
-  const held = new Set();
+  const SendInput = user32.func('unsigned int SendInput(int, void *, int)', { stdcall: true });
+  const SetCursorPos = user32.func('bool SetCursorPos(int, int)', { stdcall: true });
   const VK = { shift: 0x10, control: 0x11, alt: 0x12, meta: 0x5b, enter: 0x0d, tab: 0x09, escape: 0x1b, backspace: 0x08, space: 0x20, delete: 0x2e, home: 0x24, end: 0x23, pageup: 0x21, pagedown: 0x22, arrowup: 0x26, arrowdown: 0x28, arrowleft: 0x25, arrowright: 0x27 };
   const VK_LETTERS = 0x41; // 'A'..'Z'
   const VK_NUMS = 0x30; // '0'..'9'
@@ -138,7 +137,6 @@ function winAdapter(koffi) {
     key(k, down) {
       const vk = vkFor(k);
       if (vk === undefined) return false;
-      if (down) held.add(k); else held.delete(k);
       SendInput(1, keyInput(vk, down), 40);
       return true;
     },
@@ -153,13 +151,13 @@ function winAdapter(koffi) {
 function x11Adapter(koffi) {
   const x11 = koffi.load('libX11.so.6');
   const xtst = koffi.load('libXtst.so.6');
-  const XOpenDisplay = koffi.func('void *XOpenDisplay(const char *)', { library: x11 });
-  const XCloseDisplay = koffi.func('int XCloseDisplay(void *)', { library: x11 });
-  const XStringToKeysym = koffi.func('unsigned long XStringToKeysym(const char *)', { library: x11 });
-  const XKeysymToKeycode = koffi.func('int XKeysymToKeycode(void *, unsigned long)', { library: x11 });
-  const XTestFakeButtonEvent = koffi.func('int XTestFakeButtonEvent(void *, unsigned int, int, unsigned long)', { library: xtst });
-  const XTestFakeKeyEvent = koffi.func('int XTestFakeKeyEvent(void *, unsigned int, int, unsigned long)', { library: xtst });
-  const XTestFakeMotionEvent = koffi.func('int XTestFakeMotionEvent(void *, int, int, int, unsigned long)', { library: xtst });
+  const XOpenDisplay = x11.func('void *XOpenDisplay(const char *)');
+  const XCloseDisplay = x11.func('int XCloseDisplay(void *)');
+  const XStringToKeysym = x11.func('unsigned long XStringToKeysym(const char *)');
+  const XKeysymToKeycode = x11.func('int XKeysymToKeycode(void *, unsigned long)');
+  const XTestFakeButtonEvent = xtst.func('int XTestFakeButtonEvent(void *, unsigned int, int, unsigned long)');
+  const XTestFakeKeyEvent = xtst.func('int XTestFakeKeyEvent(void *, unsigned int, int, unsigned long)');
+  const XTestFakeMotionEvent = xtst.func('int XTestFakeMotionEvent(void *, int, int, int, unsigned long)');
   const dpy = XOpenDisplay(null);
   if (!dpy) return { available: false, platform: 'linux-x11', reason: 'x11-display-unavailable' };
   const KEYSYM = { space: 'space', enter: 'Return', tab: 'Tab', escape: 'Escape', backspace: 'BackSpace', delete: 'Delete', arrowup: 'Up', arrowdown: 'Down', arrowleft: 'Left', arrowright: 'Right', home: 'Home', end: 'End', pageup: 'Page_Up', pagedown: 'Page_Down', shift: 'Shift_L', control: 'Control_L', alt: 'Alt_L', meta: 'Super_L' };
@@ -191,7 +189,6 @@ export function createNativeInput({ adapter, koffi = null, maxPerWindow = 300, w
   const heldKeys = new Set();
   let count = 0;
   let windowStart = 0;
-  let lastPx = [0, 0];
 
   function throttled() {
     const now = Date.now();
@@ -217,7 +214,6 @@ export function createNativeInput({ adapter, koffi = null, maxPerWindow = 300, w
         case 'move': {
           const px = Math.round(ev.x * (bounds?.width ?? 0));
           const py = Math.round(ev.y * (bounds?.height ?? 0));
-          lastPx = [px, py];
           ad.move(px, py);
           return { ok: true };
         }
