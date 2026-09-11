@@ -91,6 +91,23 @@ test('полный жизненный цикл через модули desktop: 
   stale.close();
 });
 
+test('дефолтная WS-фабрика: клиент без wsFactory доходит до auth-ready (путь main.mjs)', async (t) => {
+  const { port, base } = await setup(t);
+  const api = createApi({ baseUrl: base });
+  const created = await api.request('session.create', {});
+  assert.equal(created.status, 201);
+
+  // Как main.startSignal(): wsFactory не передаётся, используется дефолтная из signal.mjs
+  const client = createSignalClient({ url: `ws://127.0.0.1:${port}/signal` });
+  const ready = await client.open({ role: 'host', sessionId: created.body.sessionId, hostToken: api.hostToken });
+  // Контракт WS: ready после auth = {type:'ready',sessionId,role,state}
+  assert.equal(ready.type, 'ready');
+  assert.equal(ready.sessionId, created.body.sessionId);
+  assert.equal(ready.role, 'host');
+  assert.equal(ready.state, 'waiting');
+  client.close();
+});
+
 test('api.request не возвращает hostToken наружу рендерера (токены живут в main)', async (t) => {
   const { base } = await setup(t);
   const api = createApi({ baseUrl: base });
