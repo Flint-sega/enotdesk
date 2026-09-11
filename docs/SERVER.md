@@ -117,6 +117,8 @@ chmod 0600 /etc/enotdesk/enotdesk.env
 
 `ENOT_PUBLIC_URL` подставляется в ссылки на страницах `/invite` и `/downloads`. Если нужен STUN/TURN, допишите `ENOT_TURN_URLS`, `ENOT_TURN_USERNAME`, `ENOT_TURN_PASSWORD` (имена — в `.env.example`) и перезапустите сервис.
 
+Сборки для `/downloads` лежат в каталоге `ENOT_DIST_DIR` (рекомендуется `ENOT_DIST_DIR=/var/lib/enotdesk/dist`; по умолчанию `<рабочий каталог>/dist`) — загрузите их, например: `scp dist/EnotDesk-* root@<server>:/var/lib/enotdesk/dist/`. Страница и API показывают только реально загруженные файлы из allowlist (`EnotDesk*.exe`, `EnotDesk*.zip`, `EnotDesk*.AppImage`); отсутствующие платформы отмечаются как «сборка ещё не готова».
+
 ### 2.6. systemd
 
 ```bash

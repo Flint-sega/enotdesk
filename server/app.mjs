@@ -50,9 +50,88 @@ export class RateLimiter {
   }
 }
 
+function esc(s) {
+  return String(s).replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+}
+
+function formatSize(bytes) {
+  if (!Number.isFinite(bytes) || bytes <= 0) return '—';
+  const units = ['Б', 'КБ', 'МБ', 'ГБ'];
+  let n = bytes; let i = 0;
+  while (n >= 1024 && i < units.length - 1) { n /= 1024; i += 1; }
+  return `${i === 0 ? n : n.toFixed(n < 10 ? 1 : 0)} ${units[i]}`;
+}
+
+const BASE_STYLE = `*{box-sizing:border-box}html{-webkit-text-size-adjust:100%}body{margin:0;background:#0B1020;color:#F4F7FB;font:16px/1.65 -apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,"Helvetica Neue",Arial,sans-serif}h1,h2,h3{line-height:1.2;margin:0 0 12px}p{margin:0 0 12px}a{color:#35D0BA}a:focus-visible,.btn:focus-visible{outline:2px solid #35D0BA;outline-offset:3px}.wrap{max-width:1080px;margin:0 auto;padding:0 20px}.hero{background:radial-gradient(900px 420px at 12% -20%,rgba(53,208,186,.14),transparent 65%),#0B1020;border-bottom:1px solid #1E2A44}.hero-inner{display:flex;align-items:center;gap:40px;padding:56px 20px}.mascot{width:clamp(140px,20vw,220px);height:auto;flex:none;filter:drop-shadow(0 14px 40px rgba(53,208,186,.16))}.eyebrow{color:#35D0BA;font-size:13px;font-weight:600;letter-spacing:.14em;text-transform:uppercase;margin:0 0 10px}h1{font-size:clamp(28px,4.6vw,44px)}.lead{color:#8D9AB2;max-width:60ch}.cta{display:flex;flex-wrap:wrap;gap:12px;margin:22px 0 0}.btn{display:inline-block;background:#35D0BA;color:#07251F;font-weight:600;text-decoration:none;padding:12px 22px;border:1px solid #35D0BA;border-radius:12px}.btn:hover{background:#57DCC8;border-color:#57DCC8}.btn-ghost{background:transparent;color:#F4F7FB;border-color:#33415F}.btn-ghost:hover{background:rgba(53,208,186,.08);border-color:#35D0BA;color:#35D0BA}section{padding:44px 0 0}.cards{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:16px}.card{display:flex;flex-direction:column;gap:8px;background:#121A2B;border:1px solid #223052;border-radius:14px;padding:22px}.plat{color:#35D0BA;font-size:12px;font-weight:600;letter-spacing:.12em;text-transform:uppercase}.file{margin:0;font-size:15px;word-break:break-all}.size{margin:0;color:#8D9AB2;font-size:13px}.pending{margin:auto 0 0}.card .btn{margin-top:auto;width:100%;text-align:center}.steps{list-style:none;counter-reset:s;margin:0;padding:0;display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:16px}.steps li{counter-increment:s;background:#121A2B;border:1px solid #223052;border-radius:14px;padding:22px}.steps li::before{content:counter(s);display:flex;align-items:center;justify-content:center;width:30px;height:30px;margin-bottom:12px;border-radius:50%;background:rgba(53,208,186,.14);color:#35D0BA;font-weight:700}.steps strong{display:block;margin-bottom:6px}.steps span{color:#8D9AB2;font-size:14px}.panel{background:#121A2B;border:1px solid #223052;border-radius:14px;padding:26px}.panel ul{margin:0;padding-left:20px;color:#C9D4E6}.panel li{margin:6px 0}.panel li::marker{color:#35D0BA}footer{border-top:1px solid #1E2A44;margin-top:48px;padding:26px 0;color:#8D9AB2;font-size:14px}.invite{min-height:62vh;display:flex;align-items:center;justify-content:center;padding:56px 20px}.invite .card{max-width:560px;align-items:flex-start}.invite h1{font-size:clamp(24px,4vw,34px)}.invite .card .btn{margin-top:8px;width:auto}@media (max-width:820px){.hero-inner{flex-direction:column;align-items:flex-start;gap:24px;padding:40px 20px}.cards{grid-template-columns:repeat(2,minmax(0,1fr))}.steps{grid-template-columns:repeat(2,minmax(0,1fr))}}@media (max-width:520px){.cards,.steps{grid-template-columns:1fr}}`;
+
+const PLATFORMS = [
+  { key: 'win32', label: 'Windows' },
+  { key: 'darwin', label: 'macOS' },
+  { key: 'linux', label: 'Linux' },
+];
+
+const BRAND_FILES = {
+  'enot-mascot.svg': 'image/svg+xml',
+  'enot-icon.svg': 'image/svg+xml',
+  'icon.png': 'image/png',
+};
+
 function page(res, title, bodyHtml) {
   res.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8' });
-  res.end(`<!doctype html><html lang="ru"><head><meta charset="utf-8"><title>${title}</title></head><body>${bodyHtml}</body></html>`);
+  res.end(`<!doctype html><html lang="ru"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">` +
+    `<title>${esc(title)}</title><link rel="icon" href="/brand/enot-icon.svg" type="image/svg+xml">` +
+    `<style>${BASE_STYLE}</style></head><body>${bodyHtml}</body></html>`);
+}
+
+function downloadCard(label, f) {
+  return `<article class="card"><span class="plat">${esc(label)}</span>` +
+    `<p class="file">${esc(f.name)}</p>` +
+    `<p class="size">${esc(formatSize(f.size))} · ${esc(f.arch)}</p>` +
+    `<a class="btn" href="${esc(f.url)}">Скачать</a></article>`;
+}
+
+function downloadsHtml(items) {
+  const byPlatform = new Map();
+  for (const f of items) {
+    if (!byPlatform.has(f.platform)) byPlatform.set(f.platform, []);
+    byPlatform.get(f.platform).push(f);
+  }
+  const cards = PLATFORMS.flatMap(({ key, label }) => {
+    const files = byPlatform.get(key) || [];
+    if (!files.length) {
+      return [`<article class="card"><span class="plat">${esc(label)}</span><p class="pending">Сборка ещё не готова</p></article>`];
+    }
+    return files.map((f) => downloadCard(label, f));
+  }).join('');
+  return `<header class="hero"><div class="wrap hero-inner">` +
+    `<img class="mascot" src="/brand/enot-mascot.svg" alt="Енот EnotDesk в очках" width="800" height="900">` +
+    `<div><p class="eyebrow">EnotDesk</p><h1>Удалённая поддержка EnotDesk</h1>` +
+    `<p class="lead">Одноразовый доступ: программа запускается без установки, а пароль действует только пока приложение открыто.</p>` +
+    `<p class="cta"><a class="btn" href="#download">Скачать</a> <a class="btn btn-ghost" href="#how">Как это работает</a></p>` +
+    `</div></div></header>` +
+    `<main class="wrap">` +
+    `<section id="download"><h2>Скачать для вашей системы</h2><div class="cards">${cards}</div></section>` +
+    `<section id="how"><h2>Как это работает</h2><ol class="steps">` +
+    `<li><strong>Получите ссылку</strong><span>Специалист поддержки пришлёт ссылку на эту страницу в чате.</span></li>` +
+    `<li><strong>Запустите программу</strong><span>Скачайте и откройте EnotDesk — установка не нужна.</span></li>` +
+    `<li><strong>Передайте ID и пароль</strong><span>В окне программы появятся ID и одноразовый пароль — сообщите их специалисту.</span></li>` +
+    `<li><strong>Подключение и завершение</strong><span>Специалист подключается к вашему рабочему столу. Закрыли программу — доступ сразу закончился.</span></li>` +
+    `</ol></section>` +
+    `<section id="security"><div class="panel"><h2>Безопасность</h2><ul>` +
+    `<li>ID и одноразовый пароль создаются для каждого сеанса заново.</li>` +
+    `<li>Доступ действует только пока приложение EnotDesk открыто.</li>` +
+    `<li>Действия специалиста записываются в журнал.</li>` +
+    `</ul></div></section></main>` +
+    `<footer><div class="wrap">EnotDesk</div></footer>`;
+}
+
+function inviteHtml() {
+  return `<main class="invite"><div class="card"><span class="plat">Приглашение</span>` +
+    `<h1>Приглашение в команду EnotDesk</h1>` +
+    `<p class="lead">Вас пригласили в команду поддержки. Откройте приложение EnotDesk и вставьте код приглашения из сообщения в форму принятия приглашения.</p>` +
+    `<a class="btn" href="/downloads">Открыть EnotDesk</a>` +
+    `<p class="size">Если приложение ещё не установлено, скачайте подходящую сборку на странице загрузки.</p>` +
+    `</div></main><footer><div class="wrap">EnotDesk</div></footer>`;
 }
 
 function validSignalData(data) {
@@ -103,6 +182,7 @@ export function createServer(opts = {}) {
     host: opts.host ?? '127.0.0.1',
     port: opts.port ?? 0,
     version: opts.version ?? '0.0.0',
+    distDir: opts.distDir || process.env.ENOT_DIST_DIR || path.join(process.cwd(), 'dist'),
     publicUrl: opts.publicUrl ?? '',
     turnUrls: opts.turnUrls ?? '',
     turnUsername: opts.turnUsername ?? '',
@@ -548,17 +628,29 @@ export function createServer(opts = {}) {
       return ok(res, 200, { iceServers });
     }
 
-    // ---- downloads / invite pages ----
+    // ---- pages / brand / downloads ----
+    if (p === '/' && req.method === 'GET' && !req.url.startsWith('/api')) {
+      res.writeHead(302, { Location: '/downloads' });
+      res.end();
+      return;
+    }
     if (p === '/downloads' && req.method === 'GET' && !req.url.startsWith('/api')) {
-      const rows = distFiles();
-      const items = rows.map((f) =>
-        `<li><a href="/api/v1/downloads-files/${encodeURIComponent(f.name)}">${f.name}</a> (${f.platform}/${f.arch})</li>`).join('');
-      return page(res, 'EnotDesk — загрузка',
-        `<h1>EnotDesk</h1><p>Портативные сборки для Windows, macOS и Linux.</p>` +
-        (items ? `<ul>${items}</ul>` : '<p>Сборка ещё не готова.</p>'));
+      return page(res, 'EnotDesk — загрузка', downloadsHtml(distFiles()));
     }
     if (p === '/downloads' && req.method === 'GET') {
       return ok(res, 200, { items: distFiles() });
+    }
+    m = p.match(/^\/brand\/([^/]+)$/);
+    if (m && req.method === 'GET') {
+      let name;
+      try { name = decodeURIComponent(m[1]); } catch { name = ''; }
+      if (!Object.hasOwn(BRAND_FILES, name)) return err(res, 404, 'not_found', 'Файл не найден');
+      let data;
+      try { data = fs.readFileSync(new URL(`../assets/${name}`, import.meta.url)); }
+      catch { return err(res, 404, 'not_found', 'Файл не найден'); }
+      res.writeHead(200, { 'Content-Type': BRAND_FILES[name], 'Cache-Control': 'public, max-age=3600' });
+      res.end(data);
+      return;
     }
     m = p.match(/^\/downloads-files\/([^/]+)$/);
     if (m && req.method === 'GET') {
@@ -569,22 +661,20 @@ export function createServer(opts = {}) {
       const file = distFiles().find((f) => f.name === name);
       if (!file) return err(res, 404, 'not_found', 'Файл недоступен');
       res.writeHead(200, { 'Content-Type': 'application/octet-stream', 'Content-Length': file.size });
-      fs.createReadStream(path.join(process.cwd(), 'dist', name)).pipe(res);
+      fs.createReadStream(path.join(cfg.distDir, name)).pipe(res);
       return;
     }
     if (p === '/invite' && req.method === 'GET' && !req.url.startsWith('/api')) {
-      return page(res, 'EnotDesk — приглашение',
-        `<h1>Приглашение в команду EnotDesk</h1>` +
-        `<p>Откройте приложение EnotDesk и вставьте код приглашения в форму принятия приглашения.</p>`);
+      return page(res, 'EnotDesk — приглашение', inviteHtml());
     }
 
     return err(res, 404, 'not_found', 'Маршрут не найден');
   }
 
   function distFiles() {
-    // Только разрешённые имена файлов из dist/ — никакие другие файлы проекта не отдаются
+    // Только разрешённые имена файлов из каталога сборок — никакие другие файлы проекта не отдаются
     const allow = [/^EnotDesk.*\.exe$/, /^EnotDesk.*\.zip$/, /^EnotDesk.*\.AppImage$/];
-    const dir = path.join(process.cwd(), 'dist');
+    const dir = cfg.distDir;
     let names = [];
     try { names = fs.readdirSync(dir); } catch { names = []; }
     return names
