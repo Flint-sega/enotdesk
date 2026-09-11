@@ -1,6 +1,7 @@
-// Генерация иконок упаковки из assets/icon.png (1024×1024):
+// Генерация иконок упаковки из assets/icon-source.png (квадратный кроп маскота):
+//   assets/icon.png  — 1024×1024, маскот на тёмном фоне (из кропа, без полей);
 //   assets/icon.icns — macOS (iconutil, только на этой ОС);
-//   assets/icon.ico   — Windows (PNG-в-ICO, 256×256, стандартный формат Vista+).
+//   assets/icon.ico  — Windows (PNG-в-ICO, 256×256, стандартный формат Vista+).
 // Linux использует assets/icon.png напрямую. Запуск: npm run icons.
 import { execFileSync } from 'node:child_process';
 import fs from 'node:fs';
@@ -8,32 +9,38 @@ import os from 'node:os';
 import path from 'node:path';
 
 const root = path.resolve(import.meta.dirname, '..');
-const src = path.join(root, 'assets', 'icon.png');
+const src = path.join(root, 'assets', 'icon-source.png');
 if (process.platform !== 'darwin') {
   console.error('npm run icons использует macOS-утилиты sips/iconutil: на Windows/Linux не работает. Запускайте на macOS.');
   process.exit(1);
 }
-if (!fs.existsSync(src)) { console.error('Нет assets/icon.png — сначала сгенерируйте его (см. assets/README.md)'); process.exit(1); }
+if (!fs.existsSync(src)) {
+  console.error('Нет assets/icon-source.png — сначала сгенерируйте его: npx electron@44.3.0 scripts/make-mascot.mjs');
+  process.exit(1);
+}
 
 const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'enotdesk-icons-'));
 try {
+  // --- icon.png: квадратный кроп уже содержит тёмный фон бренда, растягиваем без полей ---
+  const iconPng = path.join(root, 'assets', 'icon.png');
+  execFileSync('sips', ['-z', '1024', '1024', src, '--out', iconPng], { stdio: 'pipe' });
+  console.log(`Создан ${iconPng}`);
+
   // --- icns (macOS) ---
-  if (process.platform === 'darwin') {
-    const set = path.join(tmp, 'icon.iconset');
-    fs.mkdirSync(set);
-    const sizes = [16, 32, 128, 256, 512];
-    for (const s of sizes) {
-      execFileSync('sips', ['-z', String(s), String(s), src, '--out', path.join(set, `icon_${s}x${s}.png`)], { stdio: 'pipe' });
-      execFileSync('sips', ['-z', String(s * 2), String(s * 2), src, '--out', path.join(set, `icon_${s}x${s}@2x.png`)], { stdio: 'pipe' });
-    }
-    const icns = path.join(root, 'assets', 'icon.icns');
-    execFileSync('iconutil', ['-c', 'icns', set, '-o', icns], { stdio: 'pipe' });
-    console.log(`Создан ${icns}`);
+  const set = path.join(tmp, 'icon.iconset');
+  fs.mkdirSync(set);
+  const sizes = [16, 32, 128, 256, 512];
+  for (const s of sizes) {
+    execFileSync('sips', ['-z', String(s), String(s), iconPng, '--out', path.join(set, `icon_${s}x${s}.png`)], { stdio: 'pipe' });
+    execFileSync('sips', ['-z', String(s * 2), String(s * 2), iconPng, '--out', path.join(set, `icon_${s}x${s}@2x.png`)], { stdio: 'pipe' });
   }
+  const icns = path.join(root, 'assets', 'icon.icns');
+  execFileSync('iconutil', ['-c', 'icns', set, '-o', icns], { stdio: 'pipe' });
+  console.log(`Создан ${icns}`);
 
   // --- ico (Windows): один PNG-элемент 256×256 (ширина/высота 0 = 256) ---
   const png256 = path.join(tmp, 'icon-256.png');
-  execFileSync('sips', ['-z', '256', '256', src, '--out', png256], { stdio: 'pipe' });
+  execFileSync('sips', ['-z', '256', '256', iconPng, '--out', png256], { stdio: 'pipe' });
   const png = fs.readFileSync(png256);
   const header = Buffer.alloc(6);
   header.writeUInt16LE(0, 0); // reserved
