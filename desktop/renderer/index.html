@@ -293,6 +293,10 @@
           <label for="settings-url">Адрес сервера</label>
           <input id="settings-url" placeholder="http://127.0.0.1:8080">
         </div>
+        <div class="field">
+          <label for="settings-insecure"><input type="checkbox" id="settings-insecure"> Разрешить HTTP без шифрования (только для тестового сервера)</label>
+          <p class="note">Трафик без шифрования — подходит только для тестового сервера, не для интернета.</p>
+        </div>
         <p id="settings-status" class="note" role="status"></p>
         <p id="settings-error" class="err-text" role="alert"></p>
         <div class="row gap">
