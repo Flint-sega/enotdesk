@@ -1,0 +1,94 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 800 900" role="img" aria-labelledby="t d">
+  <title id="t">Енот-специалист EnotDesk</title>
+  <desc id="d">Оригинальный маскот EnotDesk: сильный енот-профессионал в очках и гарнитуре с микрофоном, в тёмной рабочей одежде. Брендовая палитра: графит, холодные серо-синие тона, бирюзовый акцент. Фон прозрачный.</desc>
+  <defs>
+    <radialGradient id="lensGlow" cx="0.35" cy="0.3" r="0.9">
+      <stop offset="0" stop-color="#35D0BA" stop-opacity="0.32"/>
+      <stop offset="1" stop-color="#35D0BA" stop-opacity="0.05"/>
+    </radialGradient>
+    <radialGradient id="micGlow" cx="0.5" cy="0.5" r="0.5">
+      <stop offset="0" stop-color="#B8F5EC" stop-opacity="0.95"/>
+      <stop offset="1" stop-color="#35D0BA" stop-opacity="0"/>
+    </radialGradient>
+  </defs>
+
+  <!-- Торс: тёмная рабочая одежда, широкие плечи -->
+  <g>
+    <path d="M330 468 C338 512 356 542 400 548 C444 542 462 512 470 468 C446 488 354 488 330 468 Z" fill="#55657D"/>
+    <path d="M400 505 C350 505 300 515 240 546 C170 582 132 654 116 748 L98 900 L702 900 L684 748 C668 654 630 582 560 546 C500 515 450 505 400 505 Z" fill="#121A2B"/>
+    <path d="M400 560 C374 546 344 542 320 548 C326 570 346 584 372 588 L400 590 Z" fill="#1D2740"/>
+    <path d="M400 560 C426 546 456 542 480 548 C474 570 454 584 428 588 L400 590 Z" fill="#1D2740"/>
+    <path d="M318 544 C336 524 368 512 400 512 C432 512 464 524 482 544 C466 552 448 546 432 540 C414 556 386 556 368 540 C352 546 334 552 318 544 Z" fill="#55657D"/>
+    <path d="M400 590 L400 900" stroke="#0B1020" stroke-width="4" fill="none"/>
+    <rect x="395.5" y="610" width="9" height="24" rx="4.5" fill="#35D0BA"/>
+    <path d="M212 900 C220 778 244 694 282 636" stroke="#1F2A44" stroke-width="4" fill="none"/>
+    <path d="M588 900 C580 778 556 694 518 636" stroke="#1F2A44" stroke-width="4" fill="none"/>
+    <rect x="520" y="662" width="88" height="26" rx="13" fill="#35D0BA" fill-opacity="0.12" stroke="#35D0BA" stroke-width="2.5" stroke-opacity="0.75"/>
+    <circle cx="546" cy="675" r="4" fill="#35D0BA" fill-opacity="0.9"/>
+    <circle cx="564" cy="675" r="4" fill="#35D0BA" fill-opacity="0.9"/>
+    <circle cx="582" cy="675" r="4" fill="#35D0BA" fill-opacity="0.9"/>
+  </g>
+
+  <!-- Голова -->
+  <g>
+    <path d="M400 150 C476 150 540 204 550 296 C554 342 549 380 534 410 L552 424 L530 438 L546 452 L518 462 C500 478 470 490 442 494 C428 496.5 414 498 400 498 C386 498 372 496.5 358 494 C330 490 300 478 282 462 L254 452 L270 438 L248 424 L266 410 C251 380 246 342 250 296 C260 204 324 150 400 150 Z" fill="#6E7F96"/>
+    <path d="M386 156 C390 208 396 244 400 270 C404 244 410 208 414 156 C409 152 391 152 386 156 Z" fill="#55657D" opacity="0.5"/>
+    <path d="M292 286 C312 262 348 252 378 258 L368 286 C342 280 314 286 298 300 Z" fill="#A8B4C6" opacity="0.85"/>
+    <path d="M508 286 C488 262 452 252 422 258 L432 286 C458 280 486 286 502 300 Z" fill="#A8B4C6" opacity="0.85"/>
+    <!-- Маска енота -->
+    <path d="M262 316 C296 284 350 270 384 280 C392 282.5 408 282.5 416 280 C450 270 504 284 538 316 C552 334 554 362 542 380 C508 402 458 404 426 388 C414 382 386 382 374 388 C342 404 292 402 258 380 C246 362 248 334 262 316 Z" fill="#232B3D"/>
+    <!-- Морда -->
+    <path d="M400 382 C446 382 478 402 480 426 C482 452 448 468 400 468 C352 468 318 452 320 426 C322 402 354 382 400 382 Z" fill="#A8B4C6"/>
+    <g stroke="#A8B4C6" stroke-width="3" stroke-linecap="round" opacity="0.65">
+      <path d="M336 418 L286 410"/>
+      <path d="M338 432 L290 436"/>
+      <path d="M464 418 L514 410"/>
+      <path d="M462 432 L510 436"/>
+    </g>
+    <path d="M400 390 C413 390 424 396 424 405 C424 416 411 423 400 423 C389 423 376 416 376 405 C376 396 387 390 400 390 Z" fill="#0B1020"/>
+    <circle cx="391" cy="399" r="3" fill="#F4F7FB" opacity="0.25"/>
+    <path d="M400 423 L400 436" stroke="#232B3D" stroke-width="4" stroke-linecap="round" fill="none"/>
+    <path d="M372 441 C384 452 416 452 428 441" stroke="#232B3D" stroke-width="4" stroke-linecap="round" fill="none"/>
+    <!-- Глаза -->
+    <circle cx="334" cy="332" r="25" fill="#0B1020"/>
+    <circle cx="342" cy="324" r="7" fill="#F4F7FB" opacity="0.9"/>
+    <circle cx="466" cy="332" r="25" fill="#0B1020"/>
+    <circle cx="474" cy="324" r="7" fill="#F4F7FB" opacity="0.9"/>
+    <path d="M263 322 C258 352 262 386 276 410" stroke="#5B8BD9" stroke-width="5" stroke-linecap="round" opacity="0.5" fill="none"/>
+    <!-- Гарнитура: оголовье -->
+    <path d="M256 300 C258 186 306 122 400 116 C494 122 542 186 544 300" stroke="#1A2235" stroke-width="30" stroke-linecap="round" fill="none"/>
+    <path d="M256 300 C258 186 306 122 400 116 C494 122 542 186 544 300" stroke="#35D0BA" stroke-width="5" stroke-linecap="round" opacity="0.85" fill="none"/>
+    <!-- Уши с мехом -->
+    <path d="M296 216 C276 176 268 128 282 94 C306 82 344 96 366 128 C352 156 336 186 330 210 C318 206 306 208 296 216 Z" fill="#43536B"/>
+    <path d="M306 200 C292 170 288 136 296 112 C314 104 340 116 354 138 C344 160 332 182 328 200 C320 196 312 196 306 200 Z" fill="#232B3D"/>
+    <g stroke="#6E7F96" stroke-width="3" stroke-linecap="round" opacity="0.5" fill="none">
+      <path d="M306 186 L298 168"/>
+      <path d="M318 192 L310 172"/>
+      <path d="M494 186 L502 168"/>
+      <path d="M482 192 L490 172"/>
+    </g>
+    <path d="M504 216 C524 176 532 128 518 94 C494 82 456 96 434 128 C448 156 464 186 470 210 C482 206 494 208 504 216 Z" fill="#43536B"/>
+    <path d="M494 200 C508 170 512 136 504 112 C486 104 460 116 446 138 C456 160 468 182 472 200 C480 196 488 196 494 200 Z" fill="#232B3D"/>
+    <!-- Очки -->
+    <rect x="286" y="296" width="96" height="74" rx="24" fill="url(#lensGlow)" stroke="#35D0BA" stroke-width="9"/>
+    <rect x="418" y="296" width="96" height="74" rx="24" fill="url(#lensGlow)" stroke="#35D0BA" stroke-width="9"/>
+    <path d="M382 322 C390 314 410 314 418 322" stroke="#35D0BA" stroke-width="9" stroke-linecap="round" fill="none"/>
+    <path d="M286 318 L260 328" stroke="#35D0BA" stroke-width="8" stroke-linecap="round"/>
+    <path d="M514 318 L540 328" stroke="#35D0BA" stroke-width="8" stroke-linecap="round"/>
+    <path d="M300 310 L330 344" stroke="#F4F7FB" stroke-width="8" stroke-linecap="round" opacity="0.18"/>
+    <path d="M432 310 L462 344" stroke="#F4F7FB" stroke-width="8" stroke-linecap="round" opacity="0.18"/>
+    <!-- Наушники и микрофон -->
+    <g transform="rotate(-8 252 330)">
+      <ellipse cx="252" cy="330" rx="33" ry="50" fill="#1A2235"/>
+      <ellipse cx="252" cy="330" rx="21" ry="36" fill="none" stroke="#35D0BA" stroke-width="3" opacity="0.8"/>
+    </g>
+    <g transform="rotate(8 548 330)">
+      <ellipse cx="548" cy="330" rx="33" ry="50" fill="#1A2235"/>
+      <ellipse cx="548" cy="330" rx="21" ry="36" fill="none" stroke="#35D0BA" stroke-width="3" opacity="0.8"/>
+    </g>
+    <circle cx="560" cy="354" r="4.5" fill="#35D0BA"/>
+    <path d="M250 374 C246 414 264 446 302 456 C320 460.5 338 458 350 452" stroke="#1A2235" stroke-width="12" stroke-linecap="round" fill="none"/>
+    <circle cx="356" cy="450" r="13" fill="#1A2235" stroke="#35D0BA" stroke-width="3"/>
+    <circle cx="356" cy="450" r="5.5" fill="url(#micGlow)"/>
+  </g>
+</svg>
