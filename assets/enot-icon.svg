@@ -1,0 +1,42 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" role="img" aria-labelledby="t d">
+  <title id="t">EnotDesk — значок</title>
+  <desc id="d">Компактный значок EnotDesk: голова енота в очках и гарнитуре с микрофоном. Брендовые цвета: графит, серо-синий, бирюзовый акцент. Фон прозрачный.</desc>
+  <g transform="translate(32 26.75) scale(1.15) translate(-32 -26.75)">
+    <!-- Оголовье гарнитуры -->
+    <path d="M14.5 27 C14 15.5 22.5 8.8 32 8.8 C41.5 8.8 50 15.5 49.5 27" stroke="#1A2235" stroke-width="4.5" stroke-linecap="round" fill="none"/>
+    <path d="M14.5 27 C14 15.5 22.5 8.8 32 8.8 C41.5 8.8 50 15.5 49.5 27" stroke="#35D0BA" stroke-width="1.4" stroke-linecap="round" opacity="0.9" fill="none"/>
+    <!-- Уши -->
+    <path d="M20 17.5 C17 13 15.5 8.5 16.5 5.5 C20 4.5 24.5 6.5 27.5 10.5 C25 12.5 22 15 20 17.5 Z" fill="#43536B"/>
+    <path d="M21 14.5 C19.5 11.5 19 8.8 19.6 7.2 C21.6 6.7 24.3 8 26.2 10.4 C24.4 12 22.5 13.4 21 14.5 Z" fill="#232B3D"/>
+    <path d="M44 17.5 C47 13 48.5 8.5 47.5 5.5 C44 4.5 39.5 6.5 36.5 10.5 C39 12.5 42 15 44 17.5 Z" fill="#43536B"/>
+    <path d="M43 14.5 C44.5 11.5 45 8.8 44.4 7.2 C42.4 6.7 39.7 8 37.8 10.4 C39.6 12 41.5 13.4 43 14.5 Z" fill="#232B3D"/>
+    <!-- Голова -->
+    <path d="M32 12 C42.5 12 50.5 19 51.5 29 C52.3 36.5 48.5 43.5 41 47 C38 48.4 35 49 32 49 C29 49 26 48.4 23 47 C15.5 43.5 11.7 36.5 12.5 29 C13.5 19 21.5 12 32 12 Z" fill="#6E7F96"/>
+    <!-- Маска -->
+    <path d="M13.5 28 C18 23.5 24 22 29 23.5 C30.8 24 33.2 24 35 23.5 C40 22 46 23.5 50.5 28 C52 32 51.5 36 49.5 38.5 C45 41.5 39.5 41.5 36.5 39.5 C34.5 38.3 29.5 38.3 27.5 39.5 C24.5 41.5 19 41.5 14.5 38.5 C12.5 36 12 32 13.5 28 Z" fill="#232B3D"/>
+    <!-- Морда, нос, рот -->
+    <path d="M32 37.5 C37 37.5 40.5 40 41 43 C41.3 45.8 37.6 47.8 32 47.8 C26.4 47.8 22.7 45.8 23 43 C23.5 40 27 37.5 32 37.5 Z" fill="#A8B4C6"/>
+    <path d="M32 39.8 C34.6 39.8 36.4 40.8 36.4 42.2 C36.4 43.8 34.2 44.9 32 44.9 C29.8 44.9 27.6 43.8 27.6 42.2 C27.6 40.8 29.4 39.8 32 39.8 Z" fill="#0B1020"/>
+    <path d="M32 44.9 L32 46.4" stroke="#232B3D" stroke-width="1.6" stroke-linecap="round"/>
+    <path d="M29.8 47 C31 48 33 48 34.2 47" stroke="#232B3D" stroke-width="1.6" stroke-linecap="round" fill="none"/>
+    <!-- Глаза -->
+    <circle cx="24.5" cy="31.5" r="3.6" fill="#0B1020"/>
+    <circle cx="26" cy="30" r="1.2" fill="#F4F7FB" opacity="0.9"/>
+    <circle cx="39.5" cy="31.5" r="3.6" fill="#0B1020"/>
+    <circle cx="41" cy="30" r="1.2" fill="#F4F7FB" opacity="0.9"/>
+    <!-- Очки -->
+    <rect x="16.5" y="26" width="13" height="11.5" rx="3.5" fill="#35D0BA" fill-opacity="0.12" stroke="#35D0BA" stroke-width="2.2"/>
+    <rect x="34.5" y="26" width="13" height="11.5" rx="3.5" fill="#35D0BA" fill-opacity="0.12" stroke="#35D0BA" stroke-width="2.2"/>
+    <path d="M29.5 30.5 C31 29.2 33 29.2 34.5 30.5" stroke="#35D0BA" stroke-width="2.2" stroke-linecap="round" fill="none"/>
+    <path d="M16.5 30.5 L13.5 31.5" stroke="#35D0BA" stroke-width="2" stroke-linecap="round"/>
+    <path d="M47.5 30.5 L50.5 31.5" stroke="#35D0BA" stroke-width="2" stroke-linecap="round"/>
+    <!-- Наушники и микрофон -->
+    <ellipse cx="13.8" cy="30.5" rx="3.6" ry="6" fill="#1A2235"/>
+    <ellipse cx="13.8" cy="30.5" rx="2" ry="3.4" fill="none" stroke="#35D0BA" stroke-width="1.2" opacity="0.85"/>
+    <ellipse cx="50.2" cy="30.5" rx="3.6" ry="6" fill="#1A2235"/>
+    <ellipse cx="50.2" cy="30.5" rx="2" ry="3.4" fill="none" stroke="#35D0BA" stroke-width="1.2" opacity="0.85"/>
+    <path d="M15.5 36.5 C15 42 19 45.6 24.5 46.3" stroke="#1A2235" stroke-width="2.6" stroke-linecap="round" fill="none"/>
+    <circle cx="26.5" cy="46.3" r="2.6" fill="#1A2235" stroke="#35D0BA" stroke-width="1.2"/>
+    <circle cx="26.5" cy="46.3" r="1" fill="#35D0BA"/>
+  </g>
+</svg>
