@@ -14,6 +14,7 @@ const OPERATIONS = {
   'rtc.config': { method: 'GET', path: '/rtc-config', auth: 'any' },
   'members.list': { method: 'GET', path: '/members', auth: 'bearer' },
   'members.patch': { method: 'PATCH', path: (p) => `/members/${p.id}`, auth: 'bearer' },
+  'members.delete': { method: 'DELETE', path: (p) => `/members/${p.id}`, auth: 'bearer' },
   'invites.list': { method: 'GET', path: '/invites', auth: 'bearer' },
   'invites.create': { method: 'POST', path: '/invites', auth: 'bearer' },
   'invites.revoke': { method: 'DELETE', path: (p) => `/invites/${p.id}`, auth: 'bearer' },
