@@ -5,6 +5,7 @@
 import { app, BrowserWindow, ipcMain, session, desktopCapturer, screen, shell, clipboard, systemPreferences } from 'electron';
 import path from 'node:path';
 import fs from 'node:fs';
+import { createRequire } from 'node:module';
 import { createApi, sanitizeForRenderer } from './lib/api.mjs';
 import { createSignalClient } from './lib/signal.mjs';
 import { createInputGate } from './lib/protocol.mjs';
@@ -27,7 +28,10 @@ let signal = null;
 let heartbeatTimer = null;
 const gate = createInputGate();
 let signalRole = null;
-const nativeInput = createNativeInput();
+// koffi подключается лениво по наличию пакета: нет пакета — честный инертный режим
+let koffi = null;
+try { koffi = createRequire(import.meta.url)('koffi'); } catch { koffi = null; }
+const nativeInput = createNativeInput({ koffi });
 // Единая проводка ввода: те же ворота и диспетчер, что проверяет тест шва
 const inputPipeline = createInputPipeline({ gate, nativeInput });
 let selectedSource = null; // {id, name, bounds:{width,height}} физические пиксели
@@ -277,6 +281,16 @@ app.on('before-quit', cleanupAndQuit);
 app.on('window-all-closed', () => app.quit());
 
 app.whenReady().then(() => {
+  if (SMOKE) {
+    // Скриншот главного экрана: не first-run, иначе модалка настроек закрывает окно
+    try {
+      const p = path.join(app.getPath('userData'), 'settings.json');
+      if (!fs.existsSync(p)) {
+        fs.mkdirSync(path.dirname(p), { recursive: true });
+        fs.writeFileSync(p, JSON.stringify({ serverUrl: DEFAULT_SERVER_URL }));
+      }
+    } catch { /* smoke: честный скриншот first-run, если записать не вышло */ }
+  }
   loadSettings();
   registerIpc();
   createWindow();
@@ -294,6 +308,16 @@ app.whenReady().then(() => {
       gateCheck.onSignal({ type: 'approved', claimId: 'c' });
       lines.push(`SMOKE gate open after approved: ${gateCheck.isOpen()}`);
       console.log(lines.join('\n'));
+      // Скриншот главного окна для отчёта (capturePage, без системных разрешений)
+      try {
+        const shotPath = process.env.EDESK_SMOKE_PATH || path.join(import.meta.dirname, '..', 'docs', 'screenshot-main.png');
+        const img = await win.webContents.capturePage();
+        fs.mkdirSync(path.dirname(shotPath), { recursive: true });
+        fs.writeFileSync(shotPath, img.toPNG());
+        console.log(`SMOKE screenshot: ${shotPath}`);
+      } catch (e) {
+        console.log(`SMOKE screenshot failed: ${e.message}`);
+      }
       console.log('SMOKE OK');
       // закрытие окна должно завершить процесс (window-all-closed → quit), а не app.quit напрямую
       win.close();
