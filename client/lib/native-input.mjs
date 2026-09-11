@@ -18,7 +18,7 @@ export function waylandAdapterProbe(env = process.env) {
 }
 
 // Попытка загрузить koffi и собрать адаптер текущей ОС. Любая неудача — инертный режим.
-function loadPlatformAdapter(koffi) {
+export function loadPlatformAdapter(koffi) {
   if (!koffi) return inertAdapter();
   const wayland = waylandAdapterProbe();
   if (wayland) return wayland;
@@ -183,8 +183,11 @@ function x11Adapter(koffi) {
   };
 }
 
-export function createNativeInput({ adapter, koffi = null, maxPerWindow = 300, windowMs = 1000 } = {}) {
-  const ad = adapter ?? loadPlatformAdapter(koffi);
+export function createNativeInput({ adapter, koffi = null, getAdapter = null, maxPerWindow = 300, windowMs = 1000 } = {}) {
+  // Адаптер (и загрузка koffi вместе с ним) резолвится лениво: status() её не форсирует,
+  // первый реальный ввод или load() на старте host-сеанса — форсируют.
+  let ad = adapter ?? null;
+  const resolveAdapter = () => (ad ??= getAdapter ? getAdapter() : loadPlatformAdapter(koffi));
   const held = new Set(); // кнопки
   const heldKeys = new Set();
   let count = 0;
@@ -198,16 +201,26 @@ export function createNativeInput({ adapter, koffi = null, maxPerWindow = 300, w
   }
 
   return {
-    status: () => ({
-      available: !!ad.available,
-      platform: ad.platform ?? 'unknown',
-      reason: ad.reason ?? null,
-      note: ad.accessibilityNote ?? null,
-    }),
+    // Явная подготовка нативного ввода (старт host-сеанса); status() её не выполняет.
+    load: resolveAdapter,
+    status: () => {
+      if (!ad) {
+        // Честно: не проверено — не заявляем ни доступность, ни недоступность
+        return { available: false, platform: 'unknown', reason: 'native-not-checked', note: null, checked: false };
+      }
+      return {
+        available: !!ad.available,
+        platform: ad.platform ?? 'unknown',
+        reason: ad.reason ?? null,
+        note: ad.accessibilityNote ?? null,
+        checked: true,
+      };
+    },
     // bounds: {width,height} в физических пикселях выбранного дисплея; x/y нормализованы 0..1
     dispatch(ev, bounds) {
       const v = validateInputEvent(ev);
       if (!v.ok) return { ok: false, reason: `invalid:${v.reason}` };
+      resolveAdapter();
       if (!ad.available) return { ok: false, reason: 'native-unavailable' };
       if (throttled()) return { ok: false, reason: 'throttled' };
       switch (ev.type) {
@@ -234,6 +247,7 @@ export function createNativeInput({ adapter, koffi = null, maxPerWindow = 300, w
     },
     // Завершение сеанса: отпустить всё зажатое, даже без парных up.
     end() {
+      if (!ad) return; // нечего отпускать и незачем грузить модуль
       for (const b of [...held]) { try { ad.button(b, false); } catch { /* адаптер мог отвалиться */ } }
       for (const k of [...heldKeys]) { try { ad.key(k, false); } catch { /* см. выше */ } }
       held.clear();
