@@ -73,6 +73,9 @@ function stopSignal() {
 
 function startSignal(params) {
   const { role, sessionId, claimId } = params;
+  if (signal && signalRole && signalRole !== role) {
+    throw new Error('В этом окне уже идёт сеанс помощи. Одно окно EnotDesk работает только в одной роли — для проверки на одном компьютере запустите второе окно приложения.');
+  }
   stopSignal();
   signalRole = role;
   signal = createSignalClient({ url: new URL('/signal', settings.serverUrl).toString().replace(/^http/, 'ws') });

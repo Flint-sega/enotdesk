@@ -91,6 +91,43 @@ test('полный жизненный цикл через модули desktop: 
   stale.close();
 });
 
+test('регрессия: auth-отказ до ready (неверный токен) отклоняет open и не эмитит socket-closed', async (t) => {
+  const { port, base } = await setup(t);
+  const api = createApi({ baseUrl: base });
+  const created = await api.request('session.create', {});
+  assert.equal(created.status, 201);
+
+  const client = createSignalClient({ url: `ws://127.0.0.1:${port}/signal`, wsFactory: (u) => new WebSocket(u) });
+  const msgs = [];
+  client.onMessage((m) => msgs.push(m)); // подписка до open
+  // Контракт WS (interfaces.md): невалидная сессия/токен → close 4003
+  await assert.rejects(
+    () => client.open({ role: 'host', sessionId: created.body.sessionId, hostToken: 'заведомо-неверный' }),
+    /closed 4003/,
+  );
+  await new Promise((r) => setTimeout(r, 50)); // close-событие приходит асинхронно
+  assert.equal(msgs.find((m) => m.type === 'socket-closed'), undefined, 'до ready socket-closed не эмитится');
+  client.close();
+});
+
+test('после ready серверное завершение по-прежнему даёт ended и socket-closed', async (t) => {
+  const { port, base } = await setup(t);
+  const api = createApi({ baseUrl: base });
+  const created = await api.request('session.create', {});
+  assert.equal(created.status, 201);
+
+  const client = createSignalClient({ url: `ws://127.0.0.1:${port}/signal`, wsFactory: (u) => new WebSocket(u) });
+  const msgs = [];
+  client.onMessage((m) => msgs.push(m));
+  await client.open({ role: 'host', sessionId: created.body.sessionId, hostToken: api.hostToken });
+
+  const end = await api.request('session.end', { sessionId: created.body.sessionId, asHost: true });
+  assert.equal(end.status, 200);
+  await client.wait((m) => m.type === 'ended', 3000);
+  await client.wait((m) => m.type === 'socket-closed', 3000);
+  client.close();
+});
+
 test('дефолтная WS-фабрика: клиент без wsFactory доходит до auth-ready (путь main.mjs)', async (t) => {
   const { port, base } = await setup(t);
   const api = createApi({ baseUrl: base });
