@@ -48,4 +48,24 @@ Public server create/start/close helper can be exported for node:test ephemeral 
 - WS close-коды: 4001 auth-timeout, 4002 auth-first, 4003 invalid-session, 4004 duplicate socket.
 - Скрипты: `npm test` (node:test, 26 тестов), `npm run server`. node:sqlite — experimental warning нормален.
 - Пароли scrypt, токены в БД только хеши; rate limits in-memory per-IP (сброс при рестарте — принято).
-- Файловый стриминг dist/ появится в T04; сейчас только allowlist имён.
+- Файловый стриминг dist/ появился в T01: GET /api/v1/downloads-files/:name (allowlist, 400 traversal, 404 иначе).
+
+### Из таска 02 — desktop
+- `window.enot` = {getSettings,setServerUrl,request(op,payload),openSignal,sendSignal,closeSignal,onSignal,sources,selectSource,permissions,input,copy,openExternal,quit} — единственный мост renderer→main.
+- request-enum: health, login, logout, me, session.create/claim/decision/end, rtc.config, members.list/patch, invites.list/create/revoke, invite.accept, contacts.list/create/update/delete, history.list, audit.list.
+- authToken/hostToken живут только в main; sanitizeForRenderer срезает hostToken на любой глубине; WS-auth нормализует hostToken→token.
+- koffi-адаптеры (macOS CG / Win SendInput / X11 XTest) подключаются лениво; без koffi — инертный честный статус.
+- Тесты: `node --test desktop/test/*.test.mjs` (15). Смоук: `EDESK_SMOKE=1 npx electron@44.3.0 desktop/main.mjs --no-sandbox`.
+- Renderer ждёт ../assets/enot-mascot.svg c текстовым fallback (см. таск 03).
+
+### Из таска 02, ремонт (обязано для T04)
+- desktop/lib/input-pipeline.mjs = createInputPipeline({gate,nativeInput}).handle(evOrRawString,bounds) — единые ворота/валидация/диспетчер.
+- protocol.mjs экспортирует INPUT_KEYS — единственный источник допустимых клавиш; renderer получает его через permissions().inputKeys.
+- before-quit: best-effort POST /sessions/:id/end (Promise.race 1с), выход не блокирует.
+- T04 ОБЯЗАН: добавить koffi точным пином в корневой package.json (dependencies), чтобы диспетчер перестал быть инертным; проверить `require('koffi')` на macOS; адаптеры Win/X11 в реальной ОС недоступны — оставить честный статус. UI-скриншот главного окна приложить в отчёт (до сих пор не снимался).
+
+### Из таска 03 — assets
+- assets/enot-mascot.svg — маскот 800×900 (viewBox), hero главного окна; title/desc на русском.
+- assets/enot-icon.svg — 64×64; assets/icon.png — 1024×1024 RGBA, отрендерен qlmanage из SVG.
+- assets/README.md — оригинальность, палитра, команда перегенерации PNG; товарный знак не регистрировался.
+- .icns/.ico не созданы; команда генерации описана в assets/README.md (сделает T04 при упаковке).

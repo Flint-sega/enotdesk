@@ -115,7 +115,22 @@ test('rtc-config: без токена 401; с hostToken и TURN-конфигом
   await inst.close();
 });
 
+// Изоляция реального dist/ проекта: собранный pack:mac артефакт не должен ни ломать
+// тест (дистрибутив не пуст), ни удаляться тестом. Спрятать → прогнать → вернуть.
+function isolateDist(t) {
+  const distDir = path.join(process.cwd(), 'dist');
+  const backup = distDir + '.test-backup';
+  const had = fs.existsSync(distDir);
+  if (had) fs.renameSync(distDir, backup);
+  t.after(() => {
+    fs.rmSync(distDir, { recursive: true, force: true });
+    if (had) fs.renameSync(backup, distDir);
+  });
+  return distDir;
+}
+
 test('downloads: страница и API честно пустые без dist', async (t) => {
+  isolateDist(t);
   const { base } = await setup(t);
   const html = await fetch(base + '/downloads');
   assert.equal(html.status, 200);
@@ -128,11 +143,10 @@ test('downloads: страница и API честно пустые без dist',
 
 test('downloads-files: отдаёт только allowlist-файлы из dist/, traversal отказан', async (t) => {
   const { base } = await setup(t);
-  const distDir = path.join(process.cwd(), 'dist');
+  const distDir = isolateDist(t);
   fs.mkdirSync(distDir, { recursive: true });
   const fileName = 'EnotDesk-0.1.0.exe';
   fs.writeFileSync(path.join(distDir, fileName), 'PORTABLE-BYTES');
-  t.after(() => fs.rmSync(distDir, { recursive: true, force: true }));
 
   const list = await api(base, 'GET', '/downloads');
   assert.equal(list.json.items.length, 1);
