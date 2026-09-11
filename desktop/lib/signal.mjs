@@ -1,9 +1,10 @@
 // WS-клиент /signal для main-процесса. Первое сообщение — auth (не query-параметры).
 // Исходящие сигналы проходят validateOutgoingSignal; ошибки сервера попадают в onMessage.
 
+import WebSocket from 'ws';
 import { validateOutgoingSignal } from './protocol.mjs';
 
-export function createSignalClient({ url, wsFactory, authTimeoutMs = 5000 }) {
+export function createSignalClient({ url, wsFactory = (u) => new WebSocket(u), authTimeoutMs = 5000 }) {
   let ws = null;
   let closedByUs = false;
   const listeners = new Set();
