@@ -11,9 +11,13 @@
 
 | Файл | Назначение |
 |---|---|
-| `enot-mascot.svg` | Маскот для главного окна (вертикальная композиция ~800×900, viewBox 800×900, прозрачный фон). Потребитель: desktop (T02), `../assets/enot-mascot.svg`. |
-| `enot-icon.svg` | Компактный значок (viewBox 64×64, читается в 32px): голова енота в очках и гарнитуре. Потребитель: UI и окна (T02/T04). |
-| `icon.png` | 1024×1024 RGBA, отрендерен из `enot-icon.svg` (qlmanage). Потребитель: упаковщик electron-builder (T02), финальная сборка (T04). |
+| `enot-mascot.svg` | Маскот для главного окна (вертикальная композиция ~800×900, viewBox 800×900, прозрачный фон). |
+| `enot-icon.svg` | Компактный значок (viewBox 64×64, читается в 32px): голова енота в очках и гарнитуре. |
+| `mascot-app.png` | Маскот с ноутбуком, вырезан из `.autopilot/enotdesk-redesign/reference/app.png` (hero приложения). |
+| `mascot-site.png` | Маскот с ноутбуком, вырезан из `.autopilot/enotdesk-redesign/reference/site.png` (hero сайта). |
+| `icon-source.png` | Квадратный кроп головы/плеч маскота — источник иконки приложения. |
+| `icon.png` | 1024×1024, собран из `icon-source.png`. Потребитель: упаковщик electron-builder. |
+| `icon.icns`, `icon.ico` | Иконки macOS/Windows, генерируются из `icon.png`. |
 
 ## Палитра
 
@@ -29,28 +33,22 @@
 
 Градиентов два, оба осмысленные: свечение линз очков и свет микрофона.
 
-## Перегенерация PNG
+## Перегенерация растровых ассетов
 
-Источник — `enot-icon.svg`. Любой из способов (macOS штатно):
-
-```sh
-qlmanage -t -s 1024 -o . assets/enot-icon.svg && mv enot-icon.svg.png assets/icon.png
-# или, при наличии: rsvg-convert -w 1024 -h 1024 assets/enot-icon.svg -o assets/icon.png
-```
-
-Иконка приложения (опционально, macOS):
+Маскоты вырезаются из эталонов редизайна (Electron `nativeImage`, без зависимостей):
 
 ```sh
-mkdir icon.iconset && for s in 16 32 64 128 256 512; do
-  qlmanage -t -s $s -o icon.iconset assets/enot-icon.svg
-  mv icon.iconset/enot-icon.svg.png icon.iconset/icon_${s}x${s}.png
-done
-iconutil -c icns icon.iconset -o icon.icns
+npx electron@44.3.0 scripts/make-mascot.mjs
 ```
 
-(qlmanage вписывает в квадрат; для точных размеров надёжнее rsvg-convert/inkscape.)
-Windows `.ico` штатными средствами macOS не собирается — при необходимости
-любой конвертер из готового `icon.png`.
+Иконка приложения и её форматы (macOS: sips/iconutil, `sips` входит в систему):
+
+```sh
+npm run icons   # icon-source.png → icon.png 1024 + icon.icns + icon.ico
+```
+
+SVG-файлы остаются векторными источниками для UI, но в генерации иконки больше
+не участвуют. Windows `.ico` собирается скриптом как PNG-in-ICO 256×256.
 
 ## Товарный знак
 
