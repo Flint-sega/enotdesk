@@ -9,7 +9,7 @@
 #   bash scripts/install-server.sh --help
 #
 # Env (имена, значения задаются снаружи): ENOT_PORT, ENOT_BIND, ENOT_PUBLIC_URL,
-# ENOT_DB, ENOT_TURN_URLS, ENOT_TURN_USERNAME, ENOT_TURN_PASSWORD.
+# ENOT_DB, ENOT_TURN_URLS, ENOT_TURN_USERNAME, ENOT_TURN_PASSWORD, NODE_VERSION.
 set -euo pipefail
 
 ENOT_USER="enotdesk"
@@ -21,7 +21,9 @@ ENV_DIR="/etc/enotdesk"
 ENV_FILE="$ENV_DIR/enotdesk.env"
 UNIT_FILE="/etc/systemd/system/enotdesk.service"
 SERVICE_NAME="enotdesk"
+NODE_PREFIX="/opt/node-24"
 
+NODE_VERSION="${NODE_VERSION:-24.12.0}"
 PORT="${ENOT_PORT:-8080}"
 BIND="${ENOT_BIND:-0.0.0.0}"
 DB_PATH="${ENOT_DB:-$DATA_DIR/enotdesk.db}"
@@ -61,12 +63,16 @@ EnotDesk — установщик сервера.
   ENOT_BIND          адрес привязки (по умолчанию 0.0.0.0)
   ENOT_PUBLIC_URL    публичный URL (по умолчанию http://<первый IP>:<порт>)
   ENOT_DB            путь к БД (по умолчанию /var/lib/enotdesk/enotdesk.db)
+  NODE_VERSION       версия Node.js из tarball nodejs.org (по умолчанию 24.12.0)
   ENOT_TURN_URLS, ENOT_TURN_USERNAME, ENOT_TURN_PASSWORD — TURN для WebRTC
 EOF
 }
 
 die() { echo "ОШИБКА: $*" >&2; exit 1; }
 info() { echo "==> $*"; }
+NODE_TMP=""
+node_tmp_cleanup() { [ -n "$NODE_TMP" ] && rm -rf "$NODE_TMP"; return 0; }
+trap node_tmp_cleanup EXIT
 
 while [ $# -gt 0 ]; do
   case "$1" in
@@ -105,8 +111,9 @@ preflight() {
     *) die "поддерживаются только Debian/Ubuntu, обнаружено: ${PRETTY_NAME:-неизвестная ОС}" ;;
   esac
   command -v systemctl >/dev/null 2>&1 || die "systemd не найден — нужна Ubuntu/Debian с systemd"
-  command -v curl >/dev/null 2>&1 || die "не найден curl — установите: apt-get install -y curl"
-  command -v tar >/dev/null 2>&1 || die "не найден tar — установите: apt-get install -y tar"
+  command -v curl >/dev/null 2>&1 || die "не найден curl — он нужен для скачивания Node tarball (пакет curl)"
+  command -v tar >/dev/null 2>&1 || die "не найден tar — он нужен для распаковки (пакет tar)"
+  command -v xz >/dev/null 2>&1 || die "не найден xz — он нужен для распаковки Node .tar.xz (пакет xz-utils)"
 }
 
 check_tarball() {
@@ -128,26 +135,59 @@ check_port() {
   fi
 }
 
-node_major() {
-  command -v node >/dev/null 2>&1 || { echo 0; return; }
-  node -v 2>/dev/null | sed -E 's/^v([0-9]+).*/\1/'
+node_version_ok() {
+  command -v node >/dev/null 2>&1 || return 1
+  [ "$(node -v 2>/dev/null)" = "v$NODE_VERSION" ]
 }
 
 ensure_node() {
-  local major
-  major="$(node_major)"
-  if [ "${major:-0}" -ge 24 ] 2>/dev/null; then
-    info "Node.js $(node -v) уже установлен"
+  if node_version_ok; then
+    info "Node.js $(node -v) уже установлен — шаг пропущен"
     return 0
   fi
-  info "устанавливаю Node.js 24 из NodeSource"
-  local setup="/tmp/nodesource_setup_24.sh"
-  curl -fsSL https://deb.nodesource.com/setup_24.x -o "$setup"
-  bash "$setup"
-  rm -f "$setup"
-  DEBIAN_FRONTEND=noninteractive apt-get install -y nodejs
-  command -v node >/dev/null 2>&1 || die "Node.js не установился — проверьте сеть и повторите запуск"
-  info "установлен Node.js $(node -v)"
+
+  local arch
+  case "$(uname -m)" in
+    x86_64|amd64) arch="linux-x64" ;;
+    *) die "tarball ставится только на x86_64 (amd64); обнаружено: $(uname -m). Установите Node $NODE_VERSION вручную и повторите." ;;
+  esac
+
+  local base="https://nodejs.org/dist/v$NODE_VERSION"
+  local file="node-v$NODE_VERSION-$arch.tar.xz"
+  NODE_TMP="$(mktemp -d)"
+
+  info "скачиваю $base/$file"
+  curl -fsSL "$base/$file" -o "$NODE_TMP/$file" || die "не удалось скачать $base/$file — проверьте доступ к nodejs.org"
+  curl -fsSL "$base/SHASUMS256.txt" -o "$NODE_TMP/SHASUMS256.txt" || die "не удалось скачать $base/SHASUMS256.txt"
+
+  local sum
+  sum="$(grep " $file\$" "$NODE_TMP/SHASUMS256.txt" || true)"
+  [ -n "$sum" ] || die "в SHASUMS256.txt нет строки для $file"
+  info "проверяю SHA256"
+  ( cd "$NODE_TMP" && printf '%s\n' "$sum" | sha256sum -c - ) || die "SHA256 не совпал — скачанный tarball повреждён"
+
+  info "распаковываю новый Node ($NODE_PREFIX.tmp)"
+  if [ ! -e "$NODE_PREFIX" ] && [ -e "$NODE_PREFIX.bak" ]; then
+    mv "$NODE_PREFIX.bak" "$NODE_PREFIX" || die "не удалось вернуть прежний $NODE_PREFIX из .bak"
+  fi
+  rm -rf "$NODE_PREFIX.tmp"
+  install -d -m 0755 "$NODE_PREFIX.tmp"
+  tar -xJf "$NODE_TMP/$file" -C "$NODE_PREFIX.tmp" --strip-components=1 || die "не удалось распаковать $file — прежний $NODE_PREFIX не тронут"
+  rm -rf "$NODE_PREFIX.bak"
+  if [ -e "$NODE_PREFIX" ]; then
+    mv "$NODE_PREFIX" "$NODE_PREFIX.bak" || die "не удалось отодвинуть прежний $NODE_PREFIX"
+  fi
+  if ! mv "$NODE_PREFIX.tmp" "$NODE_PREFIX"; then
+    if [ -e "$NODE_PREFIX.bak" ]; then mv "$NODE_PREFIX.bak" "$NODE_PREFIX" || true; fi
+    die "не удалось установить $NODE_PREFIX — прежний Node возвращён из .bak"
+  fi
+  rm -rf "$NODE_PREFIX.bak"
+  ln -sfn "$NODE_PREFIX/bin/node" /usr/local/bin/node
+  ln -sfn "$NODE_PREFIX/bin/npm" /usr/local/bin/npm
+  ln -sfn "$NODE_PREFIX/bin/npx" /usr/local/bin/npx
+  hash -r 2>/dev/null || true
+  node_version_ok || die "Node.js распакован, но node -v не равен v$NODE_VERSION — проверьте /usr/local/bin в PATH"
+  info "установлен Node.js $(node -v) в $NODE_PREFIX"
 }
 
 resolve_public_url() {
@@ -213,13 +253,11 @@ print_plan() {
     fi
     return 0
   fi
-  local node_state="Node.js не найден — будет установлен 24 из NodeSource"
-  if command -v node >/dev/null 2>&1; then
-    if [ "$(node_major)" -ge 24 ] 2>/dev/null; then
-      node_state="$(node -v) — уже подходит"
-    else
-      node_state="$(node -v) — будет обновлён до 24 из NodeSource"
-    fi
+  local node_state="Node.js не найден — будет установлен $NODE_VERSION из tarball nodejs.org в $NODE_PREFIX"
+  if node_version_ok; then
+    node_state="$(node -v) — уже подходит (шаг пропускается)"
+  elif command -v node >/dev/null 2>&1; then
+    node_state="$(node -v) — будет заменён на v$NODE_VERSION (tarball nodejs.org, $NODE_PREFIX)"
   fi
   local release_state="будет создан"
   if [ -f "$RELEASE/server/main.mjs" ]; then
