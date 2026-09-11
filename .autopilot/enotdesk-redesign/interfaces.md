@@ -54,6 +54,16 @@ dist/             выход сборки (корень, как есть)
 
 ## Реализовано в ране
 
+### Из таска 03 — приложение (готово, ждёт ремонта версии)
+- `getSettings() -> {serverUrl, firstRun, allowInsecureHttp, version}`; footer по `s.version`.
+- `client/lib/native-input.mjs`: ленивый адаптер (`loadPlatformAdapter`), загрузка на первом host-сеансе; `permissions()` не грузит; тесты `renderer-contract.test.mjs` (ids/CSP/version), `native-input.test.mjs` +2.
+- CSP без inline; все id/классы сохранены; «Оператор» — кнопка-иконка.
+
+### Из таска 04 — сайт (готово)
+- `server/app.mjs`: единый `BASE_STYLE`, страницы `/downloads`, `/invite` по эталону; `BRAND_FILES` + `mascot-site.png`, `mascot-app.png`.
+- `GET /api/v1/downloads-files/:name`: `Content-Length`, `Accept-Ranges: bytes`, `parseRange`/`streamOut` → 206/416, без Range 200.
+- `server/test/downloads.test.mjs`: 7 тестов HTTP-шва (hero/чипы/шаги/футер, бренд-статика, Range, traversal).
+
 ### Из таска 01 — структура (готово)
 - `desktop/` → `client/`; `archive/mockup/` (index.html, styles.css, app.js + README); `build/electron-builder.yml` + README; package.json: main/start/test/pack:* обновлены, поле build удалено.
 - `npm test` = 76 (server+client); смоук и pack:mac фактически прошли; в README/BUILD остались устаревшие «46 тестов» — таск 05 обновит.

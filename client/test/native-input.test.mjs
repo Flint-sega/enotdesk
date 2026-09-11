@@ -71,6 +71,29 @@ test('частота ввода ограничена: события сверх 
   assert.equal(accepted, 5);
 });
 
+test('ленивая загрузка: status() не грузит адаптер, непроверенное не выдаётся за доступное', () => {
+  let loads = 0;
+  const ni = createNativeInput({ getAdapter: () => { loads += 1; return inertAdapter(); } });
+  const before = ni.status();
+  assert.equal(loads, 0, 'status/permissions не форсируют загрузку нативного модуля');
+  assert.equal(before.checked, false);
+  assert.equal(before.available, false);
+  assert.equal(before.reason, 'native-not-checked');
+  ni.load();
+  assert.equal(loads, 1);
+  assert.equal(ni.status().checked, true);
+});
+
+test('ленивая загрузка: первый реальный ввод поднимает адаптер ровно один раз', () => {
+  let loads = 0;
+  const adapter = { available: true, platform: 'test', move() {}, button() {}, key() {}, scroll() {} };
+  const ni = createNativeInput({ getAdapter: () => { loads += 1; return adapter; } });
+  assert.equal(ni.dispatch({ type: 'move', x: 0.5, y: 0.5 }, { width: 10, height: 10 }).ok, true);
+  assert.equal(loads, 1);
+  ni.dispatch({ type: 'move', x: 0.2, y: 0.2 }, { width: 10, height: 10 });
+  assert.equal(loads, 1, 'повторный ввод не перезагружает адаптер');
+});
+
 test('Wayland диагностируется как без управления вводом, честно', () => {
   const probe = waylandAdapterProbe({ XDG_SESSION_TYPE: 'wayland', WAYLAND_DISPLAY: 'wayland-0' });
   assert.equal(probe.available, false);
