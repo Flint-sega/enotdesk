@@ -1,0 +1,309 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+  <meta charset="UTF-8">
+  <meta http-equiv="Content-Security-Policy"
+        content="default-src 'none'; script-src 'self'; style-src 'self'; img-src 'self' file: data:; media-src blob:; font-src 'self'; form-action 'none'; frame-ancestors 'none'">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>EnotDesk</title>
+  <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+  <img class="mascot-bg" src="../assets/enot-mascot.svg" alt="" aria-hidden="true">
+  <header class="topbar">
+    <div class="brand">
+      <img class="brand-icon" src="../assets/enot-mascot.svg" alt="Логотип ЕнотDesk">
+      <span class="brand-name">ЕнотDesk</span>
+    </div>
+    <nav class="role-switch" aria-label="Режим работы">
+      <button id="tab-client" class="tab active" aria-pressed="true">Помощь</button>
+      <button id="tab-operator" class="tab" aria-pressed="false">Оператор</button>
+      <button id="btn-settings" class="icon-btn" aria-label="Настройки" title="Настройки">⚙</button>
+    </nav>
+  </header>
+
+  <main id="main">
+    <!-- ======================= КЛИЕНТ ======================= -->
+    <section id="view-client" class="view" aria-label="Получить помощь">
+      <div class="hero">
+        <h1 id="client-title">Получить помощь</h1>
+        <p id="client-subtitle" class="muted">Нажмите кнопку — приложение сообщит временные идентификатор и пароль. Передайте их вашему специалисту в чате.</p>
+      </div>
+
+      <div id="client-idle" class="card center">
+        <button id="btn-start" class="cta">Получить помощь</button>
+        <p id="client-idle-note" class="muted">Соединение устанавливается только с вашим согласием. Закрытие окна полностью завершает программу.</p>
+      </div>
+
+      <div id="client-registering" class="card center hidden" role="status">
+        <p>Соединяемся с сервером…</p>
+        <div class="spinner" aria-hidden="true"></div>
+      </div>
+
+      <div id="client-waiting" class="card hidden" aria-live="polite">
+        <h2>Сообщите оператору</h2>
+        <div class="cred-grid">
+          <div class="cred">
+            <span class="cred-label">Идентификатор</span>
+            <span id="client-id" class="cred-value">—</span>
+            <button id="btn-copy-id" class="btn">Копировать ID</button>
+          </div>
+          <div class="cred">
+            <span class="cred-label">Пароль</span>
+            <span id="client-password" class="cred-value">—</span>
+            <button id="btn-copy-password" class="btn">Копировать пароль</button>
+          </div>
+        </div>
+        <button id="btn-copy-both" class="btn wide">Копировать ID и пароль</button>
+        <p id="copy-status" class="note" role="status"></p>
+        <p class="muted">Ожидаем подключения оператора… Пароль действует один раз и до завершения сеанса.</p>
+        <button id="btn-cancel-wait" class="btn danger-ghost">Отменить</button>
+      </div>
+
+      <div id="client-consent" class="card hidden" aria-live="assertive">
+        <h2>Запрос на подключение</h2>
+        <p>Оператор <strong id="consent-operator">—</strong> просит доступ к вашему экрану.</p>
+        <p class="muted">Разрешайте только тем, кого ждёте. Доступ можно прекратить кнопкой «Завершить» в любой момент.</p>
+        <div class="row">
+          <button id="btn-allow" class="cta">Разрешить</button>
+          <button id="btn-deny" class="btn danger-ghost">Отклонить</button>
+        </div>
+      </div>
+
+      <div id="client-connected" class="card hidden" aria-live="polite">
+        <h2 class="ok-text">Оператор подключён</h2>
+        <p>Сейчас оператор видит ваш экран: <strong id="connected-operator">—</strong>.</p>
+        <p id="client-native-note" class="note"></p>
+        <button id="btn-stop" class="btn danger">Завершить сеанс</button>
+      </div>
+
+      <div id="client-ended" class="card hidden" aria-live="polite">
+        <h2>Сеанс завершён</h2>
+        <p id="ended-reason" class="muted">—</p>
+        <button id="btn-again" class="cta">Начать заново</button>
+      </div>
+
+      <div id="client-error" class="card hidden" role="alert">
+        <h2 class="err-text">Не удалось начать</h2>
+        <p id="client-error-text" class="err-text"></p>
+        <button id="btn-retry" class="btn">Повторить</button>
+      </div>
+    </section>
+
+    <!-- ======================= ОПЕРАТОР ======================= -->
+    <section id="view-operator" class="view hidden" aria-label="Режим оператора">
+      <!-- Вход -->
+      <div id="op-login" class="card narrow center">
+        <h2>Вход оператора</h2>
+        <form id="form-login" novalidate>
+          <div class="field">
+            <label for="login-name">Логин</label>
+            <input id="login-name" name="login" autocomplete="username" required>
+          </div>
+          <div class="field">
+            <label for="login-password">Пароль</label>
+            <input id="login-password" name="password" type="password" autocomplete="current-password" required>
+          </div>
+          <p id="login-error" class="err-text" role="alert"></p>
+          <button type="submit" id="btn-login" class="cta wide">Войти</button>
+        </form>
+        <details class="invite-details">
+          <summary>Есть код приглашения?</summary>
+          <form id="form-invite-accept" novalidate>
+            <div class="field">
+              <label for="invite-code">Код или ссылка приглашения</label>
+              <input id="invite-code" name="invite" placeholder="https://…/invite#token=… или сам код">
+            </div>
+            <div class="field">
+              <label for="invite-name">Имя</label>
+              <input id="invite-name" name="name" maxlength="120">
+            </div>
+            <div class="field">
+              <label for="invite-login">Логин</label>
+              <input id="invite-login" name="login" autocomplete="username">
+            </div>
+            <div class="field">
+              <label for="invite-password">Пароль</label>
+              <input id="invite-password" name="password" type="password" autocomplete="new-password">
+            </div>
+            <p id="invite-accept-status" class="note" role="status"></p>
+            <p id="invite-accept-error" class="err-text" role="alert"></p>
+            <button type="submit" id="btn-accept-invite" class="btn wide">Принять приглашение</button>
+          </form>
+        </details>
+        <p class="muted">Нет аккаунта? Попросите администратора команды прислать приглашение.</p>
+      </div>
+
+      <!-- Рабочая область -->
+      <div id="op-work" class="workspace hidden">
+        <nav class="sidebar" aria-label="Разделы">
+          <button class="side-tab active" data-pane="connect" aria-pressed="true">Подключение</button>
+          <button class="side-tab" data-pane="contacts" aria-pressed="false">Адресная книга</button>
+          <button class="side-tab" data-pane="team" aria-pressed="false">Команда</button>
+          <button class="side-tab" data-pane="history" aria-pressed="false">История</button>
+          <button class="side-tab" data-pane="audit" aria-pressed="false">Журнал</button>
+          <div class="sidebar-footer">
+            <span id="op-who" class="muted"></span>
+            <button id="btn-logout" class="btn small">Выйти</button>
+          </div>
+        </nav>
+
+        <div class="panes">
+          <!-- Подключение -->
+          <div id="pane-connect" class="pane">
+            <div id="op-connect-form" class="card">
+              <h2>Подключение к клиенту</h2>
+              <div class="field">
+                <label for="conn-session-id">Идентификатор сеанса</label>
+                <input id="conn-session-id" inputmode="numeric" placeholder="9 цифр">
+              </div>
+              <div class="field">
+                <label for="conn-password">Пароль сеанса</label>
+                <input id="conn-password" autocomplete="off">
+              </div>
+              <div class="field">
+                <label for="conn-contact">Клиент из адресной книги (необязательно)</label>
+                <select id="conn-contact"><option value="">—</option></select>
+              </div>
+              <p id="conn-error" class="err-text" role="alert"></p>
+              <button id="btn-connect" class="cta wide">Подключиться</button>
+            </div>
+            <div id="op-waiting" class="card hidden" role="status">
+              <p>Ожидаем подтверждение клиента…</p>
+              <div class="spinner" aria-hidden="true"></div>
+              <button id="btn-cancel-connect" class="btn danger-ghost">Отменить</button>
+            </div>
+            <div id="op-remote" class="card hidden">
+              <div class="toolbar">
+                <span id="remote-status" class="note" role="status">Подключение…</span>
+                <span class="spacer"></span>
+                <button id="btn-end-session" class="btn danger">Завершить</button>
+              </div>
+              <video id="remote-video" autoplay playsinline aria-label="Экран клиента"></video>
+              <p class="muted">Управление мышью и клавиатурой активно, пока клиент не завершил сеанс.</p>
+            </div>
+          </div>
+
+          <!-- Адресная книга -->
+          <div id="pane-contacts" class="pane hidden">
+            <div class="card">
+              <h2>Адресная книга</h2>
+              <form id="form-contact-search" class="row gap">
+                <div class="field grow">
+                  <label for="contact-search">Поиск по имени</label>
+                  <input id="contact-search" placeholder="Например, Иванова">
+                </div>
+                <button type="submit" class="btn">Найти</button>
+                <button type="button" id="btn-contact-add" class="btn">Добавить</button>
+              </form>
+              <p id="contacts-status" class="note" role="status"></p>
+              <div id="contacts-list" class="list"></div>
+              <div class="pager">
+                <button id="contacts-prev" class="btn small">← Назад</button>
+                <span id="contacts-page" class="muted"></span>
+                <button id="contacts-next" class="btn small">Вперёд →</button>
+              </div>
+            </div>
+            <div id="contact-editor" class="card hidden">
+              <h3 id="contact-editor-title">Новый контакт</h3>
+              <form id="form-contact" novalidate>
+                <div class="field">
+                  <label for="contact-name">Имя (1–120)</label>
+                  <input id="contact-name" maxlength="120" required>
+                </div>
+                <div class="field">
+                  <label for="contact-notes">Заметки (до 2000)</label>
+                  <textarea id="contact-notes" rows="3" maxlength="2000"></textarea>
+                </div>
+                <div class="field">
+                  <label for="contact-tags">Теги (до 10, через запятую)</label>
+                  <input id="contact-tags" placeholder="срочно, бухгалтерия">
+                </div>
+                <p id="contact-error" class="err-text" role="alert"></p>
+                <div class="row gap">
+                  <button type="submit" id="btn-contact-save" class="cta">Сохранить</button>
+                  <button type="button" id="btn-contact-cancel" class="btn">Отмена</button>
+                </div>
+              </form>
+            </div>
+          </div>
+
+          <!-- Команда -->
+          <div id="pane-team" class="pane hidden">
+            <div class="card">
+              <h2>Команда</h2>
+              <p id="team-status" class="note" role="status"></p>
+              <div id="members-list" class="list"></div>
+            </div>
+            <div class="card">
+              <h2>Приглашения</h2>
+              <form id="form-invite" class="row gap">
+                <div class="field">
+                  <label for="invite-role">Роль нового участника</label>
+                  <select id="invite-role">
+                    <option value="operator">Оператор</option>
+                    <option value="admin">Администратор</option>
+                    <option value="auditor">Наблюдатель</option>
+                  </select>
+                </div>
+                <button type="submit" id="btn-invite-create" class="cta">Создать приглашение</button>
+              </form>
+              <p id="invite-result" class="note" role="status"></p>
+              <p id="team-error" class="err-text" role="alert"></p>
+              <div id="invites-list" class="list"></div>
+            </div>
+          </div>
+
+          <!-- История -->
+          <div id="pane-history" class="pane hidden">
+            <div class="card">
+              <h2>История сеансов</h2>
+              <p id="history-status" class="note" role="status"></p>
+              <div id="history-list" class="list"></div>
+              <div class="pager">
+                <button id="history-prev" class="btn small">← Назад</button>
+                <span id="history-page" class="muted"></span>
+                <button id="history-next" class="btn small">Вперёд →</button>
+              </div>
+            </div>
+          </div>
+
+          <!-- Журнал -->
+          <div id="pane-audit" class="pane hidden">
+            <div class="card">
+              <h2>Журнал действий</h2>
+              <p id="audit-status" class="note" role="status"></p>
+              <div id="audit-list" class="list"></div>
+              <div class="pager">
+                <button id="audit-prev" class="btn small">← Назад</button>
+                <span id="audit-page" class="muted"></span>
+                <button id="audit-next" class="btn small">Вперёд →</button>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <!-- ======================= НАСТРОЙКИ ======================= -->
+    <div id="settings-overlay" class="overlay hidden" role="dialog" aria-modal="true" aria-labelledby="settings-title">
+      <div class="card narrow">
+        <h2 id="settings-title">Настройки</h2>
+        <div class="field">
+          <label for="settings-url">Адрес сервера</label>
+          <input id="settings-url" placeholder="http://127.0.0.1:8080">
+        </div>
+        <p id="settings-status" class="note" role="status"></p>
+        <p id="settings-error" class="err-text" role="alert"></p>
+        <div class="row gap">
+          <button id="btn-settings-save" class="cta">Сохранить и проверить</button>
+          <button id="btn-settings-close" class="btn">Закрыть</button>
+        </div>
+        <p id="perm-report" class="note"></p>
+      </div>
+    </div>
+  </main>
+
+  <script src="app.js" type="module"></script>
+</body>
+</html>
