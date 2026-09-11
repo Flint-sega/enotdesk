@@ -1,10 +1,19 @@
 appId: com.enotdesk.app
 productName: EnotDesk
+compression: maximum
+electronLanguages:
+  - ru
+  - en
 directories:
   output: dist
 files:
   - client/**/*
-  - assets/**/*
+  - "!client/test/**"
+  - "!**/.DS_Store"
+  - assets/enot-icon.svg
+  - assets/enot-mascot.svg
+  - assets/mascot-app.png
+  - package.json
 asarUnpack:
   - node_modules/koffi/**
 artifactName: "EnotDesk-${os}-${arch}.${ext}"
