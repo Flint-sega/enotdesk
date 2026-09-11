@@ -9,8 +9,8 @@ window.STATE =
   "briefFile": "2026-09-11-brief.md",
   "memoryFile": "AGENTS.md",
   "startedAt": "2026-09-11T16:53:58+03:00",
-  "updatedAt": "2026-09-11T17:23:41+03:00",
-  "finishedAt": null,
+  "updatedAt": "2026-09-11T17:45:50+03:00",
+  "finishedAt": "2026-09-11T17:45:50+03:00",
   "stages": [
     {
       "id": "preflight",
@@ -46,23 +46,29 @@ window.STATE =
     },
     {
       "id": "build",
-      "status": "active",
+      "status": "done",
       "startedAt": "2026-09-11T16:57:12+03:00",
-      "note": "4 из 6 тасков готовы; волна 3 (05) в работе"
+      "note": "6 из 6 тасков готовы",
+      "finishedAt": "2026-09-11T17:45:50+03:00"
     },
     {
       "id": "review",
-      "status": "pending"
+      "status": "done",
+      "startedAt": "2026-09-11T17:45:50+03:00",
+      "finishedAt": "2026-09-11T17:45:50+03:00",
+      "note": "волны 1–3 проверены независимыми ревьюерами, ремонты подтверждены"
     },
     {
       "id": "final",
-      "status": "pending"
+      "status": "done",
+      "startedAt": "2026-09-11T17:45:50+03:00",
+      "finishedAt": "2026-09-11T17:45:50+03:00"
     }
   ],
   "requirements": {
     "total": 10,
-    "done": 0,
-    "inTicket": 10,
+    "done": 10,
+    "inTicket": 0,
     "inSpec": 0,
     "placeholder": 0,
     "deferred": 0,
@@ -203,11 +209,17 @@ window.STATE =
         "docs/BUILD.md",
         "README.md"
       ],
-      "status": "in-progress",
+      "status": "done",
       "retries": 0,
       "repairs": 0,
       "handoffs": 0,
-      "startedAt": "2026-09-11T17:23:41+03:00"
+      "startedAt": "2026-09-11T17:23:41+03:00",
+      "finishedAt": "2026-09-11T17:33:10+03:00",
+      "commit": "T05",
+      "tests": {
+        "passed": 84,
+        "failed": 0
+      }
     },
     {
       "id": "06",
@@ -231,10 +243,17 @@ window.STATE =
       "zone": [
         "сервер"
       ],
-      "status": "pending",
+      "status": "done",
       "retries": 0,
       "repairs": 0,
-      "handoffs": 0
+      "handoffs": 0,
+      "startedAt": "2026-09-11T17:33:10+03:00",
+      "finishedAt": "2026-09-11T17:45:50+03:00",
+      "commit": "FINAL",
+      "tests": {
+        "passed": 84,
+        "failed": 0
+      }
     }
   ],
   "singlePass": null,
@@ -245,6 +264,14 @@ window.STATE =
     "emptyEnv": []
   },
   "additions": [],
-  "coverage": null,
-  "blind": null
+  "coverage": {
+    "found": 5,
+    "fixed": 5,
+    "deferred": 0,
+    "note": "G2: скорость отдачи, состав карточек, порог веса, BRAND.md в структуре, бабл эталона — все закрыты"
+  },
+  "blind": {
+    "verdict": "все пункты брифа реализованы; отличия от макетов только осознанные: реальная версия v0.1.0 вместо выдуманной v1.0.0, кнопка «Оператор» сохранена ради функционала, HEAD у файлового роута не реализован (GET/Range работают)",
+    "drift": 0
+  }
 }
