@@ -1,0 +1,21 @@
+{
+  "name": "enotdesk",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "engines": {
+    "node": ">=24.12"
+  },
+  "scripts": {
+    "server": "node server/main.mjs",
+    "start": "npm run server",
+    "bootstrap": "node server/main.mjs bootstrap",
+    "test": "node --test \"server/test/*.test.mjs\"",
+    "pack:mac": "electron-builder --mac",
+    "pack:win": "electron-builder --win",
+    "pack:linux": "electron-builder --linux"
+  },
+  "dependencies": {
+    "ws": "8.21.3"
+  }
+}
