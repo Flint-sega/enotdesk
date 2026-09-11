@@ -14,6 +14,7 @@ const dbPath = process.env.ENOT_DB || 'enotdesk.db';
 const inst = createServer({
   version: pkg.version,
   dbPath,
+  distDir: process.env.ENOT_DIST_DIR,
   host: process.env.ENOT_HOST || '127.0.0.1',
   port: process.env.ENOT_PORT ? parseInt(process.env.ENOT_PORT, 10) : 8080,
   publicUrl: process.env.ENOT_PUBLIC_URL || '',

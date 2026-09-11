@@ -5,20 +5,27 @@
   <meta http-equiv="Content-Security-Policy"
         content="default-src 'none'; script-src 'self'; style-src 'self'; img-src 'self' file: data:; media-src blob:; font-src 'self'; form-action 'none'; frame-ancestors 'none'">
   <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="color-scheme" content="dark">
   <title>EnotDesk</title>
   <link rel="stylesheet" href="styles.css">
 </head>
 <body>
-  <img class="mascot-bg" src="../../assets/enot-mascot.svg" alt="" aria-hidden="true">
   <header class="topbar">
     <div class="brand">
       <img class="brand-icon" src="../../assets/enot-icon.svg" alt="Логотип ЕнотDesk">
       <span class="brand-name">ЕнотDesk</span>
+      <span class="brand-sub">удалённая поддержка</span>
     </div>
     <nav class="role-switch" aria-label="Режим работы">
       <button id="tab-client" class="tab active" aria-pressed="true">Помощь</button>
       <button id="tab-operator" class="tab" aria-pressed="false">Оператор</button>
-      <button id="btn-settings" class="icon-btn" aria-label="Настройки" title="Настройки">⚙</button>
+      <button id="btn-settings" class="icon-btn" aria-label="Настройки" title="Настройки">
+        <svg class="icon" viewBox="0 0 24 24" width="18" height="18" aria-hidden="true" focusable="false">
+          <circle cx="12" cy="12" r="3" fill="none" stroke="currentColor" stroke-width="1.7"/>
+          <path fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"
+                d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1 0 2.83 2 2 0 0 1-2.83 0l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-2 2 2 2 0 0 1-2-2v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83 0 2 2 0 0 1 0-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1-2-2 2 2 0 0 1 2-2h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 0-2.83 2 2 0 0 1 2.83 0l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 2-2 2 2 0 0 1 2 2v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 0 2 2 0 0 1 0 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 2 2 2 2 0 0 1-2 2h-.09a1.65 1.65 0 0 0-1.51 1z"/>
+        </svg>
+      </button>
     </nav>
   </header>
 
@@ -26,18 +33,24 @@
     <!-- ======================= КЛИЕНТ ======================= -->
     <section id="view-client" class="view" aria-label="Получить помощь">
       <div class="hero">
-        <h1 id="client-title">Получить помощь</h1>
-        <p id="client-subtitle" class="muted">Нажмите кнопку — приложение сообщит временные идентификатор и пароль. Передайте их вашему специалисту в чате.</p>
+        <div class="hero-copy">
+          <p class="eyebrow">Удалённая поддержка</p>
+          <h1 id="client-title">Получить помощь</h1>
+          <p id="client-subtitle" class="muted">Нажмите кнопку — приложение сообщит временные идентификатор и пароль. Передайте их вашему специалисту в чате.</p>
+        </div>
+        <div class="hero-art">
+          <img class="mascot-hero" src="../../assets/enot-mascot.svg" alt="Енот-специалист ЕнотDesk">
+        </div>
       </div>
 
       <div id="client-idle" class="card center">
-        <button id="btn-start" class="cta">Получить помощь</button>
+        <button id="btn-start" class="cta cta-xl">Получить помощь</button>
         <p id="client-idle-note" class="muted">Соединение устанавливается только с вашим согласием. Закрытие окна полностью завершает программу.</p>
       </div>
 
       <div id="client-registering" class="card center hidden" role="status">
-        <p>Соединяемся с сервером…</p>
         <div class="spinner" aria-hidden="true"></div>
+        <p class="muted">Соединяемся с сервером…</p>
       </div>
 
       <div id="client-waiting" class="card hidden" aria-live="polite">
@@ -94,6 +107,7 @@
     <section id="view-operator" class="view hidden" aria-label="Режим оператора">
       <!-- Вход -->
       <div id="op-login" class="card narrow center">
+        <img class="mascot-mini" src="../../assets/enot-mascot.svg" alt="" aria-hidden="true">
         <h2>Вход оператора</h2>
         <form id="form-login" novalidate>
           <div class="field">
@@ -169,8 +183,8 @@
               <button id="btn-connect" class="cta wide">Подключиться</button>
             </div>
             <div id="op-waiting" class="card hidden" role="status">
-              <p>Ожидаем подтверждение клиента…</p>
               <div class="spinner" aria-hidden="true"></div>
+              <p>Ожидаем подтверждение клиента…</p>
               <button id="btn-cancel-connect" class="btn danger-ghost">Отменить</button>
             </div>
             <div id="op-remote" class="card hidden">
