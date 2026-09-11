@@ -1,0 +1,15 @@
+<!doctype html>
+<html lang="ru">
+<head>
+  <meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>EnotDesk — поддержка</title>
+  <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+  <main class="shell">
+    <header><div class="brand"><div class="avatar">🦝</div><div><b>EnotDesk</b><span>профессиональная поддержка</span></div></div><div class="status"><i></i> защищённое соединение</div></header>
+    <section class="hero"><div><p class="eyebrow">БЫСТРАЯ ПОМОЩЬ</p><h1>Енот уже<br><em>готов помочь.</em></h1><p class="lead">Запустите программу и передайте специалисту данные ниже. Установка не требуется.</p><button id="support" class="primary">Запустить сессию <span>→</span></button><p class="hint">Сессия завершится автоматически после закрытия программы.</p></div><div class="raccoon"><div class="ring"></div><div class="mascot">🦝</div><div class="badge">PRO<br><small>SUPPORT</small></div></div></section>
+    <section id="session" class="card hidden"><div class="card-top"><div><p class="eyebrow">ОДНОРАЗОВЫЙ ДОСТУП</p><h2>Данные для специалиста</h2></div><span class="live"><i></i> сессия активна</span></div><div class="credentials"><div><label>ID подключения</label><strong id="session-id">—</strong></div><div><label>Пароль</label><strong id="session-pass">—</strong></div><button id="copy" class="copy">Копировать</button></div><div class="notice">Не публикуйте эти данные. Пароль изменится при следующем запуске.</div><button id="finish" class="secondary">Завершить поддержку</button></section>
+    <footer><span>EnotDesk v0.1 preview</span><span>Работает без установки · Windows · macOS · Linux</span></footer>
+  </main><script src="app.js"></script>
+</body></html>
