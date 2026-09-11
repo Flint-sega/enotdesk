@@ -1,206 +1,39 @@
 window.STATE =
 {
-  "slug": "enotdesk-deploy",
-  "title": "EnotDesk — развёртывание на сервер и документация",
+  "slug": "enotdesk-redesign",
+  "title": "EnotDesk — визуал по эталонам, порядок в проекте, вес и старт",
   "mode": "full",
   "depth": "deep",
   "polish": null,
-  "tier": "T1",
+  "tier": "T2",
   "briefFile": "2026-09-11-brief.md",
   "memoryFile": "AGENTS.md",
-  "startedAt": "2026-09-11T11:38:07+03:00",
-  "updatedAt": "2026-09-11T12:41:04+03:00",
-  "finishedAt": "2026-09-11T12:41:04+03:00",
+  "startedAt": "2026-09-11T16:53:58+03:00",
+  "updatedAt": "2026-09-11T16:57:12+03:00",
+  "finishedAt": null,
   "stages": [
-    {
-      "id": "preflight",
-      "status": "done",
-      "startedAt": "2026-09-11T11:30:00+03:00",
-      "finishedAt": "2026-09-11T11:38:07+03:00",
-      "note": "разведка сервера Ubuntu 24.04, вход по ключу"
-    },
-    {
-      "id": "manifest",
-      "status": "done",
-      "startedAt": "2026-09-11T11:38:07+03:00",
-      "finishedAt": "2026-09-11T11:40:37+03:00"
-    },
-    {
-      "id": "briefing",
-      "status": "skipped",
-      "note": "полный автомат — самобрифинг"
-    },
-    {
-      "id": "spec",
-      "status": "done",
-      "startedAt": "2026-09-11T11:40:37+03:00",
-      "finishedAt": "2026-09-11T11:40:37+03:00"
-    },
-    {
-      "id": "plan",
-      "status": "done",
-      "startedAt": "2026-09-11T11:40:37+03:00",
-      "finishedAt": "2026-09-11T11:40:37+03:00",
-      "note": "3 таска, ярус T1, 2 волны"
-    },
-    {
-      "id": "build",
-      "status": "done",
-      "startedAt": "2026-09-11T11:40:37+03:00",
-      "note": "4 из 4 тасков готовы (07 — развёртывание и обкатка)",
-      "finishedAt": "2026-09-11T12:41:04+03:00"
-    },
-    {
-      "id": "review",
-      "status": "done",
-      "startedAt": "2026-09-11T12:41:04+03:00",
-      "finishedAt": "2026-09-11T12:41:04+03:00",
-      "note": "все таски проверены независимыми ревьюерами"
-    },
-    {
-      "id": "final",
-      "status": "done",
-      "startedAt": "2026-09-11T12:41:04+03:00",
-      "finishedAt": "2026-09-11T12:41:04+03:00"
-    }
+    {"id":"preflight","status":"done","startedAt":"2026-09-11T16:53:58+03:00","finishedAt":"2026-09-11T16:54:04+03:00","note":"эталоны скопированы в reference/"},
+    {"id":"manifest","status":"done","startedAt":"2026-09-11T16:54:04+03:00","finishedAt":"2026-09-11T16:57:12+03:00"},
+    {"id":"briefing","status":"skipped","note":"полный автомат — самобрифинг"},
+    {"id":"spec","status":"done","startedAt":"2026-09-11T16:57:12+03:00","finishedAt":"2026-09-11T16:57:12+03:00","note":"G2: 5 дыр найдено и закрыто"},
+    {"id":"plan","status":"done","startedAt":"2026-09-11T16:57:12+03:00","finishedAt":"2026-09-11T16:57:12+03:00","note":"6 тасков, ярус T2, 4 волны"},
+    {"id":"build","status":"active","startedAt":"2026-09-11T16:57:12+03:00","note":"0 из 6 тасков готовы"},
+    {"id":"review","status":"pending"},
+    {"id":"final","status":"pending"}
   ],
-  "requirements": {
-    "total": 6,
-    "done": 6,
-    "inTicket": 0,
-    "inSpec": 0,
-    "placeholder": 0,
-    "deferred": 0,
-    "dropped": 0
-  },
-  "tickets": [
-    {
-      "id": "05",
-      "title": "Скрипты установки и деплоя",
-      "requirements": [
-        "R20",
-        "R20.1",
-        "R20.2",
-        "R20.3",
-        "R20.4",
-        "R24i"
-      ],
-      "blockedBy": [],
-      "wave": 1,
-      "zone": [
-        "scripts/",
-        ".env.example"
-      ],
-      "status": "done",
-      "startedAt": "2026-09-11T11:40:37+03:00",
-      "retries": 0,
-      "repairs": 2,
-      "handoffs": 0,
-      "finishedAt": "2026-09-11T12:04:16+03:00",
-      "commit": "7d264c4",
-      "tests": {
-        "passed": 46,
-        "failed": 0
-      }
-    },
-    {
-      "id": "06",
-      "title": "Документация сервера и сборок",
-      "requirements": [
-        "R21",
-        "R21.1"
-      ],
-      "blockedBy": [],
-      "wave": 1,
-      "zone": [
-        "docs/",
-        "README.md"
-      ],
-      "status": "done",
-      "startedAt": "2026-09-11T11:40:37+03:00",
-      "retries": 0,
-      "repairs": 0,
-      "handoffs": 0,
-      "finishedAt": "2026-09-11T12:04:16+03:00",
-      "commit": "c7a6fad",
-      "tests": {
-        "passed": 46,
-        "failed": 0
-      }
-    },
-    {
-      "id": "07",
-      "title": "Развёртывание и обкатка на тестовом сервере",
-      "requirements": [
-        "R22",
-        "R23i",
-        "R20"
-      ],
-      "blockedBy": [
-        "08"
-      ],
-      "wave": 3,
-      "zone": [
-        "сервер"
-      ],
-      "status": "done",
-      "startedAt": "2026-09-11T12:36:06+03:00",
-      "retries": 0,
-      "repairs": 0,
-      "handoffs": 0,
-      "finishedAt": "2026-09-11T12:41:04+03:00",
-      "commit": "FINAL",
-      "tests": {
-        "passed": 46,
-        "failed": 0
-      },
-      "concerns": [
-        "deploy-server.sh не поддерживает --help (env-driven; задокументировано)"
-      ]
-    },
-    {
-      "id": "08",
-      "title": "Node tarball + устойчивый деплой (D01)",
-      "requirements": [
-        "R20",
-        "R22"
-      ],
-      "blockedBy": [
-        "05"
-      ],
-      "wave": 2,
-      "zone": [
-        "scripts/",
-        "docs/SERVER.md"
-      ],
-      "status": "done",
-      "startedAt": "2026-09-11T12:29:01+03:00",
-      "retries": 0,
-      "repairs": 1,
-      "handoffs": 0,
-      "finishedAt": "2026-09-11T12:36:11+03:00",
-      "commit": "HEAD",
-      "tests": {
-        "passed": 46,
-        "failed": 0
-      }
-    }
+  "requirements":{"total":10,"done":0,"inTicket":10,"inSpec":0,"placeholder":0,"deferred":0,"dropped":0},
+  "tickets":[
+    {"id":"01","title":"Переезд проекта по папкам","requirements":["R07","R04"],"blockedBy":[],"wave":1,"zone":["package.json","build/","client/","archive/","README.md","AGENTS.md","docs/"],"status":"in-progress","startedAt":"2026-09-11T16:57:12+03:00","retries":0,"repairs":0,"handoffs":0},
+    {"id":"02","title":"Маскот-ассеты и иконка приложения","requirements":["R05","R06"],"blockedBy":[],"wave":1,"zone":["assets/","scripts/make-mascot.mjs","scripts/make-icons.mjs","BRAND.md"],"status":"in-progress","startedAt":"2026-09-11T16:57:12+03:00","retries":0,"repairs":0,"handoffs":0},
+    {"id":"03","title":"Визуал приложения по эталону","requirements":["R01","R04","R06","R08i","R10i"],"blockedBy":["01","02"],"wave":2,"zone":["client/"],"status":"pending","retries":0,"repairs":0,"handoffs":0},
+    {"id":"04","title":"Визуал сайта по эталону","requirements":["R02","R06","R08i","R09i","R10i"],"blockedBy":["02"],"wave":2,"zone":["server/app.mjs","server/test/"],"status":"pending","retries":0,"repairs":0,"handoffs":0},
+    {"id":"05","title":"Лёгкая сборка, быстрый старт, документация","requirements":["R03","R04"],"blockedBy":["01","03"],"wave":3,"zone":["build/electron-builder.yml","docs/BUILD.md","README.md"],"status":"pending","retries":0,"repairs":0,"handoffs":0},
+    {"id":"06","title":"Выкладка на сервер и приёмка","requirements":["R01","R02","R03","R04","R05","R06","R07","R09i"],"blockedBy":["03","04","05"],"wave":4,"zone":["сервер"],"status":"pending","retries":0,"repairs":0,"handoffs":0}
   ],
-  "singlePass": null,
-  "tests": null,
-  "debt": {
-    "placeholders": [],
-    "assumptions": [],
-    "emptyEnv": [
-      "ENOT_DEPLOY_HOST",
-      "ENOT_DEPLOY_USER",
-      "ENOT_DEPLOY_PASSWORD"
-    ]
-  },
-  "additions": [],
-  "coverage": null,
-  "blind": {
-    "verdict": "сервер реально работает (health/страницы/смоук/reboot); скрипты и документация на месте; единственное расхождение — deploy-server.sh без --help (не требование)",
-    "drift": 0
-  }
+  "singlePass":null,
+  "tests":null,
+  "debt":{"placeholders":[],"assumptions":[],"emptyEnv":[]},
+  "additions":[],
+  "coverage":null,
+  "blind":null
 }

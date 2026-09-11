@@ -8,7 +8,7 @@ Portable-клиент EnotDesk собирается `electron-builder` из ко
 - `npm ci` из корня репозитория — ставит `electron` 44.3.0 и `electron-builder` 26.15.3 по lockfile.
 - Сборка идёт на целевой ОС: macOS-артефакты — на macOS, Windows — на Windows, Linux — на Linux.
 - При первой сборке electron-builder скачивает Electron и свои инструменты — нужен интернет.
-- Необязательно, но полезно перед сборкой: `npm test` (46 тестов сервера и desktop-швов).
+- Необязательно, но полезно перед сборкой: `npm test` (46 тестов сервера и client-швов).
 - Иконки уже лежат в `assets/` (`icon.icns`/`icon.ico`/`icon.png`); перегенерировать можно `npm run icons` — скрипт использует macOS-утилиты `sips`/`iconutil` и работает только на macOS.
 
 ## Сборка по ОС
