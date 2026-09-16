@@ -223,7 +223,10 @@
           <button class="side-tab" data-pane="audit" aria-pressed="false">Журнал</button>
           <div class="sidebar-footer">
             <span id="op-who" class="muted"></span>
-            <button id="btn-logout" class="btn small">Выйти</button>
+            <div class="sidebar-actions">
+              <button id="btn-password" class="btn small">Сменить пароль</button>
+              <button id="btn-logout" class="btn small">Выйти</button>
+            </div>
           </div>
         </nav>
 
@@ -380,6 +383,29 @@
         </div>
       </div>
     </section>
+
+    <!-- ======================= СМЕНА ПАРОЛЯ ======================= -->
+    <div id="password-overlay" class="overlay hidden" role="dialog" aria-modal="true" aria-labelledby="password-title">
+      <div class="card narrow">
+        <h2 id="password-title">Сменить пароль</h2>
+        <form id="form-password" novalidate>
+          <div class="field">
+            <label for="password-old">Текущий пароль</label>
+            <input id="password-old" name="oldPassword" type="password" autocomplete="current-password" required>
+          </div>
+          <div class="field">
+            <label for="password-new">Новый пароль (от 8 символов)</label>
+            <input id="password-new" name="newPassword" type="password" autocomplete="new-password" required>
+          </div>
+          <p id="password-error" class="err-text" role="alert"></p>
+          <div class="row gap">
+            <button type="submit" id="btn-password-save" class="cta">Сменить</button>
+            <button type="button" id="btn-password-close" class="btn">Отмена</button>
+          </div>
+        </form>
+        <p id="password-status" class="note" role="status"></p>
+      </div>
+    </div>
 
     <!-- ======================= НАСТРОЙКИ ======================= -->
     <div id="settings-overlay" class="overlay hidden" role="dialog" aria-modal="true" aria-labelledby="settings-title">

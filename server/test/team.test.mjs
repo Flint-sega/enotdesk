@@ -104,6 +104,39 @@ test('disable: отзывает токены и не пускает обратн
   assert.equal((await api(base, 'POST', '/auth/login', { body: { login: 'оператор', password: 'пароль-опер-1' } })).status, 401);
 });
 
+test('password: смена пароля — старый обязателен, прочие токены умирают, новый работает', async (t) => {
+  const dbPath = tmpDb(t);
+  const { base } = await startServer(t, { dbPath });
+  await bootstrapAdmin(dbPath, { login: ADMIN.login, name: 'A', password: ADMIN.password });
+
+  // два «устройства»
+  const t1 = (await api(base, 'POST', '/auth/login', { body: { login: ADMIN.login, password: ADMIN.password } })).json.token;
+  const t2 = (await api(base, 'POST', '/auth/login', { body: { login: ADMIN.login, password: ADMIN.password } })).json.token;
+
+  // без авторизации — 401
+  assert.equal((await api(base, 'PATCH', '/auth/password', { body: { oldPassword: ADMIN.password, newPassword: 'новый-пароль-123' } })).status, 401);
+  // неверный старый — 403
+  assert.equal((await api(base, 'PATCH', '/auth/password', { token: t1, body: { oldPassword: 'совсем-не-тот', newPassword: 'новый-пароль-123' } })).status, 403);
+  // короткий новый — 400
+  assert.equal((await api(base, 'PATCH', '/auth/password', { token: t1, body: { oldPassword: ADMIN.password, newPassword: 'коротко' } })).status, 400);
+
+  // успешная смена с первого устройства
+  const ok = await api(base, 'PATCH', '/auth/password', { token: t1, body: { oldPassword: ADMIN.password, newPassword: 'новый-пароль-123' } });
+  assert.equal(ok.status, 200);
+
+  // второй «устройство» выкинуто, первое живо
+  assert.equal((await api(base, 'GET', '/auth/me', { token: t2 })).status, 401);
+  assert.equal((await api(base, 'GET', '/auth/me', { token: t1 })).status, 200);
+
+  // новый пароль работает, старый больше нет
+  assert.equal((await api(base, 'POST', '/auth/login', { body: { login: ADMIN.login, password: ADMIN.password } })).status, 401);
+  assert.equal((await api(base, 'POST', '/auth/login', { body: { login: ADMIN.login, password: 'новый-пароль-123' } })).status, 200);
+
+  // смена записана в аудит
+  const audit = await api(base, 'GET', '/audit?limit=50', { token: t1 });
+  assert.ok(audit.json.items.some((a) => a.action === 'password.change'));
+});
+
 test('invites: одноразовость, отзыв, роль из приглашения, уникальный логин', async (t) => {
   const dbPath = tmpDb(t);
   const { base } = await startServer(t, { dbPath });

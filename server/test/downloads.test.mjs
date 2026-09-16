@@ -143,6 +143,31 @@ test('downloads-files: Range → 206 точными байтами, без Range
   assert.equal(zeroSuffix.headers.get('content-range'), `bytes */${body.length}`);
 });
 
+test('downloads-files: ETag + If-None-Match → 304 без тела; изменение файла меняет ETag', async (t) => {
+  const dir = tempDist(t);
+  const name = 'EnotDesk-9.9.9.zip';
+  fs.writeFileSync(path.join(dir, name), 'BODY-1');
+  const { base } = await startServer(t);
+  const url = `${base}/api/v1/downloads-files/${name}`;
+
+  const first = await fetch(url);
+  assert.equal(first.status, 200);
+  const etag = first.headers.get('etag');
+  assert.ok(etag && etag.length >= 4, 'ETag присутствует');
+  assert.ok(first.headers.get('last-modified'));
+
+  const cached = await fetch(url, { headers: { 'If-None-Match': etag } });
+  assert.equal(cached.status, 304);
+  assert.equal(await cached.text(), '', '304 отдаётся без тела');
+
+  // файл заменили — кэш инвалидируется
+  fs.writeFileSync(path.join(dir, name), 'BODY-2-LONGER');
+  fs.utimesSync(path.join(dir, name), new Date(), new Date(Date.now() + 5000));
+  const after = await fetch(url, { headers: { 'If-None-Match': etag } });
+  assert.equal(after.status, 200);
+  assert.notEqual(after.headers.get('etag'), etag);
+});
+
 test('downloads-files: traversal — 400, запрещённое имя — 404 и нет в /api/v1/downloads', async (t) => {
   const dir = tempDist(t);
   fs.writeFileSync(path.join(dir, 'secrets.zip'), 'NOPE');

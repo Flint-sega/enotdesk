@@ -1,6 +1,10 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
+import fs from 'node:fs';
+import os from 'node:os';
+import path from 'node:path';
 import { openDb, runRetention } from '../db.mjs';
+import { backupDb } from '../backup.mjs';
 
 // Ретенция — гигиена БД: чистим только то, что заведомо завершено и старо.
 // Ожидания по дням заданы в тесте, не в коде под тестом.
@@ -71,4 +75,28 @@ test('retention: живой (незавершённый) сеанс не уда�
   assert.equal(r.sessions, 0);
   assert.equal(db.prepare('SELECT count(*) c FROM sessions').get().c, 1);
   db.close();
+});
+
+test('backup: VACUUM INTO создаёт читаемый дамп, ретенция выметает старые', (t) => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'enot-bak-'));
+  t.after(() => fs.rmSync(dir, { recursive: true, force: true }));
+
+  const dbPath = path.join(dir, 'src.db');
+  const db = openDb(dbPath);
+  db.prepare(`INSERT INTO users (id, login, name, role, active, password, created_at)
+              VALUES ('u1','ops','Опс','admin',1,'x','2020-01-01')`).run();
+  db.close();
+
+  // два старых дампа — при keep=2 (свежий + один) старейший должен уйти
+  fs.writeFileSync(path.join(dir, 'enotdesk-2020-01-01T000000Z.db'), 'x');
+  fs.writeFileSync(path.join(dir, 'enotdesk-2021-01-01T000000Z.db'), 'x');
+
+  const r = backupDb(dbPath, dir, { keep: 2, stamp: new Date('2026-01-02T03:04:05Z') });
+  assert.equal(path.basename(r.file), 'enotdesk-2026-01-02T030405Z.db');
+  assert.deepEqual(r.removed, ['enotdesk-2020-01-01T000000Z.db']);
+
+  // дамп — полноценная база: открывается и содержит данные
+  const copy = openDb(r.file);
+  assert.equal(copy.prepare('SELECT count(*) c FROM users').get().c, 1);
+  copy.close();
 });

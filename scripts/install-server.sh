@@ -47,6 +47,7 @@ EnotDesk — установщик сервера.
 Использование:
   install-server.sh <app.tar.gz> [опции]   установить или обновить сервер
   install-server.sh --update <app.tar.gz>  поставить новый релиз и переключить current
+  install-server.sh --backup               консистентный дамп БД в /var/lib/enotdesk/backups
   install-server.sh --uninstall [--purge-data]
   install-server.sh --help
 
@@ -54,6 +55,7 @@ EnotDesk — установщик сервера.
   <app.tar.gz>       tarball приложения (server/, package.json, package-lock.json)
   --dry-run          показать план и выйти, ничего не меняя
   --update <tar>     то же, что установка с явным tarball (атомарная смена symlink)
+  --backup           дамп БД (VACUUM INTO, безопасно на живом сервере); BACKUP_KEEP — сколько дампов хранить (по умолчанию 10)
   --uninstall        остановить и удалить unit и релизы; БД сохраняется
   --purge-data       вместе с --uninstall удалить и /var/lib/enotdesk
   --open-firewall    открыть порт в ufw, если ufw активен (иначе только сообщить)
@@ -86,6 +88,7 @@ while [ $# -gt 0 ]; do
       TARBALL="$1"
       ;;
     --uninstall) MODE="uninstall" ;;
+    --backup) MODE="backup" ;;
     --purge-data) PURGE_DATA=1 ;;
     --open-firewall) OPEN_FIREWALL=1 ;;
     -*) die "неизвестный аргумент: $1 (справка: --help)" ;;
@@ -245,6 +248,7 @@ merge_env_file() {
   if [ -z "$TURN_PASSWORD" ]; then TURN_PASSWORD="$(read_env_value ENOT_TURN_PASSWORD)"; fi
   if [ -z "${ENOT_GRACE_MS:-}" ]; then GRACE_MS="$(read_env_value ENOT_GRACE_MS)"; else GRACE_MS="$ENOT_GRACE_MS"; fi
   if [ -z "${ENOT_RETENTION_DAYS:-}" ]; then RETENTION_DAYS="$(read_env_value ENOT_RETENTION_DAYS)"; else RETENTION_DAYS="$ENOT_RETENTION_DAYS"; fi
+  if [ -z "${ENOT_MAX_SESSIONS:-}" ]; then MAX_SESSIONS="$(read_env_value ENOT_MAX_SESSIONS)"; else MAX_SESSIONS="$ENOT_MAX_SESSIONS"; fi
 }
 
 print_plan() {
@@ -288,6 +292,26 @@ print_plan() {
     echo "  ufw:                не трогать"
   fi
 }
+
+if [ "$MODE" = "backup" ]; then
+  [ "$(id -u)" = "0" ] || die "--backup нужен root — запустите через sudo"
+  [ -f "$CURRENT_LINK/server/backup.mjs" ] || die "сервер не установлен ($CURRENT_LINK/server/backup.mjs отсутствует) — сначала установите его"
+  NODE_BIN="$NODE_PREFIX/bin/node"
+  [ -x "$NODE_BIN" ] || NODE_BIN="$(command -v node || true)"
+  [ -n "$NODE_BIN" ] && [ -x "$NODE_BIN" ] || die "Node.js не найден ($NODE_PREFIX/bin/node)"
+  [ -r "$DB_PATH" ] || die "БД не найдена или не читается: $DB_PATH"
+  BACKUP_DIR="$DATA_DIR/backups"
+  info "бэкап БД $DB_PATH → $BACKUP_DIR (ретенция ${BACKUP_KEEP:-10})"
+  mkdir -p "$BACKUP_DIR"
+  chown "$ENOT_USER:$ENOT_USER" "$BACKUP_DIR"
+  if id "$ENOT_USER" >/dev/null 2>&1; then
+    runuser -u "$ENOT_USER" -- "$NODE_BIN" "$CURRENT_LINK/server/backup.mjs" "$DB_PATH" "$BACKUP_DIR" "${BACKUP_KEEP:-10}" || die "бэкап не удался"
+  else
+    "$NODE_BIN" "$CURRENT_LINK/server/backup.mjs" "$DB_PATH" "$BACKUP_DIR" "${BACKUP_KEEP:-10}" || die "бэкап не удался"
+  fi
+  info "расписание: см. docs/SERVER.md, раздел «Бэкап» (cron: sudo bash $0 --backup)"
+  exit 0
+fi
 
 preflight
 
@@ -377,6 +401,7 @@ install -m 0600 /dev/null "$ENV_FILE"
   if [ -n "$TURN_PASSWORD" ]; then echo "ENOT_TURN_PASSWORD=$TURN_PASSWORD"; fi
   if [ -n "$GRACE_MS" ]; then echo "ENOT_GRACE_MS=$GRACE_MS"; fi
   if [ -n "$RETENTION_DAYS" ]; then echo "ENOT_RETENTION_DAYS=$RETENTION_DAYS"; fi
+  if [ -n "$MAX_SESSIONS" ]; then echo "ENOT_MAX_SESSIONS=$MAX_SESSIONS"; fi
 } | tee "$ENV_FILE" >/dev/null
 chmod 0600 "$ENV_FILE"
 

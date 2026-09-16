@@ -12,6 +12,36 @@ async function setup(t) {
   return { base, port };
 }
 
+test('rate limit: брутфорс одного логина останавливается, соседний логин не затронут', async (t) => {
+  const dbPath = tmpDb(t);
+  const { base } = await startServer(t, {
+    dbPath,
+    limits: { loginId: new RateLimiter(3, 60_000) }, // per-IP login оставляем дефолтный (10/мин)
+  });
+  const admin = await adminLogin(dbPath, base); // успешный вход лимит не тратит
+
+  // 3 неудачных пароля исчерпывают per-login порог
+  for (let i = 0; i < 3; i++) {
+    const bad = await api(base, 'POST', '/auth/login', { body: { login: admin.user.login, password: `неверный-${i}` } });
+    assert.equal(bad.status, 401);
+  }
+  // четвёртая — даже с ВЕРНЫМ паролем — отклонена, пока не истечёт окно
+  const locked = await api(base, 'POST', '/auth/login', { body: { login: admin.user.login, password: 'Пароль-админа-123' } });
+  assert.equal(locked.status, 429);
+  assert.equal(locked.json.error.code, 'rate_limited');
+
+  // соседний логин не затронут
+  const inv = await api(base, 'POST', '/invites', { token: admin.token, body: { role: 'operator' } });
+  await api(base, 'POST', '/invites/accept', { body: { token: inv.json.token, login: 'сосед', name: 'С', password: 'пароль-соседа' } });
+  const other = await api(base, 'POST', '/auth/login', { body: { login: 'сосед', password: 'пароль-соседа' } });
+  assert.equal(other.status, 200);
+
+  // неудачи видны в аудите
+  const audit = await api(base, 'GET', '/audit?limit=100', { token: admin.token });
+  const failures = audit.json.items.filter((a) => a.action === 'login.failure');
+  assert.ok(failures.length >= 3, 'неудачные попытки входа записаны в аудит');
+});
+
 test('rate limit: POST /sessions ограничен по IP (429)', async (t) => {
   const { base } = await setup(t);
   let last;
