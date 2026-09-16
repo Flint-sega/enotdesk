@@ -61,7 +61,7 @@ export function createSignalClient({ url, wsFactory = (u) => new WebSocket(u), a
         });
         ws.on('message', (raw) => {
           let msg = null;
-          try { msg = JSON.parse(raw.toString('utf8')); } catch { msg = null; }
+          try { msg = JSON.parse(raw.toString('utf8')); } catch { /* некорректный JSON — игнорируем */ }
           if (!msg) return;
           if (msg.type === 'ready' && !ready) {
             ready = true;

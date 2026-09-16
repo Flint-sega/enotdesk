@@ -22,7 +22,7 @@ async function makeSession(base, port, admin) {
 test('heartbeat обновляет lease: без него сеанс истекает, с ним живёт', async (t) => {
   const { base, port, admin } = await setup(t, { leaseMs: 700, heartbeatMs: 200 });
 
-  const { sessionId, hostToken, host } = await makeSession(base, port, admin);
+  const { hostToken, host } = await makeSession(base, port, admin);
   // держим heartbeat ~1.4с (два lease-периода) — сеанс жив
   const ackP = host.wait((m) => m.type === 'heartbeat');
   for (let i = 0; i < 9; i++) {
@@ -104,7 +104,7 @@ test('operator подключается после approval: сразу полу
 
 // ---- грейс переподключения (ADR 0013) ----
 
-async function approvedSession(base, port, admin, extra = {}) {
+async function approvedSession(base, port, admin) {
   const reg = await api(base, 'POST', '/sessions');
   const s = reg.json;
   const host = wsConnect(port);
@@ -186,7 +186,7 @@ test('грейс: переподключение другим токеном и 
 
 test('грейс: истёкший грейс завершает сеанс как host-lost/operator-lost', async (t) => {
   const { base, port, admin } = await setup(t, { leaseMs: 60_000, heartbeatMs: 200, graceMs: 1200 });
-  const { s, host, op } = await approvedSession(base, port, admin);
+  const { host, op } = await approvedSession(base, port, admin);
 
   const resumed = op.wait((m) => m.type === 'ended', 4000);
   host.close();

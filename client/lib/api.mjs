@@ -90,11 +90,11 @@ export function createApi({ baseUrl, fetchImpl = fetch } = {}) {
           body: hasBody ? JSON.stringify(body) : undefined,
         });
       } catch (e) {
-        throw new Error(`Сервер недоступен: ${e?.cause?.code ?? e.message}`);
+        throw new Error(`Сервер недоступен: ${e?.cause?.code ?? e.message}`, { cause: e });
       }
 
       let json = null;
-      try { json = await res.json(); } catch { json = null; }
+      try { json = await res.json(); } catch { /* не-JSON ответ (страница) — тело null */ }
       const result = { status: res.status, body: json };
 
       // Токены оседают в main, к рендереру не уходят.

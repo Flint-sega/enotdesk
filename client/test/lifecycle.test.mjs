@@ -155,7 +155,7 @@ test('api.request не возвращает hostToken наружу рендер�
   assert.ok(created.body.sessionId && created.body.password);
 });
 
-test('недоступный сервер даёт честную ошибку, а не выдуманные данные', async (t) => {
+test('недоступный сервер даёт честную ошибку, а не выдуманные данные', async () => {
   const api = createApi({ baseUrl: 'http://127.0.0.1:9' }); // ничего не слушает
   await assert.rejects(() => api.request('session.create', {}), /fetch failed|ECONNREFUSED|недоступен/i);
 });

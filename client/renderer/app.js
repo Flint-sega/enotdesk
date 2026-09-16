@@ -9,7 +9,7 @@ import { parseChatMessage, chatMessage } from '../lib/chat.mjs';
 import { parseClipMessage, clipMessage } from '../lib/clipboard-sync.mjs';
 import {
   parseFileControl, createFileReceiver, createFileSender,
-  fileMeta, fileAccept, fileReject, fileDone, makeFileId,
+  fileMeta, fileAccept, fileReject, makeFileId,
 } from '../lib/file-transfer.mjs';
 
 const $ = (id) => document.getElementById(id);
@@ -368,7 +368,7 @@ enot.onSignal(async (msg) => {
       if (state.role === 'client') text($('client-live-note'), '');
       else text($('remote-status'), 'Подключено');
       break;
-    case 'ended':
+    case 'ended': {
       stopMedia();
       enot.closeSignal().catch(() => {});
       const clientSide = state.role === 'client';
@@ -381,6 +381,7 @@ enot.onSignal(async (msg) => {
         text($('conn-error'), END_REASONS[msg.reason] ?? `Сеанс завершён (${msg.reason ?? 'причина неизвестна'}).`);
       }
       break;
+    }
     case 'error':
       if (state.role === 'client' && state.session) { text($('client-error-text'), msg.message ?? 'Ошибка сервера'); clientShow('error'); }
       else if (state.role === 'operator') {

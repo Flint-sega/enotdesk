@@ -7,7 +7,7 @@ import os from 'node:os';
 
 export function tmpDb(t) {
   const file = path.join(os.tmpdir(), `enot-test-${Date.now()}-${Math.random().toString(36).slice(2)}.db`);
-  t.after(() => { try { fs.rmSync(file, { force: true }); } catch {} });
+  t.after(() => { try { fs.rmSync(file, { force: true }); } catch { /* удалять нечего */ } });
   return file;
 }
 

@@ -1,0 +1,13 @@
+version: 2
+updates:
+  - package-ecosystem: npm
+    directory: /
+    schedule:
+      interval: weekly
+    # точные пины по конвенции репозитория — обновления только через PR и npm test
+    allow:
+      - dependency-type: all
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: weekly

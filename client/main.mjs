@@ -6,7 +6,7 @@ import { app, BrowserWindow, ipcMain, session, desktopCapturer, screen, shell, c
 import path from 'node:path';
 import fs from 'node:fs';
 import { createRequire } from 'node:module';
-import { createApi, sanitizeForRenderer } from './lib/api.mjs';
+import { createApi } from './lib/api.mjs';
 import { createSignalClient } from './lib/signal.mjs';
 import { createInputGate } from './lib/protocol.mjs';
 import { createNativeInput, loadPlatformAdapter } from './lib/native-input.mjs';
@@ -45,7 +45,7 @@ let signalRole = null;
 // или первый реальный ввод; нет пакета — честный инертный режим.
 const nativeInput = createNativeInput({
   getAdapter: () => {
-    let koffi = null;
+    let koffi;
     try { koffi = createRequire(import.meta.url)('koffi'); } catch { koffi = null; }
     return loadPlatformAdapter(koffi);
   },

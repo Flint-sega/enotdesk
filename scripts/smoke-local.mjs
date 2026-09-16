@@ -13,7 +13,7 @@ const fail = (msg) => { console.error(`SMOKE FAIL: ${msg}`); process.exitCode = 
 const ok = (msg) => console.log(`SMOKE ok: ${msg}`);
 
 const dbPath = path.join(os.tmpdir(), `enodesk-smoke-${process.pid}.db`);
-for (const f of [dbPath, `${dbPath}-wal`, `${dbPath}-shm`]) { try { fs.unlinkSync(f); } catch {} }
+for (const f of [dbPath, `${dbPath}-wal`, `${dbPath}-shm`]) { try { fs.unlinkSync(f); } catch { /* файла могло не быть */ } }
 
 const boot = bootstrapAdmin(dbPath, { login: 'smokeadmin', name: 'Smoke Admin', password: 'smoke-pass-123' });
 if (!boot.ok) { fail(`bootstrap: ${boot.reason}`); process.exit(1); }
@@ -111,5 +111,5 @@ try {
   fail(e.message);
 } finally {
   await svc.close();
-  for (const f of [dbPath, `${dbPath}-wal`, `${dbPath}-shm`]) { try { fs.unlinkSync(f); } catch {} }
+  for (const f of [dbPath, `${dbPath}-wal`, `${dbPath}-shm`]) { try { fs.unlinkSync(f); } catch { /* файла могло не быть */ } }
 }
