@@ -23,6 +23,7 @@ const inst = createServer({
   turnPassword: process.env.ENOT_TURN_PASSWORD || '',
   graceMs: process.env.ENOT_GRACE_MS ? parseInt(process.env.ENOT_GRACE_MS, 10) : undefined,
   retentionDays: process.env.ENOT_RETENTION_DAYS ? parseInt(process.env.ENOT_RETENTION_DAYS, 10) : undefined,
+  maxSessions: process.env.ENOT_MAX_SESSIONS ? parseInt(process.env.ENOT_MAX_SESSIONS, 10) : undefined,
 });
 const port = await inst.start();
 console.log(`EnotDesk server listening on ${process.env.ENOT_HOST || '127.0.0.1'}:${port}`);

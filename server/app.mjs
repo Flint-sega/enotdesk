@@ -61,6 +61,16 @@ export class RateLimiter {
     h.count += 1;
     return h.count <= this.limit;
   }
+
+  // Порог исчерпан (без инкремента): для брутфорс-защиты логина, где
+  // лимит бьют только неудачные попытки, а проверять надо каждую.
+  exceeded(key) {
+    const h = this.#hits.get(key);
+    if (!h) return false;
+    const now = this.#now();
+    if (now > h.reset) return false;
+    return h.count >= this.limit;
+  }
 }
 
 const BRAND_FILES = {
@@ -157,10 +167,14 @@ export function createServer(opts = {}) {
     graceMs: opts.graceMs ?? 30_000,
     // сколько дней хранить завершённые сеансы; 0 — хранить вечно
     retentionDays: opts.retentionDays ?? 90,
+    // потолок живых (WS) сеансов — защита памяти публичного сервера
+    maxSessions: opts.maxSessions ?? 200,
     authTimeoutMs: opts.authTimeoutMs ?? 5000,
     bodyLimit: opts.bodyLimit ?? 64 * 1024,
     limits: {
       login: opts.limits?.login ?? new RateLimiter(10, 60_000),
+      // брутфорс конкретного логина: порог бьют только неудачные попытки
+      loginId: opts.limits?.loginId ?? new RateLimiter(5, 15 * 60_000),
       sessions: opts.limits?.sessions ?? new RateLimiter(10, 60_000),
       claim: opts.limits?.claim ?? new RateLimiter(10, 60_000),
       claimId: opts.limits?.claimId ?? new RateLimiter(20, 60_000),
@@ -317,8 +331,15 @@ export function createServer(opts = {}) {
       if (typeof login !== 'string' || typeof password !== 'string') {
         return err(res, 400, 'bad_request', 'Некорректный запрос');
       }
+      const loginKey = `login:${login.trim().toLowerCase()}`;
+      // брутфорс конкретного аккаунта: порог бьют только неудачные попытки,
+      // поэтому состояние проверяем без инкремента — верный пароль тоже отклоняется
+      if (cfg.limits.loginId.exceeded(loginKey)) {
+        return err(res, 429, 'rate_limited', 'Слишком много неудачных попыток, попробуйте позже');
+      }
       const user = db.prepare('SELECT * FROM users WHERE login = ?').get(login.trim().toLowerCase());
       if (!user || !user.active || !verifyPassword(password, user.password)) {
+        cfg.limits.loginId.take(loginKey);
         auditLog(db, null, 'login.failure', null, { login: String(login).slice(0, 120) });
         return err(res, 401, 'invalid_credentials', 'Неверный логин или пароль');
       }
@@ -345,6 +366,23 @@ export function createServer(opts = {}) {
       const token = bearer(req);
       if (token) db.prepare('DELETE FROM auth_tokens WHERE token_hash = ?').run(sha256(token));
       auditLog(db, user.id, 'logout', user.id, {});
+      return ok(res, 200, { ok: true });
+    }
+    if (p === '/auth/password' && req.method === 'PATCH') {
+      if (!user) return err(res, 401, 'unauthorized', 'Требуется авторизация');
+      const { oldPassword, newPassword } = body || {};
+      if (typeof oldPassword !== 'string' || typeof newPassword !== 'string' || newPassword.length < 8) {
+        return err(res, 400, 'bad_request', 'Проверьте данные: новый пароль — от 8 символов');
+      }
+      const row = db.prepare('SELECT password FROM users WHERE id = ?').get(user.id);
+      if (!row || !verifyPassword(oldPassword, row.password)) {
+        return err(res, 403, 'wrong_password', 'Текущий пароль указан неверно');
+      }
+      db.prepare('UPDATE users SET password = ? WHERE id = ?').run(hashPassword(newPassword), user.id);
+      // прочие сеансы выходят принудительно: старые токены умирают, текущий остаётся
+      const current = sha256(bearer(req) ?? '');
+      db.prepare('DELETE FROM auth_tokens WHERE user_id = ? AND token_hash != ?').run(user.id, current);
+      auditLog(db, user.id, 'password.change', user.id, {});
       return ok(res, 200, { ok: true });
     }
 
@@ -700,8 +738,19 @@ export function createServer(opts = {}) {
       const file = distFiles().find((f) => f.name === name);
       if (!file) return err(res, 404, 'not_found', 'Файл недоступен');
       const fullPath = path.join(cfg.distDir, name);
+      const etag = `"${file.etag}"`;
+      const base = {
+        'Content-Type': 'application/octet-stream',
+        'Accept-Ranges': 'bytes',
+        'Last-Modified': new Date(file.mtimeMs).toUTCString(),
+        'ETag': etag,
+      };
+      // качалка уже скачала эту версию — не перекачиваем гигабайты
+      if (req.headers['if-none-match'] === etag) {
+        res.writeHead(304, { ETag: etag });
+        return res.end();
+      }
       const range = parseRange(req.headers.range, file.size);
-      const base = { 'Content-Type': 'application/octet-stream', 'Accept-Ranges': 'bytes' };
       if (range?.unsatisfiable) {
         res.writeHead(416, { ...base, 'Content-Range': `bytes */${file.size}` });
         return res.end();
@@ -738,8 +787,15 @@ export function createServer(opts = {}) {
         const platform = n.endsWith('.exe') ? 'win32' : n.endsWith('.AppImage') ? 'linux' : 'darwin';
         const arch = /arm64/i.test(n) ? 'arm64' : 'x64';
         let size = 0;
-        try { size = fs.statSync(path.join(dir, n)).size; } catch { /* исчез файл между readdir и stat */ }
-        return { platform, arch, name: n, url: `/api/v1/downloads-files/${encodeURIComponent(n)}`, size };
+        let mtimeMs = 0;
+        try {
+          const st = fs.statSync(path.join(dir, n));
+          size = st.size;
+          mtimeMs = st.mtimeMs;
+        } catch { /* исчез файл между readdir и stat */ }
+        // слабый ETag — файлы большие, считаем по метаданным, не по содержимому
+        const etag = crypto.createHash('sha256').update(`${n}:${size}:${Math.floor(mtimeMs)}`).digest('hex').slice(0, 16);
+        return { platform, arch, name: n, url: `/api/v1/downloads-files/${encodeURIComponent(n)}`, size, mtimeMs, etag };
       });
   }
 
@@ -813,6 +869,10 @@ export function createServer(opts = {}) {
       let rt = live.get(s.id);
       if (rt && (msg.role === 'host' ? rt.hostWs : rt.opWs)) {
         return ws.close(4004, 'duplicate-socket');
+      }
+      if (!rt && live.size >= cfg.maxSessions) {
+        // переподключения своих не блокируем — только новые сеансы при перегрузке
+        return ws.close(4005, 'server-busy');
       }
       if (!rt) {
         rt = { hostWs: null, opWs: null, operatorUserId: null, sigCount: 0, sigReset: 0, hostLostAt: null, opLostAt: null };

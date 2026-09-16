@@ -264,6 +264,27 @@ curl -fsS http://127.0.0.1:8080/api/v1/health
 
 В env-файле секретов нет, кроме пароля TURN (если задан), — его тоже стоит сохранить, но не вместе с бэкапами на публичном диске.
 
+### 7.1. Встроенный бэкап без sqlite3 (рекомендуется)
+
+Установщик умеет сам: `VACUUM INTO` штатным Node (sqlite3-CLI не нужен), дампы в `/var/lib/enotdesk/backups`, ретенция последних 10 (меняется через `BACKUP_KEEP`):
+
+```bash
+sudo bash /tmp/enotdesk-install/install-server.sh --backup
+```
+
+Расписание — системный cron, например каждый день в 03:15 (`crontab -e` под root):
+
+```cron
+15 3 * * * sudo bash /tmp/enotdesk-install/install-server.sh --backup >> /var/log/enotdesk-backup.log 2>&1
+```
+
+Скрипт лежит на сервере вместе с релизом (`/opt/enotdesk/current/server/backup.mjs`), его можно вызывать и напрямую:
+
+```bash
+sudo -u enotdesk /opt/node-24/bin/node /opt/enotdesk/current/server/backup.mjs \
+  /var/lib/enotdesk/enotdesk.db /var/lib/enotdesk/backups 10
+```
+
 ## 8. Логи
 
 Сервис пишет в journald:
