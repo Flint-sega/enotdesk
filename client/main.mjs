@@ -2,7 +2,7 @@
 // ворота нативного ввода по реальному WS-состоянию, выбор источника захвата.
 // Рендереру доступен только context-isolated мост window.enot (preload.cjs).
 
-import { app, BrowserWindow, ipcMain, session, desktopCapturer, screen, shell, clipboard, systemPreferences } from 'electron';
+import { app, BrowserWindow, ipcMain, session, desktopCapturer, screen, shell, clipboard, systemPreferences, Menu } from 'electron';
 import path from 'node:path';
 import fs from 'node:fs';
 import { createRequire } from 'node:module';
@@ -32,6 +32,18 @@ const pkg = (() => {
 let win = null;
 let settingsPath = null;
 let settings = { serverUrl: DEFAULT_SERVER_URL, allowInsecureHttp: false };
+
+// Один экземпляр на машину: второй запуск просто уходит, а этот получает
+// second-instance и показывает окно. Заодно закрывает обход «одно окно —
+// одна роль» двойным запуском портативки.
+const gotLock = app.requestSingleInstanceLock();
+if (!gotLock) app.quit();
+app.on('second-instance', () => {
+  if (win && !win.isDestroyed()) {
+    if (win.isMinimized()) win.restore();
+    win.focus();
+  }
+});
 
 // Токены живут только здесь (main). Рендереру не возвращаются.
 let api = createApi({ baseUrl: settings.serverUrl });
@@ -91,7 +103,7 @@ function stopSignal() {
 function startSignal(params) {
   const { role, sessionId, claimId } = params;
   if (signal && signalRole && signalRole !== role) {
-    throw new Error('В этом окне уже идёт сеанс помощи. Одно окно EnotDesk работает только в одной роли — для проверки на одном компьютере запустите второе окно приложения.');
+    throw new Error('В этом окне уже идёт сеанс помощи. Одно окно EnotDesk работает только в одной роли — завершите текущий сеанс или используйте второе устройство.');
   }
   stopSignal();
   signalRole = role;
@@ -274,6 +286,17 @@ function createWindow() {
   win.webContents.setWindowOpenHandler(() => ({ action: 'deny' }));
   win.webContents.on('will-navigate', (e) => e.preventDefault());
 
+  // Контекстное меню текстовых полей: копировать/вставить/выделить — без IPC
+  win.webContents.on('context-menu', (_e, params) => {
+    if (!params.isEditable) return;
+    Menu.buildFromTemplate([
+      { label: 'Копировать', role: 'copy', enabled: params.editFlags.canCopy },
+      { label: 'Вставить', role: 'paste', enabled: params.editFlags.canPaste },
+      { type: 'separator' },
+      { label: 'Выделить всё', role: 'selectAll' },
+    ]).popup({ window: win });
+  });
+
   // Захват через задокументированный путь: setDisplayMediaRequestHandler
   session.defaultSession.setDisplayMediaRequestHandler((_opts, callback) => {
     if (!selectedSource) {
@@ -307,6 +330,7 @@ app.on('before-quit', cleanupAndQuit);
 app.on('window-all-closed', () => app.quit());
 
 app.whenReady().then(() => {
+  if (!gotLock) return; // второй экземпляр уже уходит через app.quit()
   if (SMOKE) {
     // Скриншот главного экрана: не first-run, иначе модалка настроек закрывает окно
     try {

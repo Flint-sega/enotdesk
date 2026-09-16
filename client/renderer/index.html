@@ -42,6 +42,7 @@
   </header>
 
   <main id="main">
+    <p id="update-banner" class="update-banner hidden" role="status"></p>
     <!-- ======================= КЛИЕНТ ======================= -->
     <section id="view-client" class="view" aria-label="Получить помощь">
       <div class="hero">
@@ -140,6 +141,7 @@
         <p id="client-live-note" class="note" role="status"></p>
         <div class="row gap wrap-btns">
           <button id="btn-switch-source" class="btn">Сменить экран</button>
+          <button id="btn-pause-stream" class="btn">Скрыть экран</button>
           <button id="btn-client-file" class="btn">Отправить файл</button>
           <input id="client-file-input" type="file" class="hidden">
         </div>
@@ -259,6 +261,7 @@
             <div id="op-remote" class="card hidden">
               <div class="toolbar">
                 <span id="remote-status" class="note" role="status">Подключение…</span>
+                <span id="session-timer" class="note"></span>
                 <span class="spacer"></span>
                 <button id="btn-fit" class="btn small">Заполнить</button>
                 <button id="btn-fullscreen" class="btn small">Во весь экран</button>
@@ -363,6 +366,7 @@
                 <button id="history-prev" class="btn small">← Назад</button>
                 <span id="history-page" class="muted"></span>
                 <button id="history-next" class="btn small">Вперёд →</button>
+                <button id="history-csv" class="btn small">Скачать CSV</button>
               </div>
             </div>
           </div>
@@ -377,6 +381,7 @@
                 <button id="audit-prev" class="btn small">← Назад</button>
                 <span id="audit-page" class="muted"></span>
                 <button id="audit-next" class="btn small">Вперёд →</button>
+                <button id="audit-csv" class="btn small">Скачать CSV</button>
               </div>
             </div>
           </div>

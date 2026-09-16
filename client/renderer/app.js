@@ -11,6 +11,10 @@ import {
   parseFileControl, createFileReceiver, createFileSender,
   fileMeta, fileAccept, fileReject, makeFileId,
 } from '../lib/file-transfer.mjs';
+import { isNewerVersion, latestVersionFrom } from '../lib/version-check.mjs';
+import { setVideoEnabled } from '../lib/media-toggle.mjs';
+import { summarizeStats, formatQuality } from '../lib/rtc-stats.mjs';
+import { toCsv } from '../lib/csv.mjs';
 
 const $ = (id) => document.getElementById(id);
 const enot = window.enot;
@@ -30,6 +34,7 @@ const state = {
   busy: false,
   pages: { contacts: 0, history: 0, audit: 0 },
   query: { contacts: '' },
+  activePane: 'connect', // активная боковая вкладка оператора (для счётчика чата)
 };
 
 const END_REASONS = {
@@ -148,9 +153,53 @@ $('btn-again').addEventListener('click', () => { cleanupSession(); clientShow('i
 function cleanupSession() {
   stopMedia();
   enot.closeSignal().catch(() => {});
+  streamPaused = false;
+  text($('btn-pause-stream'), 'Скрыть экран');
   state.session = null;
   state.pendingClaim = null;
   state.connect = null;
+}
+
+// Пауза трансляции: чёрные кадры оператору, явный статус у клиента.
+let streamPaused = false;
+$('btn-pause-stream').addEventListener('click', () => {
+  if (!state.localStream) return;
+  streamPaused = !streamPaused;
+  setVideoEnabled(state.localStream, !streamPaused);
+  text($('btn-pause-stream'), streamPaused ? 'Показать снова' : 'Скрыть экран');
+  text($('client-live-note'), streamPaused ? 'Трансляция приостановлена — оператор не видит экран.' : '');
+});
+
+// Таймер длительности сеанса у оператора.
+let sessionTimer = null;
+function startSessionTimer() {
+  const startedAt = Date.now();
+  clearInterval(sessionTimer);
+  sessionTimer = setInterval(() => {
+    const sec = Math.floor((Date.now() - startedAt) / 1000);
+    text($('session-timer'), `${String(Math.floor(sec / 60)).padStart(2, '0')}:${String(sec % 60).padStart(2, '0')}`);
+  }, 1000);
+}
+function stopSessionTimer() {
+  clearInterval(sessionTimer);
+  sessionTimer = null;
+  text($('session-timer'), '');
+}
+
+// Индикатор качества соединения у оператора (rtt/потери видео).
+let qualityTimer = null;
+function startQualityPolling(pc) {
+  stopQualityPolling();
+  qualityTimer = setInterval(async () => {
+    try {
+      const summary = summarizeStats(await pc.getStats());
+      text($('remote-status'), formatQuality('Подключено', summary));
+    } catch { /* соединение закрывается — не критично */ }
+  }, 2000);
+}
+function stopQualityPolling() {
+  clearInterval(qualityTimer);
+  qualityTimer = null;
 }
 
 function stopMedia() {
@@ -162,6 +211,8 @@ function stopMedia() {
   state.dcs = null; state.fileRx = null;
   state.iceQueue = [];
   $('remote-video').srcObject = null;
+  stopSessionTimer();
+  stopQualityPolling();
 }
 
 // ---------- WebRTC: host — offerer, operator — answerer, ICE в очереди ----------
@@ -308,6 +359,8 @@ async function operatorAnswer(offerSdp) {
   fileCh.onmessage = (m) => operatorFileMessage(fileCh, m.data);
   state.dcs = { input: state.dc, chat: chatCh, clip: clipCh, file: fileCh };
   pc.ontrack = (e) => { $('remote-video').srcObject = e.streams[0]; };
+  startSessionTimer();
+  startQualityPolling(pc);
   await pc.setRemoteDescription({ type: 'offer', sdp: offerSdp });
   drainIce(pc);
   const answer = await pc.createAnswer();
@@ -627,16 +680,22 @@ function wireOperatorInput(dc) {
 
 // ---------- сессия: чат, буфер обмена, файлы, видео-UX (ADR 0014) ----------
 
-function appendChat(logId, who, text) {
+let unreadChat = 0;
+function appendChat(logId, who, value) {
   const log = $(logId);
   const line = document.createElement('p');
   line.className = `chat-line chat-${who === 'Вы' ? 'me' : 'them'}`;
   const name = document.createElement('strong');
   name.textContent = `${who}: `;
   line.appendChild(name);
-  line.appendChild(document.createTextNode(text));
+  line.appendChild(document.createTextNode(value));
   log.appendChild(line);
   log.scrollTop = log.scrollHeight;
+  // оператор в другой вкладке — честный счётчик непрочитанного на вкладке «Подключение»
+  if (logId === 'op-chat-log' && who !== 'Вы' && state.activePane !== 'connect') {
+    unreadChat += 1;
+    text(document.querySelector('.side-tab[data-pane="connect"]'), `Подключение (${unreadChat})`);
+  }
 }
 
 function sendChat(side) {
@@ -786,10 +845,8 @@ function operatorFileMessage(ch, data) {
 }
 
 // Отправка файла (обе стороны): meta + чанки через один file-канал.
-function sendFile(side) {
-  const input = $(side === 'client' ? 'client-file-input' : 'op-file-input');
-  const file = input.files?.[0];
-  input.value = '';
+// Файл приходит и из input, и из drag&drop — общий путь один.
+function sendFileFrom(side, file) {
   if (!file) return;
   const dc = state.dcs?.file;
   if (!dc || dc.readyState !== 'open') {
@@ -803,10 +860,32 @@ function sendFile(side) {
   } catch { /* канал закрыт */ return; }
   if (side === 'op') text($('file-op-status'), `Отправляем «${file.name}»…`);
 }
+function sendFile(side) {
+  const input = $(side === 'client' ? 'client-file-input' : 'op-file-input');
+  const file = input.files?.[0];
+  input.value = '';
+  sendFileFrom(side, file);
+}
 $('btn-client-file').addEventListener('click', () => $('client-file-input').click());
 $('client-file-input').addEventListener('change', () => sendFile('client'));
 $('btn-op-file').addEventListener('click', () => $('op-file-input').click());
 $('op-file-input').addEventListener('change', () => sendFile('op'));
+
+// Drag&drop файла на карточки сеанса, у обеих сторон.
+function wireFileDrop(zone, side) {
+  zone.addEventListener('dragover', (e) => {
+    e.preventDefault();
+    zone.classList.add('drop-hover');
+  });
+  zone.addEventListener('dragleave', () => zone.classList.remove('drop-hover'));
+  zone.addEventListener('drop', (e) => {
+    e.preventDefault();
+    zone.classList.remove('drop-hover');
+    sendFileFrom(side, e.dataTransfer?.files?.[0]);
+  });
+}
+wireFileDrop($('client-connected'), 'client');
+wireFileDrop($('op-remote'), 'op');
 
 // Видео-UX: полноэкранный режим, заполнение кадра, смена источника на ходу.
 $('btn-fullscreen').addEventListener('click', () => {
@@ -1158,6 +1237,36 @@ $('history-next').addEventListener('click', () => { state.pages.history += 1; re
 $('audit-prev').addEventListener('click', () => { state.pages.audit = Math.max(0, state.pages.audit - 1); renderAudit(); });
 $('audit-next').addEventListener('click', () => { state.pages.audit += 1; renderAudit(); });
 
+// Экспорт в CSV: до 1000 записей постранично, файл через Blob (как принятые файлы).
+const CSV_LIMIT = 1000;
+async function downloadCsv(op, header, rowOf) {
+  const rows = [];
+  for (let offset = 0; offset < CSV_LIMIT && rows.length < CSV_LIMIT; offset += 100) {
+    const body = await fetchList(op, { limit: 100, offset });
+    for (const it of body.items) rows.push(rowOf(it));
+    if (rows.length >= body.total || body.items.length < 100) break;
+  }
+  const blob = new Blob([toCsv(header, rows)], { type: 'text/csv;charset=utf-8' });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = `${op}-${new Date().toISOString().slice(0, 10)}.csv`;
+  a.click();
+  setTimeout(() => URL.revokeObjectURL(url), 60_000);
+}
+$('history-csv').addEventListener('click', () => {
+  downloadCsv('history.list',
+    ['Сеанс', 'Оператор', 'Состояние', 'Создан', 'Завершён', 'Причина'],
+    (it) => [it.id, it.operatorName ?? '', it.state, it.createdAt, it.endedAt ?? '', it.endReason ?? ''])
+    .catch((e) => text($('history-status'), e.message));
+});
+$('audit-csv').addEventListener('click', () => {
+  downloadCsv('audit.list',
+    ['Действие', 'Кто', 'Объект', 'Когда', 'Детали'],
+    (it) => [it.action, it.actorId ?? '', it.targetId ?? '', it.createdAt, JSON.stringify(it.detail ?? {})])
+    .catch((e) => text($('audit-status'), e.message));
+});
+
 for (const btn of document.querySelectorAll('.side-tab')) {
   btn.addEventListener('click', () => {
     for (const b of document.querySelectorAll('.side-tab')) { b.classList.remove('active'); b.setAttribute('aria-pressed', 'false'); }
@@ -1165,6 +1274,11 @@ for (const btn of document.querySelectorAll('.side-tab')) {
     btn.setAttribute('aria-pressed', 'true');
     for (const pane of document.querySelectorAll('.pane')) hide(pane);
     show($('pane-' + btn.dataset.pane));
+    state.activePane = btn.dataset.pane;
+    if (btn.dataset.pane === 'connect') {
+      unreadChat = 0; // вкладка открыта — непрочитанное прочитано
+      text(btn, 'Подключение');
+    }
     if (btn.dataset.pane === 'contacts') renderContacts();
     if (btn.dataset.pane === 'team') renderTeam();
     if (btn.dataset.pane === 'history') renderHistory();
@@ -1205,12 +1319,27 @@ $('btn-settings-save').addEventListener('click', async () => {
     // nativeInput проверяется лениво: «не проверено» — не повод заявлять недоступность
     if (perms.nativeInput?.checked && !perms.nativeInput.available) notes.push('Нативный ввод недоступен: управление мышью/клавиатурой работать не будет.');
     text($('perm-report'), notes.join(' '));
+    enot.getSettings().then((s2) => checkForUpdate(s2.version)).catch(() => { /* не критично */ });
   } catch (e) {
     text($('settings-error'), `Сервер недоступен: ${e.message}`);
   } finally {
     setBusy(btn, false);
   }
 });
+
+// Баннер «доступна новая версия»: сравниваем свою версию со сборками на сервере.
+// Сетевые сбои молча игнорируются — баннер не критичен.
+async function checkForUpdate(currentVersion) {
+  try {
+    const res = await enot.request('downloads', {});
+    if (res.status !== 200 || !Array.isArray(res.body?.items)) return;
+    const latest = latestVersionFrom(res.body.items.map((f) => f.name));
+    if (latest && currentVersion && isNewerVersion(currentVersion, latest)) {
+      text($('update-banner'), `Доступна версия ${latest} — обновите клиент со страницы загрузок вашего сервера EnotDesk.`);
+      show($('update-banner'));
+    }
+  } catch { /* не критично */ }
+}
 
 // ---------- запуск ----------
 
@@ -1219,6 +1348,7 @@ $('btn-settings-save').addEventListener('click', async () => {
   if (s.version) { // футер только с фактической версией — без выдуманных чисел
     text($('app-version'), s.version);
     show($('app-footer'));
+    checkForUpdate(s.version);
   }
   if (s.firstRun) openSettings(); // первый запуск: экран адреса сервера
 })();
