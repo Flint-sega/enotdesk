@@ -21,6 +21,7 @@ const inst = createServer({
   turnUrls: process.env.ENOT_TURN_URLS || '',
   turnUsername: process.env.ENOT_TURN_USERNAME || '',
   turnPassword: process.env.ENOT_TURN_PASSWORD || '',
+  graceMs: process.env.ENOT_GRACE_MS ? parseInt(process.env.ENOT_GRACE_MS, 10) : undefined,
 });
 const port = await inst.start();
 console.log(`EnotDesk server listening on ${process.env.ENOT_HOST || '127.0.0.1'}:${port}`);
