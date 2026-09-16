@@ -244,6 +244,7 @@ merge_env_file() {
   if [ -z "$TURN_USERNAME" ]; then TURN_USERNAME="$(read_env_value ENOT_TURN_USERNAME)"; fi
   if [ -z "$TURN_PASSWORD" ]; then TURN_PASSWORD="$(read_env_value ENOT_TURN_PASSWORD)"; fi
   if [ -z "${ENOT_GRACE_MS:-}" ]; then GRACE_MS="$(read_env_value ENOT_GRACE_MS)"; else GRACE_MS="$ENOT_GRACE_MS"; fi
+  if [ -z "${ENOT_RETENTION_DAYS:-}" ]; then RETENTION_DAYS="$(read_env_value ENOT_RETENTION_DAYS)"; else RETENTION_DAYS="$ENOT_RETENTION_DAYS"; fi
 }
 
 print_plan() {
@@ -375,6 +376,7 @@ install -m 0600 /dev/null "$ENV_FILE"
   if [ -n "$TURN_USERNAME" ]; then echo "ENOT_TURN_USERNAME=$TURN_USERNAME"; fi
   if [ -n "$TURN_PASSWORD" ]; then echo "ENOT_TURN_PASSWORD=$TURN_PASSWORD"; fi
   if [ -n "$GRACE_MS" ]; then echo "ENOT_GRACE_MS=$GRACE_MS"; fi
+  if [ -n "$RETENTION_DAYS" ]; then echo "ENOT_RETENTION_DAYS=$RETENTION_DAYS"; fi
 } | tee "$ENV_FILE" >/dev/null
 chmod 0600 "$ENV_FILE"
 
@@ -397,6 +399,10 @@ Restart=on-failure
 RestartSec=3
 NoNewPrivileges=true
 PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=true
+# Если ENOT_DB или ENOT_DIST_DIR вынесены за $DATA_DIR — добавьте эти пути в ReadWritePaths.
+ReadWritePaths=$DATA_DIR
 
 [Install]
 WantedBy=multi-user.target

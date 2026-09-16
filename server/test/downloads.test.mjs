@@ -107,6 +107,15 @@ test('downloads-files: Range → 206 точными байтами, без Range
   assert.equal(full.headers.get('content-length'), String(body.length));
   assert.equal(Buffer.compare(Buffer.from(await full.arrayBuffer()), body), 0);
 
+  // HEAD — те же заголовки без тела (качалки и менеджеры загрузок)
+  const head = await fetch(url, { method: 'HEAD' });
+  assert.equal(head.status, 200);
+  assert.equal(head.headers.get('content-length'), String(body.length));
+  assert.equal(await head.text(), '');
+  const headPart = await fetch(url, { method: 'HEAD', headers: { Range: 'bytes=0-1023' } });
+  assert.equal(headPart.status, 206);
+  assert.equal(headPart.headers.get('content-length'), '1024');
+
   const part = await fetch(url, { headers: { Range: 'bytes=0-1023' } });
   assert.equal(part.status, 206);
   assert.equal(part.headers.get('content-length'), '1024');
@@ -143,4 +152,13 @@ test('downloads-files: traversal — 400, запрещённое имя — 404 
   assert.equal((await fetch(base + '/api/v1/downloads-files/secrets.zip')).status, 404);
   const res = await api(base, 'GET', '/downloads');
   assert.deepEqual(res.json.items, []);
+});
+
+test('downloads: страница отдаётся с защитными заголовками (CSP, nosniff, DENY)', async (t) => {
+  const { base } = await startServer(t);
+  const res = await fetch(base + '/downloads');
+  assert.equal(res.status, 200);
+  assert.match(res.headers.get('content-security-policy') ?? '', /default-src 'none'/);
+  assert.equal(res.headers.get('x-content-type-options'), 'nosniff');
+  assert.equal(res.headers.get('x-frame-options'), 'DENY');
 });
