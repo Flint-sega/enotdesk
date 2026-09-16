@@ -20,6 +20,23 @@ test('rate limit: POST /sessions ограничен по IP (429)', async (t) =>
   assert.equal(last.json.error.code, 'rate_limited');
 });
 
+test('sessions: не более трёх висящих регистраций с одного IP; завершение освобождает слот', async (t) => {
+  const { base } = await setup(t, { leaseMs: 60_000 });
+  const regs = [];
+  for (let i = 0; i < 3; i++) {
+    const r = await api(base, 'POST', '/sessions');
+    assert.equal(r.status, 201, `регистрация ${i + 1} должна пройти`);
+    regs.push(r.json);
+  }
+  const fourth = await api(base, 'POST', '/sessions');
+  assert.equal(fourth.status, 429, 'четвёртая висящая регистрация с того же IP отклонена');
+
+  // хост завершает одну регистрацию — слот освобождается
+  await api(base, 'POST', `/sessions/${regs[0].sessionId}/end`, { token: regs[0].hostToken, body: {} });
+  const again = await api(base, 'POST', '/sessions');
+  assert.equal(again.status, 201);
+});
+
 test('rate limit: login ограничен по IP (429)', async (t) => {
   const { base } = await setup(t);
   const body = { login: 'никто', password: 'несуществует-1' };

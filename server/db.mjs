@@ -63,6 +63,8 @@ export function openDb(dbPath) {
       created_at TEXT NOT NULL
     );
   `);
+  // миграция для существующих баз: адрес создателя регистрации (потолок waiting-сессий на IP)
+  try { db.exec('ALTER TABLE sessions ADD COLUMN created_ip TEXT'); } catch { /* колонка уже есть */ }
   return db;
 }
 
@@ -72,6 +74,23 @@ export function endLiveSessions(db, reason) {
     "UPDATE sessions SET state='ended', ended_at=?, end_reason=? WHERE state != 'ended'"
   ).run(now, reason);
   return r.changes;
+}
+
+// Ретенция (ADR не требуется — гигиена): истёкшие токены старше 7 дней,
+// завершённые приглашения старше 30 дней, завершённые сеансы старше retentionDays.
+// Вызывается домом-уборщиком раз в час и тестируется напрямую.
+export function runRetention(db, { retentionDays = 90, nowMs = Date.now() } = {}) {
+  const cut = (days) => new Date(nowMs - days * 86_400_000).toISOString();
+  const tokens = db.prepare('DELETE FROM auth_tokens WHERE expires_at < ?').run(cut(7)).changes;
+  const invites = db.prepare(`
+    DELETE FROM invites
+    WHERE expires_at <= ? AND (used_at IS NOT NULL OR revoked_at IS NOT NULL OR expires_at <= ?)
+  `).run(cut(30), new Date(nowMs).toISOString()).changes;
+  let sessions = 0;
+  if (retentionDays > 0) {
+    sessions = db.prepare("DELETE FROM sessions WHERE state='ended' AND ended_at < ?").run(cut(retentionDays)).changes;
+  }
+  return { tokens, invites, sessions };
 }
 
 export function auditLog(db, actorId, action, targetId, detail = {}) {

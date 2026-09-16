@@ -72,6 +72,7 @@ chmod 600 "$ENV_FILE_LOCAL"
   if [ -n "${ENOT_TURN_USERNAME:-}" ]; then env_kv ENOT_TURN_USERNAME "$ENOT_TURN_USERNAME"; fi
   if [ -n "${ENOT_TURN_PASSWORD:-}" ]; then env_kv ENOT_TURN_PASSWORD "$ENOT_TURN_PASSWORD"; fi
   if [ -n "${ENOT_GRACE_MS:-}" ]; then env_kv ENOT_GRACE_MS "$ENOT_GRACE_MS"; fi
+  if [ -n "${ENOT_RETENTION_DAYS:-}" ]; then env_kv ENOT_RETENTION_DAYS "$ENOT_RETENTION_DAYS"; fi
 } > "$ENV_FILE_LOCAL"
 chmod 600 "$ENV_FILE_LOCAL"
 

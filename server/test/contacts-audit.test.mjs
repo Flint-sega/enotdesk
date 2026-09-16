@@ -83,6 +83,8 @@ test('audit: append-only записи с акторами из auth; history о�
 
   const audit = await api(base, 'GET', '/audit?limit=100', { token: aud.token });
   assert.equal(audit.status, 200);
+  // журнал — для админов и наблюдателей; оператору не нужен
+  assert.equal((await api(base, 'GET', '/audit', { token: op.token })).status, 403);
   const actions = audit.json.items.map((a) => a.action);
   for (const expected of ['login.success', 'login.failure', 'invite.create', 'invite.accept', 'contact.create', 'session.create', 'session.claim', 'session.end']) {
     assert.ok(actions.includes(expected), `нет действия ${expected}`);
