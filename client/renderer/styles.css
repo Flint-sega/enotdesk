@@ -443,6 +443,16 @@ input[type="checkbox"] {
 
 /* ---------- сессия: чат, буфер, файлы ---------- */
 
+.update-banner {
+  margin: 0 0 var(--s-3);
+  padding: 10px 16px;
+  background: rgba(53, 224, 196, .08);
+  border: 1px solid rgba(53, 224, 196, .4);
+  border-radius: var(--r-md);
+  color: var(--accent);
+  font-size: 14px;
+}
+.drop-hover { outline: 2px dashed var(--accent); outline-offset: 4px; }
 .wrap-btns { justify-content: flex-start; flex-wrap: wrap; margin: var(--s-3) 0; }
 .check-line {
   display: inline-flex; align-items: center; gap: 8px;
