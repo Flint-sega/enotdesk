@@ -26,6 +26,7 @@ const OPERATIONS = {
   'contacts.delete': { method: 'DELETE', path: (p) => `/contacts/${p.id}`, auth: 'bearer' },
   'history.list': { method: 'GET', path: '/history', auth: 'bearer' },
   'audit.list': { method: 'GET', path: '/audit', auth: 'bearer' },
+  downloads: { method: 'GET', path: '/downloads' },
 };
 
 const TOKEN_KEYS = new Set(['hostToken']);
