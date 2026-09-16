@@ -38,7 +38,7 @@ async function req(method, p, { token, auth, body } = {}) {
       signal: AbortSignal.timeout(TIMEOUT_MS),
     });
   } catch (e) {
-    throw new Error(`сеть: ${method} ${p}: ${e.message}`);
+    throw new Error(`сеть: ${method} ${p}: ${e.message}`, { cause: e });
   }
   return { status: res.status, data: await res.json().catch(() => ({})) };
 }
