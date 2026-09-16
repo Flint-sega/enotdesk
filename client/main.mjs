@@ -35,8 +35,10 @@ let settings = { serverUrl: DEFAULT_SERVER_URL, allowInsecureHttp: false };
 
 // Один экземпляр на машину: второй запуск просто уходит, а этот получает
 // second-instance и показывает окно. Заодно закрывает обход «одно окно —
-// одна роль» двойным запуском портативки.
-const gotLock = app.requestSingleInstanceLock();
+// одна роль» двойным запуском портативки. EDESK_ALLOW_MULTI=1 — явный
+// тестовый обход для проверки двух ролей на одном компьютере.
+const allowMulti = process.env.EDESK_ALLOW_MULTI === '1';
+const gotLock = allowMulti || app.requestSingleInstanceLock();
 if (!gotLock) app.quit();
 app.on('second-instance', () => {
   if (win && !win.isDestroyed()) {
