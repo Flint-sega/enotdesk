@@ -14,5 +14,8 @@ jobs:
           node-version: 24
           cache: npm
       - run: npm ci
+      - run: npm run lint
       - run: npm test
       - run: node scripts/smoke-local.mjs
+      - name: npm audit (производственные зависимости, не падает)
+        run: npm audit --omit=dev || true

@@ -14,6 +14,7 @@ export function makeFileId() {
 export function sanitizeFileName(raw) {
   if (typeof raw !== 'string') return '';
   const base = String(raw).split(/[\\/]/).pop() ?? '';
+  // eslint-disable-next-line no-control-regex -- управляющие символы вырезаем намеренно
   const cleaned = base.replace(/[\u0000-\u001f<>:"|?*]/g, '').trim();
   return cleaned === '.' || cleaned === '..' ? '' : cleaned.slice(0, 120);
 }

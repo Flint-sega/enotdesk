@@ -4,7 +4,7 @@ import fs from 'node:fs';
 import crypto from 'node:crypto';
 import { WebSocketServer } from 'ws';
 import { openDb, endLiveSessions, auditLog, runRetention } from './db.mjs';
-import { esc, page, downloadsHtml, inviteHtml } from './pages.mjs';
+import { page, downloadsHtml, inviteHtml } from './pages.mjs';
 import {
   hashPassword, verifyPassword, newToken, sha256,
   sessionPassword, newSessionId, newClaimId,
@@ -414,7 +414,6 @@ export function createServer(opts = {}) {
         ).get(target.id).c;
         if (admins === 0) return err(res, 409, 'last_admin', 'Нельзя отключить или понизить последнего активного администратора');
       }
-      const now = new Date().toISOString();
       if (role !== undefined && role !== target.role) {
         db.prepare('UPDATE users SET role = ? WHERE id = ?').run(role, target.id);
         auditLog(db, user.id, 'member.role', target.id, { role });
@@ -779,7 +778,7 @@ export function createServer(opts = {}) {
     // Только разрешённые имена файлов из каталога сборок — никакие другие файлы проекта не отдаются
     const allow = [/^EnotDesk.*\.exe$/, /^EnotDesk.*\.zip$/, /^EnotDesk.*\.AppImage$/];
     const dir = cfg.distDir;
-    let names = [];
+    let names;
     try { names = fs.readdirSync(dir); } catch { names = []; }
     return names
       .filter((n) => allow.some((re) => re.test(n)))
@@ -807,7 +806,7 @@ export function createServer(opts = {}) {
     if (url.pathname !== '/signal') { socket.destroy(); return; }
     const origin = req.headers.origin;
     if (origin) {
-      let same = false;
+      let same;
       try { same = new URL(origin).host === req.headers.host; } catch { same = false; }
       if (!same) {
         socket.write('HTTP/1.1 403 Forbidden\r\nConnection: close\r\n\r\n');
@@ -878,7 +877,7 @@ export function createServer(opts = {}) {
         rt = { hostWs: null, opWs: null, operatorUserId: null, sigCount: 0, sigReset: 0, hostLostAt: null, opLostAt: null };
         live.set(s.id, rt);
       }
-      let resumed = false;
+      let resumed;
       if (msg.role === 'host') {
         resumed = rt.hostLostAt != null; // переподключение в грейсе
         rt.hostLostAt = null;
@@ -963,7 +962,7 @@ export function createServer(opts = {}) {
       closed = true;
       clearInterval(sweeper);
       clearInterval(housekeeper);
-      for (const [id, rt] of live) {
+      for (const rt of live.values()) {
         for (const ws of [rt.hostWs, rt.opWs]) if (ws) ws.terminate();
       }
       live.clear();

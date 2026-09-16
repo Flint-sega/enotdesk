@@ -1,7 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { createServer } from '../app.mjs';
-import { bootstrapAdmin } from '../bootstrap.mjs';
 import { api, tmpDb, wsConnect, wsAuth, adminLogin } from './util.mjs';
 
 test('рестарт: живые сеансы инвалидируются, команда/книга/аудит сохраняются', async (t) => {
