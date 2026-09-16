@@ -451,6 +451,37 @@ $('btn-logout').addEventListener('click', async () => {
   show($('op-login'));
 });
 
+// Смена пароля: старый обязателен; прочие сеансы сервер завершает сам.
+$('btn-password').addEventListener('click', () => {
+  $('password-old').value = '';
+  $('password-new').value = '';
+  text($('password-error'), '');
+  text($('password-status'), '');
+  show($('password-overlay'));
+  $('password-old').focus();
+});
+$('btn-password-close').addEventListener('click', () => hide($('password-overlay')));
+$('form-password').addEventListener('submit', async (e) => {
+  e.preventDefault();
+  const btn = $('btn-password-save');
+  setBusy(btn, true, 'Меняем…');
+  text($('password-error'), '');
+  text($('password-status'), '');
+  try {
+    const res = await enot.request('password.change', {
+      oldPassword: $('password-old').value,
+      newPassword: $('password-new').value,
+    });
+    if (res.status !== 200) throw new Error(res.body?.error?.message ?? 'Не удалось сменить пароль');
+    text($('password-status'), 'Пароль изменён. Другие сеансы завершены.');
+    setTimeout(() => hide($('password-overlay')), 1500);
+  } catch (err) {
+    text($('password-error'), err.message);
+  } finally {
+    setBusy(btn, false);
+  }
+});
+
 $('form-invite-accept').addEventListener('submit', async (e) => {
   e.preventDefault();
   const btn = $('btn-accept-invite');

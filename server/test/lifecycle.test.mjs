@@ -193,3 +193,30 @@ test('грейс: истёкший грейс завершает сеанс ка
   const ended = await resumed;
   assert.equal(ended.reason, 'host-lost', 'по истечении грейса сеанс завершается с честной причиной');
 });
+
+test('потолок живых сеансов: новые отклоняются (4005), свои и после освобождения слота — да', async (t) => {
+  const { base, port, admin } = await setup(t, { leaseMs: 8000, heartbeatMs: 200, graceMs: 0, maxSessions: 1 });
+  const reg = await api(base, 'POST', '/sessions');
+  const s = reg.json;
+  const host = wsConnect(port);
+  await wsAuth(host, { type: 'auth', role: 'host', sessionId: s.sessionId, token: s.hostToken });
+
+  // свой оператор подключается, хотя потолок уже достигнут (сеанс A уже в live)
+  const claim = await api(base, 'POST', `/sessions/${s.sessionId}/claim`, { token: admin.token, body: { password: s.password } });
+  const op = wsConnect(port);
+  const opReady = await wsAuth(op, { type: 'auth', role: 'operator', sessionId: s.sessionId, token: admin.token, claimId: claim.json.claimId });
+  assert.equal(opReady.type, 'ready');
+
+  // новый сеанс B — новый live-запись — отклонён честным server-busy
+  const reg2 = await api(base, 'POST', '/sessions');
+  const busy = wsConnect(port);
+  await busy.opened;
+  busy.send(JSON.stringify({ type: 'auth', role: 'host', sessionId: reg2.json.sessionId, token: reg2.json.hostToken }));
+  assert.equal(await busy.closeCode(), 4005);
+
+  // завершение A освобождает слот — B подключается
+  await api(base, 'POST', `/sessions/${s.sessionId}/end`, { token: s.hostToken, body: {} });
+  const retry = wsConnect(port);
+  const ready = await wsAuth(retry, { type: 'auth', role: 'host', sessionId: reg2.json.sessionId, token: reg2.json.hostToken });
+  assert.equal(ready.type, 'ready');
+});
