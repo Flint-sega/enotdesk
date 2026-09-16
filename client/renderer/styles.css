@@ -436,7 +436,29 @@ input[type="checkbox"] {
   display: block; width: 100%; aspect-ratio: 16 / 9;
   background: var(--bg-deep); border: 1px solid var(--border); border-radius: var(--r-md);
   box-shadow: 0 14px 44px rgba(0, 0, 0, .42);
+  object-fit: contain;
 }
+#remote-video.fit-cover { object-fit: cover; }
+
+/* ---------- сессия: чат, буфер, файлы ---------- */
+
+.wrap-btns { justify-content: flex-start; flex-wrap: wrap; margin: var(--s-3) 0; }
+.check-line {
+  display: inline-flex; align-items: center; gap: 8px;
+  color: var(--muted); font-size: 13.5px; cursor: pointer; user-select: none;
+}
+.check-line input { accent-color: var(--accent); }
+.chat { margin-top: var(--s-3); display: flex; flex-direction: column; gap: var(--s-2); }
+.chat-log {
+  display: flex; flex-direction: column; gap: 6px;
+  min-height: 72px; max-height: 220px; overflow-y: auto;
+  background: var(--bg-deep); border: 1px solid var(--border); border-radius: var(--r-md);
+  padding: var(--s-3);
+}
+.chat-line { margin: 0; font-size: 14px; color: var(--text); overflow-wrap: anywhere; }
+.chat-line.chat-me strong { color: var(--accent); }
+.chat-line.chat-them strong { color: #8FA3BF; }
+.chat .row input { flex: 1; }
 
 /* ---------- настройки ---------- */
 
