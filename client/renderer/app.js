@@ -3,6 +3,8 @@
 
 import { parseCredentials } from '../lib/credentials.mjs';
 import { inviteStatus } from '../lib/invites.mjs';
+import { keyFromCode } from '../lib/keymap.mjs';
+import { wheelToLines } from '../lib/protocol.mjs';
 
 const $ = (id) => document.getElementById(id);
 const enot = window.enot;
@@ -305,6 +307,12 @@ enot.onSignal(async (msg) => {
       break;
     case 'error':
       if (state.role === 'client' && state.session) { text($('client-error-text'), msg.message ?? 'Ошибка сервера'); clientShow('error'); }
+      else if (state.role === 'operator') {
+        // транзиентные ошибки сигналинга (rate_limited, bad_signal) видимы оператору
+        text($('remote-status'), msg.message ?? 'Ошибка сервера');
+        clearTimeout(keyErrorReset);
+        keyErrorReset = setTimeout(() => text($('remote-status'), 'Подключено'), 3000);
+      }
       break;
     default:
       break;
@@ -429,18 +437,13 @@ $('btn-cancel-connect').addEventListener('click', async () => {
 });
 
 // Ввод: ограниченный протокол, частота ограничена, координаты 0..1.
-// Allowlist клавиш — единый источник в main (protocol.mjs), приходит через permissions().
+// Клавиши маппятся по физическому коду (e.code) — раскладка (RU/EN) не важна;
+// allowlist — единый источник в main (protocol.mjs), приходит через permissions().
 let allowedKeys = null;
 function ensureKeys() {
   allowedKeys ??= enot.permissions().then((p) => new Set(p.inputKeys ?? [])).catch(() => new Set());
   return allowedKeys;
 }
-
-const KEY_MAP = (k) => {
-  if (/^[a-zа-яё0-9]$/i.test(k)) return k.toLowerCase();
-  const map = { ' ': 'space', Enter: 'enter', Tab: 'tab', Escape: 'escape', Backspace: 'backspace', Delete: 'delete', ArrowUp: 'arrowup', ArrowDown: 'arrowdown', ArrowLeft: 'arrowleft', ArrowRight: 'arrowright', Home: 'home', End: 'end', PageUp: 'pageup', PageDown: 'pagedown', Shift: 'shift', Control: 'control', Alt: 'alt', Meta: 'meta' };
-  return map[k] ?? null;
-};
 
 let keyErrorReset = null;
 function showKeyError(key) {
@@ -474,19 +477,30 @@ function wireOperatorInput(dc) {
   };
   video.onmousedown = (e) => {
     const btnName = { 0: 'left', 1: 'middle', 2: 'right' }[e.button];
-    if (btnName) { e.preventDefault(); send({ type: 'button', button: btnName, down: true }); }
+    if (btnName) {
+      e.preventDefault();
+      const { x, y } = norm(e); // клик там, где курсор, даже если движение ещё не посылалось
+      send({ type: 'move', x, y });
+      send({ type: 'button', button: btnName, down: true });
+    }
   };
   video.onmouseup = (e) => {
     const btnName = { 0: 'left', 1: 'middle', 2: 'right' }[e.button];
-    if (btnName) send({ type: 'button', button: btnName, down: false });
+    if (btnName) {
+      const { x, y } = norm(e);
+      send({ type: 'move', x, y });
+      send({ type: 'button', button: btnName, down: false });
+    }
   };
   video.oncontextmenu = (e) => e.preventDefault();
   video.onwheel = (e) => {
     e.preventDefault();
-    send({ type: 'scroll', dx: Math.max(-1000, Math.min(1000, e.deltaX)), dy: Math.max(-1000, Math.min(1000, e.deltaY)) });
+    const dx = wheelToLines(e.deltaX);
+    const dy = wheelToLines(e.deltaY);
+    if (dx || dy) send({ type: 'scroll', dx, dy });
   };
   video.onkeydown = async (e) => {
-    const key = KEY_MAP(e.key);
+    const key = keyFromCode(e.code, e.key);
     if (!key) { showKeyError(e.key); return; }
     e.preventDefault();
     const allowed = await ensureKeys();
@@ -494,7 +508,7 @@ function wireOperatorInput(dc) {
     send({ type: 'key', key, down: true });
   };
   video.onkeyup = async (e) => {
-    const key = KEY_MAP(e.key);
+    const key = keyFromCode(e.code, e.key);
     if (!key) return;
     e.preventDefault();
     const allowed = await ensureKeys();
