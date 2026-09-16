@@ -14,6 +14,7 @@
     "start": "electron client/main.mjs",
     "bootstrap": "node server/main.mjs bootstrap",
     "test": "node --test \"server/test/*.test.mjs\" \"client/test/*.test.mjs\"",
+    "lint": "eslint .",
     "smoke:local": "node scripts/smoke-local.mjs",
     "icons": "node scripts/make-icons.mjs",
     "pack:mac": "electron-builder --config build/electron-builder.yml --mac",
