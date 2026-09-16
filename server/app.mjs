@@ -364,6 +364,8 @@ export function createServer(opts = {}) {
     turnPassword: opts.turnPassword ?? '',
     leaseMs: opts.leaseMs ?? 20000,
     heartbeatMs: opts.heartbeatMs ?? 5000,
+    // грейс на переподключение участника в состоянии approved; 0 — старое fail-closed
+    graceMs: opts.graceMs ?? 30_000,
     authTimeoutMs: opts.authTimeoutMs ?? 5000,
     bodyLimit: opts.bodyLimit ?? 64 * 1024,
     limits: {
@@ -377,11 +379,19 @@ export function createServer(opts = {}) {
   const db = openDb(cfg.dbPath);
   endLiveSessions(db, 'server-restart'); // рестарт инвалидирует живые регистрации
 
-  const live = new Map(); // sessionId -> {hostWs, opWs, sigCount, sigReset}
+  const live = new Map(); // sessionId -> {hostWs, opWs, operatorUserId, sigCount, sigReset, hostLostAt, opLostAt}
   let closed = false;
 
   function send(ws, obj) {
     if (ws && ws.readyState === ws.OPEN) ws.send(JSON.stringify(obj));
+  }
+
+  // Истёкший грейс участника завершает сеанс; в активном грейсе lease не судья
+  // (host не шлёт heartbeat, пока переподключается).
+  function gracePending(rt, nowMs) {
+    const hostWait = rt.hostLostAt != null && nowMs - rt.hostLostAt <= cfg.graceMs;
+    const opWait = rt.opLostAt != null && nowMs - rt.opLostAt <= cfg.graceMs;
+    return { hostWait, opWait, any: hostWait || opWait };
   }
 
   function endSession(sessionId, reason) {
@@ -406,12 +416,35 @@ export function createServer(opts = {}) {
     }
   }
 
+  // Обрыв участника: до согласия и при graceMs=0 — fail-closed; в approved даём
+  // грейс на переподключение теми же токенами (ADR 0013).
+  function participantLost(sessionId, rt, who) {
+    const s = db.prepare('SELECT state FROM sessions WHERE id = ?').get(sessionId);
+    if (!s || s.state === 'ended') return;
+    if (cfg.graceMs <= 0 || s.state !== 'approved') {
+      endSession(sessionId, who === 'host' ? 'host-lost' : 'operator-lost');
+      return;
+    }
+    if (who === 'host') rt.hostLostAt = Date.now();
+    else rt.opLostAt = Date.now();
+    send(who === 'host' ? rt.opWs : rt.hostWs, { type: 'peer-reconnecting', role: who });
+  }
+
   const sweeper = setInterval(() => {
-    const cutoff = new Date(Date.now() - cfg.heartbeatMs).toISOString();
+    const nowMs = Date.now();
+    for (const [id, rt] of [...live]) {
+      if (rt.hostLostAt != null && nowMs - rt.hostLostAt > cfg.graceMs) endSession(id, 'host-lost');
+      else if (rt.opLostAt != null && nowMs - rt.opLostAt > cfg.graceMs) endSession(id, 'operator-lost');
+    }
+    const cutoff = new Date(nowMs - cfg.heartbeatMs).toISOString();
     const rows = db.prepare(
       "SELECT id FROM sessions WHERE state!='ended' AND lease_expires_at < ?"
     ).all(cutoff);
-    for (const row of rows) endSession(row.id, 'lease-expired');
+    for (const row of rows) {
+      const rt = live.get(row.id);
+      if (rt && gracePending(rt, nowMs).any) continue; // ждём переподключения
+      endSession(row.id, 'lease-expired');
+    }
   }, 1000);
   sweeper.unref();
 
@@ -935,10 +968,10 @@ export function createServer(opts = {}) {
       if (!rt) return;
       if (role === 'host' && rt.hostWs === ws) {
         rt.hostWs = null;
-        endSession(session.id, 'host-lost');
+        participantLost(session.id, rt, 'host');
       } else if (role === 'operator' && rt.opWs === ws) {
         rt.opWs = null;
-        endSession(session.id, 'operator-lost');
+        participantLost(session.id, rt, 'operator');
       }
     });
 
@@ -952,7 +985,9 @@ export function createServer(opts = {}) {
       if (!s || s.state === 'ended') return ws.close(4003, 'invalid-session');
       if (msg.role === 'host') {
         if (typeof msg.token !== 'string' || sha256(msg.token) !== s.host_token_hash) return ws.close(4003, 'invalid-session');
-        if (s.lease_expires_at <= now) return ws.close(4003, 'invalid-session');
+        const existingRt = live.get(s.id);
+        const inGrace = existingRt?.hostLostAt != null && Date.now() - existingRt.hostLostAt <= cfg.graceMs;
+        if (s.lease_expires_at <= now && !inGrace) return ws.close(4003, 'invalid-session');
         role = 'host';
       } else if (msg.role === 'operator') {
         const u = authUser({ headers: { authorization: `Bearer ${msg.token}` }, socket: { remoteAddress: '' } });
@@ -969,12 +1004,20 @@ export function createServer(opts = {}) {
       if (rt && (msg.role === 'host' ? rt.hostWs : rt.opWs)) {
         return ws.close(4004, 'duplicate-socket');
       }
-      if (!rt) { rt = { hostWs: null, opWs: null, operatorUserId: null, sigCount: 0, sigReset: 0 }; live.set(s.id, rt); }
+      if (!rt) {
+        rt = { hostWs: null, opWs: null, operatorUserId: null, sigCount: 0, sigReset: 0, hostLostAt: null, opLostAt: null };
+        live.set(s.id, rt);
+      }
+      let resumed = false;
       if (msg.role === 'host') {
+        resumed = rt.hostLostAt != null; // переподключение в грейсе
+        rt.hostLostAt = null;
         rt.hostWs = ws;
         db.prepare('UPDATE sessions SET lease_expires_at = ? WHERE id = ?')
           .run(new Date(Date.now() + cfg.leaseMs).toISOString(), s.id);
       } else {
+        resumed = rt.opLostAt != null;
+        rt.opLostAt = null;
         rt.opWs = ws;
         rt.operatorUserId = userId;
       }
@@ -987,8 +1030,16 @@ export function createServer(opts = {}) {
         const op = db.prepare('SELECT id, name FROM users WHERE id = ?').get(s.operator_id);
         send(ws, { type: 'claim', claimId: s.claim_id, operator: op });
       }
+      if (role === 'host' && fresh.state === 'approved') {
+        // replay после переподключения: ворота ввода открывает только реальный approved
+        send(ws, { type: 'approved', claimId: s.claim_id });
+      }
       if (role === 'operator' && fresh.state === 'approved') {
         send(ws, { type: 'approved', claimId: s.claim_id });
+      }
+      if (resumed) {
+        send(rt.hostWs, { type: 'resumed' });
+        send(rt.opWs, { type: 'resumed' });
       }
     });
 

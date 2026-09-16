@@ -164,16 +164,29 @@ function makePc(iceServers) {
   pc.ondatachannel = (e) => {
     e.channel.onmessage = (m) => { enot.input(m.data).catch(() => {}); };
   };
+  // Краткое дрожание сети ('disconnected') часто самовосстанавливается — даём
+  // 10с грейс; 'failed' рвёт сразу (R15.2: не висим в вечном connected).
+  let rtcGrace = null;
   pc.onconnectionstatechange = () => {
-    if (['failed', 'disconnected', 'closed'].includes(pc.connectionState) && (state.session || state.connect)) {
-      // Потеря RTC — завершение и понятная ошибка, не вечный connected (R15.2)
-      const wasClient = state.role === 'client' || !!state.session;
-      cleanupSession();
-      if (wasClient) { text($('ended-reason'), END_REASONS.rtc); clientShow('ended'); }
-      else { showConnectForm(); text($('conn-error'), END_REASONS.rtc); }
+    if (pc.connectionState === 'disconnected') {
+      rtcGrace ??= setTimeout(() => { rtcGrace = null; rtcLinkLost(); }, 10000);
+      return;
     }
+    if (pc.connectionState === 'connected') {
+      if (rtcGrace) { clearTimeout(rtcGrace); rtcGrace = null; }
+      return;
+    }
+    if (['failed', 'closed'].includes(pc.connectionState) && (state.session || state.connect)) rtcLinkLost();
   };
   return pc;
+}
+
+function rtcLinkLost() {
+  if (!state.session && !state.connect) return;
+  const wasClient = state.role === 'client' || !!state.session;
+  cleanupSession();
+  if (wasClient) { text($('ended-reason'), END_REASONS.rtc); clientShow('ended'); }
+  else { showConnectForm(); text($('conn-error'), END_REASONS.rtc); }
 }
 
 function drainIce(pc) {
@@ -291,6 +304,15 @@ enot.onSignal(async (msg) => {
           else state.iceQueue.push(c); // кандидаты в очередь до remote description
         }
       } catch { /* некорректный сигнал игнорируется: транспорт не открывается */ }
+      break;
+    case 'peer-reconnecting':
+      // второй участник потерял связь, сеанс ещё жив (грейс сервера, ADR 0013)
+      if (state.role === 'client') text($('client-live-note'), msg.role === 'operator' ? 'Оператор переподключается…' : 'Переподключение…');
+      else text($('remote-status'), 'Клиент переподключается…');
+      break;
+    case 'resumed':
+      if (state.role === 'client') text($('client-live-note'), '');
+      else text($('remote-status'), 'Подключено');
       break;
     case 'ended':
       stopMedia();

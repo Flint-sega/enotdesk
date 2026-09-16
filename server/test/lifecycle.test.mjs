@@ -41,8 +41,8 @@ test('heartbeat обновляет lease: без него сеанс истек�
   assert.equal(rtcAfter.status, 401);
 });
 
-test('потеря host-сокета завершает сеанс и уведомляет оператора', async (t) => {
-  const { base, port, admin } = await setup(t, { leaseMs: 8000, heartbeatMs: 200 });
+test('потеря host-сокета завершает сеанс и уведомляет оператора (graceMs=0, fail-closed)', async (t) => {
+  const { base, port, admin } = await setup(t, { leaseMs: 8000, heartbeatMs: 200, graceMs: 0 });
   const reg = await api(base, 'POST', '/sessions');
   const s = reg.json;
   const host2 = wsConnect(port);
@@ -56,8 +56,8 @@ test('потеря host-сокета завершает сеанс и уведо
   assert.equal((await endedP).reason, 'host-lost');
 });
 
-test('потеря operator-сокета завершает сеанс и уведомляет host', async (t) => {
-  const { base, port, admin } = await setup(t, { leaseMs: 8000, heartbeatMs: 200 });
+test('потеря operator-сокета завершает сеанс и уведомляет host (graceMs=0, fail-closed)', async (t) => {
+  const { base, port, admin } = await setup(t, { leaseMs: 8000, heartbeatMs: 200, graceMs: 0 });
   const reg = await api(base, 'POST', '/sessions');
   const s = reg.json;
   const h2 = wsConnect(port);
@@ -100,4 +100,96 @@ test('operator подключается после approval: сразу полу
   assert.equal(ready.state, 'approved');
   const approved = await op.wait((m) => m.type === 'approved');
   assert.equal(approved.claimId, claimId);
+});
+
+// ---- грейс переподключения (ADR 0013) ----
+
+async function approvedSession(base, port, admin, extra = {}) {
+  const reg = await api(base, 'POST', '/sessions');
+  const s = reg.json;
+  const host = wsConnect(port);
+  await wsAuth(host, { type: 'auth', role: 'host', sessionId: s.sessionId, token: s.hostToken });
+  const claim = await api(base, 'POST', `/sessions/${s.sessionId}/claim`, { token: admin.token, body: { password: s.password } });
+  const claimId = claim.json.claimId;
+  const op = wsConnect(port);
+  await wsAuth(op, { type: 'auth', role: 'operator', sessionId: s.sessionId, token: admin.token, claimId });
+  await api(base, 'POST', `/sessions/${s.sessionId}/decision`, { token: s.hostToken, body: { claimId, allow: true } });
+  await host.wait((m) => m.type === 'approved');
+  await op.wait((m) => m.type === 'approved');
+  return { s, host, op, claimId };
+}
+
+test('грейс: host переподключается тем же токеном — сеанс жив, обе стороны получают resumed', async (t) => {
+  const { base, port, admin } = await setup(t, { leaseMs: 400, heartbeatMs: 200, graceMs: 5000 });
+  const { s, host, op, claimId } = await approvedSession(base, port, admin);
+
+  const peerNoteP = op.wait((m) => m.type === 'peer-reconnecting');
+  host.close(); // host «обрывается»
+  assert.equal((await peerNoteP).role, 'host');
+
+  // в грейсе lease не судья: heartbeat не идут дольше leaseMs, но сеанс не завершился
+  await new Promise((r) => setTimeout(r, 700));
+
+  const host2 = wsConnect(port);
+  const ready = await wsAuth(host2, { type: 'auth', role: 'host', sessionId: s.sessionId, token: s.hostToken });
+  assert.equal(ready.state, 'approved');
+  // replay approved: ворота ввода на клиенте открываются только реальным approved
+  assert.equal((await host2.wait((m) => m.type === 'approved')).claimId, claimId);
+  assert.equal((await host2.wait((m) => m.type === 'resumed')).type, 'resumed');
+  assert.equal((await op.wait((m) => m.type === 'resumed')).type, 'resumed');
+
+  // heartbeat после переподключения снова продлевает lease
+  host2.send(JSON.stringify({ type: 'heartbeat' }));
+  assert.equal((await host2.wait((m) => m.type === 'heartbeat')).type, 'heartbeat');
+});
+
+test('грейс: operator переподключается — claimId тот же, resumed обоим', async (t) => {
+  const { base, port, admin } = await setup(t, { leaseMs: 8000, heartbeatMs: 200, graceMs: 5000 });
+  const { s, host, op, claimId } = await approvedSession(base, port, admin);
+
+  const peerNoteP = host.wait((m) => m.type === 'peer-reconnecting');
+  op.close();
+  assert.equal((await peerNoteP).role, 'operator');
+
+  const op2 = wsConnect(port);
+  const ready = await wsAuth(op2, { type: 'auth', role: 'operator', sessionId: s.sessionId, token: admin.token, claimId });
+  assert.equal(ready.state, 'approved');
+  assert.equal((await op2.wait((m) => m.type === 'approved')).claimId, claimId);
+  await host.wait((m) => m.type === 'resumed');
+  await op2.wait((m) => m.type === 'resumed');
+});
+
+test('грейс: переподключение другим токеном и до согласия — по-прежнему отказ', async (t) => {
+  const { base, port, admin } = await setup(t, { leaseMs: 400, heartbeatMs: 200, graceMs: 5000 });
+  const { s, host } = await approvedSession(base, port, admin);
+
+  // чужой hostToken не пускаем и в грейсе (сервер закрывает 4003 без сообщения)
+  const other = await api(base, 'POST', '/sessions');
+  const intruder = wsConnect(port);
+  await intruder.opened;
+  intruder.send(JSON.stringify({ type: 'auth', role: 'host', sessionId: s.sessionId, token: other.json.hostToken }));
+  assert.equal(await intruder.closeCode(), 4003);
+
+  // до approval обрыв мгновенно завершает сеанс, грейс не применяется
+  const reg = await api(base, 'POST', '/sessions');
+  const h2 = wsConnect(port);
+  await wsAuth(h2, { type: 'auth', role: 'host', sessionId: reg.json.sessionId, token: reg.json.hostToken });
+  await api(base, 'POST', `/sessions/${reg.json.sessionId}/claim`, { token: admin.token, body: { password: reg.json.password } });
+  h2.close();
+  await new Promise((r) => setTimeout(r, 150));
+  const h = await api(base, 'GET', '/history', { token: admin.token });
+  const row = h.json.items.find((it) => it.id === reg.json.sessionId);
+  assert.equal(row.state, 'ended');
+  assert.equal(row.endReason, 'host-lost');
+  void host;
+});
+
+test('грейс: истёкший грейс завершает сеанс как host-lost/operator-lost', async (t) => {
+  const { base, port, admin } = await setup(t, { leaseMs: 60_000, heartbeatMs: 200, graceMs: 1200 });
+  const { s, host, op } = await approvedSession(base, port, admin);
+
+  const resumed = op.wait((m) => m.type === 'ended', 4000);
+  host.close();
+  const ended = await resumed;
+  assert.equal(ended.reason, 'host-lost', 'по истечении грейса сеанс завершается с честной причиной');
 });
