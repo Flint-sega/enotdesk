@@ -12,6 +12,7 @@ export function createSignalClient({ url, wsFactory = (u) => new WebSocket(u), a
 
   function emit(msg) {
     seen.push(msg);
+    if (seen.length > 100) seen.splice(0, seen.length - 100); // буфер только для wait(), не копим всю сессию
     for (const cb of listeners) cb(msg);
   }
 

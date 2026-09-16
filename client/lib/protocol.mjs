@@ -17,7 +17,15 @@ const KEYS = INPUT_KEYS;
 
 const BUTTONS = new Set(['left', 'right', 'middle']);
 const SCROLL_LIMIT = 1000;
+const SCROLL_LINE_LIMIT = 50; // строки на одно событие колеса (рендерер нормализует пиксели)
 const SDP_MAX = 64 * 1024;
+
+// Колесо мыши/тачпада приходит в пикселях (один щелчок ≈ 100); протокол передаёт
+// строки (один щелчок ≈ 3 строки): 40px = строка, мелкие тачпад-движения гасятся.
+export function wheelToLines(delta) {
+  if (typeof delta !== 'number' || !Number.isFinite(delta)) return 0;
+  return Math.max(-SCROLL_LINE_LIMIT, Math.min(SCROLL_LINE_LIMIT, Math.round(delta / 40))) || 0;
+}
 
 function isFinite01(v) {
   return typeof v === 'number' && Number.isFinite(v) && v >= 0 && v <= 1;
@@ -95,9 +103,12 @@ export function createInputGate() {
           apply(role === 'host');
           break;
         case 'ended':
-        case 'error':
           approved = false;
           apply(false);
+          break;
+        case 'error':
+          // Транзиентные ошибки сервера (rate_limited, bad_signal…) управление не рвут:
+          // ворота закрывает только ended либо закрытие соединения (stopSignal → close()).
           break;
         default:
           break;

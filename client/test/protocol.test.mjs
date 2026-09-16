@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { validateInputEvent, validateOutgoingSignal, createInputGate } from '../lib/protocol.mjs';
+import { validateInputEvent, validateOutgoingSignal, createInputGate, wheelToLines } from '../lib/protocol.mjs';
 
 // Ожидания заданы из frozen-контракта interfaces.md, не из кода под тестом:
 // move x:0..1 y:0..1; button left|right|middle down:bool; key allowlist down:bool; scroll dx,dy bounded.
@@ -77,4 +77,32 @@ test('input gate: для оператора никогда не открыт; с
   assert.equal(g2.needInputReset(), false, 'сброс одноразовый');
   g2.close();
   assert.equal(g2.isOpen(), false);
+});
+
+test('input gate: транзиентные ошибки сервера (rate_limited, bad_signal) управление не рвут', () => {
+  const gate = createInputGate();
+  gate.onSignal({ type: 'ready', role: 'host', sessionId: 1, state: 'waiting' });
+  gate.onSignal({ type: 'approved', claimId: 'c1' });
+  assert.equal(gate.isOpen(), true);
+  gate.onSignal({ type: 'error', code: 'rate_limited', message: 'Слишком частая передача сигналов' });
+  assert.equal(gate.isOpen(), true, 'бурст ICE не должен отнимать управление');
+  gate.onSignal({ type: 'error', code: 'bad_signal', message: 'Некорректный сигнал' });
+  assert.equal(gate.isOpen(), true);
+  gate.onSignal({ type: 'heartbeat' }); // посторонние типы тоже не трогают
+  assert.equal(gate.isOpen(), true);
+  // закрыть ворота может только ended (или закрытие соединения → close())
+  gate.onSignal({ type: 'ended', reason: 'operator-lost' });
+  assert.equal(gate.isOpen(), false);
+});
+
+test('wheelToLines: пиксели колеса → строки, мелкий тачпад гасится, клэмп ±50', () => {
+  assert.equal(wheelToLines(0), 0);
+  assert.equal(wheelToLines(10), 0, 'микродвижение тачпада не скроллит');
+  assert.equal(wheelToLines(-10), 0);
+  assert.equal(wheelToLines(120), 3, 'щелчок мыши ≈ 3 строки');
+  assert.equal(wheelToLines(-120), -3);
+  assert.equal(wheelToLines(1e9), 50, 'верхний клэмп');
+  assert.equal(wheelToLines(-1e9), -50, 'нижний клэмп');
+  assert.equal(wheelToLines(NaN), 0);
+  assert.equal(wheelToLines('100'), 0);
 });

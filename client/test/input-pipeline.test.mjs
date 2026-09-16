@@ -44,6 +44,19 @@ test('мусор в канале отбраковывается до ворот 
   assert.equal(channel.onMessage(JSON.stringify({ type: 'exec', cmd: 'ls' })).reason, 'invalid:type-not-allowed');
 });
 
+test('move без реальных границ дисплея отклоняется (no-bounds), кнопки не зависят от границ', () => {
+  const gate = createInputGate();
+  const nativeInput = createNativeInput({ adapter: inertAdapter() });
+  const pipeline = createInputPipeline({ gate, nativeInput });
+  gate.onSignal({ type: 'ready', role: 'host', sessionId: 1, state: 'waiting' });
+  gate.onSignal({ type: 'approved', claimId: 'c1' });
+
+  assert.equal(pipeline.handle({ type: 'move', x: 0.5, y: 0.5 }, { width: 0, height: 0 }).reason, 'no-bounds');
+  assert.equal(pipeline.handle({ type: 'move', x: 0.5, y: 0.5 }, undefined).reason, 'no-bounds');
+  // кнопке координаты не нужны: она доходит до диспетчера (инертный — native-unavailable)
+  assert.equal(pipeline.handle({ type: 'button', button: 'left', down: true }, { width: 0, height: 0 }).reason, 'native-unavailable');
+});
+
 test('allowlist клавиш — единственный источник: export согласован с validateInputEvent', () => {
   assert.ok(INPUT_KEYS instanceof Set && INPUT_KEYS.size > 20);
   for (const key of INPUT_KEYS) {
