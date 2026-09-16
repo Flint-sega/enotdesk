@@ -243,6 +243,7 @@ merge_env_file() {
   if [ -z "$TURN_URLS" ]; then TURN_URLS="$(read_env_value ENOT_TURN_URLS)"; fi
   if [ -z "$TURN_USERNAME" ]; then TURN_USERNAME="$(read_env_value ENOT_TURN_USERNAME)"; fi
   if [ -z "$TURN_PASSWORD" ]; then TURN_PASSWORD="$(read_env_value ENOT_TURN_PASSWORD)"; fi
+  if [ -z "${ENOT_GRACE_MS:-}" ]; then GRACE_MS="$(read_env_value ENOT_GRACE_MS)"; else GRACE_MS="$ENOT_GRACE_MS"; fi
 }
 
 print_plan() {
@@ -373,6 +374,7 @@ install -m 0600 /dev/null "$ENV_FILE"
   if [ -n "$TURN_URLS" ]; then echo "ENOT_TURN_URLS=$TURN_URLS"; fi
   if [ -n "$TURN_USERNAME" ]; then echo "ENOT_TURN_USERNAME=$TURN_USERNAME"; fi
   if [ -n "$TURN_PASSWORD" ]; then echo "ENOT_TURN_PASSWORD=$TURN_PASSWORD"; fi
+  if [ -n "$GRACE_MS" ]; then echo "ENOT_GRACE_MS=$GRACE_MS"; fi
 } | tee "$ENV_FILE" >/dev/null
 chmod 0600 "$ENV_FILE"
 
