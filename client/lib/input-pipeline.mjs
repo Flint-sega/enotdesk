@@ -20,6 +20,10 @@ export function createInputPipeline({ gate, nativeInput }) {
       if (p.error) return { ok: false, reason: p.error };
       const v = validateInputEvent(p.value);
       if (!v.ok) return { ok: false, reason: `invalid:${v.reason}` };
+      // без реальных границ дисплея move уехал бы в угол (0,0) — честный отказ
+      if (p.value.type === 'move' && !(bounds?.width > 0 && bounds?.height > 0)) {
+        return { ok: false, reason: 'no-bounds' };
+      }
       if (!gate.isOpen()) return { ok: false, reason: 'gate-closed' };
       if (gate.needInputReset()) nativeInput.end();
       return nativeInput.dispatch(p.value, bounds);

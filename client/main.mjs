@@ -132,6 +132,7 @@ async function selectSource(id) {
   const src = sources.find((s) => s.id === id);
   if (!src) return { ok: false, error: 'Выбранный источник больше не доступен, выберите заново' };
   const displays = screen.getAllDisplays();
+  if (!displays.length) return { ok: false, error: 'Дисплеи не найдены — координаты ввода определить невозможно' };
   const display = displays.find((d) => String(d.id) === String(src.display_id)) ?? displays[0];
   const bounds = display
     ? { width: Math.round(display.size.width * display.scaleFactor), height: Math.round(display.size.height * display.scaleFactor) }

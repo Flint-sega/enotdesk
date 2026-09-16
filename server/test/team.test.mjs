@@ -152,3 +152,28 @@ test('invites: одноразовость, отзыв, роль из пригл�
   const opTok = (await api(base, 'POST', '/auth/login', { body: { login: 'пришелец', password: 'пароль-пришельца' } })).json.token;
   assert.equal((await api(base, 'POST', '/invites', { token: opTok, body: { role: 'admin' } })).status, 403);
 });
+
+test('invites: имя и логин ограничены по длине (без гигантских строк в БД)', async (t) => {
+  const dbPath = tmpDb(t);
+  const { base } = await startServer(t, { dbPath });
+  const admin = await adminLogin(dbPath, base);
+
+  const inv = await api(base, 'POST', '/invites', { token: admin.token, body: { role: 'operator' } });
+  assert.equal(inv.status, 201);
+
+  const tooLongName = await api(base, 'POST', '/invites/accept', {
+    body: { token: inv.json.token, login: 'нормальный', name: 'И'.repeat(121), password: 'пароль-длинного' },
+  });
+  assert.equal(tooLongName.status, 400);
+
+  // приглашение не съедено отказом — принимаем с корректным логином
+  const tooLongLogin = await api(base, 'POST', '/invites/accept', {
+    body: { token: inv.json.token, login: 'л'.repeat(33), name: 'Л', password: 'пароль-длинного' },
+  });
+  assert.equal(tooLongLogin.status, 400);
+
+  const ok = await api(base, 'POST', '/invites/accept', {
+    body: { token: inv.json.token, login: 'нормальный', name: 'И'.repeat(120), password: 'пароль-длинного' },
+  });
+  assert.equal(ok.status, 200, 'граничные 120 символов допустимы');
+});

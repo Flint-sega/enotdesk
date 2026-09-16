@@ -5,6 +5,18 @@
 
 import { validateInputEvent } from './protocol.mjs';
 
+// Калибровка скролла: протокол передаёт строки колеса (1 щелчок мыши ≈ 3 строки).
+// Windows: WHEEL_DELTA = 120 на щелчок → 40 на строку.
+export function linesToWinDelta(lines) {
+  return Math.round(lines) * 40;
+}
+
+// X11: один щелчок колеса ≈ 3 строки; нулевая строка — ноль щелчков, меньшая — один.
+export function linesToClicks(lines) {
+  const n = Math.round(Math.abs(lines) / 3);
+  return lines === 0 || !Number.isFinite(lines) ? 0 : Math.max(1, n);
+}
+
 // Инертный адаптер: ничего не делает, честно сообщает о недоступности.
 export function inertAdapter() {
   return { available: false, platform: 'inert', reason: 'native-unavailable' };
@@ -92,6 +104,7 @@ function macAdapter(koffi) {
       post(ev);
       return true;
     },
+    // строки колеса, unit=line; знак инвертирован: dy>0 (вниз) = прокрутка вниз
     scroll(dx, dy) {
       if (dx) post(CGEventCreateScrollWheelEvent(null, 0, 1, 1, -Math.round(dx)));
       if (dy) post(CGEventCreateScrollWheelEvent(null, 0, 1, 1, -Math.round(dy)));
@@ -141,8 +154,8 @@ function winAdapter(koffi) {
       return true;
     },
     scroll(dx, dy) {
-      if (dy) { const buf = Buffer.alloc(40); buf.writeUInt32LE(0, 0); buf.writeInt32LE(-Math.round(dy) * 120, 16); buf.writeUInt32LE(0x0800, 20); SendInput(1, buf, 40); }
-      if (dx) { const buf = Buffer.alloc(40); buf.writeUInt32LE(0, 0); buf.writeInt32LE(Math.round(dx) * 120, 16); buf.writeUInt32LE(0x1000, 20); SendInput(1, buf, 40); }
+      if (dy) { const buf = Buffer.alloc(40); buf.writeUInt32LE(0, 0); buf.writeInt32LE(-linesToWinDelta(dy), 16); buf.writeUInt32LE(0x0800, 20); SendInput(1, buf, 40); }
+      if (dx) { const buf = Buffer.alloc(40); buf.writeUInt32LE(0, 0); buf.writeInt32LE(linesToWinDelta(dx), 16); buf.writeUInt32LE(0x1000, 20); SendInput(1, buf, 40); }
     },
   };
 }
@@ -176,8 +189,11 @@ function x11Adapter(koffi) {
       return true;
     },
     scroll(dx, dy) {
-      if (dy) { XTestFakeButtonEvent(dpy, dy > 0 ? 5 : 4, 1, 0); XTestFakeButtonEvent(dpy, dy > 0 ? 5 : 4, 0, 0); }
-      if (dx) { XTestFakeButtonEvent(dpy, dx > 0 ? 7 : 6, 1, 0); XTestFakeButtonEvent(dpy, dx > 0 ? 7 : 6, 0, 0); }
+      // строки → щелчки X11 (4/5 — вертикаль, 6/7 — горизонталь)
+      const clicks = linesToClicks(dy);
+      for (let i = 0; i < clicks; i++) { XTestFakeButtonEvent(dpy, dy > 0 ? 5 : 4, 1, 0); XTestFakeButtonEvent(dpy, dy > 0 ? 5 : 4, 0, 0); }
+      const hclicks = linesToClicks(dx);
+      for (let i = 0; i < hclicks; i++) { XTestFakeButtonEvent(dpy, dx > 0 ? 7 : 6, 1, 0); XTestFakeButtonEvent(dpy, dx > 0 ? 7 : 6, 0, 0); }
     },
     close() { XCloseDisplay(dpy); },
   };

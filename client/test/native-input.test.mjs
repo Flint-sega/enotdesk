@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { createNativeInput, inertAdapter, waylandAdapterProbe } from '../lib/native-input.mjs';
+import { createNativeInput, inertAdapter, waylandAdapterProbe, linesToWinDelta, linesToClicks } from '../lib/native-input.mjs';
 
 // Шов из interfaces.md: «Desktop input validation and native adapters separate module
 // test with inert adapter only». Реальный OS-ввод здесь не тестируется и не подделывается.
@@ -98,4 +98,31 @@ test('Wayland диагностируется как без управления 
   const probe = waylandAdapterProbe({ XDG_SESSION_TYPE: 'wayland', WAYLAND_DISPLAY: 'wayland-0' });
   assert.equal(probe.available, false);
   assert.equal(probe.reason, 'wayland-unsupported-control');
+});
+
+// Калибровка скролла: протокол передаёт строки (щелчок мыши ≈ 3 строки).
+// Ожидания считаны из констант Windows (WHEEL_DELTA=120) и X11 (кнопки 4/5/6/7).
+test('скролл: строки → дельта Windows (40 на строку) и щелчки X11 (3 строки на щелчок)', () => {
+  assert.equal(linesToWinDelta(3), 120, 'щелчок мыши = WHEEL_DELTA');
+  assert.equal(linesToWinDelta(-1), -40);
+  assert.equal(linesToWinDelta(0), 0);
+
+  assert.equal(linesToClicks(0), 0);
+  assert.equal(linesToClicks(1), 1, 'меньше строки — всё равно один щелчок');
+  assert.equal(linesToClicks(3), 1);
+  assert.equal(linesToClicks(-4), 1);
+  assert.equal(linesToClicks(7), 2, '7 строк ≈ 2 щелчка');
+  assert.equal(linesToClicks(NaN), 0);
+});
+
+test('скролл доходит до адаптера в строках без искажений', () => {
+  let got = null;
+  const adapter = {
+    available: true, platform: 'test',
+    move() {}, button() {}, key() {},
+    scroll(dx, dy) { got = [dx, dy]; },
+  };
+  const ni = createNativeInput({ adapter });
+  assert.deepEqual(ni.dispatch({ type: 'scroll', dx: 0, dy: -6 }, { width: 1, height: 1 }), { ok: true });
+  assert.deepEqual(got, [0, -6], 'адаптер получает строки как есть — перевод в единицы ОС внутри адаптера');
 });

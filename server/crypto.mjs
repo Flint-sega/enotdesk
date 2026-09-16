@@ -23,16 +23,13 @@ export function sha256(value) {
   return crypto.createHash('sha256').update(value).digest('hex');
 }
 
-const AMBIGUOUS = /[0O1lI|]/;
+// Алфавит без визуально двусмысленных символов (0O1lI и строчная o).
 const ALPHABET = 'ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnpqrstuvwxyz23456789';
 
 export function sessionPassword(length = 8) {
-  let out;
-  do {
-    out = '';
-    const bytes = crypto.randomBytes(length);
-    for (let i = 0; i < length; i++) out += ALPHABET[bytes[i] % ALPHABET.length];
-  } while (AMBIGUOUS.test(out));
+  const bytes = crypto.randomBytes(length);
+  let out = '';
+  for (let i = 0; i < length; i++) out += ALPHABET[bytes[i] % ALPHABET.length];
   return out;
 }
 

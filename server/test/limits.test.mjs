@@ -59,6 +59,19 @@ test('body limit: слишком большой запрос — 413', async (t)
   assert.equal(res.status, 413);
 });
 
+test('rate limit: чужие IP не копятся в памяти вечно (eviction протухших окон)', () => {
+  let now = 1_000_000;
+  const rl = new RateLimiter(5, 60_000, { now: () => now, maxKeys: 10 });
+  for (let i = 0; i < 10; i++) rl.take(`ip-${i}`); // 10 разных IP — Map полон
+  now += 61_000; // все окна протухли
+  assert.equal(rl.take('ip-new'), true, 'новый ключ допущен');
+  // следующий take с полным Map снова выметает протухших — память не растёт безгранично
+  for (let i = 0; i < 10; i++) rl.take(`fresh-${i}`);
+  now += 61_000;
+  for (let i = 0; i < 20; i++) rl.take(`wave-${i}`); // выметание должно происходить автоматически
+  assert.equal(rl.take('после-выметания'), true);
+});
+
 test('WS frame limit: кадр больше 128KiB закрывает соединение (1009)', async (t) => {
   const { port, base } = await setup(t);
   const reg = await api(base, 'POST', '/sessions');

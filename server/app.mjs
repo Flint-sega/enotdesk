@@ -1,6 +1,7 @@
 import http from 'node:http';
 import path from 'node:path';
 import fs from 'node:fs';
+import crypto from 'node:crypto';
 import { WebSocketServer } from 'ws';
 import { openDb, endLiveSessions, auditLog } from './db.mjs';
 import {
@@ -40,9 +41,20 @@ function readJson(req, maxBytes) {
 
 export class RateLimiter {
   #hits = new Map();
-  constructor(limit, windowMs) { this.limit = limit; this.windowMs = windowMs; }
+  #now;
+  #maxKeys;
+  constructor(limit, windowMs, { now = Date.now, maxKeys = 5000 } = {}) {
+    this.limit = limit;
+    this.windowMs = windowMs;
+    this.#now = now;
+    this.#maxKeys = maxKeys;
+  }
   take(key) {
-    const now = Date.now();
+    const now = this.#now();
+    // публичный интернет: чужие IP не должны расти в памяти бесконечно
+    if (this.#hits.size >= this.#maxKeys) {
+      for (const [k, h] of this.#hits) if (now > h.reset) this.#hits.delete(k);
+    }
     let h = this.#hits.get(key);
     if (!h || now > h.reset) { h = { count: 0, reset: now + this.windowMs }; this.#hits.set(key, h); }
     h.count += 1;
@@ -388,6 +400,12 @@ export function createServer(opts = {}) {
     return true;
   }
 
+  function endOperatorSessions(userId, reason) {
+    for (const [sid, rt] of live) {
+      if (rt.operatorUserId === userId) endSession(sid, reason);
+    }
+  }
+
   const sweeper = setInterval(() => {
     const cutoff = new Date(Date.now() - cfg.heartbeatMs).toISOString();
     const rows = db.prepare(
@@ -533,9 +551,7 @@ export function createServer(opts = {}) {
         auditLog(db, user.id, active ? 'member.enable' : 'member.disable', target.id, {});
         if (!active) {
           db.prepare('DELETE FROM auth_tokens WHERE user_id = ?').run(target.id);
-          for (const [sid, rt] of live) {
-            if (rt.operatorUserId === target.id) endSession(sid, 'operator-revoked');
-          }
+          endOperatorSessions(target.id, 'operator-revoked');
         }
       }
       const u = db.prepare('SELECT id, login, name, role, active FROM users WHERE id = ?').get(target.id);
@@ -553,9 +569,7 @@ export function createServer(opts = {}) {
         ).get(target.id).c;
         if (admins === 0) return err(res, 409, 'last_admin', 'Нельзя удалить последнего активного администратора');
       }
-      for (const [sid, rt] of live) {
-        if (rt.operatorUserId === target.id) endSession(sid, 'operator-revoked');
-      }
+      endOperatorSessions(target.id, 'operator-revoked');
       db.prepare('DELETE FROM auth_tokens WHERE user_id = ?').run(target.id);
       db.prepare('DELETE FROM users WHERE id = ?').run(target.id);
       auditLog(db, user.id, 'member.delete', target.id, { login: target.login, role: target.role });
@@ -607,8 +621,8 @@ export function createServer(opts = {}) {
       if (!cfg.limits.accept.take(ip(req))) return err(res, 429, 'rate_limited', 'Слишком много попыток');
       const { token, login, name, password } = body || {};
       if (typeof token !== 'string' || typeof login !== 'string' || typeof name !== 'string' || typeof password !== 'string' ||
-          login.trim().length < 3 || name.trim().length < 1 || password.length < 8) {
-        return err(res, 400, 'bad_request', 'Проверьте данные: логин от 3 символов, пароль от 8 символов');
+          login.trim().length < 3 || login.trim().length > 32 || name.trim().length < 1 || name.trim().length > 120 || password.length < 8) {
+        return err(res, 400, 'bad_request', 'Проверьте данные: логин от 3 до 32 символов, имя до 120, пароль от 8 символов');
       }
       const inv = db.prepare('SELECT * FROM invites WHERE token_hash = ?').get(sha256(token));
       if (!inv || inv.used_at || inv.revoked_at || inv.expires_at <= new Date().toISOString()) {
@@ -909,6 +923,7 @@ export function createServer(opts = {}) {
     let session = null;
     let role = null;
     let authed = false;
+    let userId = null; // id оператора после успешной аутентификации
     // превышение maxPayload и сетевые сбои приходят ошибкой; ws сам закрывает 1009
     ws.on('error', () => {});
     const authTimer = setTimeout(() => { if (!authed) ws.close(4001, 'auth-timeout'); }, cfg.authTimeoutMs);
@@ -945,7 +960,7 @@ export function createServer(opts = {}) {
         if (msg.claimId !== s.claim_id || s.operator_id !== u.id) return ws.close(4003, 'invalid-session');
         if (!['pending-consent', 'approved'].includes(s.state)) return ws.close(4003, 'invalid-session');
         role = 'operator';
-        ws._userId = u.id;
+        userId = u.id;
       } else {
         return ws.close(4002, 'auth-first');
       }
@@ -961,7 +976,7 @@ export function createServer(opts = {}) {
           .run(new Date(Date.now() + cfg.leaseMs).toISOString(), s.id);
       } else {
         rt.opWs = ws;
-        rt.operatorUserId = ws._userId;
+        rt.operatorUserId = userId;
       }
       session = s;
       authed = true;
