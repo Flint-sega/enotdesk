@@ -1,19 +1,32 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { readFileSync } from 'node:fs';
+import { readFileSync, readdirSync, statSync } from 'node:fs';
 import path from 'node:path';
 
-// Шов UI: index.html обязан сохранять все id, которые ищет app.js, без inline-
-// стилей/скриптов (CSP), а getSettings — отдавать фактическую версию.
+// Шов UI: index.html обязан сохранять все id, которые ищет JS рендерера (во всех
+// модулях), без inline-стилей/скриптов (CSP); каждая кнопка HTML должна быть
+// подключена в JS; getSettings — отдавать фактическую версию.
 
 const dir = path.join(import.meta.dirname, '..', 'renderer');
+
+function listJs(dirPath) {
+  const out = [];
+  for (const name of readdirSync(dirPath)) {
+    const full = path.join(dirPath, name);
+    if (statSync(full).isDirectory()) out.push(...listJs(full));
+    else if (name.endsWith('.js')) out.push(full);
+  }
+  return out;
+}
+
 const html = readFileSync(path.join(dir, 'index.html'), 'utf8');
-const appJs = readFileSync(path.join(dir, 'app.js'), 'utf8');
+const jsFiles = listJs(dir);
+const allJs = jsFiles.map((f) => readFileSync(f, 'utf8')).join('\n');
 const mainJs = readFileSync(path.join(import.meta.dirname, '..', 'main.mjs'), 'utf8');
 
-test('все id, которые ищет app.js, есть в index.html', () => {
+test('все id, которые ищет JS рендерера, есть в index.html', () => {
   const htmlIds = new Set([...html.matchAll(/id="([^"]+)"/g)].map((m) => m[1]));
-  const referenced = [...appJs.matchAll(/\$\('([^']+)'\)|getElementById\('([^']+)'\)/g)].map((m) => m[1] ?? m[2]);
+  const referenced = [...allJs.matchAll(/\$\('([^']+)'\)|getElementById\('([^']+)'\)/g)].map((m) => m[1] ?? m[2]);
   const states = ['idle', 'registering', 'waiting', 'consent', 'connected', 'ended', 'error'];
   const panes = ['connect', 'contacts', 'team', 'history', 'audit'];
   const views = ['client', 'operator']; // switchView: $('view-' + role) в тернарнике, regex его не ловит
@@ -24,6 +37,14 @@ test('все id, которые ищет app.js, есть в index.html', () => 
   ];
   for (const id of new Set([...referenced, ...dynamic])) {
     assert.ok(htmlIds.has(id), `id «${id}» отсутствует в index.html`);
+  }
+});
+
+test('анти-мёртвые-кнопки: каждая кнопка из HTML подключена в JS', () => {
+  const buttons = [...html.matchAll(/<button[^>]*id="([^"]+)"/g)].map((m) => m[1]);
+  assert.ok(buttons.length > 20, 'список кнопок не должен быть пуст');
+  for (const id of buttons) {
+    assert.ok(allJs.includes(`'${id}'`), `кнопка «${id}» есть в HTML, но нигде не подключена в JS`);
   }
 });
 
@@ -38,5 +59,5 @@ test('getSettings отдаёт фактическую версию, футер �
   assert.match(mainJs, /version:\s*app\.isPackaged\s*\?\s*app\.getVersion\(\)\s*:\s*pkg\.version/);
   assert.match(html, /id="app-footer"/);
   assert.match(html, /id="app-version"/);
-  assert.match(appJs, /if \(s\.version\)/);
+  assert.match(allJs, /if \(s\.version\)/);
 });
