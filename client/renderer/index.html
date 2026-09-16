@@ -138,6 +138,20 @@
         <h2 class="ok-text">Оператор подключён</h2>
         <p>Сейчас оператор видит ваш экран: <strong id="connected-operator">—</strong>.</p>
         <p id="client-live-note" class="note" role="status"></p>
+        <div class="row gap wrap-btns">
+          <button id="btn-switch-source" class="btn">Сменить экран</button>
+          <button id="btn-client-file" class="btn">Отправить файл</button>
+          <input id="client-file-input" type="file" class="hidden">
+        </div>
+        <label class="check-line" for="clip-client-toggle"><input type="checkbox" id="clip-client-toggle"> Синхронизировать буфер обмена</label>
+        <div id="client-file-prompt" class="note"></div>
+        <div class="chat">
+          <div id="client-chat-log" class="chat-log" aria-live="polite"></div>
+          <div class="row gap">
+            <input id="client-chat-input" maxlength="2000" placeholder="Сообщение оператору…">
+            <button id="client-chat-send" class="btn">Отправить</button>
+          </div>
+        </div>
         <button id="btn-stop" class="btn danger">Завершить сеанс</button>
       </div>
 
@@ -243,9 +257,25 @@
               <div class="toolbar">
                 <span id="remote-status" class="note" role="status">Подключение…</span>
                 <span class="spacer"></span>
+                <button id="btn-fit" class="btn small">Заполнить</button>
+                <button id="btn-fullscreen" class="btn small">Во весь экран</button>
+                <button id="btn-op-file" class="btn small">Отправить файл</button>
+                <input id="op-file-input" type="file" class="hidden">
                 <button id="btn-end-session" class="btn danger">Завершить</button>
               </div>
               <video id="remote-video" autoplay playsinline aria-label="Экран клиента"></video>
+              <div class="row gap wrap-btns">
+                <label class="check-line" for="clip-op-toggle"><input type="checkbox" id="clip-op-toggle" checked> Буфер обмена</label>
+                <span id="file-op-status" class="note"></span>
+              </div>
+              <div id="op-file-list" class="list"></div>
+              <div class="chat">
+                <div id="op-chat-log" class="chat-log" aria-live="polite"></div>
+                <div class="row gap">
+                  <input id="op-chat-input" maxlength="2000" placeholder="Сообщение клиенту…">
+                  <button id="op-chat-send" class="btn">Отправить</button>
+                </div>
+              </div>
               <p class="muted">Управление мышью и клавиатурой активно, пока клиент не завершил сеанс.</p>
             </div>
           </div>

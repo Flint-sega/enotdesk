@@ -5,6 +5,12 @@ import { parseCredentials } from '../lib/credentials.mjs';
 import { inviteStatus } from '../lib/invites.mjs';
 import { keyFromCode } from '../lib/keymap.mjs';
 import { wheelToLines } from '../lib/protocol.mjs';
+import { parseChatMessage, chatMessage } from '../lib/chat.mjs';
+import { parseClipMessage, clipMessage } from '../lib/clipboard-sync.mjs';
+import {
+  parseFileControl, createFileReceiver, createFileSender,
+  fileMeta, fileAccept, fileReject, fileDone, makeFileId,
+} from '../lib/file-transfer.mjs';
 
 const $ = (id) => document.getElementById(id);
 const enot = window.enot;
@@ -17,6 +23,9 @@ const state = {
   // оператор
   connect: null, // {sessionId, claimId}
   pc: null, dc: null, localStream: null,
+  dcs: null, // {input, chat, clip, file} — каналы сессии (ADR 0014)
+  clip: { client: false, operator: true }, // синхронизация буфера: у клиента выключена по умолчанию
+  fileRx: null, // приём файла {rx, dc, prog}
   iceQueue: [],
   busy: false,
   pages: { contacts: 0, history: 0, audit: 0 },
@@ -147,8 +156,11 @@ function cleanupSession() {
 function stopMedia() {
   try { state.localStream?.getTracks().forEach((t) => t.stop()); } catch { /* треки уже остановлены */ }
   try { state.dc?.close(); } catch { /* уже закрыт */ }
+  for (const ch of Object.values(state.dcs ?? {})) { try { ch.close(); } catch { /* уже закрыт */ } }
   try { state.pc?.close(); } catch { /* уже закрыт */ }
-  state.localStream = null; state.dc = null; state.pc = null; state.iceQueue = [];
+  state.localStream = null; state.dc = null; state.pc = null;
+  state.dcs = null; state.fileRx = null;
+  state.iceQueue = [];
   $('remote-video').srcObject = null;
 }
 
@@ -159,11 +171,9 @@ function makePc(iceServers) {
   pc.onicecandidate = (e) => {
     if (e.candidate) enot.sendSignal({ type: 'signal', data: { candidate: e.candidate.toJSON() } }).catch(() => {});
   };
-  // Host-сторона: принимает datachannel оператора; сырой кадр уходит в main,
+  // Host-сторона: принимает каналы оператора; сырой ввод уходит в main,
   // где парс/валидация/ворота/диспетчер — единый код (input-pipeline.mjs).
-  pc.ondatachannel = (e) => {
-    e.channel.onmessage = (m) => { enot.input(m.data).catch(() => {}); };
-  };
+  pc.ondatachannel = (e) => wireHostChannel(e.channel);
   // Краткое дрожание сети ('disconnected') часто самовосстанавливается — даём
   // 10с грейс; 'failed' рвёт сразу (R15.2: не висим в вечном connected).
   let rtcGrace = null;
@@ -195,52 +205,81 @@ function drainIce(pc) {
 }
 
 async function startHostRtc() {
-  const srcs = await enot.sources();
-  if (!srcs.items?.length) throw new Error('Экраны не найдены: разрешение на запись экрана не выдано или захват недоступен');
-  // выбор источника: экраны отдельно, окна — по одному
-  const pick = document.createElement('div');
-  pick.className = 'card';
-  pick.innerHTML = '<h2>Что показать оператору?</h2><p class="muted">Выберите экран или окно. Трансляция начнётся после выбора.</p>';
-  const list = document.createElement('div');
-  list.className = 'list';
-  for (const s of srcs.items) {
-    const item = document.createElement('button');
-    item.className = 'btn wide';
-    item.textContent = s.name || '(без названия)';
-    item.addEventListener('click', () => chooseSource(s.id, pick));
-    list.appendChild(item);
-  }
-  pick.appendChild(list);
-  $('view-client').appendChild(pick);
-
-  async function chooseSource(id, pickEl) {
-    setBusyAll(list, true);
-    const sel = await enot.selectSource(id);
-    if (!sel.ok) { text($('client-error-text'), sel.error ?? 'Источник недоступен'); clientShow('error'); pickEl.remove(); return; }
-    let stream;
-    try {
-      stream = await navigator.mediaDevices.getDisplayMedia({ video: true, audio: false });
-    } catch {
-      const perms = await enot.permissions();
-      const hint = perms.platform === 'darwin'
-        ? 'Разрешите запись экрана: Системные настройки → Конфиденциальность и безопасность → Запись экрана, затем перезапустите ЕнотDesk.'
-        : 'Захват экрана запрещён системой. Предоставьте разрешение и попробуйте снова.';
-      text($('client-error-text'), hint);
-      clientShow('error');
-      pickEl.remove();
-      return;
-    }
+  await showSourcePicker(async (id, pickEl) => {
+    const stream = await acquireStream(id, pickEl);
+    if (!stream) return;
     pickEl.remove();
     state.localStream = stream;
     const cfg = await enot.request('rtc.config', { asHost: true });
     const pc = makePc(cfg.body?.iceServers ?? []);
     state.pc = pc;
     for (const track of stream.getTracks()) pc.addTrack(track, stream);
+    applyVideoCap(pc);
     const offer = await pc.createOffer();
     await pc.setLocalDescription(offer);
     await enot.sendSignal({ type: 'signal', data: { description: { type: 'offer', sdp: pc.localDescription.sdp } } });
     clientShow('connected');
+  });
+}
+
+// Выбор источника: экраны отдельно, окна — по одному; onChoose решает, стартовать
+// трансляцию или заменить трек на ходу (replaceTrack, без ренегоциации).
+async function showSourcePicker(onChoose) {
+  const srcs = await enot.sources();
+  if (!srcs.items?.length) throw new Error('Экраны не найдены: разрешение на запись экрана не выдано или захват недоступен');
+  const pick = document.createElement('div');
+  pick.className = 'card';
+  pick.innerHTML = '<h2>Что показать оператору?</h2><p class="muted">Выберите экран или окно.</p>';
+  const list = document.createElement('div');
+  list.className = 'list';
+  for (const s of srcs.items) {
+    const item = document.createElement('button');
+    item.className = 'btn wide';
+    item.textContent = s.name || '(без названия)';
+    item.addEventListener('click', async () => {
+      setBusyAll(list, true);
+      try { await onChoose(s.id, pick); } catch { /* ошибка уже показана в статусах сеанса */ }
+      setBusyAll(list, false);
+    });
+    list.appendChild(item);
   }
+  pick.appendChild(list);
+  $('view-client').appendChild(pick);
+}
+
+async function acquireStream(id, pickEl) {
+  const sel = await enot.selectSource(id);
+  if (!sel.ok) {
+    text($('client-error-text'), sel.error ?? 'Источник недоступен');
+    clientShow('error');
+    pickEl.remove();
+    return null;
+  }
+  try {
+    return await navigator.mediaDevices.getDisplayMedia({ video: true, audio: false });
+  } catch {
+    const perms = await enot.permissions();
+    const hint = perms.platform === 'darwin'
+      ? 'Разрешите запись экрана: Системные настройки → Конфиденциальность и безопасность → Запись экрана, затем перезапустите ЕнотDesk.'
+      : 'Захват экрана запрещён системой. Предоставьте разрешение и попробуйте снова.';
+    text($('client-error-text'), hint);
+    clientShow('error');
+    pickEl.remove();
+    return null;
+  }
+}
+
+// Потолок качества исходящего видео: 2.5 Мбит/с хватает для читаемого экрана.
+function applyVideoCap(pc, maxBitrate = 2_500_000) {
+  try {
+    for (const sender of pc.getSenders()) {
+      if (sender.track?.kind !== 'video') continue;
+      const p = sender.getParameters();
+      p.encodings = p.encodings?.length ? p.encodings : [{}];
+      p.encodings[0].maxBitrate = maxBitrate;
+      sender.setParameters(p).catch(() => { /* не применилось — не критично */ });
+    }
+  } catch { /* не критично */ }
 }
 
 function setBusyAll(container, busy) {
@@ -253,6 +292,21 @@ async function operatorAnswer(offerSdp) {
   state.pc = pc;
   state.dc = pc.createDataChannel('input');
   wireOperatorInput(state.dc);
+  // Каналы сессии (ADR 0014): чат, буфер, файлы — отдельные DC с allowlist-именами.
+  const chatCh = pc.createDataChannel('chat');
+  chatCh.onmessage = (m) => {
+    const msg = parseChatMessage(m.data);
+    if (msg) appendChat('op-chat-log', 'Клиент', msg.text);
+  };
+  const clipCh = pc.createDataChannel('clip');
+  clipCh.onmessage = (m) => {
+    const msg = parseClipMessage(m.data);
+    if (msg && state.clip.operator) enot.copy(msg.text).catch(() => { /* буфер недоступен */ });
+  };
+  const fileCh = pc.createDataChannel('file');
+  fileCh.binaryType = 'arraybuffer';
+  fileCh.onmessage = (m) => operatorFileMessage(fileCh, m.data);
+  state.dcs = { input: state.dc, chat: chatCh, clip: clipCh, file: fileCh };
   pc.ontrack = (e) => { $('remote-video').srcObject = e.streams[0]; };
   await pc.setRemoteDescription({ type: 'offer', sdp: offerSdp });
   drainIce(pc);
@@ -538,6 +592,214 @@ function wireOperatorInput(dc) {
     send({ type: 'key', key, down: false });
   };
 }
+
+// ---------- сессия: чат, буфер обмена, файлы, видео-UX (ADR 0014) ----------
+
+function appendChat(logId, who, text) {
+  const log = $(logId);
+  const line = document.createElement('p');
+  line.className = `chat-line chat-${who === 'Вы' ? 'me' : 'them'}`;
+  const name = document.createElement('strong');
+  name.textContent = `${who}: `;
+  line.appendChild(name);
+  line.appendChild(document.createTextNode(text));
+  log.appendChild(line);
+  log.scrollTop = log.scrollHeight;
+}
+
+function sendChat(side) {
+  const input = $(side === 'client' ? 'client-chat-input' : 'op-chat-input');
+  const logId = side === 'client' ? 'client-chat-log' : 'op-chat-log';
+  const value = input.value.trim();
+  if (!value) return;
+  const wire = chatMessage(value);
+  if (!wire) { input.value = ''; return; }
+  const dc = state.dcs?.chat;
+  if (!dc || dc.readyState !== 'open') return;
+  try { dc.send(wire); } catch { /* канал закрывается */ return; }
+  appendChat(logId, 'Вы', value);
+  input.value = '';
+}
+$('client-chat-send').addEventListener('click', () => sendChat('client'));
+$('op-chat-send').addEventListener('click', () => sendChat('op'));
+for (const id of ['client-chat-input', 'op-chat-input']) {
+  $(id).addEventListener('keydown', (e) => {
+    if (e.key === 'Enter') { e.preventDefault(); sendChat(id === 'client-chat-input' ? 'client' : 'op'); }
+  });
+}
+
+// Host-сторона: приём каналов оператора.
+function wireHostChannel(ch) {
+  state.dcs ??= {};
+  state.dcs[ch.label] = ch;
+  if (ch.label === 'input') {
+    ch.onmessage = (m) => { enot.input(m.data).catch(() => {}); };
+  } else if (ch.label === 'chat') {
+    ch.onmessage = (m) => {
+      const msg = parseChatMessage(m.data);
+      if (msg) appendChat('client-chat-log', 'Оператор', msg.text);
+    };
+  } else if (ch.label === 'clip') {
+    ch.onmessage = (m) => {
+      const msg = parseClipMessage(m.data);
+      if (msg && state.clip.client) enot.copy(msg.text).catch(() => { /* буфер недоступен */ });
+    };
+  } else if (ch.label === 'file') {
+    ch.binaryType = 'arraybuffer';
+    ch.onmessage = (m) => hostFileMessage(ch, m.data);
+  }
+}
+
+// Исходящий буфер: событие copy уходит в канал, только если синхронизация включена.
+document.addEventListener('copy', () => {
+  const on = state.role === 'client' ? state.clip.client : state.clip.operator;
+  if (!on) return;
+  const dc = state.dcs?.clip;
+  if (!dc || dc.readyState !== 'open') return;
+  const selected = String(document.getSelection?.() ?? '');
+  const wire = clipMessage(selected);
+  if (!wire) return;
+  try { dc.send(wire); } catch { /* канал закрывается */ }
+});
+$('clip-client-toggle').addEventListener('change', (e) => { state.clip.client = e.target.checked; });
+$('clip-op-toggle').addEventListener('change', (e) => { state.clip.operator = e.target.checked; });
+
+function showFileProgress(size) {
+  return () => {
+    const rx = state.fileRx?.rx;
+    if (!rx || rx.meta.size !== size) return;
+    state.fileRx.prog.textContent = `Получено ${(rx.received / 1048576).toFixed(1)} из ${(size / 1048576).toFixed(1)} МБ`;
+  };
+}
+
+function saveReceivedBlob(blob, name, box) {
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = name;
+  a.textContent = `Сохранить «${name}» (${(blob.size / 1048576).toFixed(1)} МБ)`;
+  box.textContent = '';
+  box.appendChild(a);
+  setTimeout(() => URL.revokeObjectURL(url), 60_000);
+}
+
+// Клиент: оператор отправляет файл — явное «Принять/Отклонить» обязательно.
+function hostFileMessage(ch, data) {
+  if (typeof data === 'string') {
+    const ctl = parseFileControl(data);
+    if (!ctl) return;
+    if (ctl.kind === 'meta') {
+      const rx = createFileReceiver(ctl);
+      const prog = document.createElement('p');
+      prog.className = 'note';
+      state.fileRx = { rx, dc: ch, prog };
+      const box = $('client-file-prompt');
+      box.textContent = '';
+      const label = document.createElement('p');
+      label.textContent = `Оператор отправляет файл «${ctl.name}» (${(ctl.size / 1048576).toFixed(1)} МБ). Принять?`;
+      const accept = document.createElement('button');
+      accept.className = 'btn';
+      accept.textContent = 'Принять';
+      accept.addEventListener('click', () => {
+        try { ch.send(fileAccept(ctl.id)); } catch { /* канал закрыт */ }
+        box.textContent = '';
+        box.appendChild(prog);
+      });
+      const reject = document.createElement('button');
+      reject.className = 'btn danger-ghost';
+      reject.textContent = 'Отклонить';
+      reject.addEventListener('click', () => {
+        state.fileRx = null;
+        box.textContent = '';
+        try { ch.send(fileReject(ctl.id)); } catch { /* канал закрыт */ }
+      });
+      box.append(label, accept, reject);
+    } else if (ctl.kind === 'done') {
+      const { rx } = state.fileRx ?? {};
+      if (!rx) return;
+      const blob = rx.complete();
+      const name = rx.meta.name;
+      state.fileRx = null;
+      if (!blob) { appendChat('client-chat-log', 'Система', 'Файл получен с ошибкой — передача прервана.'); return; }
+      saveReceivedBlob(blob, name, $('client-file-prompt'));
+    }
+    return;
+  }
+  const { rx } = state.fileRx ?? {};
+  if (rx?.push(data)) showFileProgress(rx.meta.size)();
+}
+
+// Оператор: клиент шлёт файл только по своему явному действию — принимаем сами.
+function operatorFileMessage(ch, data) {
+  if (typeof data === 'string') {
+    const ctl = parseFileControl(data);
+    if (!ctl) return;
+    if (ctl.kind === 'meta') {
+      state.fileRx = { rx: createFileReceiver(ctl), dc: ch, prog: null };
+      try { ch.send(fileAccept(ctl.id)); } catch { /* канал закрыт */ }
+      text($('file-op-status'), `Клиент отправляет «${ctl.name}»…`);
+    } else if (ctl.kind === 'done') {
+      const { rx } = state.fileRx ?? {};
+      if (!rx) return;
+      const blob = rx.complete();
+      const name = rx.meta.name;
+      state.fileRx = null;
+      text($('file-op-status'), '');
+      if (!blob) { text($('file-op-status'), 'Файл получен с ошибкой'); return; }
+      saveReceivedBlob(blob, name, $('op-file-list'));
+    } else if (ctl.kind === 'reject') {
+      text($('file-op-status'), 'Клиент отклонил файл.');
+    }
+  }
+}
+
+// Отправка файла (обе стороны): meta + чанки через один file-канал.
+function sendFile(side) {
+  const input = $(side === 'client' ? 'client-file-input' : 'op-file-input');
+  const file = input.files?.[0];
+  input.value = '';
+  if (!file) return;
+  const dc = state.dcs?.file;
+  if (!dc || dc.readyState !== 'open') {
+    if (side === 'op') text($('file-op-status'), 'Канал передачи недоступен');
+    return;
+  }
+  const id = makeFileId();
+  try {
+    dc.send(fileMeta(id, file.name, file.size));
+    createFileSender({ file, dc, id }).start();
+  } catch { /* канал закрыт */ return; }
+  if (side === 'op') text($('file-op-status'), `Отправляем «${file.name}»…`);
+}
+$('btn-client-file').addEventListener('click', () => $('client-file-input').click());
+$('client-file-input').addEventListener('change', () => sendFile('client'));
+$('btn-op-file').addEventListener('click', () => $('op-file-input').click());
+$('op-file-input').addEventListener('change', () => sendFile('op'));
+
+// Видео-UX: полноэкранный режим, заполнение кадра, смена источника на ходу.
+$('btn-fullscreen').addEventListener('click', () => {
+  $('remote-video').requestFullscreen?.().catch(() => { /* пользователь отказал */ });
+});
+$('btn-fit').addEventListener('click', () => {
+  const video = $('remote-video');
+  const cover = video.classList.toggle('fit-cover');
+  text($('btn-fit'), cover ? 'Вписать' : 'Заполнить');
+});
+$('btn-switch-source').addEventListener('click', () => {
+  if (!state.pc) return;
+  showSourcePicker(async (id, pickEl) => {
+    const stream = await acquireStream(id, pickEl);
+    if (!stream) return;
+    pickEl.remove();
+    const old = state.localStream;
+    state.localStream = stream;
+    const videoSender = state.pc.getSenders().find((s) => s.track?.kind === 'video');
+    if (videoSender) await videoSender.replaceTrack(stream.getVideoTracks()[0]);
+    else for (const t of stream.getTracks()) state.pc.addTrack(t, stream);
+    applyVideoCap(state.pc);
+    old?.getTracks().forEach((t) => t.stop());
+  }).catch((e) => text($('client-error-text'), e.message));
+});
 
 // ---------- адресная книга ----------
 
