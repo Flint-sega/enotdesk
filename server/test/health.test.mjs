@@ -8,6 +8,8 @@ test('smoke: сервер стартует, /health отвечает без ав
   assert.equal(res.status, 200);
   assert.equal(res.json.ok, true);
   assert.match(res.json.version, /^\d+\.\d+\.\d+$/);
+  assert.equal(typeof res.json.activeSessions, 'number', 'health показывает число живых сеансов');
+  assert.ok(res.json.uptimeSec >= 0, 'health показывает аптайм');
 });
 
 test('неизвестный маршрут — 404 в формате {error:{code,message}} на русском', async (t) => {
