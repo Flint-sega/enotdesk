@@ -4,6 +4,7 @@
 
 import { app, BrowserWindow, ipcMain, session, desktopCapturer, screen, shell, clipboard, systemPreferences, Menu } from 'electron';
 import path from 'node:path';
+import os from 'node:os';
 import fs from 'node:fs';
 import { createRequire } from 'node:module';
 import { createApi } from './lib/api.mjs';
@@ -13,8 +14,14 @@ import { createNativeInput, loadPlatformAdapter } from './lib/native-input.mjs';
 import { createInputPipeline } from './lib/input-pipeline.mjs';
 import { INPUT_KEYS } from './lib/protocol.mjs';
 import { normalizeServerUrl } from './lib/server-url.mjs';
+import { createAgent, createAgentApi } from './lib/agent.mjs';
 
 const SMOKE = process.env.EDESK_SMOKE === '1';
+// Режим агента-службы (EDESK_AGENT=1): без окна, логи честные в stdout.
+// Отдельный userData-профиль даёт агенту свой single-instance-замок, поэтому
+// служба и обычный клиент работают на одной машине одновременно.
+const AGENT = process.env.EDESK_AGENT === '1';
+if (AGENT) app.setPath('userData', path.join(app.getPath('userData'), 'agent'));
 const DEFAULT_SERVER_URL = 'http://127.0.0.1:8080';
 
 // Версия продукта: в упаковке — app.getVersion(); в dev Electron отдаёт свою версию,
@@ -326,6 +333,51 @@ function createWindow() {
   win.loadFile(path.join(import.meta.dirname, 'renderer', 'index.html'));
 }
 
+// Агент-служба (EDESK_AGENT=1): тот же цикл, что у клиента-помощника, но без
+// окна и рендерера. Токен машины — файл в отдельном agent-профиле (0600),
+// в рендерер не попадает никогда — рендерера нет. Логи честные, в stdout.
+function startAgentMode() {
+  const tokenPath = path.join(app.getPath('userData'), 'agent-token.json');
+  const tokenStore = {
+    load() {
+      try {
+        const raw = JSON.parse(fs.readFileSync(tokenPath, 'utf8'));
+        return typeof raw?.token === 'string' && raw.token ? raw.token : null;
+      } catch { return null; } // первый старт — токена ещё нет
+    },
+    save(token) {
+      fs.mkdirSync(path.dirname(tokenPath), { recursive: true });
+      fs.writeFileSync(tokenPath, JSON.stringify({ token }, null, 2), { mode: 0o600 });
+    },
+    clear() {
+      try { fs.rmSync(tokenPath, { force: true }); } catch { /* не было — не страшно */ }
+    },
+  };
+  const agent = createAgent({
+    api: createAgentApi({ baseUrl: settings.serverUrl }),
+    signal: () => createSignalClient({ url: new URL('/signal', settings.serverUrl).toString().replace(/^http/, 'ws') }),
+    native: nativeInput,
+    policy: {
+      name: process.env.EDESK_AGENT_NAME || os.hostname(),
+      os: process.platform,
+      version: app.isPackaged ? app.getVersion() : pkg.version,
+      heartbeatMs: 5000,
+      backoffBaseMs: 1000,
+      backoffMaxMs: 30000,
+      tokenStore,
+      log: console,
+    },
+  });
+  app.on('before-quit', () => agent.stop());
+  const code = process.env.EDESK_AGENT_CODE;
+  const started = agent.start(code ? { code } : {});
+  if (started.ok) {
+    console.log(`[enotdesk-agent] запущен: сервер ${settings.serverUrl}, машина «${process.env.EDESK_AGENT_NAME || os.hostname()}»${code ? ' (регистрация по onboarding-коду)' : ''}`);
+  } else {
+    console.error(`[enotdesk-agent] не запущен: ${started.error}`);
+  }
+}
+
 // Закрытие окна = реальный выход, без фонового процесса (R16.1)
 function cleanupAndQuit() {
   // Best-effort revoke: не ждём сервер дольше ~1с, локальное завершение от него не зависит
@@ -354,6 +406,11 @@ app.whenReady().then(() => {
     } catch { /* smoke: честный скриншот first-run, если записать не вышло */ }
   }
   loadSettings();
+  if (AGENT) {
+    // Агент-служба: окно, IPC и рендерер не создаются — только цикл и логи
+    startAgentMode();
+    return;
+  }
   registerIpc();
   createWindow();
   if (SMOKE) {
