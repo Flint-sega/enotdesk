@@ -1,0 +1,85 @@
+# EnotDesk одним стеком: enotdesk (сервер) + coturn (TURN) + caddy (авто-HTTPS).
+# Быстрый старт за 5 минут: docker/README.md. Переменные — в .env (шаблон .env.example).
+
+name: enotdesk
+
+services:
+  enotdesk:
+    build: .
+    image: enotdesk-server:local
+    restart: unless-stopped
+    # Замечание: coturn работает в network_mode: host (см. ниже), поэтому прямых
+    # зависимостей по сети нет; caddy ждёт старта enotdesk.
+    environment:
+      ENOT_HOST: 0.0.0.0
+      ENOT_PORT: 8080
+      ENOT_DB: /data/enotdesk.db
+      ENOT_DIST_DIR: /data/dist
+      DOMAIN: ${DOMAIN:-}
+      ENOT_PUBLIC_URL: ${ENOT_PUBLIC_URL:-}
+      ENOT_TURN_URLS: ${ENOT_TURN_URLS:-}
+      ENOT_TURN_USERNAME: ${TURN_USERNAME:-}
+      ENOT_TURN_PASSWORD: ${TURN_PASSWORD:-}
+      ENOT_TURN_SECRET: ${TURN_SECRET:?Задай TURN_SECRET в .env — секрет TURN-сервера, см. .env.example}
+    volumes:
+      - enotdesk-data:/data
+      - enotdesk-dist:/data/dist
+    ports:
+      # Только loopback: админ может проверить health снаружи контейнера;
+      # наружу сервер отдаётся через caddy (80/443), напрямую 8080 не публикуем.
+      - "127.0.0.1:8080:8080"
+    healthcheck:
+      test: ["CMD", "node", "-e", "fetch('http://127.0.0.1:8080/api/v1/health').then((r)=>{if(!r.ok)throw new Error('not ok')}).catch(()=>process.exit(1))"]
+      interval: 30s
+      timeout: 5s
+      retries: 5
+      start_period: 15s
+
+  coturn:
+    # TURN из коробки (история 4): static-auth-secret из env, realm из DOMAIN.
+    image: coturn/coturn:4.6-alpine
+    restart: unless-stopped
+    # host-сеть: релейные кандидаты обязаны видеть внешний адрес машины,
+    # проброс портов контейнера для TURN не работает без --external-ip.
+    # Требование: Linux-хост (VPS). На Docker Desktop может не релеить — честно см. docker/README.md.
+    network_mode: host
+    command:
+      - -c
+      - /dev/null
+      - --use-auth-secret
+      - --static-auth-secret=${TURN_SECRET:?Задай TURN_SECRET в .env — секрет TURN-сервера, см. .env.example}
+      - --realm=${DOMAIN:-localhost}
+      - --listening-port=3478
+      - --no-tls
+      - --no-dtls
+      # Релейные порты (открыть на хосте: 3478/tcp+udp и 49160-49200/udp)
+      - --min-port=49160
+      - --max-port=49200
+      - --fingerprint
+      - --no-multicast-peers
+      - --no-cli
+
+  caddy:
+    # Авто-TLS (Let's Encrypt) при заданном DOMAIN; без домена — HTTP :80 с честным
+    # предупреждением в логах (docker/caddy/entrypoint.sh).
+    image: caddy:2.10-alpine
+    restart: unless-stopped
+    depends_on:
+      - enotdesk
+    ports:
+      - "80:80"
+      - "443:443"
+      - "443:443/udp"
+    environment:
+      DOMAIN: ${DOMAIN:-}
+    volumes:
+      - ./docker/caddy/entrypoint.sh:/entrypoint.sh:ro
+      - caddy-data:/data
+      - caddy-config:/config
+    entrypoint: ["sh", "/entrypoint.sh"]
+
+volumes:
+  enotdesk-data:
+  enotdesk-dist:
+  caddy-data:
+  caddy-config:
