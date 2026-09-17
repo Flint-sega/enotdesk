@@ -5,7 +5,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { DatabaseSync } from 'node:sqlite';
 import { openDb, SCHEMA_VERSION } from '../db.mjs';
-import { createMachinesStore } from '../machines.mjs';
+import { createMachinesStore, sanitizeInventory } from '../machines.mjs';
 import { sha256 } from '../crypto.mjs';
 
 // ---- миграция A01: версионированная схема ----
@@ -217,6 +217,61 @@ test('store: touch обновляет last_seen, list пагинирует и ч
   db.close();
 });
 
+// ---- инвентарь машин (R06): heartbeat агента → валидация → наружу ----
+// Ожидания из таска: строки ограничены, числа числа, мусор отбрасывается;
+// инвентарь ≤ 4 КБ; без инвентаря всё продолжает работать, прошлый не затирается.
+
+test('sanitizeInventory: allowlist полей, строки ограничены, числа числа, мусор → null', () => {
+  assert.deepEqual(
+    sanitizeInventory({ os: 'linux', appVersion: '0.9.0', uptimeSec: 123.7, diskFreeGb: 42.567 }),
+    { os: 'linux', appVersion: '0.9.0', uptimeSec: 123, diskFreeGb: 42.57 },
+  );
+  // неизвестные поля отбрасываются — наружу проходит только allowlist
+  assert.deepEqual(sanitizeInventory({ os: 'win32', evil: '<script>', extra: { a: 1 } }), { os: 'win32' });
+  // строки обрезаются до предела, пустые не хранятся
+  assert.equal(sanitizeInventory({ os: 'о'.repeat(200) }).os.length, 60);
+  assert.deepEqual(sanitizeInventory({ os: '   ' }), null);
+  // не-строки и не-числа — поле отбрасывается
+  assert.deepEqual(sanitizeInventory({ os: 42, uptimeSec: 'много' }), null);
+  // отрицательные, NaN и нелепые величины — поле отбрасывается
+  assert.deepEqual(sanitizeInventory({ uptimeSec: -5 }), null);
+  assert.deepEqual(sanitizeInventory({ diskFreeGb: NaN }), null);
+  assert.deepEqual(sanitizeInventory({ uptimeSec: 1e15 }), null);
+  // переполнение 4 КБ — весь объект мусор
+  assert.equal(sanitizeInventory({ junk: 'x'.repeat(5000) }), null);
+  // вовсе не объект — мусор
+  assert.equal(sanitizeInventory('строка'), null);
+  assert.equal(sanitizeInventory(42), null);
+  assert.equal(sanitizeInventory(null), null);
+  assert.equal(sanitizeInventory(['linux']), null);
+});
+
+test('store: heartbeat с инвентарём сохраняется и отдаётся; без — старый остаётся, мусор не затирает', () => {
+  const db = openDb(':memory:');
+  const store = createMachinesStore(db);
+  const { machine, code } = store.createOnboarding({ name: 'м-инв' });
+  const { token } = store.register({ code, name: 'inv-1', os: 'linux', version: '1.0' });
+  const id = machine.id;
+  void token;
+
+  assert.equal(store.out(store.get(id)).inventory, null, 'у новой машины инвентаря нет');
+  const inv = sanitizeInventory({ os: 'linux', appVersion: '1.0', uptimeSec: 3600, diskFreeGb: 12.5 });
+  assert.equal(store.touch(id, { inventory: inv }), true);
+  assert.deepEqual(store.out(store.get(id)).inventory, { os: 'linux', appVersion: '1.0', uptimeSec: 3600, diskFreeGb: 12.5 });
+
+  // heartbeat без инвентаря не затирает сохранённый
+  assert.equal(store.touch(id), true);
+  assert.deepEqual(store.out(store.get(id)).inventory, { os: 'linux', appVersion: '1.0', uptimeSec: 3600, diskFreeGb: 12.5 });
+  // мусор (валидация дала null) — прошлый инвентарь сохраняется
+  assert.equal(store.touch(id, { inventory: null }), true);
+  assert.deepEqual(store.out(store.get(id)).inventory, { os: 'linux', appVersion: '1.0', uptimeSec: 3600, diskFreeGb: 12.5 });
+
+  // незарегистрированная машина (токена нет) не обновляется
+  const other = store.createOnboarding({ name: 'м-2' });
+  assert.equal(store.touch(other.machine.id, { inventory: sanitizeInventory({ os: 'x' }) }), false);
+  db.close();
+});
+
 // ---- маршруты /machines*, /agent/* (шов createServer) ----
 
 import { startServer, api, adminLogin, tmpDb, wsConnect, wsAuth } from './util.mjs';
@@ -425,6 +480,37 @@ test('revoke завершает живой сеанс машины и гасит
   assert.equal((await api(base, 'DELETE', `/machines/${created.machine.id}`, { token: admin.token })).status, 200);
   assert.equal((await api(base, 'GET', '/machines', { token: admin.token })).json.total, 0);
   assert.equal((await api(base, 'DELETE', `/machines/${created.machine.id}`, { token: admin.token })).status, 404);
+});
+
+test('инвентарь по API: heartbeat с inventory сохранён и виден в GET /machines и /machines/:id; мусор отброшен; без inventory не падает', async (t) => {
+  const { base, admin } = await setup(t);
+  const auditor = await makeUser(base, admin, 'auditor', 'aud-inv');
+  const { created, reg } = await onboardAndRegister(base, admin);
+  const machineUrl = `/machines/${created.machine.id}`;
+
+  // heartbeat без inventory — 200, у машины честно null
+  assert.equal((await api(base, 'POST', '/agent/heartbeat', { token: reg.token })).status, 200);
+  assert.equal((await api(base, 'GET', machineUrl, { token: admin.token })).json.inventory, null);
+
+  // валидный инвентарь: сохранён и отдаётся и в одиночной машине, и в списке
+  const good = { os: 'linux', appVersion: '0.9.0', uptimeSec: 3600, diskFreeGb: 12.5 };
+  assert.equal((await api(base, 'POST', '/agent/heartbeat', { token: reg.token, body: { inventory: good } })).status, 200);
+  assert.deepEqual((await api(base, 'GET', machineUrl, { token: admin.token })).json.inventory, good);
+  assert.deepEqual(
+    (await api(base, 'GET', '/machines', { token: admin.token })).json.items.find((x) => x.id === created.machine.id).inventory,
+    good,
+  );
+
+  // мусор (не-объект, не-те типы, переполнение 4 КБ) — heartbeat всё равно 200, прошлый инвентарь жив
+  for (const junk of ['строка', { os: 42, uptimeSec: 'много' }, { junk: 'x'.repeat(5000) }]) {
+    assert.equal((await api(base, 'POST', '/agent/heartbeat', { token: reg.token, body: { inventory: junk } })).status, 200);
+  }
+  assert.deepEqual((await api(base, 'GET', machineUrl, { token: admin.token })).json.inventory, good);
+
+  // RBAC одиночной машины: аноним 401, аудитор 403, неизвестная 404
+  assert.equal((await api(base, 'GET', machineUrl)).status, 401);
+  assert.equal((await api(base, 'GET', machineUrl, { token: auditor.token })).status, 403);
+  assert.equal((await api(base, 'GET', '/machines/no-such-machine', { token: admin.token })).status, 404);
 });
 
 test('отказы машинных маршрутов локализуются по Accept-Language (ru/en)', async (t) => {

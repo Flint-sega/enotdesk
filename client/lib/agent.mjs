@@ -34,7 +34,13 @@ export function createAgentApi({ baseUrl, fetchImpl = fetch } = {}) {
   return {
     register: ({ code, name, os, version }) => call('/agent/register', { method: 'POST', body: { code, name, os, version } }),
     session: (token) => call('/agent/session', { token }),
-    heartbeat: (token) => call('/agent/heartbeat', { method: 'POST', token }),
+    heartbeat: (token, inventory) => call('/agent/heartbeat', {
+      method: 'POST',
+      token,
+      // без инвентаря — тело не отправляется вовсе (старые серверы не заметят)
+      ...(inventory !== undefined ? { body: { inventory } } : {}),
+    }),
+    rtcConfig: (token) => call('/rtc-config', { token }),
     decision: ({ sessionId, token, claimId, allow }) => call(`/sessions/${encodeURIComponent(String(sessionId))}/decision`, { method: 'POST', token, body: { claimId, allow } }),
   };
 }
@@ -42,6 +48,35 @@ export function createAgentApi({ baseUrl, fetchImpl = fetch } = {}) {
 function memoryTokenStore() {
   let t = null;
   return { load: () => t, save: (v) => { t = v; }, clear: () => { t = null; } };
+}
+
+// Runtime-подключение TURN для терминала моста (R09): хук для createBridgeRelay
+// достаёт iceServers через GET /rtc-config с машинным (host-)токеном — сервер
+// принимает его при живом сеансе, а терминал открывается только в approved.
+// Нет токена / не-200 / неверное тело — честный throw: релей сам деградирует
+// в iceServers:[] с причиной, пустой список проходит (TURN не настроен).
+export function createIceServersFetcher({ api, tokenLoad, timeoutMs = 5000 }) {
+  if (!api || typeof api.rtcConfig !== 'function' || typeof tokenLoad !== 'function') {
+    throw new Error('createIceServersFetcher: нужны api (rtcConfig) и tokenLoad');
+  }
+  const ms = Math.max(1, Number(timeoutMs) || 5000);
+  return async function fetchIceServers() {
+    const token = tokenLoad();
+    if (!token) throw new Error('токена машины ещё нет');
+    // Дедлайн (craft-ревью R09): зависший fetch навсегда держит
+    // setRemoteDescription моста — offer не уйдёт и FAIL не придёт. Не успели —
+    // честный пустой список с причиной, терминал открывается по LAN.
+    return Promise.race([
+      (async () => {
+        const r = await api.rtcConfig(token);
+        if (r.status !== 200 || !Array.isArray(r.body?.iceServers)) {
+          throw new Error(`rtc-config: ${r.status === 200 ? 'неверный ответ' : `HTTP ${r.status}`}`);
+        }
+        return { iceServers: r.body.iceServers };
+      })(),
+      new Promise((resolve) => { setTimeout(() => resolve({ iceServers: [], reason: 'ice-config-timeout' }), ms); }),
+    ]);
+  };
 }
 
 export function createAgent({ api, signal, native, policy, termHost, rtc }) {
@@ -61,6 +96,9 @@ export function createAgent({ api, signal, native, policy, termHost, rtc }) {
   const backoffMaxMs = Math.max(backoffBaseMs, Number(p.backoffMaxMs ?? 30000));
   const tokenStore = p.tokenStore ?? memoryTokenStore();
   const log = p.log ?? { info() {}, warn() {}, error() {} };
+  // Инвентарь (R06): сборщик может отсутствовать; может быть асинхронным
+  // (statfs); может упасть — heartbeat тогда уходит без инвентаря.
+  const getInventory = typeof p.getInventory === 'function' ? p.getInventory : null;
   const onBackoff = typeof p.onBackoff === 'function' ? p.onBackoff : null;
   // Терминал (R09): host-сторона DC-канала `term`; агент только оповещает
   // heartbeat'ом о факте жизни терминала (аудит переходов — на сервере) и
@@ -266,7 +304,11 @@ export function createAgent({ api, signal, native, policy, termHost, rtc }) {
 
       // Машинный heartbeat (online-статус в списке машин) — на всём времени жизни.
       machineBeat = setInterval(() => {
-        api.heartbeat(token)
+        // Сбор инвентаря (R06) до отправки: упал или нет — heartbeat всё равно идёт.
+        Promise.resolve()
+          .then(() => (getInventory ? getInventory() : undefined))
+          .catch(() => undefined)
+          .then((inventory) => api.heartbeat(token, inventory))
           .then((r) => { if (r.status === 401) revoke('Токен машины отозван (heartbeat 401)'); })
           .catch(() => { /* сеть — видеть будет следующий цикл опроса */ });
       }, heartbeatMs);

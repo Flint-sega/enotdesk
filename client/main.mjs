@@ -470,6 +470,22 @@ function createAgentRtc() {
   };
 }
 
+// Инвентарь машины (R06): честный сбор — что собрать не удалось, поле просто
+// отсутствует, фейков нет. statfs даёт свободное место на томе профиля
+// (Node/Electron умеют его на всех трёх ОС; при отказе — поле без диска).
+async function collectInventory() {
+  const inventory = {
+    os: process.platform,
+    appVersion: app.isPackaged ? app.getVersion() : pkg.version,
+    uptimeSec: Math.floor(process.uptime()),
+  };
+  try {
+    const st = await fs.promises.statfs(app.getPath('userData'));
+    inventory.diskFreeGb = Math.round(((st.bavail * st.bsize) / 1e9) * 100) / 100;
+  } catch { /* statfs недоступен на этом томе/платформе — поле честно отсутствует */ }
+  return inventory;
+}
+
 // Агент-служба (EDESK_AGENT=1): тот же цикл, что у клиента-помощника, но без
 // окна и рендерера. Токен машины — файл в отдельном agent-профиле (0600),
 // в рендерер не попадает никогда — рендерера нет. Логи честные, в stdout.
@@ -508,6 +524,7 @@ function startAgentMode() {
       backoffBaseMs: 1000,
       backoffMaxMs: 30000,
       tokenStore,
+      getInventory: collectInventory, // инвентарь машин (R06) с каждым heartbeat
       log: console,
     },
   });

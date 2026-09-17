@@ -12,6 +12,38 @@ const ONBOARDING_TTL_MS = 24 * 3600 * 1000;
 // агент подтверждает жизнь heartbeat-ом (как host, раз в ~5с); окно online — с запасом
 const ONLINE_WINDOW_MS = 60 * 1000;
 
+// Инвентарь машины (R06): агент присылает объект с heartbeat'ом, наружу
+// проходит только allowlist полей с жёсткими пределами. Мусор любого рода —
+// не-объект, не-те типы, переполнение 4 КБ — отбрасывается (null): сервер не
+// хранит то, что не смог понять. Где поле собрать не удалось (например, statfs
+// недоступен) — оно просто отсутствует, фейков агент не присылает и мы не делаем.
+const INVENTORY_LIMITS = { str: 60, bytes: 4096, uptimeSecMax: 1e12, diskFreeGbMax: 1e9 };
+
+export function sanitizeInventory(value) {
+  if (typeof value !== 'object' || value === null || Array.isArray(value)) return null;
+  if (JSON.stringify(value).length > INVENTORY_LIMITS.bytes) return null;
+  const inv = {};
+  for (const key of ['os', 'appVersion']) {
+    const v = value[key];
+    if (typeof v === 'string' && v.trim()) inv[key] = v.trim().slice(0, INVENTORY_LIMITS.str);
+  }
+  for (const [key, max] of [['uptimeSec', INVENTORY_LIMITS.uptimeSecMax], ['diskFreeGb', INVENTORY_LIMITS.diskFreeGbMax]]) {
+    const n = value[key];
+    if (typeof n === 'number' && Number.isFinite(n) && n >= 0 && n <= max) {
+      inv[key] = key === 'uptimeSec' ? Math.floor(n) : Math.round(n * 100) / 100;
+    }
+  }
+  return Object.keys(inv).length ? inv : null;
+}
+
+// Инвентарь из БД: писали только после валидации, но читаем на отказ честно.
+function storedInventory(raw) {
+  try {
+    const v = JSON.parse(raw || 'null');
+    return v && typeof v === 'object' && !Array.isArray(v) ? v : null;
+  } catch { return null; }
+}
+
 export function createMachinesStore(db, { nowMs = Date.now, onlineWindowMs = ONLINE_WINDOW_MS } = {}) {
   const nowIso = () => new Date(nowMs()).toISOString();
   const get = (id) => db.prepare('SELECT * FROM machines WHERE id = ?').get(id) || null;
@@ -31,6 +63,7 @@ export function createMachinesStore(db, { nowMs = Date.now, onlineWindowMs = ONL
       registered: row.agent_token_hash != null,
       revokedAt: row.revoked_at,
       lastSeenAt: row.last_seen_at,
+      inventory: storedInventory(row.inventory),
       online: !Number.isNaN(seen) && nowMs() - seen <= onlineWindowMs,
       onboardingExpiresAt: row.onboarding_expires_at,
       onboardingUsedAt: row.onboarding_used_at,
@@ -112,10 +145,18 @@ export function createMachinesStore(db, { nowMs = Date.now, onlineWindowMs = ONL
       ).get(sha256(token)) || null;
     },
 
-    touch(id) {
+    // heartbeat агента. inventory — результат sanitizeInventory: объект
+    // перезаписывает прошлый, null (мусор) и отсутствие поля (undefined)
+    // старый инвентарь сохраняют.
+    touch(id, { inventory } = {}) {
+      if (inventory === undefined || inventory === null) {
+        return db.prepare(
+          'UPDATE machines SET last_seen_at=? WHERE id=? AND agent_token_hash IS NOT NULL'
+        ).run(nowIso(), id).changes === 1;
+      }
       return db.prepare(
-        'UPDATE machines SET last_seen_at=? WHERE id=? AND agent_token_hash IS NOT NULL'
-      ).run(nowIso(), id).changes === 1;
+        'UPDATE machines SET last_seen_at=?, inventory=? WHERE id=? AND agent_token_hash IS NOT NULL'
+      ).run(nowIso(), JSON.stringify(inventory), id).changes === 1;
     },
   };
 }

@@ -1,7 +1,7 @@
 import { DatabaseSync } from 'node:sqlite';
 
 // Последняя версия схемы; растёт с каждым версионированным шагом (A01 и далее).
-export const SCHEMA_VERSION = 3;
+export const SCHEMA_VERSION = 4;
 
 // Версионированные шаги схемы (A01): каждая база — старая или новая — проходит
 // недостающие шаги по порядку, версия хранится в таблице schema_version.
@@ -115,6 +115,15 @@ const MIGRATIONS = [
           events TEXT NOT NULL DEFAULT '[]'
         );
       `);
+    },
+  },
+  {
+    // C5 (R06): инвентарь машин. Агент присылает объект с heartbeat'ом,
+    // сервер хранит валидированный JSON (allowlist полей, предел 4 КБ) и
+    // отдаёт наружу вместе с машиной. NULL — инвентаря ещё не присылали.
+    version: 4,
+    up: (db) => {
+      try { db.exec('ALTER TABLE machines ADD COLUMN inventory TEXT'); } catch { /* колонка уже есть */ }
     },
   },
 ];

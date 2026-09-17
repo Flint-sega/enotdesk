@@ -4,7 +4,7 @@ import fs from 'node:fs';
 import crypto from 'node:crypto';
 import { WebSocketServer } from 'ws';
 import { openDb, endLiveSessions, auditLog, runRetention } from './db.mjs';
-import { createMachinesStore } from './machines.mjs';
+import { createMachinesStore, sanitizeInventory } from './machines.mjs';
 import { createWebhooks } from './webhooks.mjs';
 import { page, downloadsHtml, inviteHtml, operatorPage, isInsecurePage } from './pages.mjs';
 import { t, pickLocale } from '../client/lib/i18n.mjs';
@@ -901,6 +901,16 @@ export function createServer(opts = {}) {
       return ok(res, 200, { ok: true });
     }
     m = p.match(/^\/machines\/([^/]+)$/);
+    if (m && req.method === 'GET') {
+      // одиночная машина (R06): инвентарь и статус — те же права, что у списка
+      if (!user) return err(res, 401, 'unauthorized', 'Требуется авторизация');
+      if (!['admin', 'operator'].includes(user.role)) return err(res, 403, 'forbidden', 'Недостаточно прав');
+      const locale = pickLocale(req.headers['accept-language']);
+      const machine = machinesStore.out(machinesStore.get(m[1]));
+      if (!machine) return err(res, 404, 'not_found', t('machines.notFound', {}, locale));
+      return ok(res, 200, machine);
+    }
+    m = p.match(/^\/machines\/([^/]+)$/);
     if (m && req.method === 'DELETE') {
       if (!user) return err(res, 401, 'unauthorized', 'Требуется авторизация');
       if (user.role !== 'admin') return err(res, 403, 'forbidden', 'Недостаточно прав');
@@ -947,7 +957,10 @@ export function createServer(opts = {}) {
       const locale = pickLocale(req.headers['accept-language']);
       const machine = machinesStore.machineByToken(bearer(req) ?? '');
       if (!machine) return err(res, 401, 'unauthorized', t('machines.tokenRequired', {}, locale));
-      machinesStore.touch(machine.id);
+      // Инвентарь (R06): если поле пришло — валидируем (allowlist, ≤4 КБ);
+      // мусор отбрасывается, прошлый инвентарь остаётся.
+      const inventory = body && Object.hasOwn(body, 'inventory') ? sanitizeInventory(body.inventory) : undefined;
+      machinesStore.touch(machine.id, { inventory });
       return ok(res, 200, { ok: true });
     }
 

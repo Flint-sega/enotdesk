@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { createAgent, createAgentApi } from '../lib/agent.mjs';
+import { createAgent, createAgentApi, createIceServersFetcher } from '../lib/agent.mjs';
 import { createNativeInput, inertAdapter } from '../lib/native-input.mjs';
 
 // Шов §2 (interfaces.md): agent-цикл над фейк-api, фейк-сигналингом и инертным
@@ -19,7 +19,7 @@ function memoryStore() {
 }
 
 function fakeApi(script = {}) {
-  const calls = { register: [], session: [], heartbeat: [], decision: [] };
+  const calls = { register: [], session: [], heartbeat: [], heartbeatBodies: [], decision: [] };
   return {
     calls,
     api: {
@@ -29,9 +29,13 @@ function fakeApi(script = {}) {
       async session(token) { calls.session.push(token); return script.session
         ? script.session(token)
         : { status: 404, body: { error: 'no_session', message: 'Активного сеанса у машины нет' } }; },
-      async heartbeat(token) { calls.heartbeat.push(token); return script.heartbeat
-        ? script.heartbeat(token)
-        : { status: 200, body: { ok: true } }; },
+      async heartbeat(token, inventory) {
+        calls.heartbeat.push(token);
+        calls.heartbeatBodies.push(inventory);
+        return script.heartbeat
+          ? script.heartbeat(token)
+          : { status: 200, body: { ok: true } };
+      },
       async decision(p) { calls.decision.push(p); return script.decision
         ? script.decision(p)
         : { status: 200, body: { ok: true } }; },
@@ -300,16 +304,105 @@ test('createAgentApi: пути, bearer-токен и тела запросов /
   await api.register({ code: 'K', name: 'mk', os: 'win', version: '1.2' });
   await api.session('tok-9');
   await api.heartbeat('tok-9');
+  await api.rtcConfig('tok-9');
   await api.decision({ sessionId: 77, token: 'tok-9', claimId: 'cl', allow: true });
   assert.deepEqual(reqs.map((r) => [r.method, r.url.replace('http://srv:8080', '')]), [
     ['POST', '/api/v1/agent/register'],
     ['GET', '/api/v1/agent/session'],
     ['POST', '/api/v1/agent/heartbeat'],
+    ['GET', '/api/v1/rtc-config'],
     ['POST', '/api/v1/sessions/77/decision'],
   ]);
   assert.deepEqual(reqs[0].body, { code: 'K', name: 'mk', os: 'win', version: '1.2' });
   assert.equal(reqs[0].headers.Authorization, undefined, 'регистрация анонимна по коду');
   assert.equal(reqs[1].headers.Authorization, 'Bearer tok-9');
-  assert.equal(reqs[3].headers.Authorization, 'Bearer tok-9');
-  assert.deepEqual(reqs[3].body, { claimId: 'cl', allow: true });
+  assert.equal(reqs[3].headers.Authorization, 'Bearer tok-9', 'rtc-config — с машинным (host-)токеном');
+  assert.equal(reqs[3].body, undefined, 'rtc-config — GET без тела');
+  assert.deepEqual(reqs[4].body, { claimId: 'cl', allow: true });
+});
+
+test('TURN для терминала (R09): createIceServersFetcher — токен из store → iceServers; сбой — честный throw', async () => {
+  const servers = [{ urls: ['turn:turn.example:3478'], username: 'u', credential: 'p' }];
+  const okApi = { rtcConfig: async () => ({ status: 200, body: { iceServers: servers } }) };
+
+  // happy path: iceServers уходят в хук релея как есть
+  assert.deepEqual(await createIceServersFetcher({ api: okApi, tokenLoad: () => 'tok-1' })(), { iceServers: servers });
+
+  // нет токена (не зарегистрирован/отозван) — честный отказ, релей деградирует в []
+  await assert.rejects(
+    createIceServersFetcher({ api: okApi, tokenLoad: () => null })(),
+    /токена машины ещё нет/,
+  );
+  // не-200 (например, сеанса нет / токен чужой) — честный отказ с кодом
+  await assert.rejects(
+    createIceServersFetcher({ api: { rtcConfig: async () => ({ status: 401, body: null }) }, tokenLoad: () => 't' })(),
+    /HTTP 401/,
+  );
+  // пустой список — не ошибка: нет TURN на сервере, мост честно [] с причиной
+  assert.deepEqual(
+    await createIceServersFetcher({ api: { rtcConfig: async () => ({ status: 200, body: { iceServers: [] } }) }, tokenLoad: () => 't' })(),
+    { iceServers: [] },
+  );
+  // неверное тело — честный отказ, а не тихий []
+  await assert.rejects(
+    createIceServersFetcher({ api: { rtcConfig: async () => ({ status: 200, body: null }) }, tokenLoad: () => 't' })(),
+    /неверный ответ/,
+  );
+  // фабрика проверяет зависимости при сборке
+  assert.throws(() => createIceServersFetcher({ api: {}, tokenLoad: () => 't' }), /rtcConfig/);
+  assert.throws(() => createIceServersFetcher({ api: okApi }), /tokenLoad/);
+});
+
+test('TURN для терминала (R09): зависший rtc-config не держит открытие — дедлайн даёт честный пустой список', async () => {
+  // fetch навсегда завис: без дедлайна setRemoteDescription моста не отвисает —
+  // offer не уходит и FAIL не приходит
+  const hung = { rtcConfig: () => new Promise(() => {}) };
+  const started = Date.now();
+  assert.deepEqual(
+    await createIceServersFetcher({ api: hung, tokenLoad: () => 'tok-1', timeoutMs: 20 })(),
+    { iceServers: [], reason: 'ice-config-timeout' },
+  );
+  assert.ok(Date.now() - started < 5000, 'дедлайн сработал, а не ждал вечно');
+
+  // быстрый ответ успевает раньше дедлайна — дедлайн не перебивает успех
+  const fast = { rtcConfig: async () => ({ status: 200, body: { iceServers: [{ urls: ['stun:x'] }] } }) };
+  assert.deepEqual(
+    await createIceServersFetcher({ api: fast, tokenLoad: () => 'tok-1', timeoutMs: 5000 })(),
+    { iceServers: [{ urls: ['stun:x'] }] },
+  );
+});
+
+test('инвентарь (R06): getInventory уходит с машинным heartbeat; упавший сборщик цикл не рвёт', async () => {
+  const { calls, api } = fakeApi();
+  const store = memoryStore();
+  store.save('tok-inv');
+  const sig = fakeSignalFactory();
+  const inventory = { os: 'linux', appVersion: '1.0', uptimeSec: 5 };
+  let fail = false;
+  const agent = createAgent({
+    api,
+    signal: sig.factory,
+    native: createNativeInput({ adapter: inertAdapter() }),
+    policy: {
+      tokenStore: store, heartbeatMs: 5, backoffBaseMs: 10, backoffMaxMs: 40,
+      getInventory: () => { if (fail) throw new Error('statfs умер'); return inventory; },
+    },
+  });
+  try {
+    assert.equal(agent.start({}).ok, true);
+    await sleep(40);
+    assert.ok(calls.heartbeat.length >= 1, 'машинный heartbeat отправляется');
+    assert.ok(calls.heartbeatBodies.every((b) => b === inventory), 'инвентарь уходит в каждом heartbeat');
+
+    // сборщик упал — heartbeat продолжается, но без инвентаря (честное отсутствие)
+    fail = true;
+    const before = calls.heartbeat.length;
+    await sleep(40);
+    assert.ok(calls.heartbeat.length > before, 'цикл жив после сбоя сборщика');
+    assert.equal(agent.status().state, 'waiting', 'состояние не испорчено сбоем сборщика');
+    assert.ok(calls.heartbeatBodies.slice(before).every((b) => b === undefined), 'упавший сборщик не подменяет инвентарь');
+  } finally {
+    agent.stop();
+    await sleep(10);
+  }
 });
