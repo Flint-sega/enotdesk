@@ -129,7 +129,8 @@ jobs:
       - name: Create GitHub Release
         uses: softprops/action-gh-release@v2
         with:
-          fail_on_unmatched_files: true
+          # Windows portable не пишет latest.yml — фид опционален, win-клиент на notify-only
+          fail_on_unmatched_files: false
           generate_release_notes: true
           # история 35: инструкции запуска неподписанной сборки — в описании релиза
           body: |
