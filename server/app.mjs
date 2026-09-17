@@ -5,6 +5,7 @@ import crypto from 'node:crypto';
 import { WebSocketServer } from 'ws';
 import { openDb, endLiveSessions, auditLog, runRetention } from './db.mjs';
 import { createMachinesStore } from './machines.mjs';
+import { createWebhooks } from './webhooks.mjs';
 import { page, downloadsHtml, inviteHtml, operatorPage, isInsecurePage } from './pages.mjs';
 import { t, pickLocale } from '../client/lib/i18n.mjs';
 import {
@@ -218,6 +219,15 @@ export function createServer(opts = {}) {
   const db = openDb(cfg.dbPath);
   endLiveSessions(db, 'server-restart'); // рестарт инвалидирует живые регистрации
   const machinesStore = createMachinesStore(db);
+  const webhooks = createWebhooks(db);
+
+  // Коды ошибок настройки webhooks → честные тексты маршрута
+  const WEBHOOK_ERR_TEXT = {
+    bad_url: 'URL должен быть http(s)-адресом',
+    url_too_long: 'URL слишком длинный (до 2048 символов)',
+    secret_required: 'Укажите секрет подписи',
+    secret_too_long: 'Секрет слишком длинный (до 256 символов)',
+  };
 
   const live = new Map(); // sessionId -> {hostWs, opWs, operatorUserId, sigCount, sigReset, hostLostAt, opLostAt}
   let closed = false;
@@ -240,6 +250,8 @@ export function createServer(opts = {}) {
       "UPDATE sessions SET state='ended', ended_at=?, end_reason=? WHERE id=? AND state!='ended'"
     ).run(now, reason, sessionId);
     if (r.changes === 0) return false;
+    // доставка события асинхронная: сеанс не ждёт webhook
+    webhooks.emit('session.ended', { sessionId, reason });
     const rt = live.get(sessionId);
     if (rt) {
       send(rt.hostWs, { type: 'ended', reason });
@@ -707,6 +719,9 @@ export function createServer(opts = {}) {
         const r = db.prepare("UPDATE sessions SET state='approved' WHERE id = ? AND state != 'approved'").run(s.id);
         if (r.changes === 1) {
           auditLog(db, null, 'session.approve', s.id, { host: true, claimId });
+          webhooks.emit('session.started', {
+            sessionId: s.id, operatorId: s.operator_id, machineId: s.machine_id, contactId: s.contact_id,
+          });
           const rt = live.get(s.id);
           send(rt?.hostWs, { type: 'approved', claimId });
           send(rt?.opWs, { type: 'approved', claimId });
@@ -743,6 +758,28 @@ export function createServer(opts = {}) {
         });
       }
       return ok(res, 200, { iceServers });
+    }
+
+    // ---- webhooks (D1): настройка доставки событий, только админ ----
+    if (p === '/settings/webhooks' && req.method === 'GET') {
+      if (!user) return err(res, 401, 'unauthorized', 'Требуется авторизация');
+      if (user.role !== 'admin') return err(res, 403, 'forbidden', 'Недостаточно прав');
+      return ok(res, 200, webhooks.get()); // секрет маскирован внутри webhooks.get()
+    }
+    if (p === '/settings/webhooks' && req.method === 'POST') {
+      if (!user) return err(res, 401, 'unauthorized', 'Требуется авторизация');
+      if (user.role !== 'admin') return err(res, 403, 'forbidden', 'Недостаточно прав');
+      const { url, secret, events } = body || {};
+      if (events !== undefined && events !== null && !Array.isArray(events)) {
+        return err(res, 400, 'bad_request', 'Список событий должен быть массивом');
+      }
+      if (events !== undefined && events !== null && events.some((e) => typeof e !== 'string')) {
+        return err(res, 400, 'bad_request', 'Список событий должен быть массивом строк');
+      }
+      const r = webhooks.configure(url, secret, events ?? null);
+      if (!r.ok) return err(res, 400, r.error, WEBHOOK_ERR_TEXT[r.error] || 'Некорректные настройки');
+      auditLog(db, user.id, 'webhooks.config', null, { url: r.url, events: r.events });
+      return ok(res, 200, webhooks.get());
     }
 
     // ---- machines (unattended); отказные тексты — через словари i18n, язык запроса ----
@@ -783,6 +820,7 @@ export function createServer(opts = {}) {
       // отказ политики фиксируется в аудите; значение PIN в тексты и журнал не подставляется
       const deny = (code, key, status) => {
         auditLog(db, machine.id, 'machine.claim.deny', machine.id, { unattended: true, code, operatorId: user.id });
+        webhooks.emit('machine.claim.denied', { machineId: machine.id, code, operatorId: user.id });
         return err(res, status, code, t(key, {}, locale));
       };
       if (machine.revoked_at) return err(res, 409, 'machine_revoked', t('machines.revoked', {}, locale));

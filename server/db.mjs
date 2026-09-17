@@ -1,7 +1,7 @@
 import { DatabaseSync } from 'node:sqlite';
 
 // Последняя версия схемы; растёт с каждым версионированным шагом (A01 и далее).
-export const SCHEMA_VERSION = 2;
+export const SCHEMA_VERSION = 3;
 
 // Версионированные шаги схемы (A01): каждая база — старая или новая — проходит
 // недостающие шаги по порядку, версия хранится в таблице schema_version.
@@ -99,6 +99,22 @@ const MIGRATIONS = [
         );
       `);
       try { db.exec('ALTER TABLE sessions ADD COLUMN machine_id TEXT'); } catch { /* колонка уже есть */ }
+    },
+  },
+  {
+    // D1: webhooks — настройки доставки событий (одна строка, id=1).
+    // Секрет нужен восстановимо (им вычисляется HMAC-подпись), поэтому хранится
+    // как есть, но не покидает модуль webhooks: GET маскирует, в логи не пишется.
+    version: 3,
+    up: (db) => {
+      db.exec(`
+        CREATE TABLE IF NOT EXISTS webhook_settings (
+          id INTEGER PRIMARY KEY CHECK (id = 1),
+          url TEXT NOT NULL DEFAULT '',
+          secret TEXT NOT NULL DEFAULT '',
+          events TEXT NOT NULL DEFAULT '[]'
+        );
+      `);
     },
   },
 ];
