@@ -30,7 +30,7 @@ jobs:
       ENOT_FEED_URL: https://github.com/${{ github.repository }}/releases/latest/download/
     steps:
       - uses: actions/checkout@v7
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@v7
         with:
           node-version: 24
           cache: npm
