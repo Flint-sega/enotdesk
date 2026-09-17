@@ -11,7 +11,7 @@ import { renderTeam } from './views/team.js';
 import { renderHistory, renderAudit } from './views/history.js';
 import { stopMedia, drainIce, startHostRtc, operatorAnswer } from './session-media.js';
 import { resetUnreadChat } from './session-services.js';
-import { checkForUpdate } from './settings.js';
+import { checkForUpdate, openFirstRun, updateServerChip } from './settings.js';
 
 function switchView(role) {
   state.role = role;
@@ -140,8 +140,9 @@ for (const btn of document.querySelectorAll('.side-tab')) {
     show($('app-footer'));
     checkForUpdate(s.version);
   }
-  if (s.firstRun) { // первый запуск: экран адреса сервера
-    const { openSettings } = await import('./settings.js');
-    openSettings();
+  if (s.firstRun) { // первый запуск: экран проверки соединения (проверка обновит и чип)
+    await openFirstRun();
+  } else {
+    updateServerChip(); // чип статуса сервера на главном экране
   }
 })();

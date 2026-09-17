@@ -1,4 +1,5 @@
 // Настройки: язык, адрес сервера, допуск HTTP, честный отчёт о разрешениях платформы.
+// Здесь же — статус сервера: чип на главном экране и экран первого запуска (B3).
 
 import { $, enot, text, show, hide, setBusy, applyI18n } from './dom.js';
 import { t, setLocale, getLocale } from '../lib/i18n.mjs';
@@ -7,7 +8,32 @@ import { isNewerVersion, latestVersionFrom } from '../lib/version-check.mjs';
 $('btn-settings').addEventListener('click', openSettings);
 $('btn-settings-close').addEventListener('click', () => hide($('settings-overlay')));
 
-async function openSettings() {
+function setChip(cls, key, vars) {
+  const chip = $('server-chip');
+  chip.className = `server-chip ${cls}`;
+  text(chip, t(key, vars));
+}
+
+// Health-проверка через существующий мост; чип синхронизируется с результатом.
+async function checkHealth() {
+  try {
+    const health = await enot.request('health', {});
+    const ok = health?.status === 200;
+    const version = ok ? (health.body?.version ?? '—') : '—';
+    setChip(ok ? 'server-chip--ok' : 'server-chip--down', ok ? 'server.statusOk' : 'server.statusDown', { version });
+    return { ok, version, error: ok ? null : t('settings.serverBad') };
+  } catch (e) {
+    setChip('server-chip--down', 'server.statusDown');
+    return { ok: false, version: null, error: e.message };
+  }
+}
+
+// Фоновое обновление чипа при старте приложения.
+export async function updateServerChip() {
+  await checkHealth();
+}
+
+export async function openSettings() {
   const s = await enot.getSettings();
   $('settings-locale').value = getLocale();
   $('settings-url').value = s.serverUrl;
@@ -36,9 +62,9 @@ $('btn-settings-save').addEventListener('click', async () => {
   try {
     const r = await enot.setServerUrl($('settings-url').value.trim(), { allowInsecureHttp: $('settings-insecure').checked });
     if (!r.ok) throw new Error(r.error ?? t('settings.saveFail'));
-    const health = await enot.request('health', {});
-    if (health.status !== 200) throw new Error(t('settings.serverBad'));
-    text($('settings-status'), t('settings.serverOk', { version: health.body?.version ?? '—' }));
+    const health = await checkHealth();
+    if (!health.ok) throw new Error(health.error ?? t('settings.serverBad'));
+    text($('settings-status'), t('settings.serverOk', { version: health.version }));
     const perms = await enot.permissions();
     const notes = [];
     if (perms.platform === 'darwin' && perms.screenCapture !== 'granted') notes.push(t('settings.macosScreen'));
@@ -76,4 +102,32 @@ enot.onUpdate?.(({ version, auto }) => {
   if (!version) return;
   text($('update-banner'), t(auto ? 'update.autoBanner' : 'update.manualBanner', { version }));
   show($('update-banner'));
+});
+
+// ---------- первый запуск (B3): честный статус соединения ----------
+
+async function runFirstRunCheck() {
+  const btn = $('btn-firstrun-check');
+  setBusy(btn, true, t('server.checking'));
+  text($('firstrun-status'), t('server.checking'));
+  $('firstrun-status').className = 'note';
+  const { ok, version } = await checkHealth();
+  text($('firstrun-status'), ok ? t('server.statusOk', { version }) : t('server.statusDown'));
+  $('firstrun-status').className = ok ? 'note ok-text' : 'note err-text';
+  setBusy(btn, false);
+}
+
+// Первый запуск: показываем резолвленный адрес и результат health-проверки.
+// Проверка заодно обновляет чип статуса на главном экране.
+export async function openFirstRun() {
+  const s = await enot.getSettings();
+  text($('firstrun-url'), s.serverUrl);
+  show($('firstrun-overlay'));
+  await runFirstRunCheck();
+}
+
+$('btn-firstrun-check').addEventListener('click', runFirstRunCheck);
+$('btn-firstrun-settings').addEventListener('click', async () => {
+  hide($('firstrun-overlay'));
+  await openSettings();
 });

@@ -258,6 +258,31 @@ p:last-child { margin-bottom: 0; }
 /* Hero уступает место состояниям сеанса: на первом экране виден, дальше — нет. */
 #view-client:has(#client-idle.hidden) .hero { display: none; }
 
+/* ---------- чип статуса сервера ---------- */
+
+.server-chip {
+  display: inline-flex; align-items: center; gap: 8px;
+  width: fit-content;
+  margin: 0 0 12px; padding: 4px 12px;
+  border: 1px solid var(--border); border-radius: var(--r-pill);
+  background: var(--panel-2);
+  color: var(--muted); font-size: 12.5px; font-weight: 600;
+}
+.server-chip::before {
+  content: ''; width: 8px; height: 8px; flex: none;
+  border-radius: 50%; background: var(--faint);
+}
+.server-chip--checking::before { background: var(--warn); animation: pulse 1.6s ease-in-out infinite; }
+.server-chip--ok { border-color: rgba(53, 224, 196, .35); color: #7FE3D3; }
+.server-chip--ok::before { background: var(--accent); box-shadow: 0 0 0 3px rgba(53, 224, 196, .14); }
+.server-chip--down { border-color: rgba(255, 100, 124, .4); color: var(--danger); }
+.server-chip--down::before { background: var(--danger); }
+
+.firstrun-url {
+  font-family: var(--mono); font-size: 14px; color: var(--text);
+  overflow-wrap: anywhere;
+}
+
 /* ---------- кнопки ---------- */
 
 .cta {
@@ -470,6 +495,15 @@ input[type="checkbox"] {
 .chat-line.chat-me strong { color: var(--accent); }
 .chat-line.chat-them strong { color: #8FA3BF; }
 .chat .row input { flex: 1; }
+
+/* ---------- терминал машины (web-оператор, R09) ---------- */
+
+.term-log {
+  margin: 0; min-height: 96px; max-height: 260px; overflow-y: auto;
+  background: var(--bg-deep); border: 1px solid var(--border); border-radius: var(--r-md);
+  padding: var(--s-3); font-size: 13px; line-height: 1.45; color: var(--text);
+  white-space: pre-wrap; overflow-wrap: anywhere;
+}
 
 /* ---------- настройки ---------- */
 

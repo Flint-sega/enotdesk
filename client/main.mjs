@@ -14,6 +14,7 @@ import { createNativeInput, loadPlatformAdapter } from './lib/native-input.mjs';
 import { createInputPipeline } from './lib/input-pipeline.mjs';
 import { INPUT_KEYS } from './lib/protocol.mjs';
 import { normalizeServerUrl } from './lib/server-url.mjs';
+import { resolveServerUrl, DEFAULT_SERVER_URL } from './lib/first-run.mjs';
 import { createAgent, createAgentApi } from './lib/agent.mjs';
 import { UPDATE_REPO, updateFeedUrl, platformFeedName, updateDecision } from './lib/updater.mjs';
 import { isNewerVersion } from './lib/version-check.mjs';
@@ -25,7 +26,11 @@ const SMOKE = process.env.EDESK_SMOKE === '1';
 // служба и обычный клиент работают на одной машине одновременно.
 const AGENT = process.env.EDESK_AGENT === '1';
 if (AGENT) app.setPath('userData', path.join(app.getPath('userData'), 'agent'));
-const DEFAULT_SERVER_URL = 'http://127.0.0.1:8080';
+// EDESK_SMOKE_FIRSTRUN=1 (вместе с EDESK_SMOKE=1): изолированный профиль без
+// settings.json — честный прогон и скриншот первого запуска, данные не трогаем.
+if (SMOKE && process.env.EDESK_SMOKE_FIRSTRUN === '1') {
+  app.setPath('userData', path.join(app.getPath('userData'), 'smoke-firstrun'));
+}
 
 // Версия продукта: в упаковке — app.getVersion(); в dev Electron отдаёт свою версию,
 // поэтому один раз при старте читаем фактическую из корневого package.json.
@@ -38,6 +43,11 @@ const pkg = (() => {
     return {};
   }
 })();
+
+// Вшитый при сборке адрес сервера (R03): electron-builder extraMetadata кладёт
+// ключ в package.json внутри app.asar (build/electron-builder.yml), dev-прогон
+// может задать его переменной окружения. Пустая строка = «не задано».
+const BAKED_SERVER_URL = pkg.ENOT_BAKED_SERVER_URL || process.env.ENOT_BAKED_SERVER_URL || null;
 
 let win = null;
 let settingsPath = null;
@@ -79,15 +89,23 @@ const inputPipeline = createInputPipeline({ gate, nativeInput });
 let selectedSource = null; // {id, name, bounds:{width,height}} физические пиксели
 
 function loadSettings() {
+  let savedUrl = null;
   try {
     settingsPath = path.join(app.getPath('userData'), 'settings.json');
     const raw = JSON.parse(fs.readFileSync(settingsPath, 'utf8'));
-    if (typeof raw.serverUrl === 'string' && raw.serverUrl) settings.serverUrl = raw.serverUrl;
+    if (typeof raw.serverUrl === 'string' && raw.serverUrl) savedUrl = raw.serverUrl;
     settings.allowInsecureHttp = raw.allowInsecureHttp === true;
     settings.locale = raw.locale === 'ru' || raw.locale === 'en' ? raw.locale : null; // null = по системе
   } catch {
     // первый запуск — файл настроек ещё не существует
   }
+  // Порядок резолва (spec §первый запуск): сохранённый → enotdesk-server.txt
+  // рядом с exe → вшитый при сборке → дефолт.
+  settings.serverUrl = resolveServerUrl({
+    saved: savedUrl,
+    execPath: process.execPath,
+    baked: BAKED_SERVER_URL,
+  }).url;
   setLocale(settings.locale); // строки main-процесса — тоже из словаря (null оставляет ru по умолчанию)
   api = createApi({ baseUrl: settings.serverUrl });
 }
@@ -357,6 +375,9 @@ function createWindow() {
   });
 
   win.webContents.setWindowOpenHandler(() => ({ action: 'deny' }));
+  if (SMOKE) win.webContents.on('console-message', (_e, level, message, line, source) => {
+    console.log(`SMOKE console[${level}] ${source}:${line} ${message}`);
+  });
   win.webContents.on('will-navigate', (e) => e.preventDefault());
 
   // Контекстное меню текстовых полей: копировать/вставить/выделить — без IPC
@@ -450,14 +471,18 @@ app.on('window-all-closed', () => app.quit());
 app.whenReady().then(() => {
   if (!gotLock) return; // второй экземпляр уже уходит через app.quit()
   if (SMOKE) {
-    // Скриншот главного экрана: не first-run, иначе модалка настроек закрывает окно
-    try {
-      const p = path.join(app.getPath('userData'), 'settings.json');
-      if (!fs.existsSync(p)) {
-        fs.mkdirSync(path.dirname(p), { recursive: true });
-        fs.writeFileSync(p, JSON.stringify({ serverUrl: DEFAULT_SERVER_URL }));
-      }
-    } catch { /* smoke: честный скриншот first-run, если записать не вышло */ }
+    // Скриншот главного экрана: не first-run, иначе модалки закрывают окно.
+    // EDESK_SMOKE_FIRSTRUN=1 — наоборот, изолированный профиль первого запуска
+    // (см. setPath выше): settings.json не создаём, чтобы firstRun был честным.
+    if (process.env.EDESK_SMOKE_FIRSTRUN !== '1') {
+      try {
+        const p = path.join(app.getPath('userData'), 'settings.json');
+        if (!fs.existsSync(p)) {
+          fs.mkdirSync(path.dirname(p), { recursive: true });
+          fs.writeFileSync(p, JSON.stringify({ serverUrl: DEFAULT_SERVER_URL }));
+        }
+      } catch { /* smoke: честный скриншот first-run, если записать не вышло */ }
+    }
   }
   loadSettings();
   if (AGENT) {
@@ -481,6 +506,13 @@ app.whenReady().then(() => {
       lines.push(`SMOKE gate closed before approved: ${!gateCheck.isOpen()}`);
       gateCheck.onSignal({ type: 'approved', claimId: 'c' });
       lines.push(`SMOKE gate open after approved: ${gateCheck.isOpen()}`);
+      // Чип статуса сервера (B3): фактическое состояние после health-проверки рендерера
+      try {
+        lines.push(`SMOKE server chip: ${await win.webContents.executeJavaScript('(document.getElementById("server-chip")||{}).className + " | " + (document.getElementById("server-chip")||{}).textContent')}`);
+        lines.push(`SMOKE footer: ${await win.webContents.executeJavaScript('document.getElementById("app-footer").className')}`);
+      } catch (e) {
+        lines.push(`SMOKE server chip: n/a (${e.message})`);
+      }
       console.log(lines.join('\n'));
       // Скриншот главного окна для отчёта (capturePage, без системных разрешений)
       try {
