@@ -13,8 +13,8 @@ window.STATE =
   "conventionsFile": "AGENTS.md",
   "skillDir": "/Users/admin/.zcode/skills/foreman",
   "startedAt": "2026-09-17T12:24:25+03:00",
-  "updatedAt": "2026-09-17T15:35:13+03:00",
-  "finishedAt": null,
+  "updatedAt": "2026-09-17T15:50:48+03:00",
+  "finishedAt": "2026-09-17T15:50:48+03:00",
   "stages": [
     {
       "id": "preflight",
@@ -62,7 +62,10 @@ window.STATE =
     },
     {
       "id": "final",
-      "status": "pending"
+      "status": "done",
+      "startedAt": "2026-09-17T15:35:13+03:00",
+      "finishedAt": "2026-09-17T15:50:48+03:00",
+      "note": "слепая приёмка G4: расхождений нет; 10/10 тасков"
     }
   ],
   "requirements": {
@@ -374,7 +377,10 @@ window.STATE =
     }
   ],
   "singlePass": null,
-  "tests": null,
+  "tests": {
+    "passed": 200,
+    "failed": 0
+  },
   "debt": {
     "placeholders": [],
     "assumptions": [],
