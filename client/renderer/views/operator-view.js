@@ -80,7 +80,7 @@ $('form-password').addEventListener('submit', async (e) => {
       newPassword: $('password-new').value,
     });
     if (res.status !== 200) throw new Error(res.body?.error?.message ?? 'Не удалось сменить пароль');
-    text($('password-status'), 'Пароль изменён. Другие сеансы завершены.');
+    text($('password-status'), 'Пароль изменён. Активные сеансы с вашим участием завершены.');
     setTimeout(() => hide($('password-overlay')), 1500);
   } catch (err) {
     text($('password-error'), err.message);

@@ -7,6 +7,12 @@ test('ячейка CSV: спецсимволы экранируются по RFC
   assert.equal(csvCell('a;b'), '"a;b"');
   assert.equal(csvCell('сказал "привет"'), '"сказал ""привет"""');
   assert.equal(csvCell('строка1\nстрока2'), '"строка1\nстрока2"');
+  // нейтрализация формул Excel: = + - @ в начале получают префикс-апостроф
+  assert.equal(csvCell('=cmd'), "'=cmd");
+  assert.equal(csvCell('+7'), "'+7");
+  assert.equal(csvCell('-1'), "'-1");
+  assert.equal(csvCell('@risk'), "'@risk");
+  assert.equal(csvCell('a-b'), 'a-b', 'дефис не в начале не трогается');
   assert.equal(csvCell(''), '');
   assert.equal(csvCell(null), '');
   assert.equal(csvCell(undefined), '');

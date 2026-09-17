@@ -34,17 +34,19 @@ test('все id, которые ищет JS рендерера, есть в inde
     ...states.map((s) => `client-${s}`),
     ...panes.map((p) => `pane-${p}`),
     ...views.map((v) => `view-${v}`),
+    'op-chat-log', 'client-chat-log', // appendChat: $(logId) через переменную
   ];
   for (const id of new Set([...referenced, ...dynamic])) {
     assert.ok(htmlIds.has(id), `id «${id}» отсутствует в index.html`);
   }
 });
 
-test('анти-мёртвые-кнопки: каждая кнопка из HTML подключена в JS', () => {
+test('анти-мёртвые-кнопки: каждая кнопка из HTML подключена в JS через $(id)', () => {
   const buttons = [...html.matchAll(/<button[^>]*id="([^"]+)"/g)].map((m) => m[1]);
   assert.ok(buttons.length > 20, 'список кнопок не должен быть пуст');
   for (const id of buttons) {
-    assert.ok(allJs.includes(`'${id}'`), `кнопка «${id}» есть в HTML, но нигде не подключена в JS`);
+    const wired = new RegExp(`\\$\\('${id}'\\)|getElementById\\('${id}'\\)`).test(allJs);
+    assert.ok(wired, `кнопка «${id}» есть в HTML, но нигде не подключена в JS`);
   }
 });
 

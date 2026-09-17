@@ -27,9 +27,8 @@ export function sha256(value) {
 const ALPHABET = 'ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnpqrstuvwxyz23456789';
 
 export function sessionPassword(length = 8) {
-  const bytes = crypto.randomBytes(length);
   let out = '';
-  for (let i = 0; i < length; i++) out += ALPHABET[bytes[i] % ALPHABET.length];
+  for (let i = 0; i < length; i++) out += ALPHABET[crypto.randomInt(ALPHABET.length)]; // без modulo bias
   return out;
 }
 

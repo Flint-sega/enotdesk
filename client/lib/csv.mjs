@@ -3,7 +3,9 @@
 
 export function csvCell(value) {
   if (value === null || value === undefined) return '';
-  const s = String(value);
+  let s = String(value);
+  // нейтрализация формул Excel: = + - @ в начале ячейки — префикс-апостроф
+  if (/^[=+\-@]/.test(s)) s = `'${s}`;
   return /[;"\r\n]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s;
 }
 

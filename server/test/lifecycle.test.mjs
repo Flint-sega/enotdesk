@@ -194,6 +194,19 @@ test('грейс: истёкший грейс завершает сеанс ка
   assert.equal(ended.reason, 'host-lost', 'по истечении грейса сеанс завершается с честной причиной');
 });
 
+test('повторный decision allow — no-op: approved не рассылается дважды', async (t) => {
+  const { base, port, admin } = await setup(t, { leaseMs: 8000, heartbeatMs: 200, graceMs: 0 });
+  const { s, claimId } = await approvedSession(base, port, admin);
+
+  const approves = () => api(base, 'GET', '/audit?limit=100', { token: admin.token })
+    .then((r) => r.json.items.filter((a) => a.action === 'session.approve' && a.targetId === s.sessionId));
+  assert.equal((await approves()).length, 1, 'первое одобрение записано один раз');
+
+  const repeat = await api(base, 'POST', `/sessions/${s.sessionId}/decision`, { token: s.hostToken, body: { claimId, allow: true } });
+  assert.equal(repeat.status, 200);
+  assert.equal((await approves()).length, 1, 'повторное одобрение — no-op: ни аудита, ни рассылки');
+});
+
 test('потолок живых сеансов: новые отклоняются (4005), свои и после освобождения слота — да', async (t) => {
   const { base, port, admin } = await setup(t, { leaseMs: 8000, heartbeatMs: 200, graceMs: 0, maxSessions: 1 });
   const reg = await api(base, 'POST', '/sessions');
