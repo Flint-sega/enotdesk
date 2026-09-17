@@ -38,6 +38,7 @@ enot.onSignal(async (msg) => {
       break;
     case 'approved':
       if (state.role === 'client' && state.session) {
+        if (state.pc) break; // replay после переподключения — RTC уже поднят, не собираем второй
         clientShow('connected');
         text($('connected-operator'), document.getElementById('consent-operator').textContent);
         try { await startHostRtc(); } catch (e) {
@@ -45,6 +46,7 @@ enot.onSignal(async (msg) => {
           clientShow('error');
         }
       } else if (state.role === 'operator') {
+        if (state.pc) break; // уже отвечаем на оффер
         show($('op-waiting'));
         text($('remote-status'), 'Ожидаем экран клиента…');
       }
