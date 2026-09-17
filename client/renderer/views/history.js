@@ -2,9 +2,10 @@
 
 import { $, text, fetchList } from '../dom.js';
 import { state } from '../state.js';
+import { t, getLocale } from '../../lib/i18n.mjs';
 import { toCsv } from '../../lib/csv.mjs';
 
-function renderTimeList(box, statusEl, items, emptyText, format) {
+function renderTimeList(box, items, emptyText, format) {
   box.textContent = '';
   if (!items.length) {
     const empty = document.createElement('p');
@@ -25,16 +26,18 @@ function renderTimeList(box, statusEl, items, emptyText, format) {
 
 export async function renderHistory() {
   const box = $('history-list');
-  text($('history-status'), 'Загрузка…');
+  text($('history-status'), t('common.loading'));
   try {
     const body = await fetchList('history.list', { limit: 20, offset: state.pages.history * 20 });
-    renderTimeList(box, $('history-status'), body.items,
-      'История пуста. Здесь появятся завершённые сеансы помощи.',
-      {
-        title: (it) => `Сеанс ${it.id} — ${it.state}`,
-        sub: (it) => `${it.operatorName ?? 'удалённый сотрудник'} · ${new Date(it.createdAt).toLocaleString('ru')} · причина: ${it.endReason ?? '—'}`,
-      });
-    text($('history-page'), `Стр. ${state.pages.history + 1}, всего ${body.total}`);
+    renderTimeList(box, body.items, t('history.empty'), {
+      title: (it) => t('history.item', { id: it.id, state: it.state }),
+      sub: (it) => t('history.sub', {
+        operator: it.operatorName ?? t('history.operatorDefault'),
+        date: new Date(it.createdAt).toLocaleString(getLocale()),
+        reason: it.endReason ?? '—',
+      }),
+    });
+    text($('history-page'), t('common.pageOf', { page: state.pages.history + 1, total: body.total }));
     $('history-prev').disabled = state.pages.history === 0;
     $('history-next').disabled = (state.pages.history + 1) * 20 >= body.total;
     text($('history-status'), '');
@@ -45,16 +48,17 @@ export async function renderHistory() {
 
 export async function renderAudit() {
   const box = $('audit-list');
-  text($('audit-status'), 'Загрузка…');
+  text($('audit-status'), t('common.loading'));
   try {
     const body = await fetchList('audit.list', { limit: 20, offset: state.pages.audit * 20 });
-    renderTimeList(box, $('audit-status'), body.items,
-      'Журнал пуст. Действия команды будут записываться сюда автоматически.',
-      {
-        title: (it) => `${it.action}`,
-        sub: (it) => `${new Date(it.createdAt).toLocaleString('ru')}${it.detail && typeof it.detail === 'string' ? ` · ${it.detail}` : ''}`,
-      });
-    text($('audit-page'), `Стр. ${state.pages.audit + 1}, всего ${body.total}`);
+    renderTimeList(box, body.items, t('audit.empty'), {
+      title: (it) => `${it.action}`,
+      sub: (it) => t('audit.sub', {
+        date: new Date(it.createdAt).toLocaleString(getLocale()),
+        detail: it.detail && typeof it.detail === 'string' ? ` · ${it.detail}` : '',
+      }),
+    });
+    text($('audit-page'), t('common.pageOf', { page: state.pages.audit + 1, total: body.total }));
     $('audit-prev').disabled = state.pages.audit === 0;
     $('audit-next').disabled = (state.pages.audit + 1) * 20 >= body.total;
     text($('audit-status'), '');
@@ -86,13 +90,13 @@ async function downloadCsv(op, header, rowOf) {
 }
 $('history-csv').addEventListener('click', () => {
   downloadCsv('history.list',
-    ['Сеанс', 'Оператор', 'Состояние', 'Создан', 'Завершён', 'Причина'],
+    [t('csv.session'), t('csv.operator'), t('csv.state'), t('csv.created'), t('csv.ended'), t('csv.reason')],
     (it) => [it.id, it.operatorName ?? '', it.state, it.createdAt, it.endedAt ?? '', it.endReason ?? ''])
     .catch((e) => text($('history-status'), e.message));
 });
 $('audit-csv').addEventListener('click', () => {
   downloadCsv('audit.list',
-    ['Действие', 'Кто', 'Объект', 'Когда', 'Детали'],
+    [t('csv.action'), t('csv.actor'), t('csv.target'), t('csv.when'), t('csv.details')],
     (it) => [it.action, it.actorId ?? '', it.targetId ?? '', it.createdAt, JSON.stringify(it.detail ?? {})])
     .catch((e) => text($('audit-status'), e.message));
 });

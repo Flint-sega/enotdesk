@@ -14,28 +14,28 @@
     <div class="brand">
       <img class="brand-icon" src="../../assets/enot-icon.svg" alt="">
       <span class="brand-name">EnotDesk</span>
-      <span class="brand-sub">Удалённая поддержка</span>
+      <span class="brand-sub" data-i18n="app.subtitle">Удалённая поддержка</span>
     </div>
-    <nav class="role-switch" aria-label="Режим работы">
+    <nav class="role-switch" data-i18n-aria-label="app.aria.workMode" aria-label="Режим работы">
       <button id="tab-client" class="tab active" aria-pressed="true">
         <svg class="icon" viewBox="0 0 24 24" aria-hidden="true" focusable="false">
           <circle cx="12" cy="12" r="9"/>
           <path d="M9.7 9.3a2.5 2.5 0 1 1 3.4 2.3c-.9.4-1.1 1-1.1 1.8v.2"/>
           <path d="M12 16.6h.01"/>
         </svg>
-        <span>Помощь</span>
+        <span data-i18n="app.tabHelp">Помощь</span>
       </button>
       <button id="tab-operator" class="tab" aria-pressed="false">
         <svg class="icon" viewBox="0 0 24 24" aria-hidden="true" focusable="false">
           <circle cx="12" cy="7.8" r="3.6"/>
           <path d="M5.2 19.6a6.8 6.8 0 0 1 13.6 0"/>
         </svg>
-        <span>Оператор</span>
+        <span data-i18n="app.tabOperator">Оператор</span>
       </button>
-      <button id="btn-settings" class="icon-btn" aria-label="Настройки" title="Настройки">
+      <button id="btn-settings" class="icon-btn" data-i18n-aria-label="app.aria.settings" data-i18n-title="app.aria.settings" aria-label="Настройки" title="Настройки">
         <svg class="icon" viewBox="0 0 24 24" aria-hidden="true" focusable="false">
           <circle cx="12" cy="12" r="3"/>
-          <path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1 0 2.83 2 2 0 0 1-2.83 0l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-2 2 2 2 0 0 1-2-2v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83 0 2 2 0 0 1 0-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1-2-2 2 2 0 0 1 2-2h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 0-2.83 2 2 0 0 1 2.83 0l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 2-2 2 2 0 0 1 2 2v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 0 2 2 0 0 1 0 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 2 2 2 2 0 0 1-2 2h-.09a1.65 1.65 0 0 0-1.51 1z"/>
+          <path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1 0 2.83 2 2 0 0 1-2.83 0l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-2 2 2 2 0 0 1-2-2v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83 0 2 2 0 0 1 0-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 0-2.83 2 2 0 0 1 2.83 0l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 2-2 2 2 0 0 1 2 2v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 0 2 2 0 0 1 0 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 2 2 2 2 0 0 1-2 2h-.09a1.65 1.65 0 0 0-1.51 1z"/>
         </svg>
       </button>
     </nav>
@@ -44,21 +44,21 @@
   <main id="main">
     <p id="update-banner" class="update-banner hidden" role="status"></p>
     <!-- ======================= КЛИЕНТ ======================= -->
-    <section id="view-client" class="view" aria-label="Получить помощь">
+    <section id="view-client" class="view" data-i18n-aria-label="app.aria.getHelp" aria-label="Получить помощь">
       <div class="hero">
         <div class="hero-copy">
-          <p class="eyebrow">Удалённая поддержка</p>
+          <p class="eyebrow" data-i18n="app.subtitle">Удалённая поддержка</p>
           <h1 id="client-title">EnotDesk</h1>
-          <p id="client-subtitle" class="hero-lead">Быстрая и безопасная помощь<br>на расстоянии</p>
-          <p class="hero-explain">Нажмите кнопку — приложение сообщит временные идентификатор и пароль. Передайте их вашему специалисту в чате.</p>
+          <p id="client-subtitle" class="hero-lead" data-i18n-html="client.leadHtml">Быстрая и безопасная помощь<br>на расстоянии</p>
+          <p class="hero-explain" data-i18n="client.explain">Нажмите кнопку — приложение сообщит временные идентификатор и пароль. Передайте их вашему специалисту в чате.</p>
           <div id="client-idle">
-            <button id="btn-start" class="cta cta-xl">Получить помощь</button>
+            <button id="btn-start" class="cta cta-xl" data-i18n="client.start">Получить помощь</button>
             <p id="client-idle-note" class="lock-line">
               <svg class="icon" viewBox="0 0 24 24" aria-hidden="true" focusable="false">
                 <rect x="5" y="10.5" width="14" height="9.5" rx="2.5"/>
                 <path d="M8 10.5V8a4 4 0 0 1 8 0v2.5"/>
               </svg>
-              Соединение устанавливается только с вашего согласия
+              <span data-i18n="client.idleNote">Соединение устанавливается только с вашего согласия</span>
             </p>
           </div>
           <div class="tiles">
@@ -69,8 +69,8 @@
                   <path d="m9.2 12 2 2 3.6-3.9"/>
                 </svg>
               </span>
-              <h3>Безопасно</h3>
-              <p>Ваши данные под защитой</p>
+              <h3 data-i18n="tile.secureTitle">Безопасно</h3>
+              <p data-i18n="tile.secureSub">Ваши данные под защитой</p>
             </div>
             <div class="tile">
               <span class="tile-icon">
@@ -78,8 +78,8 @@
                   <path d="M13.2 2 5.5 13.4h5.1L10.8 22l7.7-11.4h-5.1z"/>
                 </svg>
               </span>
-              <h3>Быстро</h3>
-              <p>Подключение за секунды</p>
+              <h3 data-i18n="tile.fastTitle">Быстро</h3>
+              <p data-i18n="tile.fastSub">Подключение за секунды</p>
             </div>
             <div class="tile">
               <span class="tile-icon">
@@ -90,8 +90,8 @@
                   <path d="M18.2 13.9a5.9 5.9 0 0 1 2.4 4.2"/>
                 </svg>
               </span>
-              <h3>Удобно</h3>
-              <p>Просто передайте ID и пароль</p>
+              <h3 data-i18n="tile.easyTitle">Удобно</h3>
+              <p data-i18n="tile.easySub">Просто передайте ID и пароль</p>
             </div>
           </div>
         </div>
@@ -102,71 +102,71 @@
 
       <div id="client-registering" class="card center hidden" role="status">
         <div class="spinner" aria-hidden="true"></div>
-        <p class="muted">Соединяемся с сервером…</p>
+        <p class="muted" data-i18n="client.registering">Соединяемся с сервером…</p>
       </div>
 
       <div id="client-waiting" class="card hidden" aria-live="polite">
-        <h2>Сообщите оператору</h2>
+        <h2 data-i18n="client.tellOperator">Сообщите оператору</h2>
         <div class="cred-grid">
           <div class="cred">
-            <span class="cred-label">Идентификатор</span>
+            <span class="cred-label" data-i18n="client.idLabel">Идентификатор</span>
             <span id="client-id" class="cred-value">—</span>
-            <button id="btn-copy-id" class="btn">Копировать ID</button>
+            <button id="btn-copy-id" class="btn" data-i18n="client.copyId">Копировать ID</button>
           </div>
           <div class="cred">
-            <span class="cred-label">Пароль</span>
+            <span class="cred-label" data-i18n="client.passLabel">Пароль</span>
             <span id="client-password" class="cred-value">—</span>
-            <button id="btn-copy-password" class="btn">Копировать пароль</button>
+            <button id="btn-copy-password" class="btn" data-i18n="client.copyPass">Копировать пароль</button>
           </div>
         </div>
-        <button id="btn-copy-both" class="btn wide">Копировать ID и пароль</button>
+        <button id="btn-copy-both" class="btn wide" data-i18n="client.copyBoth">Копировать ID и пароль</button>
         <p id="copy-status" class="note" role="status"></p>
-        <p class="muted">Ожидаем подключения оператора… Пароль действует один раз и до завершения сеанса.</p>
-        <button id="btn-cancel-wait" class="btn danger-ghost">Отменить</button>
+        <p class="muted" data-i18n="client.waitNote">Ожидаем подключения оператора… Пароль действует один раз и до завершения сеанса.</p>
+        <button id="btn-cancel-wait" class="btn danger-ghost" data-i18n="common.cancel">Отменить</button>
       </div>
 
       <div id="client-consent" class="card hidden" aria-live="assertive">
-        <h2>Запрос на подключение</h2>
-        <p>Оператор <strong id="consent-operator">—</strong> просит доступ к вашему экрану.</p>
-        <p class="muted">Разрешайте только тем, кого ждёте. Доступ можно прекратить кнопкой «Завершить» в любой момент.</p>
+        <h2 data-i18n="client.consentTitle">Запрос на подключение</h2>
+        <p data-i18n-html="client.consentIntroHtml">Оператор <strong id="consent-operator">—</strong> просит доступ к вашему экрану.</p>
+        <p class="muted" data-i18n="client.consentNote">Разрешайте только тем, кого ждёте. Доступ можно прекратить кнопкой «Завершить» в любой момент.</p>
         <div class="row">
-          <button id="btn-allow" class="cta">Разрешить</button>
-          <button id="btn-deny" class="btn danger-ghost">Отклонить</button>
+          <button id="btn-allow" class="cta" data-i18n="client.allow">Разрешить</button>
+          <button id="btn-deny" class="btn danger-ghost" data-i18n="client.deny">Отклонить</button>
         </div>
       </div>
 
       <div id="client-connected" class="card hidden" aria-live="polite">
-        <h2 class="ok-text">Оператор подключён</h2>
-        <p>Сейчас оператор видит ваш экран: <strong id="connected-operator">—</strong>.</p>
+        <h2 class="ok-text" data-i18n="client.connectedTitle">Оператор подключён</h2>
+        <p data-i18n-html="client.connectedIntroHtml">Сейчас оператор видит ваш экран: <strong id="connected-operator">—</strong>.</p>
         <p id="client-live-note" class="note" role="status"></p>
         <div class="row gap wrap-btns">
-          <button id="btn-switch-source" class="btn">Сменить экран</button>
-          <button id="btn-pause-stream" class="btn">Скрыть экран</button>
-          <button id="btn-client-file" class="btn">Отправить файл</button>
+          <button id="btn-switch-source" class="btn" data-i18n="client.switchScreen">Сменить экран</button>
+          <button id="btn-pause-stream" class="btn" data-i18n="client.hideScreen">Скрыть экран</button>
+          <button id="btn-client-file" class="btn" data-i18n="client.sendFile">Отправить файл</button>
           <input id="client-file-input" type="file" class="hidden">
         </div>
-        <label class="check-line" for="clip-client-toggle"><input type="checkbox" id="clip-client-toggle"> Синхронизировать буфер обмена</label>
+        <label class="check-line" for="clip-client-toggle"><input type="checkbox" id="clip-client-toggle"> <span data-i18n="client.syncClip">Синхронизировать буфер обмена</span></label>
         <div id="client-file-prompt" class="note"></div>
         <div class="chat">
           <div id="client-chat-log" class="chat-log" aria-live="polite"></div>
           <div class="row gap">
-            <input id="client-chat-input" maxlength="2000" placeholder="Сообщение оператору…">
-            <button id="client-chat-send" class="btn">Отправить</button>
+            <input id="client-chat-input" maxlength="2000" data-i18n-placeholder="client.chatPlaceholder" placeholder="Сообщение оператору…">
+            <button id="client-chat-send" class="btn" data-i18n="common.send">Отправить</button>
           </div>
         </div>
-        <button id="btn-stop" class="btn danger">Завершить сеанс</button>
+        <button id="btn-stop" class="btn danger" data-i18n="client.endSession">Завершить сеанс</button>
       </div>
 
       <div id="client-ended" class="card hidden" aria-live="polite">
-        <h2>Сеанс завершён</h2>
+        <h2 data-i18n="client.endedTitle">Сеанс завершён</h2>
         <p id="ended-reason" class="muted">—</p>
-        <button id="btn-again" class="cta">Начать заново</button>
+        <button id="btn-again" class="cta" data-i18n="client.restart">Начать заново</button>
       </div>
 
       <div id="client-error" class="card hidden" role="alert">
-        <h2 class="err-text">Не удалось начать</h2>
+        <h2 class="err-text" data-i18n="client.failTitle">Не удалось начать</h2>
         <p id="client-error-text" class="err-text"></p>
-        <button id="btn-retry" class="btn">Повторить</button>
+        <button id="btn-retry" class="btn" data-i18n="client.retry">Повторить</button>
       </div>
     </section>
 
@@ -175,59 +175,59 @@
       <!-- Вход -->
       <div id="op-login" class="card narrow center">
         <img class="mascot-mini" src="../../assets/enot-mascot.svg" alt="" aria-hidden="true">
-        <h2>Вход оператора</h2>
+        <h2 data-i18n="op.loginTitle">Вход оператора</h2>
         <form id="form-login" novalidate>
           <div class="field">
-            <label for="login-name">Логин</label>
+            <label for="login-name" data-i18n="op.login">Логин</label>
             <input id="login-name" name="login" autocomplete="username" required>
           </div>
           <div class="field">
-            <label for="login-password">Пароль</label>
+            <label for="login-password" data-i18n="op.password">Пароль</label>
             <input id="login-password" name="password" type="password" autocomplete="current-password" required>
           </div>
           <p id="login-error" class="err-text" role="alert"></p>
-          <button type="submit" id="btn-login" class="cta wide">Войти</button>
+          <button type="submit" id="btn-login" class="cta wide" data-i18n="op.loginBtn">Войти</button>
         </form>
         <details class="invite-details">
-          <summary>Есть код приглашения?</summary>
+          <summary data-i18n="op.hasInvite">Есть код приглашения?</summary>
           <form id="form-invite-accept" novalidate>
             <div class="field">
-              <label for="invite-code">Код или ссылка приглашения</label>
-              <input id="invite-code" name="invite" placeholder="https://…/invite#token=… или сам код">
+              <label for="invite-code" data-i18n="op.inviteCodeLabel">Код или ссылка приглашения</label>
+              <input id="invite-code" name="invite" data-i18n-placeholder="op.inviteCodePlaceholder" placeholder="https://…/invite#token=… или сам код">
             </div>
             <div class="field">
-              <label for="invite-name">Имя</label>
+              <label for="invite-name" data-i18n="op.nameLabel">Имя</label>
               <input id="invite-name" name="name" maxlength="120">
             </div>
             <div class="field">
-              <label for="invite-login">Логин</label>
+              <label for="invite-login" data-i18n="op.login">Логин</label>
               <input id="invite-login" name="login" autocomplete="username">
             </div>
             <div class="field">
-              <label for="invite-password">Пароль</label>
+              <label for="invite-password" data-i18n="op.password">Пароль</label>
               <input id="invite-password" name="password" type="password" autocomplete="new-password">
             </div>
             <p id="invite-accept-status" class="note" role="status"></p>
             <p id="invite-accept-error" class="err-text" role="alert"></p>
-            <button type="submit" id="btn-accept-invite" class="btn wide">Принять приглашение</button>
+            <button type="submit" id="btn-accept-invite" class="btn wide" data-i18n="op.acceptInvite">Принять приглашение</button>
           </form>
         </details>
-        <p class="muted">Нет аккаунта? Попросите администратора команды прислать приглашение.</p>
+        <p class="muted" data-i18n="op.noAccount">Нет аккаунта? Попросите администратора команды прислать приглашение.</p>
       </div>
 
       <!-- Рабочая область -->
       <div id="op-work" class="workspace hidden">
-        <nav class="sidebar" aria-label="Разделы">
-          <button class="side-tab active" data-pane="connect" aria-pressed="true">Подключение</button>
-          <button class="side-tab" data-pane="contacts" aria-pressed="false">Адресная книга</button>
-          <button class="side-tab" data-pane="team" aria-pressed="false">Команда</button>
-          <button class="side-tab" data-pane="history" aria-pressed="false">История</button>
-          <button class="side-tab" data-pane="audit" aria-pressed="false">Журнал</button>
+        <nav class="sidebar" data-i18n-aria-label="app.aria.sections" aria-label="Разделы">
+          <button class="side-tab active" data-pane="connect" aria-pressed="true" data-i18n="op.paneConnect">Подключение</button>
+          <button class="side-tab" data-pane="contacts" aria-pressed="false" data-i18n="op.paneContacts">Адресная книга</button>
+          <button class="side-tab" data-pane="team" aria-pressed="false" data-i18n="op.paneTeam">Команда</button>
+          <button class="side-tab" data-pane="history" aria-pressed="false" data-i18n="op.paneHistory">История</button>
+          <button class="side-tab" data-pane="audit" aria-pressed="false" data-i18n="op.paneAudit">Журнал</button>
           <div class="sidebar-footer">
             <span id="op-who" class="muted"></span>
             <div class="sidebar-actions">
-              <button id="btn-password" class="btn small">Сменить пароль</button>
-              <button id="btn-logout" class="btn small">Выйти</button>
+              <button id="btn-password" class="btn small" data-i18n="op.changePassword">Сменить пароль</button>
+              <button id="btn-logout" class="btn small" data-i18n="op.logout">Выйти</button>
             </div>
           </div>
         </nav>
@@ -236,95 +236,95 @@
           <!-- Подключение -->
           <div id="pane-connect" class="pane">
             <div id="op-connect-form" class="card">
-              <h2>Подключение к клиенту</h2>
+              <h2 data-i18n="op.connectTitle">Подключение к клиенту</h2>
               <div class="field">
-                <label for="conn-session-id">Идентификатор сеанса</label>
-                <input id="conn-session-id" inputmode="numeric" placeholder="9 цифр">
+                <label for="conn-session-id" data-i18n="op.sessionIdLabel">Идентификатор сеанса</label>
+                <input id="conn-session-id" inputmode="numeric" data-i18n-placeholder="op.sessionIdPlaceholder" placeholder="9 цифр">
               </div>
               <div class="field">
-                <label for="conn-password">Пароль сеанса</label>
+                <label for="conn-password" data-i18n="op.sessionPassLabel">Пароль сеанса</label>
                 <input id="conn-password" autocomplete="off">
               </div>
               <div class="field">
-                <label for="conn-contact">Клиент из адресной книги (необязательно)</label>
+                <label for="conn-contact" data-i18n="op.contactLabel">Клиент из адресной книги (необязательно)</label>
                 <select id="conn-contact"><option value="">—</option></select>
               </div>
-              <p id="conn-paste-hint" class="note hidden">Можно вставить данные доступа целиком — ID и пароль подставятся сами</p>
+              <p id="conn-paste-hint" class="note hidden" data-i18n="op.pasteHint">Можно вставить данные доступа целиком — ID и пароль подставятся сами</p>
               <p id="conn-error" class="err-text" role="alert"></p>
-              <button id="btn-connect" class="cta wide">Подключиться</button>
+              <button id="btn-connect" class="cta wide" data-i18n="op.connectBtn">Подключиться</button>
             </div>
             <div id="op-waiting" class="card hidden" role="status">
               <div class="spinner" aria-hidden="true"></div>
-              <p>Ожидаем подтверждение клиента…</p>
-              <button id="btn-cancel-connect" class="btn danger-ghost">Отменить</button>
+              <p data-i18n="op.waitingConfirm">Ожидаем подтверждение клиента…</p>
+              <button id="btn-cancel-connect" class="btn danger-ghost" data-i18n="common.cancel">Отменить</button>
             </div>
             <div id="op-remote" class="card hidden">
               <div class="toolbar">
-                <span id="remote-status" class="note" role="status">Подключение…</span>
+                <span id="remote-status" class="note" role="status" data-i18n="status.connecting">Подключение…</span>
                 <span id="session-timer" class="note"></span>
                 <span class="spacer"></span>
-                <button id="btn-fit" class="btn small">Заполнить</button>
-                <button id="btn-fullscreen" class="btn small">Во весь экран</button>
-                <button id="btn-op-file" class="btn small">Отправить файл</button>
+                <button id="btn-fit" class="btn small" data-i18n="op.fitFill">Заполнить</button>
+                <button id="btn-fullscreen" class="btn small" data-i18n="op.fullscreen">Во весь экран</button>
+                <button id="btn-op-file" class="btn small" data-i18n="client.sendFile">Отправить файл</button>
                 <input id="op-file-input" type="file" class="hidden">
-                <button id="btn-end-session" class="btn danger">Завершить</button>
+                <button id="btn-end-session" class="btn danger" data-i18n="op.end">Завершить</button>
               </div>
-              <video id="remote-video" autoplay playsinline aria-label="Экран клиента"></video>
+              <video id="remote-video" autoplay playsinline data-i18n-aria-label="app.aria.remoteVideo" aria-label="Экран клиента"></video>
               <div class="row gap wrap-btns">
-                <label class="check-line" for="clip-op-toggle"><input type="checkbox" id="clip-op-toggle" checked> Буфер обмена</label>
+                <label class="check-line" for="clip-op-toggle"><input type="checkbox" id="clip-op-toggle" checked> <span data-i18n="op.clipLabel">Буфер обмена</span></label>
                 <span id="file-op-status" class="note"></span>
               </div>
               <div id="op-file-list" class="list"></div>
               <div class="chat">
                 <div id="op-chat-log" class="chat-log" aria-live="polite"></div>
                 <div class="row gap">
-                  <input id="op-chat-input" maxlength="2000" placeholder="Сообщение клиенту…">
-                  <button id="op-chat-send" class="btn">Отправить</button>
+                  <input id="op-chat-input" maxlength="2000" data-i18n-placeholder="op.chatPlaceholder" placeholder="Сообщение клиенту…">
+                  <button id="op-chat-send" class="btn" data-i18n="common.send">Отправить</button>
                 </div>
               </div>
-              <p class="muted">Управление мышью и клавиатурой активно, пока клиент не завершил сеанс.</p>
+              <p class="muted" data-i18n="op.controlNote">Управление мышью и клавиатурой активно, пока клиент не завершил сеанс.</p>
             </div>
           </div>
 
           <!-- Адресная книга -->
           <div id="pane-contacts" class="pane hidden">
             <div class="card">
-              <h2>Адресная книга</h2>
+              <h2 data-i18n="contacts.title">Адресная книга</h2>
               <form id="form-contact-search" class="row gap">
                 <div class="field grow">
-                  <label for="contact-search">Поиск по имени</label>
-                  <input id="contact-search" placeholder="Например, Иванова">
+                  <label for="contact-search" data-i18n="contacts.searchLabel">Поиск по имени</label>
+                  <input id="contact-search" data-i18n-placeholder="contacts.searchPlaceholder" placeholder="Например, Иванова">
                 </div>
-                <button type="submit" class="btn">Найти</button>
-                <button type="button" id="btn-contact-add" class="btn">Добавить</button>
+                <button type="submit" class="btn" data-i18n="contacts.find">Найти</button>
+                <button type="button" id="btn-contact-add" class="btn" data-i18n="contacts.add">Добавить</button>
               </form>
               <p id="contacts-status" class="note" role="status"></p>
               <div id="contacts-list" class="list"></div>
               <div class="pager">
-                <button id="contacts-prev" class="btn small">← Назад</button>
+                <button id="contacts-prev" class="btn small" data-i18n="common.back">← Назад</button>
                 <span id="contacts-page" class="muted"></span>
-                <button id="contacts-next" class="btn small">Вперёд →</button>
+                <button id="contacts-next" class="btn small" data-i18n="common.forward">Вперёд →</button>
               </div>
             </div>
             <div id="contact-editor" class="card hidden">
-              <h3 id="contact-editor-title">Новый контакт</h3>
+              <h3 id="contact-editor-title" data-i18n="contacts.newTitle">Новый контакт</h3>
               <form id="form-contact" novalidate>
                 <div class="field">
-                  <label for="contact-name">Имя (1–120)</label>
+                  <label for="contact-name" data-i18n="contacts.nameLabel">Имя (1–120)</label>
                   <input id="contact-name" maxlength="120" required>
                 </div>
                 <div class="field">
-                  <label for="contact-notes">Заметки (до 2000)</label>
+                  <label for="contact-notes" data-i18n="contacts.notesLabel">Заметки (до 2000)</label>
                   <textarea id="contact-notes" rows="3" maxlength="2000"></textarea>
                 </div>
                 <div class="field">
-                  <label for="contact-tags">Теги (до 10, через запятую)</label>
-                  <input id="contact-tags" placeholder="срочно, бухгалтерия">
+                  <label for="contact-tags" data-i18n="contacts.tagsLabel">Теги (до 10, через запятую)</label>
+                  <input id="contact-tags" data-i18n-placeholder="contacts.tagsPlaceholder" placeholder="срочно, бухгалтерия">
                 </div>
                 <p id="contact-error" class="err-text" role="alert"></p>
                 <div class="row gap">
-                  <button type="submit" id="btn-contact-save" class="cta">Сохранить</button>
-                  <button type="button" id="btn-contact-cancel" class="btn">Отмена</button>
+                  <button type="submit" id="btn-contact-save" class="cta" data-i18n="contacts.save">Сохранить</button>
+                  <button type="button" id="btn-contact-cancel" class="btn" data-i18n="common.cancel">Отмена</button>
                 </div>
               </form>
             </div>
@@ -333,22 +333,22 @@
           <!-- Команда -->
           <div id="pane-team" class="pane hidden">
             <div class="card">
-              <h2>Команда</h2>
+              <h2 data-i18n="team.title">Команда</h2>
               <p id="team-status" class="note" role="status"></p>
               <div id="members-list" class="list"></div>
             </div>
             <div class="card">
-              <h2>Приглашения</h2>
+              <h2 data-i18n="team.invitesTitle">Приглашения</h2>
               <form id="form-invite" class="row gap">
                 <div class="field">
-                  <label for="invite-role">Роль нового участника</label>
+                  <label for="invite-role" data-i18n="team.roleLabel">Роль нового участника</label>
                   <select id="invite-role">
-                    <option value="operator">Оператор</option>
-                    <option value="admin">Администратор</option>
-                    <option value="auditor">Наблюдатель</option>
+                    <option value="operator" data-i18n="team.roleSelect.operator">Оператор</option>
+                    <option value="admin" data-i18n="team.roleSelect.admin">Администратор</option>
+                    <option value="auditor" data-i18n="team.roleSelect.auditor">Наблюдатель</option>
                   </select>
                 </div>
-                <button type="submit" id="btn-invite-create" class="cta">Создать приглашение</button>
+                <button type="submit" id="btn-invite-create" class="cta" data-i18n="team.createInvite">Создать приглашение</button>
               </form>
               <p id="invite-result" class="note" role="status"></p>
               <p id="team-error" class="err-text" role="alert"></p>
@@ -359,14 +359,14 @@
           <!-- История -->
           <div id="pane-history" class="pane hidden">
             <div class="card">
-              <h2>История сеансов</h2>
+              <h2 data-i18n="history.title">История сеансов</h2>
               <p id="history-status" class="note" role="status"></p>
               <div id="history-list" class="list"></div>
               <div class="pager">
-                <button id="history-prev" class="btn small">← Назад</button>
+                <button id="history-prev" class="btn small" data-i18n="common.back">← Назад</button>
                 <span id="history-page" class="muted"></span>
-                <button id="history-next" class="btn small">Вперёд →</button>
-                <button id="history-csv" class="btn small">Скачать CSV</button>
+                <button id="history-next" class="btn small" data-i18n="common.forward">Вперёд →</button>
+                <button id="history-csv" class="btn small" data-i18n="common.downloadCsv">Скачать CSV</button>
               </div>
             </div>
           </div>
@@ -374,14 +374,14 @@
           <!-- Журнал -->
           <div id="pane-audit" class="pane hidden">
             <div class="card">
-              <h2>Журнал действий</h2>
+              <h2 data-i18n="audit.title">Журнал действий</h2>
               <p id="audit-status" class="note" role="status"></p>
               <div id="audit-list" class="list"></div>
               <div class="pager">
-                <button id="audit-prev" class="btn small">← Назад</button>
+                <button id="audit-prev" class="btn small" data-i18n="common.back">← Назад</button>
                 <span id="audit-page" class="muted"></span>
-                <button id="audit-next" class="btn small">Вперёд →</button>
-                <button id="audit-csv" class="btn small">Скачать CSV</button>
+                <button id="audit-next" class="btn small" data-i18n="common.forward">Вперёд →</button>
+                <button id="audit-csv" class="btn small" data-i18n="common.downloadCsv">Скачать CSV</button>
               </div>
             </div>
           </div>
@@ -392,20 +392,20 @@
     <!-- ======================= СМЕНА ПАРОЛЯ ======================= -->
     <div id="password-overlay" class="overlay hidden" role="dialog" aria-modal="true" aria-labelledby="password-title">
       <div class="card narrow">
-        <h2 id="password-title">Сменить пароль</h2>
+        <h2 id="password-title" data-i18n="password.title">Сменить пароль</h2>
         <form id="form-password" novalidate>
           <div class="field">
-            <label for="password-old">Текущий пароль</label>
+            <label for="password-old" data-i18n="password.oldLabel">Текущий пароль</label>
             <input id="password-old" name="oldPassword" type="password" autocomplete="current-password" required>
           </div>
           <div class="field">
-            <label for="password-new">Новый пароль (от 8 символов)</label>
+            <label for="password-new" data-i18n="password.newLabel">Новый пароль (от 8 символов)</label>
             <input id="password-new" name="newPassword" type="password" autocomplete="new-password" required>
           </div>
           <p id="password-error" class="err-text" role="alert"></p>
           <div class="row gap">
-            <button type="submit" id="btn-password-save" class="cta">Сменить</button>
-            <button type="button" id="btn-password-close" class="btn">Отмена</button>
+            <button type="submit" id="btn-password-save" class="cta" data-i18n="password.save">Сменить</button>
+            <button type="button" id="btn-password-close" class="btn" data-i18n="common.cancel">Отмена</button>
           </div>
         </form>
         <p id="password-status" class="note" role="status"></p>
@@ -415,20 +415,27 @@
     <!-- ======================= НАСТРОЙКИ ======================= -->
     <div id="settings-overlay" class="overlay hidden" role="dialog" aria-modal="true" aria-labelledby="settings-title">
       <div class="card narrow">
-        <h2 id="settings-title">Настройки</h2>
+        <h2 id="settings-title" data-i18n="settings.title">Настройки</h2>
         <div class="field">
-          <label for="settings-url">Адрес сервера</label>
+          <label for="settings-locale" data-i18n="settings.language">Язык интерфейса</label>
+          <select id="settings-locale">
+            <option value="ru">Русский</option>
+            <option value="en">English</option>
+          </select>
+        </div>
+        <div class="field">
+          <label for="settings-url" data-i18n="settings.serverLabel">Адрес сервера</label>
           <input id="settings-url" placeholder="http://127.0.0.1:8080">
         </div>
         <div class="field">
-          <label for="settings-insecure"><input type="checkbox" id="settings-insecure"> Разрешить HTTP без шифрования (только для тестового сервера)</label>
-          <p class="note">Трафик без шифрования — подходит только для тестового сервера, не для интернета.</p>
+          <label for="settings-insecure"><input type="checkbox" id="settings-insecure"> <span data-i18n="settings.allowHttp">Разрешить HTTP без шифрования (только для тестового сервера)</span></label>
+          <p class="note" data-i18n="settings.allowHttpNote">Трафик без шифрования — подходит только для тестового сервера, не для интернета.</p>
         </div>
         <p id="settings-status" class="note" role="status"></p>
         <p id="settings-error" class="err-text" role="alert"></p>
         <div class="row gap">
-          <button id="btn-settings-save" class="cta">Сохранить и проверить</button>
-          <button id="btn-settings-close" class="btn">Закрыть</button>
+          <button id="btn-settings-save" class="cta" data-i18n="settings.save">Сохранить и проверить</button>
+          <button id="btn-settings-close" class="btn" data-i18n="settings.close">Закрыть</button>
         </div>
         <p id="perm-report" class="note"></p>
       </div>
@@ -437,7 +444,7 @@
 
   <footer id="app-footer" class="app-footer hidden">
     <span class="footer-brand">EnotDesk v<span id="app-version"></span></span>
-    <span class="footer-note"><span class="heart" aria-hidden="true">♥</span> С заботой о ваших задачах</span>
+    <span class="footer-note"><span class="heart" aria-hidden="true">♥</span> <span data-i18n="app.care">С заботой о ваших задачах</span></span>
   </footer>
 
   <script src="app.js" type="module"></script>
