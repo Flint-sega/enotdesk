@@ -229,7 +229,7 @@ export function createServer(opts = {}) {
     secret_too_long: 'Секрет слишком длинный (до 256 символов)',
   };
 
-  const live = new Map(); // sessionId -> {hostWs, opWs, operatorUserId, sigCount, sigReset, hostLostAt, opLostAt}
+  const live = new Map(); // sessionId -> {hostWs, opWs, operatorUserId, sigCount, sigReset, hostLostAt, opLostAt, termActive}
   let closed = false;
 
   function send(ws, obj) {
@@ -254,6 +254,13 @@ export function createServer(opts = {}) {
     webhooks.emit('session.ended', { sessionId, reason });
     const rt = live.get(sessionId);
     if (rt) {
+      // Терминал живёт не дольше сеанса (R09): если был активен — честный term.close.
+      if (rt.termActive === true) {
+        const s0 = db.prepare('SELECT machine_id FROM sessions WHERE id = ?').get(sessionId);
+        auditLog(db, s0?.machine_id ?? null, 'term.close', sessionId, {
+          host: !s0?.machine_id, unattended: !!s0?.machine_id, ...(s0?.machine_id ? { machineId: s0.machine_id } : {}), reason,
+        });
+      }
       send(rt.hostWs, { type: 'ended', reason });
       send(rt.opWs, { type: 'ended', reason });
       for (const ws of [rt.hostWs, rt.opWs]) if (ws) ws.close(1000, 'ended');
@@ -1146,7 +1153,7 @@ export function createServer(opts = {}) {
         return ws.close(4005, 'server-busy');
       }
       if (!rt) {
-        rt = { hostWs: null, opWs: null, operatorUserId: null, sigCount: 0, sigReset: 0, hostLostAt: null, opLostAt: null, lastBeat: 0 };
+        rt = { hostWs: null, opWs: null, operatorUserId: null, sigCount: 0, sigReset: 0, hostLostAt: null, opLostAt: null, lastBeat: 0, termActive: false };
         live.set(s.id, rt);
       }
       let resumed;
@@ -1191,9 +1198,18 @@ export function createServer(opts = {}) {
       if (!s || s.state === 'ended') return;
       if (msg.type === 'heartbeat') {
         if (role !== 'host') return send(ws, { type: 'error', code: 'forbidden', message: 'Недопустимое сообщение' });
-        // частый стук не нагружает БД: lease пишем не чаще половины интервала
         const rtBeat = live.get(s.id);
         const nowMs = Date.now();
+        // Аудит терминала (R09): переходы termActive пишутся как term.open/term.close
+        // один раз на смену состояния, не на каждый heartbeat. Актёр — машина
+        // (unattended) или null при человеке-хосте, как в machine.claim.
+        if (rtBeat && (msg.termActive === true || msg.termActive === false) && rtBeat.termActive !== msg.termActive) {
+          rtBeat.termActive = msg.termActive;
+          auditLog(db, s.machine_id ?? null, msg.termActive ? 'term.open' : 'term.close', s.id, {
+            host: !s.machine_id, unattended: !!s.machine_id, ...(s.machine_id ? { machineId: s.machine_id } : {}),
+          });
+        }
+        // частый стук не нагружает БД: lease пишем не чаще половины интервала
         if (rtBeat && rtBeat.lastBeat && nowMs - rtBeat.lastBeat < cfg.heartbeatMs / 2) {
           return send(ws, { type: 'heartbeat' });
         }
