@@ -15,6 +15,8 @@ import { createInputPipeline } from './lib/input-pipeline.mjs';
 import { INPUT_KEYS } from './lib/protocol.mjs';
 import { normalizeServerUrl } from './lib/server-url.mjs';
 import { createAgent, createAgentApi } from './lib/agent.mjs';
+import { UPDATE_REPO, updateFeedUrl, platformFeedName, updateDecision } from './lib/updater.mjs';
+import { isNewerVersion } from './lib/version-check.mjs';
 
 const SMOKE = process.env.EDESK_SMOKE === '1';
 // Режим агента-службы (EDESK_AGENT=1): без окна, логи честные в stdout.
@@ -100,6 +102,55 @@ function saveSettings() {
 
 function sendToRenderer(channel, payload) {
   if (win && !win.isDestroyed()) win.webContents.send(channel, payload);
+}
+
+// Автообновление (история 34): только упакованное приложение — dev, EDESK_SMOKE
+// и агент-служба не проверяют ничего. Проверка раз в сутки; фид — generic-провайдер
+// electron-updater на GitHub Releases (latest*.yml к релизу прикладывает release.yml).
+// electron-updater — мягкая зависимость: если пакета нет, честно логируем и остаёмся
+// на уведомлениях по фиду (fetch + чистый парсер updater.mjs), установку не подменяем.
+// Windows-сборка v1 — portable .exe: автоустановку такой формат не поддерживает,
+// поэтому только уведомление со ссылкой на страницу релизов (update.manualBanner).
+const UPDATE_CHECK_MS = 24 * 60 * 60 * 1000;
+
+function startUpdater() {
+  if (SMOKE || AGENT || !app.isPackaged) return;
+  const feedUrl = updateFeedUrl(UPDATE_REPO);
+  const notify = (payload) => sendToRenderer('enot:update', payload);
+  let autoUpdater = null;
+  try { autoUpdater = createRequire(import.meta.url)('electron-updater').autoUpdater; } catch { autoUpdater = null; }
+  if (!autoUpdater) {
+    console.log(`[enotdesk] автообновление выключено: пакет electron-updater не установлен (уведомления о версиях по фиду ${feedUrl} продолжаются)`);
+    const check = async () => {
+      try {
+        const res = await fetch(feedUrl + platformFeedName(process.platform));
+        const d = updateDecision({ current: app.getVersion(), feedText: res.ok ? await res.text() : null });
+        if (d.update) notify({ version: d.version, auto: false });
+      } catch { /* баннер не критичен, следующий цикл через сутки */ }
+    };
+    void check();
+    setInterval(check, UPDATE_CHECK_MS);
+    return;
+  }
+  autoUpdater.autoDownload = process.platform !== 'win32';
+  autoUpdater.autoInstallOnAppQuit = true; // не рвём активный сеанс: установка при закрытии
+  try {
+    autoUpdater.setFeedURL({ provider: 'generic', url: feedUrl });
+  } catch (e) {
+    console.error(`[enotdesk] не удалось задать фид обновлений: ${e.message}`);
+    return;
+  }
+  autoUpdater.on('update-available', (info) => {
+    const version = String(info?.version ?? '');
+    if (isNewerVersion(app.getVersion(), version)) notify({ version, auto: autoUpdater.autoDownload });
+  });
+  autoUpdater.on('update-downloaded', (info) => {
+    console.log(`[enotdesk] обновление ${info?.version ?? ''} скачано — применится при закрытии приложения`);
+    notify({ version: String(info?.version ?? ''), auto: true });
+  });
+  autoUpdater.on('error', (e) => console.log(`[enotdesk] проверка обновлений не удалась: ${e?.message ?? e}`));
+  autoUpdater.checkForUpdates().catch((e) => console.log(`[enotdesk] проверка обновлений не удалась: ${e?.message ?? e}`));
+  setInterval(() => { autoUpdater.checkForUpdates().catch(() => { /* ошибки приходят в 'error' */ }); }, UPDATE_CHECK_MS);
 }
 
 function stopSignal() {
@@ -413,6 +464,7 @@ app.whenReady().then(() => {
   }
   registerIpc();
   createWindow();
+  startUpdater();
   if (SMOKE) {
     setTimeout(async () => {
       const lines = [];

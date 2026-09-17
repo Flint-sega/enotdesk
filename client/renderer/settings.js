@@ -67,3 +67,13 @@ export async function checkForUpdate(currentVersion) {
     }
   } catch { /* не критично */ }
 }
+
+// Автообновление через GitHub Releases (история 34): main решает сам и сообщает
+// сюда. auto=true — сборка скачается и применится при перезапуске; auto=false —
+// платформа не умеет автоустановку (портативный .exe Windows), только уведомление.
+// Тот же баннер, что у серверных сборок, — нового UI нет.
+enot.onUpdate?.(({ version, auto }) => {
+  if (!version) return;
+  text($('update-banner'), t(auto ? 'update.autoBanner' : 'update.manualBanner', { version }));
+  show($('update-banner'));
+});
