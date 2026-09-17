@@ -14,6 +14,16 @@ files:
   - assets/enot-mascot.svg
   - assets/mascot-app.png
   - package.json
+  # Срез мёртвого груза koffi (R01): C++-исходники, vendor-заголовки, doc.
+  # Рантайму нужны index.cjs -> src/koffi/index.cjs -> src/koffi/src/static.cjs
+  # и бинарник @koromix/koffi-<platform> — JS-рантайм реинклюдится после src/**.
+  - "!node_modules/koffi/src/**"
+  - "!node_modules/koffi/vendor/**"
+  - "!node_modules/koffi/doc/**"
+  - "node_modules/koffi/src/koffi/*.cjs"
+  - "node_modules/koffi/src/koffi/*.js"
+  - "node_modules/koffi/src/koffi/src/*.cjs"
+  - "node_modules/koffi/src/koffi/src/*.js"
 asarUnpack:
   - node_modules/koffi/**
 artifactName: "EnotDesk-${os}-${arch}.${ext}"

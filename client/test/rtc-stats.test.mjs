@@ -18,6 +18,13 @@ test('качество: Map-подобный report (настоящий RTCStats
   assert.deepEqual(summarizeStats(map), { rttMs: 45, lossPct: 1 });
 });
 
+test('host-сторона: потери своего исходящего видео — из remote-inbound-rtp (отчёт приёмника)', () => {
+  assert.deepEqual(summarizeStats({
+    pair: { type: 'candidate-pair', state: 'succeeded', currentRoundTripTime: 0.045 },
+    rin: { type: 'remote-inbound-rtp', kind: 'video', packetsLost: 10, packetsReceived: 90 },
+  }), { rttMs: 45, lossPct: 10 });
+});
+
 test('качество: пустой/кривой отчёт → null, без потерь → 0%', () => {
   assert.equal(summarizeStats({}), null);
   assert.equal(summarizeStats(undefined), null);
