@@ -3,7 +3,10 @@
 <head>
   <meta charset="UTF-8">
   <meta http-equiv="Content-Security-Policy"
-        content="default-src 'none'; script-src 'self'; style-src 'self'; img-src 'self' file: data:; media-src blob:; font-src 'self'; form-action 'none'; frame-ancestors 'none'">
+        content="default-src 'none'; script-src 'self'; style-src 'self'; img-src 'self' file: data:; media-src blob:; font-src 'self'; connect-src 'self' file:; form-action 'none'; frame-ancestors 'none'">
+  <!-- connect-src 'self' file: — только для import … with {type:'json'} словарей i18n (client/locales/*.json):
+       без него весь граф модулей рендерера падает под default-src 'none' и JS клиента мёртв.
+       Удалённые fetch/WebSocket по-прежнему запрещены (file:/self не совпадают с http/ws). -->
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <meta name="color-scheme" content="dark">
   <title>EnotDesk</title>
@@ -47,6 +50,7 @@
     <section id="view-client" class="view" data-i18n-aria-label="app.aria.getHelp" aria-label="Получить помощь">
       <div class="hero">
         <div class="hero-copy">
+          <span id="server-chip" class="server-chip" role="status" data-i18n="server.checking">Проверяем сервер…</span>
           <p class="eyebrow" data-i18n="app.subtitle">Удалённая поддержка</p>
           <h1 id="client-title">EnotDesk</h1>
           <p id="client-subtitle" class="hero-lead" data-i18n-html="client.leadHtml">Быстрая и безопасная помощь<br>на расстоянии</p>
@@ -409,6 +413,21 @@
           </div>
         </form>
         <p id="password-status" class="note" role="status"></p>
+      </div>
+    </div>
+
+    <!-- ======================= ПЕРВЫЙ ЗАПУСК ======================= -->
+    <div id="firstrun-overlay" class="overlay hidden" role="dialog" aria-modal="true" aria-labelledby="firstrun-title">
+      <div class="card narrow center">
+        <img class="mascot-mini" src="../../assets/enot-mascot.svg" alt="" aria-hidden="true">
+        <h2 id="firstrun-title" data-i18n="firstRun.title">Первый запуск</h2>
+        <p class="muted" data-i18n="firstRun.lead">Адрес сервера уже настроен — проверим, что он доступен.</p>
+        <p id="firstrun-url" class="firstrun-url"></p>
+        <p id="firstrun-status" class="note" role="status"></p>
+        <div class="row gap">
+          <button id="btn-firstrun-check" class="cta" data-i18n="firstRun.check">Проверить</button>
+          <button id="btn-firstrun-settings" class="btn" data-i18n="firstRun.openSettings">Настроить адрес вручную</button>
+        </div>
       </div>
     </div>
 

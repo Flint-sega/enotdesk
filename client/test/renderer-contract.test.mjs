@@ -54,6 +54,10 @@ test('CSP: стили только styles.css, без inline-стилей и inl
   assert.ok(!/\sstyle="/.test(html), 'найден inline style');
   assert.ok(!/<script(?![^>]*\bsrc=)/.test(html), 'найден inline script');
   assert.match(html, /<link rel="stylesheet" href="styles.css">/);
+  // Словари i18n приходят в рендерер через import … with {type:'json'} — это
+  // fetch, без connect-src 'self' file: он блокируется default-src 'none' и
+  // падает весь граф модулей (SMOKE 03: рендерер был мёртв без этой строки).
+  assert.match(html, /connect-src 'self' file:;/, 'в CSP нет connect-src для локальных JSON-словарей');
 });
 
 test('getSettings отдаёт фактическую версию, футер её показывает', () => {
