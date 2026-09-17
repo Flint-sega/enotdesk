@@ -29,11 +29,12 @@ export function roleName(r) {
   return label === `role.${r}` ? r : label; // неизвестная роль — код как есть
 }
 
-// Перевод статической разметки: data-i18n (текст), -html, -placeholder, -aria-label, -title.
+// Перевод статической разметки: data-i18n (текст), -html, -placeholder, -aria-label, -title, -alt.
 export function applyI18n(root = document) {
   for (const el of root.querySelectorAll('[data-i18n]')) el.textContent = t(el.getAttribute('data-i18n'));
   for (const el of root.querySelectorAll('[data-i18n-html]')) el.innerHTML = t(el.getAttribute('data-i18n-html'));
   for (const el of root.querySelectorAll('[data-i18n-placeholder]')) el.placeholder = t(el.getAttribute('data-i18n-placeholder'));
   for (const el of root.querySelectorAll('[data-i18n-aria-label]')) el.setAttribute('aria-label', t(el.getAttribute('data-i18n-aria-label')));
   for (const el of root.querySelectorAll('[data-i18n-title]')) el.title = t(el.getAttribute('data-i18n-title'));
+  for (const el of root.querySelectorAll('[data-i18n-alt]')) el.alt = t(el.getAttribute('data-i18n-alt'));
 }

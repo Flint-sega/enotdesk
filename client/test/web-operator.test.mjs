@@ -47,7 +47,8 @@ test('web/operator.html: анти-мёртвые-кнопки — каждая �
   const buttons = [...html.matchAll(/<button[^>]*id="([^"]+)"/g)].map((m) => m[1]);
   assert.ok(buttons.length >= 9, 'на странице оператора есть живая панель кнопок');
   for (const id of buttons) {
-    assert.ok(allJs.includes(`'${id}'`), `кнопка «${id}» есть в HTML, но не подключена в web/*.mjs`);
+    const wired = new RegExp(`\\$\\('${id}'\\)`).test(allJs);
+    assert.ok(wired, `кнопка «${id}» есть в HTML, но не подключена в web/*.mjs`);
   }
 });
 

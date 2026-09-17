@@ -28,9 +28,27 @@ test('initLocale: сохранённый выбор сильнее систем�
   assert.equal(initLocale('ru'), 'ru');
   assert.equal(getLocale(), 'ru');
   assert.equal(initLocale('fr'), 'en');
-  assert.equal(initLocale(), initLocale()); // без сохранения — системная, но валидная
-  assert.ok(['ru', 'en'].includes(initLocale(null)));
   setLocale('en');
+});
+
+test('initLocale: без сохранения следует системной локали (stub), неизвестная система — фолбэк en', () => {
+  const realDescriptor = Object.getOwnPropertyDescriptor(globalThis, 'navigator');
+  const stubSystem = (language) => Object.defineProperty(globalThis, 'navigator', {
+    value: { language }, configurable: true,
+  });
+  try {
+    stubSystem('ru-RU');
+    assert.equal(initLocale(null), 'ru'); // ожидание задано стабом, не результатом вызова
+    assert.equal(getLocale(), 'ru');
+    stubSystem('en-GB');
+    assert.equal(initLocale(undefined), 'en');
+    assert.equal(getLocale(), 'en');
+    stubSystem('de-DE'); // системный язык вне словаря — честный фолбэк en
+    assert.equal(initLocale(null), 'en');
+  } finally {
+    Object.defineProperty(globalThis, 'navigator', realDescriptor);
+    setLocale('en');
+  }
 });
 
 test('pickLocale: Accept-Language с q-весами, тегами с регионом и мусором', () => {

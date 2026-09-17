@@ -6,6 +6,8 @@
   "app.aria.getHelp": "Получить помощь",
   "app.aria.sections": "Разделы",
   "app.aria.remoteVideo": "Экран клиента",
+  "app.aria.operatorMode": "Режим оператора",
+  "app.alt.mascotHero": "Енот-специалист EnotDesk",
   "app.subtitle": "Удалённая поддержка",
   "app.care": "С заботой о ваших задачах",
 
@@ -23,6 +25,7 @@
   "common.saveBusy": "Сохраняем…",
   "common.untitled": "(без названия)",
   "common.httpError": "Ошибка {status}",
+  "error.badLocale": "Некорректная локаль",
 
   "client.start": "Получить помощь",
   "client.startBusy": "Соединяемся…",
@@ -137,6 +140,8 @@
   "settings.allowHttp": "Разрешить HTTP без шифрования (только для тестового сервера)",
   "settings.allowHttpNote": "Трафик без шифрования — подходит только для тестового сервера, не для интернета.",
   "settings.language": "Язык интерфейса",
+  "settings.langRu": "Русский",
+  "settings.langEn": "Английский",
   "settings.save": "Сохранить и проверить",
   "settings.close": "Закрыть",
   "settings.firstRun": "Первый запуск: укажите адрес сервера ЕнотDesk.",
