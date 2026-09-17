@@ -15,7 +15,7 @@ import { createInputPipeline } from './lib/input-pipeline.mjs';
 import { INPUT_KEYS } from './lib/protocol.mjs';
 import { normalizeServerUrl } from './lib/server-url.mjs';
 import { resolveServerUrl, DEFAULT_SERVER_URL } from './lib/first-run.mjs';
-import { createAgent, createAgentApi } from './lib/agent.mjs';
+import { createAgent, createAgentApi, createIceServersFetcher } from './lib/agent.mjs';
 import { createBridgeRelay, BRIDGE_IPC } from './agent-bridge/relay.mjs';
 import { createTermHost } from './lib/term.mjs';
 import { UPDATE_REPO, updateFeedUrl, platformFeedName, updateDecision } from './lib/updater.mjs';
@@ -416,7 +416,7 @@ function createWindow() {
 // фиксированным IPC-каналам (BRIDGE_IPC) через createBridgeRelay. Мост живёт
 // только внутри сеанса: pcLike.close() на ended/stop; краш страницы не роняет
 // агента — терминал честно закрывается (relay.destroy → onclose канала).
-function createAgentRtc() {
+function createAgentRtc({ fetchIceServers } = {}) {
   return () => {
     let win = null;
     let relay = null;
@@ -447,6 +447,9 @@ function createAgentRtc() {
     relay = createBridgeRelay({
       send: (channel, payload) => { if (win && !win.isDestroyed()) win.webContents.send(channel, payload); },
       onClosed: cleanup,
+      // TURN для pc терминала (R09): релей запросит конфиг один раз до первого
+      // offer; сбой/пусто — релей сам честно деградирует в iceServers:[] (по LAN).
+      fetchIceServers,
       log: console,
     });
     // отправитель — только наше окно: чужие ipc-посылки не проходят
@@ -506,8 +509,9 @@ function startAgentMode() {
       try { fs.rmSync(tokenPath, { force: true }); } catch { /* не было — не страшно */ }
     },
   };
+  const agentApi = createAgentApi({ baseUrl: settings.serverUrl });
   const agent = createAgent({
-    api: createAgentApi({ baseUrl: settings.serverUrl }),
+    api: agentApi,
     signal: () => createSignalClient({ url: new URL('/signal', settings.serverUrl).toString().replace(/^http/, 'ws') }),
     native: nativeInput,
     // Терминал (R09): оболочка поднимается от контекста службы; консольный
@@ -515,7 +519,12 @@ function startAgentMode() {
     termHost: createTermHost({ platform: process.platform }),
     // pc терминала живёт в скрытом renderer-мосте: в main-процессе Electron
     // нет RTCPeerConnection. Не собрали мост — createAgent честно предупредит.
-    rtc: createAgentRtc(),
+    rtc: createAgentRtc({
+      // TURN терминала (R09): /rtc-config с машинным токеном. Токен читаем из
+      // store в момент открытия терминала — к этому моменту машина
+      // зарегистрирована; отзыв/не-200/зависание хук честно отчитает.
+      fetchIceServers: createIceServersFetcher({ api: agentApi, tokenLoad: () => tokenStore.load() }),
+    }),
     policy: {
       name: process.env.EDESK_AGENT_NAME || os.hostname(),
       os: process.platform,
