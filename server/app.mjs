@@ -379,9 +379,11 @@ export function createServer(opts = {}) {
         return err(res, 403, 'wrong_password', 'Текущий пароль указан неверно');
       }
       db.prepare('UPDATE users SET password = ? WHERE id = ?').run(hashPassword(newPassword), user.id);
-      // прочие сеансы выходят принудительно: старые токены умирают, текущий остаётся
+      // прочие сеансы выходят принудительно: старые токены умирают, текущий остаётся;
+      // живые WS-сеансы, где пользователь — оператор, тоже рвём (WS-аутентификация одноразовая)
       const current = sha256(bearer(req) ?? '');
       db.prepare('DELETE FROM auth_tokens WHERE user_id = ? AND token_hash != ?').run(user.id, current);
+      endOperatorSessions(user.id, 'password-changed');
       auditLog(db, user.id, 'password.change', user.id, {});
       return ok(res, 200, { ok: true });
     }
@@ -664,11 +666,15 @@ export function createServer(opts = {}) {
         return err(res, 400, 'bad_request', 'Некорректный запрос решения');
       }
       if (allow) {
-        db.prepare("UPDATE sessions SET state='approved' WHERE id = ?").run(s.id);
-        auditLog(db, null, 'session.approve', s.id, { host: true, claimId });
-        const rt = live.get(s.id);
-        send(rt?.hostWs, { type: 'approved', claimId });
-        send(rt?.opWs, { type: 'approved', claimId });
+        // повторный allow — no-op: approved уходит один раз, при переподключении
+        // его разыгрывает WS-аутентификация (replay)
+        const r = db.prepare("UPDATE sessions SET state='approved' WHERE id = ? AND state != 'approved'").run(s.id);
+        if (r.changes === 1) {
+          auditLog(db, null, 'session.approve', s.id, { host: true, claimId });
+          const rt = live.get(s.id);
+          send(rt?.hostWs, { type: 'approved', claimId });
+          send(rt?.opWs, { type: 'approved', claimId });
+        }
         return ok(res, 200, { ok: true });
       }
       auditLog(db, null, 'session.reject', s.id, { host: true, claimId });
@@ -874,7 +880,7 @@ export function createServer(opts = {}) {
         return ws.close(4005, 'server-busy');
       }
       if (!rt) {
-        rt = { hostWs: null, opWs: null, operatorUserId: null, sigCount: 0, sigReset: 0, hostLostAt: null, opLostAt: null };
+        rt = { hostWs: null, opWs: null, operatorUserId: null, sigCount: 0, sigReset: 0, hostLostAt: null, opLostAt: null, lastBeat: 0 };
         live.set(s.id, rt);
       }
       let resumed;
@@ -919,8 +925,15 @@ export function createServer(opts = {}) {
       if (!s || s.state === 'ended') return;
       if (msg.type === 'heartbeat') {
         if (role !== 'host') return send(ws, { type: 'error', code: 'forbidden', message: 'Недопустимое сообщение' });
+        // частый стук не нагружает БД: lease пишем не чаще половины интервала
+        const rtBeat = live.get(s.id);
+        const nowMs = Date.now();
+        if (rtBeat && rtBeat.lastBeat && nowMs - rtBeat.lastBeat < cfg.heartbeatMs / 2) {
+          return send(ws, { type: 'heartbeat' });
+        }
+        if (rtBeat) rtBeat.lastBeat = nowMs;
         db.prepare('UPDATE sessions SET lease_expires_at = ? WHERE id = ?')
-          .run(new Date(Date.now() + cfg.leaseMs).toISOString(), s.id);
+          .run(new Date(nowMs + cfg.leaseMs).toISOString(), s.id);
         return send(ws, { type: 'heartbeat' });
       }
       if (msg.type === 'signal') {
