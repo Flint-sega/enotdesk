@@ -127,7 +127,7 @@ jobs:
       #   APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
 
       - name: Create GitHub Release
-        uses: softprops/action-gh-release@v2
+        uses: softprops/action-gh-release@v3
         with:
           # Windows portable не пишет latest.yml — фид опционален, win-клиент на notify-only
           fail_on_unmatched_files: false
