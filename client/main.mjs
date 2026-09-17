@@ -31,7 +31,7 @@ const pkg = (() => {
 
 let win = null;
 let settingsPath = null;
-let settings = { serverUrl: DEFAULT_SERVER_URL, allowInsecureHttp: false };
+let settings = { serverUrl: DEFAULT_SERVER_URL, allowInsecureHttp: false, locale: null };
 
 // Один экземпляр на машину: второй запуск просто уходит, а этот получает
 // second-instance и показывает окно. Заодно закрывает обход «одно окно —
@@ -74,6 +74,7 @@ function loadSettings() {
     const raw = JSON.parse(fs.readFileSync(settingsPath, 'utf8'));
     if (typeof raw.serverUrl === 'string' && raw.serverUrl) settings.serverUrl = raw.serverUrl;
     settings.allowInsecureHttp = raw.allowInsecureHttp === true;
+    settings.locale = raw.locale === 'ru' || raw.locale === 'en' ? raw.locale : null; // null = по системе
   } catch {
     // первый запуск — файл настроек ещё не существует
   }
@@ -183,7 +184,16 @@ function registerIpc() {
     if (!fromOurRenderer(e)) throw new Error('Доступ запрещён: недоверенный отправитель');
   };
 
-  ipcMain.handle('enot:getSettings', (e) => { guard(e); return { serverUrl: settings.serverUrl, allowInsecureHttp: settings.allowInsecureHttp, firstRun: !fs.existsSync(settingsPath), version: app.isPackaged ? app.getVersion() : pkg.version }; });
+  ipcMain.handle('enot:getSettings', (e) => { guard(e); return { serverUrl: settings.serverUrl, allowInsecureHttp: settings.allowInsecureHttp, locale: settings.locale, firstRun: !fs.existsSync(settingsPath), version: app.isPackaged ? app.getVersion() : pkg.version }; });
+
+  // Выбор языка интерфейса (R08.2): только известные локали, null снимает выбор.
+  ipcMain.handle('enot:setLocale', (e, locale) => {
+    guard(e);
+    if (locale !== 'ru' && locale !== 'en' && locale !== null) throw new Error('Некорректная локаль');
+    settings.locale = locale;
+    const saved = saveSettings();
+    return { ...saved, locale: settings.locale };
+  });
 
   ipcMain.handle('enot:setServerUrl', (e, url, opts = {}) => {
     guard(e);

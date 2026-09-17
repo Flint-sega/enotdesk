@@ -2,7 +2,8 @@
 // пауза трансляции, таймер, запуск/приём WebRTC-соединения.
 
 import { $, enot, text, setBusyAll } from './dom.js';
-import { state, END_REASONS } from './state.js';
+import { state, endReasonText } from './state.js';
+import { t } from '../lib/i18n.mjs';
 import { wireOperatorInput } from './operator-input.js';
 import { wireHostChannel } from './session-services.js';
 import { setVideoEnabled } from '../lib/media-toggle.mjs';
@@ -14,8 +15,8 @@ $('btn-pause-stream').addEventListener('click', () => {
   if (!state.localStream) return;
   streamPaused = !streamPaused;
   setVideoEnabled(state.localStream, !streamPaused);
-  text($('btn-pause-stream'), streamPaused ? 'Показать снова' : 'Скрыть экран');
-  text($('client-live-note'), streamPaused ? 'Трансляция приостановлена — оператор не видит экран.' : '');
+  text($('btn-pause-stream'), streamPaused ? t('client.showScreen') : t('client.hideScreen'));
+  text($('client-live-note'), streamPaused ? t('client.pausedNote') : '');
 });
 
 // Таймер длительности сеанса у оператора.
@@ -41,7 +42,7 @@ function startQualityPolling(pc) {
   qualityTimer = setInterval(async () => {
     try {
       const summary = summarizeStats(await pc.getStats());
-      text($('remote-status'), formatQuality('Подключено', summary));
+      text($('remote-status'), formatQuality(t('status.connected'), summary));
     } catch { /* соединение закрывается — не критично */ }
   }, 2000);
 }
@@ -54,14 +55,14 @@ export function cleanupSession() {
   stopMedia();
   enot.closeSignal().catch(() => {});
   streamPaused = false;
-  text($('btn-pause-stream'), 'Скрыть экран');
+  text($('btn-pause-stream'), t('client.hideScreen'));
   state.session = null;
   state.pendingClaim = null;
   state.connect = null;
 }
 
 export function stopMedia() {
-  try { state.localStream?.getTracks().forEach((t) => t.stop()); } catch { /* треки уже остановлены */ }
+  try { state.localStream?.getTracks().forEach((track) => track.stop()); } catch { /* треки уже остановлены */ }
   try { state.dc?.close(); } catch { /* уже закрыт */ }
   for (const ch of Object.values(state.dcs ?? {})) { try { ch.close(); } catch { /* уже закрыт */ } }
   try { state.pc?.close(); } catch { /* уже закрыт */ }
@@ -102,8 +103,8 @@ export function rtcLinkLost() {
   if (!state.session && !state.connect) return;
   const wasClient = state.role === 'client' || !!state.session;
   cleanupSession();
-  if (wasClient) { text($('ended-reason'), END_REASONS.rtc); clientShow('ended'); }
-  else { showConnectForm(); text($('conn-error'), END_REASONS.rtc); }
+  if (wasClient) { text($('ended-reason'), endReasonText('rtc')); clientShow('ended'); }
+  else { showConnectForm(); text($('conn-error'), endReasonText('rtc')); }
 }
 
 // Импорт в конце: представления импортируют cleanupSession из этого модуля,
@@ -138,16 +139,18 @@ export async function startHostRtc() {
 // трансляцию или заменить трек на ходу (replaceTrack, без ренегоциации).
 async function showSourcePicker(onChoose) {
   const srcs = await enot.sources();
-  if (!srcs.items?.length) throw new Error('Экраны не найдены: разрешение на запись экрана не выдано или захват недоступен');
+  if (!srcs.items?.length) throw new Error(t('client.noSources'));
   const pick = document.createElement('div');
   pick.className = 'card';
-  pick.innerHTML = '<h2>Что показать оператору?</h2><p class="muted">Выберите экран или окно.</p>';
+  pick.innerHTML = '<h2></h2><p class="muted"></p>';
+  pick.querySelector('h2').textContent = t('client.pickTitle');
+  pick.querySelector('p').textContent = t('client.pickSubtitle');
   const list = document.createElement('div');
   list.className = 'list';
   for (const s of srcs.items) {
     const item = document.createElement('button');
     item.className = 'btn wide';
-    item.textContent = s.name || '(без названия)';
+    item.textContent = s.name || t('common.untitled');
     item.addEventListener('click', async () => {
       setBusyAll(list, true);
       try { await onChoose(s.id, pick); } catch { /* ошибка уже показана в статусах сеанса */ }
@@ -162,7 +165,7 @@ async function showSourcePicker(onChoose) {
 async function acquireStream(id, pickEl) {
   const sel = await enot.selectSource(id);
   if (!sel.ok) {
-    text($('client-error-text'), sel.error ?? 'Источник недоступен');
+    text($('client-error-text'), sel.error ?? t('client.sourceUnavailable'));
     clientShow('error');
     pickEl.remove();
     return null;
@@ -171,10 +174,7 @@ async function acquireStream(id, pickEl) {
     return await navigator.mediaDevices.getDisplayMedia({ video: true, audio: false });
   } catch {
     const perms = await enot.permissions();
-    const hint = perms.platform === 'darwin'
-      ? 'Разрешите запись экрана: Системные настройки → Конфиденциальность и безопасность → Запись экрана, затем перезапустите ЕнотDesk.'
-      : 'Захват экрана запрещён системой. Предоставьте разрешение и попробуйте снова.';
-    text($('client-error-text'), hint);
+    text($('client-error-text'), perms.platform === 'darwin' ? t('client.permMac') : t('client.permOther'));
     clientShow('error');
     pickEl.remove();
     return null;
@@ -237,7 +237,7 @@ $('btn-fullscreen').addEventListener('click', () => {
 $('btn-fit').addEventListener('click', () => {
   const video = $('remote-video');
   const cover = video.classList.toggle('fit-cover');
-  text($('btn-fit'), cover ? 'Вписать' : 'Заполнить');
+  text($('btn-fit'), cover ? t('op.fitFit') : t('op.fitFill'));
 });
 $('btn-switch-source').addEventListener('click', () => {
   if (!state.pc) return;
@@ -249,8 +249,8 @@ $('btn-switch-source').addEventListener('click', () => {
     state.localStream = stream;
     const videoSender = state.pc.getSenders().find((s) => s.track?.kind === 'video');
     if (videoSender) await videoSender.replaceTrack(stream.getVideoTracks()[0]);
-    else for (const t of stream.getTracks()) state.pc.addTrack(t, stream);
+    else for (const track of stream.getTracks()) state.pc.addTrack(track, stream);
     applyVideoCap(state.pc);
-    old?.getTracks().forEach((t) => t.stop());
+    old?.getTracks().forEach((track) => track.stop());
   }).catch((e) => text($('client-error-text'), e.message));
 });

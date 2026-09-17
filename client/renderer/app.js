@@ -1,8 +1,9 @@
 // Рендерер ЕнотDesk: точка сборки. Табы ролей, роутер сигналов сервера, запуск.
 // Сеть и нативный ввод — только через window.enot (context-isolated мост).
 
-import { $, enot, text, show, hide } from './dom.js';
-import { state, END_REASONS } from './state.js';
+import { $, enot, text, show, hide, applyI18n } from './dom.js';
+import { state, endReasonText } from './state.js';
+import { initLocale, getLocale, t } from '../lib/i18n.mjs';
 import { clientShow } from './views/client-view.js';
 import { showConnectForm } from './views/operator-view.js';
 import { renderContacts } from './views/contacts.js';
@@ -33,7 +34,7 @@ enot.onSignal(async (msg) => {
     case 'claim':
       // Клиент подтверждает видимое имя авторизованного оператора (R15/R15.3)
       state.pendingClaim = { sessionId: state.session?.sessionId, claimId: msg.claimId };
-      text($('consent-operator'), msg.operator?.name ?? 'неизвестный оператор');
+      text($('consent-operator'), msg.operator?.name ?? t('client.noOperator'));
       clientShow('consent');
       break;
     case 'approved':
@@ -48,7 +49,7 @@ enot.onSignal(async (msg) => {
       } else if (state.role === 'operator') {
         if (state.pc) break; // уже отвечаем на оффер
         show($('op-waiting'));
-        text($('remote-status'), 'Ожидаем экран клиента…');
+        text($('remote-status'), t('op.waitingScreen'));
       }
       break;
     case 'signal':
@@ -58,7 +59,7 @@ enot.onSignal(async (msg) => {
             await operatorAnswer(msg.data.description.sdp);
             show($('op-remote'));
             hide($('op-waiting'));
-            text($('remote-status'), 'Подключено');
+            text($('remote-status'), t('status.connected'));
           } else if (state.role === 'client' && state.pc && msg.data.description.type === 'answer') {
             await state.pc.setRemoteDescription({ type: 'answer', sdp: msg.data.description.sdp });
             drainIce(state.pc);
@@ -72,12 +73,12 @@ enot.onSignal(async (msg) => {
       break;
     case 'peer-reconnecting':
       // второй участник потерял связь, сеанс ещё жив (грейс сервера, ADR 0013)
-      if (state.role === 'client') text($('client-live-note'), msg.role === 'operator' ? 'Оператор переподключается…' : 'Переподключение…');
-      else text($('remote-status'), 'Клиент переподключается…');
+      if (state.role === 'client') text($('client-live-note'), msg.role === 'operator' ? t('op.operatorReconnecting') : t('op.genericReconnecting'));
+      else text($('remote-status'), t('op.clientReconnecting'));
       break;
     case 'resumed':
       if (state.role === 'client') text($('client-live-note'), '');
-      else text($('remote-status'), 'Подключено');
+      else text($('remote-status'), t('status.connected'));
       break;
     case 'ended': {
       stopMedia();
@@ -85,20 +86,20 @@ enot.onSignal(async (msg) => {
       const clientSide = state.role === 'client';
       state.session = null; state.pendingClaim = null; state.connect = null;
       if (clientSide) {
-        text($('ended-reason'), END_REASONS[msg.reason] ?? `Сеанс завершён (${msg.reason ?? 'причина неизвестна'}).`);
+        text($('ended-reason'), endReasonText(msg.reason));
         clientShow('ended');
       } else {
         showConnectForm();
-        text($('conn-error'), END_REASONS[msg.reason] ?? `Сеанс завершён (${msg.reason ?? 'причина неизвестна'}).`);
+        text($('conn-error'), endReasonText(msg.reason));
       }
       break;
     }
     case 'error':
-      if (state.role === 'client' && state.session) { text($('client-error-text'), msg.message ?? 'Ошибка сервера'); clientShow('error'); }
+      if (state.role === 'client' && state.session) { text($('client-error-text'), msg.message ?? t('common.serverError')); clientShow('error'); }
       else if (state.role === 'operator') {
         // транзиентные ошибки сигналинга (rate_limited, bad_signal) видимы оператору
-        text($('remote-status'), msg.message ?? 'Ошибка сервера');
-        setTimeout(() => text($('remote-status'), 'Подключено'), 3000);
+        text($('remote-status'), msg.message ?? t('common.serverError'));
+        setTimeout(() => text($('remote-status'), t('status.connected')), 3000);
       }
       break;
     default:
@@ -118,7 +119,7 @@ for (const btn of document.querySelectorAll('.side-tab')) {
     state.activePane = btn.dataset.pane;
     if (btn.dataset.pane === 'connect') {
       resetUnreadChat(); // вкладка открыта — непрочитанное прочитано
-      text(btn, 'Подключение');
+      text(btn, t('op.paneConnect'));
     }
     if (btn.dataset.pane === 'contacts') renderContacts();
     if (btn.dataset.pane === 'team') renderTeam();
@@ -131,6 +132,9 @@ for (const btn of document.querySelectorAll('.side-tab')) {
 
 (async function boot() {
   const s = await enot.getSettings();
+  initLocale(s.locale); // сохранённый выбор, иначе системная локаль, фолбэк en
+  document.documentElement.lang = getLocale();
+  applyI18n(); // статическая разметка переводится после выбора языка
   if (s.version) { // футер только с фактической версией — без выдуманных чисел
     text($('app-version'), s.version);
     show($('app-footer'));

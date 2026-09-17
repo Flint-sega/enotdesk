@@ -5,6 +5,7 @@ const { contextBridge, ipcRenderer } = require('electron');
 
 contextBridge.exposeInMainWorld('enot', {
   getSettings: () => ipcRenderer.invoke('enot:getSettings'),
+  setLocale: (locale) => ipcRenderer.invoke('enot:setLocale', locale),
   setServerUrl: (url, opts) => ipcRenderer.invoke('enot:setServerUrl', url, opts),
   request: (operation, payload) => ipcRenderer.invoke('enot:request', operation, payload),
   openSignal: (params) => ipcRenderer.invoke('enot:openSignal', params),

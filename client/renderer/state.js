@@ -1,4 +1,6 @@
-// Общее состояние рендерера и тексты причин завершения сеанса.
+// Общее состояние рендерера; тексты причин завершения сеанса — из словаря i18n.
+
+import { t } from '../lib/i18n.mjs';
 
 export const state = {
   role: 'client',
@@ -19,13 +21,10 @@ export const state = {
   activePane: 'connect', // активная боковая вкладка оператора (для счётчика чата)
 };
 
-export const END_REASONS = {
-  ended: 'Сеанс завершён.',
-  denied: 'Вы отклонили запрос оператора.',
-  'host-lost': 'Приложение помощи закрылось — сеанс завершён.',
-  'operator-lost': 'Оператор отключился — сеанс завершён.',
-  'lease-expired': 'Сеанс завершён по таймауту неактивности.',
-  'server-restart': 'Сервер перезапущен — сеанс завершён.',
-  'signal-lost': 'Связь с сервером потеряна — сеанс завершён.',
-  rtc: 'Соединение экрана прервалось.',
-};
+// Коды причин из протокола; человекочитаемый текст берётся из словаря по ключу end.<код>.
+export const END_REASONS = ['ended', 'denied', 'host-lost', 'operator-lost', 'lease-expired', 'server-restart', 'signal-lost', 'rtc'];
+
+export function endReasonText(reason) {
+  if (reason && END_REASONS.includes(reason)) return t(`end.${reason}`);
+  return t('end.generic', { reason: reason ?? '—' });
+}

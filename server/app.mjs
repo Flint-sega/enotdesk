@@ -5,6 +5,7 @@ import crypto from 'node:crypto';
 import { WebSocketServer } from 'ws';
 import { openDb, endLiveSessions, auditLog, runRetention } from './db.mjs';
 import { page, downloadsHtml, inviteHtml } from './pages.mjs';
+import { t, pickLocale } from '../client/lib/i18n.mjs';
 import {
   hashPassword, verifyPassword, newToken, sha256,
   sessionPassword, newSessionId, newClaimId,
@@ -716,7 +717,8 @@ export function createServer(opts = {}) {
       return;
     }
     if (p === '/downloads' && req.method === 'GET' && !req.url.startsWith('/api')) {
-      return page(res, 'EnotDesk — загрузка', downloadsHtml(distFiles(), cfg.version));
+      const locale = pickLocale(req.headers['accept-language']);
+      return page(res, t('server.titleDownloads', {}, locale), downloadsHtml(distFiles(), cfg.version, locale), locale);
     }
     if (p === '/downloads' && req.method === 'GET') {
       return ok(res, 200, { items: distFiles() });
@@ -774,7 +776,8 @@ export function createServer(opts = {}) {
       return streamOut(fs.createReadStream(fullPath), res);
     }
     if (p === '/invite' && req.method === 'GET' && !req.url.startsWith('/api')) {
-      return page(res, 'EnotDesk — приглашение', inviteHtml(cfg.version));
+      const locale = pickLocale(req.headers['accept-language']);
+      return page(res, t('server.titleInvite', {}, locale), inviteHtml(cfg.version, locale), locale);
     }
 
     return err(res, 404, 'not_found', 'Маршрут не найден');

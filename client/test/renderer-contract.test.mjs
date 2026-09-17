@@ -63,3 +63,53 @@ test('getSettings отдаёт фактическую версию, футер �
   assert.match(html, /id="app-version"/);
   assert.match(allJs, /if \(s\.version\)/);
 });
+
+// ---- i18n (таск 02): словари, data-i18n, отсутствие строк-литералов в UI ----
+
+import ru from '../locales/ru.json' with { type: 'json' };
+import en from '../locales/en.json' with { type: 'json' };
+
+const serverPages = readFileSync(path.join(import.meta.dirname, '..', '..', 'server', 'pages.mjs'), 'utf8');
+const uiSources = jsFiles.map((f) => [f, readFileSync(f, 'utf8')]);
+uiSources.push(['server/pages.mjs', serverPages]);
+
+test('каждый data-i18n* ключ из index.html есть в словарях ru и en', () => {
+  const keys = [...html.matchAll(/data-i18n(?:-[a-z-]+)?="([^"]+)"/g)].map((m) => m[1]);
+  assert.ok(keys.length > 50, 'статические строки HTML должны быть помечены data-i18n');
+  for (const key of new Set(keys)) {
+    assert.ok(key in ru, `ключ «${key}» из index.html отсутствует в ru.json`);
+    assert.ok(key in en, `ключ «${key}» из index.html отсутствует в en.json`);
+  }
+});
+
+test('эвристика: в UI-модулях и серверных страницах нет кириллических строк-литералов', () => {
+  // Ищем кириллицу только внутри строковых литералов — комментарии на русском разрешены.
+  const literalRe = /'[^'\n]*'|"[^"\n]*"|`[^`]*`/g;
+  const cyrRe = /[\u0400-\u04FF]/;
+  const exceptions = new Set([]); // оправданные литералы, пофайлово: 'путь:литерал'
+  for (const [name, src] of uiSources) {
+    for (const lit of src.match(literalRe) ?? []) {
+      if (cyrRe.test(lit)) {
+        assert.ok(exceptions.has(`${name}:${lit}`), `кириллический литерал в ${name}: ${lit.slice(0, 60)}`);
+      }
+    }
+  }
+});
+
+test('ключи t(\'…\') из кода UI существуют в обоих словарях', () => {
+  for (const [name, src] of uiSources) {
+    for (const m of src.matchAll(/\bt\('([^']+)'/g)) {
+      const key = m[1];
+      assert.ok(key in ru, `t('${key}') в ${name}: ключа нет в ru.json`);
+      assert.ok(key in en, `t('${key}') в ${name}: ключа нет в en.json`);
+    }
+  }
+});
+
+test('причины завершения сеанса переведены для всех известных кодов', () => {
+  const reasons = ['ended', 'denied', 'host-lost', 'operator-lost', 'lease-expired', 'server-restart', 'signal-lost', 'rtc'];
+  for (const r of reasons) {
+    assert.ok(`end.${r}` in ru, `ключ end.${r} отсутствует в ru.json`);
+    assert.ok(`end.${r}` in en, `ключ end.${r} отсутствует в en.json`);
+  }
+});
