@@ -1,0 +1,33 @@
+# В образ идёт только server/ + package*.json + docker/enotdesk/entrypoint.sh (см. Dockerfile).
+# Остальное не тащим в контекст: секреты и данные пользователя — никогда.
+.git
+.github
+.zcode
+.autopilot
+.env
+enotdesk.db
+enotdesk.db-shm
+enotdesk.db-wal
+*.db
+*.db-shm
+*.db-wal
+node_modules
+dist
+client
+!client/lib/i18n.mjs
+!client/locales
+docs
+archive
+assets
+build
+scripts
+docker/caddy
+docker/README.md
+compose.yaml
+Dockerfile
+.dockerignore
+eslint.config.js
+README.md
+BRAND.md
+CLAUDE.md
+LICENSE
