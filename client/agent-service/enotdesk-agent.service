@@ -1,0 +1,35 @@
+[Unit]
+Description=EnotDesk agent (unattended machine)
+Documentation=https://github.com/enotdesk/enotdesk/blob/main/docs/AGENT.md
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=enotdesk-agent
+Group=enotdesk-agent
+# Отдельный HOME: профиль Electron (userData/agent: токен, настройки) живёт здесь.
+Environment=HOME=/var/lib/enotdesk-agent
+Environment=EDESK_AGENT=1
+# EDESK_AGENT_NAME и опциональные DISPLAY/XAUTHORITY - в EnvironmentFile (0600):
+EnvironmentFile=/etc/enotdesk-agent/agent.env
+# Путь к распакованной сборке клиента - скорректируйте при другом расположении.
+ExecStart=/opt/enotdesk-agent/EnotDesk/enotdesk
+Restart=always
+RestartSec=5
+# Хардненинг - тот же набор, что у серверного unit (scripts/install-server.sh).
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=true
+# Единственный каталог, куда агент пишет (токен, настройки, кэш Electron).
+ReadWritePaths=/var/lib/enotdesk-agent
+# X11: инъекция ввода (XTest) в консольную сессию требует DISPLAY и XAUTHORITY.
+# Wayland в v1 не поддерживается для управления (адаптер честно сообщает wayland-unsupported-control).
+# При использовании X11 раскомментируйте и поправьте пути; ProtectHome=true скрывает /home -
+# либо положите xauth-файл вне /home, либо замените ProtectHome=true на ProtectHome=read-only:
+# Environment=DISPLAY=:0
+# Environment=XAUTHORITY=/etc/enotdesk-agent/xauth
+
+[Install]
+WantedBy=multi-user.target
