@@ -7,3 +7,4 @@ dist/
 *.db-*
 
 graphify-out/
+.autopilot/serve.*
