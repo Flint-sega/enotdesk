@@ -148,6 +148,8 @@
   "settings.macosScreen": "Screen recording is not allowed on macOS — enable it in System Settings.",
   "settings.nativeInput": "Native input is unavailable: mouse/keyboard control will not work.",
   "settings.updateBanner": "Version {version} is available — update the client from the downloads page of your EnotDesk server.",
+  "update.autoBanner": "Version {version} is available — the update downloads and applies when EnotDesk restarts.",
+  "update.manualBanner": "Version {version} is available — download the new build from the project releases page.",
 
   "contacts.title": "Address book",
   "contacts.searchLabel": "Search by name",

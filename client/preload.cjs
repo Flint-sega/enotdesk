@@ -24,4 +24,10 @@ contextBridge.exposeInMainWorld('enot', {
     ipcRenderer.on('enot:signal', listener);
     return () => ipcRenderer.removeListener('enot:signal', listener);
   },
+  onUpdate: (callback) => {
+    if (typeof callback !== 'function') return () => {};
+    const listener = (_event, payload) => callback(payload);
+    ipcRenderer.on('enot:update', listener);
+    return () => ipcRenderer.removeListener('enot:update', listener);
+  },
 });

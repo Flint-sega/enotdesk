@@ -10,7 +10,9 @@ This is an original Electron + WebRTC application, not a RustDesk fork (see docs
 
 ## Screenshots
 
-> Placeholder — real screenshots of the running product are added at the release phase (see the project roadmap). Until then, judge the product by running it: quick start below takes about five minutes.
+Main window — the client side with the one-time ID/password for the operator (smoke screenshot of the packaged build):
+
+![Main window of EnotDesk](docs/screenshot-main.png)
 
 ## How it works
 
@@ -47,7 +49,7 @@ Downloads page: a deployed server serves built installers at `/downloads` — it
 
 ## Security notes
 
-- **Unsigned builds.** Releases are not code-signed yet (no certificates budgeted). On first launch: **macOS** — right-click the app → “Open” (and grant Screen Recording + Accessibility permissions); **Windows** — SmartScreen → “More info” → “Run anyway”; **Linux** — `chmod +x` the AppImage.
+- **Unsigned builds.** Releases are not code-signed yet — see “Unsigned builds” below for run instructions and why the OS warnings appear.
 - **Network.** The server listens on `127.0.0.1:8080` by default; exposing it requires HTTPS/WSS (Caddy in the docker setup, or your own reverse proxy — see SERVER.md). TURN credentials are issued only to authenticated session participants.
 - **Data.** Passwords and tokens are stored in the database only as hashes; secrets never reach the renderer process (`contextIsolation: true`, `sandbox: true`, communication only via the preload bridge). Never commit your `.env`.
 - **Protocol.** Keys, buttons, scroll deltas and SDP sizes are allowlisted and bounded; file serving is name-allowlisted and rejects path traversal; input decisions belong to the main process behind a WS-state gate, never to renderer claims.
@@ -63,10 +65,24 @@ Downloads page: a deployed server serves built installers at `/downloads` — it
 
 Artifacts are branded EnotDesk (`assets/icon.icns` / `icon.ico` / `icon.png`).
 
+## Releases and updates
+
+Pushing a tag `v…` runs [.github/workflows/release.yml](.github/workflows/release.yml): the three platforms are packed on GitHub runners, lint and tests gate the build, and the artifacts are attached to a GitHub Release together with `checksums-sha256.txt` (verify with `sha256sum -c`) and the auto-update feed files (`latest-mac.yml`, `latest.yml`, `latest-linux.yml`).
+
+The packaged client checks that feed once a day (electron-updater, generic provider): on macOS and Linux the update downloads in the background and applies on the next restart — never in the middle of a session. On Windows the v1 build is a portable `.exe` that cannot replace itself, so the client shows a notification with a link to the releases page. The updater is disabled in development (`npm start`), smoke runs (`EDESK_SMOKE=1`) and the headless agent.
+
+## Unsigned builds
+
+Releases are not code-signed yet (no certificate budget); enabling signing later requires no rework — the secrets block is prepared and commented in release.yml. OS warnings on first launch are expected, here is the short way to run:
+
+- **macOS**: right-click `EnotDesk.app` → “Open” → “Open”; if it stays blocked, `xattr -cr /path/to/EnotDesk.app` removes the quarantine flag. Grant Screen Recording and Accessibility permissions on first launch (see [docs/BUILD.md](docs/BUILD.md)).
+- **Windows**: SmartScreen → “More info” → “Run anyway”.
+- **Linux**: `chmod +x EnotDesk-linux-*.AppImage` and run it.
+
 ## Development
 
 ```bash
-npm test          # 135 node:test tests: server HTTP/WS + client lib shims + renderer contract
+npm test          # 198 node:test tests: server HTTP/WS + client lib shims + renderer contract
 npm run lint      # ESLint
 npm run smoke:local
 ```
