@@ -1,0 +1,41 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<!--
+  EnotDesk agent - LaunchDaemon (macOS).
+  Ставится в /Library/LaunchDaemons/com.enotdesk.agent.plist (root:wheel, 0644).
+  Скорректируйте EDESK_AGENT_NAME и путь в ProgramArguments под свою сборку.
+-->
+<plist version="1.0">
+<dict>
+    <key>Label</key>
+    <string>com.enotdesk.agent</string>
+
+    <key>ProgramArguments</key>
+    <array>
+        <string>/Applications/EnotDesk.app/Contents/MacOS/EnotDesk</string>
+    </array>
+
+    <key>EnvironmentVariables</key>
+    <dict>
+        <key>EDESK_AGENT</key>
+        <string>1</string>
+        <key>EDESK_AGENT_NAME</key>
+        <string>mac-mini</string>
+    </dict>
+
+    <key>RunAtLoad</key>
+    <true/>
+
+    <key>KeepAlive</key>
+    <true/>
+
+    <key>ThrottleInterval</key>
+    <integer>10</integer>
+
+    <!-- Логи агента (stdout/stderr) - см. docs/AGENT.md, раздел "Логи" -->
+    <key>StandardOutPath</key>
+    <string>/var/log/enotdesk-agent.log</string>
+    <key>StandardErrorPath</key>
+    <string>/var/log/enotdesk-agent.log</string>
+</dict>
+</plist>
