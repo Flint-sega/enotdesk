@@ -166,6 +166,17 @@ video.fit-cover{object-fit:cover}
         <p id="file-op-status" aria-live="polite"></p>
         <div id="op-file-list"></div>
       </div>
+      <div class="card hidden" id="op-term">
+        <h2 data-i18n="term.title">Терминал машины</h2>
+        <p class="note" data-i18n="term.limits"></p>
+        <p class="note" id="op-term-status" aria-live="polite"></p>
+        <pre class="term-log" id="op-term-out" tabindex="0"></pre>
+        <div class="row">
+          <input id="op-term-input" data-i18n-placeholder="term.placeholder" placeholder="команда…" autocomplete="off" spellcheck="false">
+          <button id="btn-term-send" class="btn" type="button" data-i18n="term.send">Отправить</button>
+          <button id="btn-term-close" class="btn ghost" type="button" data-i18n="term.close">Закрыть</button>
+        </div>
+      </div>
     </div>
   </section>
 </main>

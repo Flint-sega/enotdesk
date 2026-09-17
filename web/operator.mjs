@@ -112,6 +112,9 @@ function showConnectForm() {
   stopMedia();
   state.connect = null;
   showOnly('view-connect');
+  hide($('op-term')); // панель терминала живёт только внутри сеанса
+  text($('op-term-out'), '');
+  text($('op-term-status'), '');
   text($('remote-status'), '');
   text($('session-timer'), '');
 }
@@ -202,7 +205,13 @@ async function operatorAnswer(offerSdp) {
   const fileCh = pc.createDataChannel('file');
   fileCh.binaryType = 'arraybuffer';
   fileCh.onmessage = (m) => fileMessage(fileCh, m.data);
-  state.dcs = { input: state.dc, chat: chatCh, clip: clipCh, file: fileCh };
+  // Терминал (R09): канал создаём только для сеанса с машиной (unattended).
+  let termCh = null;
+  if (state.connect?.machineId) {
+    termCh = pc.createDataChannel('term');
+    wireTermChannel(termCh);
+  }
+  state.dcs = { input: state.dc, chat: chatCh, clip: clipCh, file: fileCh, ...(termCh ? { term: termCh } : {}) };
   pc.ontrack = (e) => { $('remote-video').srcObject = e.streams[0]; };
   startTimers(pc);
   await pc.setRemoteDescription({ type: 'offer', sdp: offerSdp });
@@ -210,6 +219,29 @@ async function operatorAnswer(offerSdp) {
   const answer = await pc.createAnswer();
   await pc.setLocalDescription(answer);
   sendSignal({ description: { type: 'answer', sdp: pc.localDescription.sdp } });
+}
+
+// Machine-сеанс (R09): оператор — оферер, агент отвечает answer'ом без медиа;
+// единственный канал — `term` (панель терминала).
+async function machineOffer() {
+  try {
+    const cfg = await api('GET', '/rtc-config');
+    const pc = makePc(cfg.body?.iceServers ?? []);
+    state.pc = pc;
+    state.iceQueue = [];
+    const termCh = pc.createDataChannel('term');
+    wireTermChannel(termCh);
+    state.dcs = { term: termCh };
+    pc.ontrack = (e) => { $('remote-video').srcObject = e.streams[0]; };
+    startTimers(pc);
+    const offer = await pc.createOffer();
+    await pc.setLocalDescription(offer);
+    sendSignal({ description: { type: 'offer', sdp: pc.localDescription.sdp } });
+  } catch {
+    // честный откат: оффер не собрался (нет rtc-config и т.п.)
+    showConnectForm();
+    text($('conn-error'), t('common.serverError'));
+  }
 }
 
 // ---- роутер сигналов (операторская ветка desktop app.js) ----
@@ -221,14 +253,28 @@ async function onSignal(msg) {
       break;
     case 'approved':
       if (!state.pc) {
-        showOnly('op-waiting');
-        showStatus(t('op.waitingScreen'));
+        if (state.connect?.machineId) {
+          // machine-сеанс (R09): оператор офферит — агент без медиа отвечает answer'ом
+          showOnly('op-remote');
+          showStatus(t('op.waitingScreen'));
+          void machineOffer();
+        } else {
+          showOnly('op-waiting');
+          showStatus(t('op.waitingScreen'));
+        }
       }
       break;
     case 'signal':
       try {
         if (msg.data?.description && msg.data.description.type === 'offer') {
           await operatorAnswer(msg.data.description.sdp);
+          showOnly('op-remote');
+          showStatus(t('status.connected'));
+        } else if (msg.data?.description && msg.data.description.type === 'answer'
+                   && state.connect?.machineId && state.pc && !state.pc.remoteDescription) {
+          // machine-сеанс: ответ агента на наш offer
+          await state.pc.setRemoteDescription({ type: 'answer', sdp: msg.data.description.sdp });
+          drainIce(state.pc);
           showOnly('op-remote');
           showStatus(t('status.connected'));
         } else if (msg.data?.candidate) {
@@ -366,6 +412,59 @@ function sendFile(file) {
   text($('file-op-status'), t('files.sending', { name: file.name }));
 }
 
+// ---- терминал машины (R09): DC-канал `term`, только внутри сеанса с машиной ----
+
+function wireTermChannel(ch) {
+  show($('op-term'));
+  text($('op-term-out'), '');
+  showStatusId(t('term.opening'));
+  ch.onmessage = (m) => {
+    let msg;
+    try { msg = JSON.parse(m.data); } catch { return; } // не-JSON не проходит allowlist
+    if (!msg || typeof msg !== 'object') return;
+    switch (msg.type) {
+      case 'opened':
+        // честная пометка контекста исполнения (SYSTEM v1, R09.1)
+        showStatusId(t('term.context', { context: typeof msg.context === 'string' ? msg.context : '?' }));
+        break;
+      case 'out':
+        termAppend(String(msg.data ?? ''));
+        break;
+      case 'exit':
+        showStatusId(t('term.exited', { reason: typeof msg.reason === 'string' ? msg.reason : 'exit' }));
+        break;
+      case 'error':
+        showStatusId(t(msg.code === 'term-busy' ? 'term.busy'
+          : msg.code === 'term-unavailable' ? 'term.unavailable' : 'term.failed'));
+        break;
+      default:
+        break;
+    }
+  };
+  ch.onclose = () => showStatusId(t('term.closed'));
+}
+
+function showStatusId(value) {
+  text($('op-term-status'), value);
+}
+
+// Вывод — <pre> с потолком (хвост), чтобы живая страница не раздувалась.
+function termAppend(data) {
+  const out = $('op-term-out');
+  const joined = out.textContent + data;
+  out.textContent = joined.length > 20000 ? joined.slice(-20000) : joined;
+  out.scrollTop = out.scrollHeight;
+}
+
+function sendTermLine() {
+  const input = $('op-term-input');
+  const dc = state.dcs?.term;
+  if (!dc || dc.readyState !== 'open') return;
+  const line = input.value.slice(0, 8192);
+  input.value = '';
+  try { dc.send(JSON.stringify({ type: 'in', data: `${line}\r` })); } catch { /* канал закрывается */ }
+}
+
 // ---- действия страницы ----
 
 function wire() {
@@ -406,7 +505,7 @@ function wire() {
         text($('conn-error'), res.body?.error?.message ?? t('common.serverError'));
         return;
       }
-      state.connect = { sessionId: res.body.sessionId, claimId: res.body.claimId };
+      state.connect = { sessionId: res.body.sessionId, claimId: res.body.claimId, machineId: res.body.machineId ?? null };
       text($('conn-error'), '');
       showOnly('op-waiting');
       openSignal();
@@ -447,6 +546,16 @@ function wire() {
     const file = $('op-file-input').files?.[0];
     $('op-file-input').value = '';
     sendFile(file);
+  });
+
+  $('btn-term-send')?.addEventListener('click', () => sendTermLine());
+  $('op-term-input')?.addEventListener('keydown', (e) => {
+    if (e.key === 'Enter') { e.preventDefault(); sendTermLine(); }
+  });
+  $('btn-term-close')?.addEventListener('click', () => {
+    const dc = state.dcs?.term;
+    if (!dc || dc.readyState !== 'open') return;
+    try { dc.send(JSON.stringify({ type: 'close' })); } catch { /* канал закрывается */ }
   });
 
   // Drag&drop файла на экран сеанса, как в desktop.
