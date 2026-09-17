@@ -6,7 +6,16 @@ on:
 
 jobs:
   test:
-    runs-on: ubuntu-latest
+    strategy:
+      # одно ОС не топит матрицу: win/mac — advisory, пока адаптеры не проверены вручную
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest, macos-latest]
+    runs-on: ${{ matrix.os }}
+    # пометка: windows/macos не блокируют CI — koffi/электрон-адаптеры этих ОС
+    # проверяются вручную на живых машинах (README «Platforms»); падение инфраструктуры
+    # раннера не считается регрессией кода
+    continue-on-error: ${{ matrix.os != 'ubuntu-latest' }}
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
@@ -16,6 +25,9 @@ jobs:
       - run: npm ci
       - run: npm run lint
       - run: npm test
-      - run: node scripts/smoke-local.mjs
+      - name: smoke:local (ubuntu only — полный цикл control-plane)
+        if: runner.os == 'Linux'
+        run: node scripts/smoke-local.mjs
       - name: npm audit (производственные зависимости, не падает)
+        if: runner.os == 'Linux'
         run: npm audit --omit=dev || true

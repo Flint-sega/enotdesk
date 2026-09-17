@@ -1,83 +1,89 @@
 # EnotDesk
 
-Portable-приложение удалённой поддержки для Windows, macOS и Linux. Клиент запускает программу без установки, получает одноразовые ID и пароль и передаёт их специалисту через свой обычный чат. Оператор подключается, видит экран и управляет мышью/клавиатурой. Закрытие приложения немедленно завершает доступ. Никаких служб, автозапуска и фоновых процессов.
+English | [Русский](README.ru.md)
 
-Это оригинальное приложение на Electron + WebRTC (не форк RustDesk; обоснование — docs/adr/0001-original-electron-webrtc.md).
+[![tests](https://github.com/Flint-sega/enotdesk/actions/workflows/test.yml/badge.svg)](https://github.com/Flint-sega/enotdesk/actions/workflows/test.yml)
 
-## Как это работает
+EnotDesk is a portable remote-support application for Windows, macOS and Linux, licensed under **AGPL-3.0** and designed for self-hosting. The person receiving help runs the program with no installation, gets a one-time ID and password, and passes them to the operator through their usual chat. The operator connects, sees the screen and controls mouse and keyboard. Closing the application immediately ends access — no services, no autostart, no background processes.
 
-- **Клиент (получает помощь):** запускает portable-программу → «Получить помощь» → видит ID и одноразовый пароль → сообщает их оператору в своём чате → подтверждает подключение конкретного оператора → общается в чате, может скрыть экран одной кнопкой (пауза трансляции) и сменить показываемый экран на ходу → закрывает окно, когда помощь не нужна. Доступ существует только пока приложение открыто.
-- **Оператор (оказывает помощь):** входит на сервере EnotDesk → берёт ID/пароль из чата (можно вставить целиком — подставятся сами) → подключается → после согласия клиента видит экран и управляет вводом (клавиатура работает на любой раскладке). В сеансе: чат, двусторонняя синхронизация буфера обмена, передача файлов, таймер и индикатор качества соединения; история сеансов и журнал — с экспортом в CSV.
-- **Транспорт:** видео — WebRTC (DTLS/SRTP) напрямую между сторонами; сигналинг — через ваш сервер EnotDesk; ввод, чат, буфер и файлы — по DataChannel с жёсткими allowlist и лимитами. Короткий обрыв связи не убивает сеанс: 30 секунд (настраивается) на переподключение тех же участников; до согласия — мгновенный разрыв.
+This is an original Electron + WebRTC application, not a RustDesk fork (see docs/adr/0001-original-electron-webrtc.md, in Russian).
 
-## Быстрый старт (локально)
+## Screenshots
 
-Требуется Node.js ≥ 24.12.
+> Placeholder — real screenshots of the running product are added at the release phase (see the project roadmap). Until then, judge the product by running it: quick start below takes about five minutes.
+
+## How it works
+
+- **Client (receives help):** runs the portable app → “Get help” → shares the one-time ID and password with the operator via their own chat → approves the specific operator’s connection → chats, can hide the screen with one button (pause streaming) and switch the shared screen on the fly → closes the window when done. Access exists only while the app is open.
+- **Operator (provides help):** signs in on the EnotDesk server → takes the ID/password from the chat (paste the whole message — fields fill themselves) → connects → after the client’s consent sees the screen and controls input (keyboard works on any layout). During the session: chat, two-way clipboard sync, file transfer, session timer and connection-quality indicator; session history and audit log with CSV export.
+- **Transport:** video — WebRTC (DTLS/SRTP) peer-to-peer; signaling — through your EnotDesk server; input, chat, clipboard and files — over DataChannels with strict allowlists and size limits. A short network drop does not kill the session: 30 seconds (configurable) to reconnect with the same tokens; before consent the session ends immediately.
+
+## Quick start
+
+### Docker (recommended)
 
 ```bash
-npm install          # koffi, ws; electron и electron-builder — точные пины в lockfile
-npm run server       # control-plane на 127.0.0.1:8080 (SQLite)
-npm run bootstrap    # первый администратор (интерактивно; существующий не перезаписывает)
-npm start            # приложение EnotDesk (Electron)
+git clone https://github.com/Flint-sega/enotdesk.git
+cd enotdesk/docker
+docker compose up -d
 ```
 
-Дальше в приложении: вход оператора (или «Получить помощь» на стороне клиента) → адрес сервера по умолчанию `http://127.0.0.1:8080`. Для тестового HTTP-сервера включите галочку «Разрешить HTTP без шифрования» в настройках клиента; для адресов в интернете используйте HTTPS. Полный связный прогон серверного цикла (bootstrap → вход → приглашение → сессия → claim → согласие → сигналинг): `npm run smoke:local`.
+One command brings up the EnotDesk server, [coturn](https://github.com/coturn/coturn) (TURN for difficult NATs) and Caddy (automatic HTTPS) — see the README in [`docker/`](docker/) for ports, volumes and env.
 
-### Проверка на одном компьютере
+### Bare metal
 
-Приложение по умолчанию работает в одном экземпляре (второй запуск просто показывает существующее окно). Для проверки двух ролей на одной машине запустите второй экземпляр с тестовым обходом: для исходников — `EDESK_ALLOW_MULTI=1 npm start` из другого терминала, для собранного `.app` — `EDESK_ALLOW_MULTI=1 ./EnotDesk.app/Contents/MacOS/EnotDesk`. В первом окне нажмите «Получить помощь» и скопируйте ID с паролем, во втором войдите как специалист и подключитесь по этим ID и паролю. Одно окно EnotDesk работает только в одной роли: смена роли в том же окне завершает текущий сеанс, поэтому обе роли — всегда два окна.
+Requires Node.js ≥ 24.12. Full server installation guide (Ubuntu/Debian install script, systemd, updates, backups, HTTPS): [`docs/SERVER.md`](docs/SERVER.md).
 
-Тесты: `npm test` (134 теста: серверные HTTP/WS + client-швы + контракт рендерера) и `npm run lint`. Инъекция ввода в ОС тестами не выполняется — проверяются загрузка адаптера, валидация и координаты; реальную инъекцию проверяет человек (см. AGENTS.md).
+```bash
+npm install          # koffi, ws; electron and electron-builder are exact-pinned in the lockfile
+npm run server       # control plane on 127.0.0.1:8080 (SQLite)
+npm run bootstrap    # first admin (interactive; never overwrites an existing one)
+npm start            # EnotDesk desktop app (Electron)
+```
 
-## Сервер
+Then in the app: sign in as operator (or press “Get help” on the client side) → default server address `http://127.0.0.1:8080`. Plain HTTP must be explicitly allowed in client settings and is meant for testing only; use HTTPS for anything reachable from the internet. A full control-plane smoke run (bootstrap → login → invite → session → claim → consent → signaling): `npm run smoke:local`.
 
-Установка EnotDesk-сервера на Ubuntu/Debian (скриптом и вручную), systemd, обновление и удаление, бэкап БД, логи, HTTPS через Caddy, первый администратор — [`docs/SERVER.md`](docs/SERVER.md).
+Downloads page: a deployed server serves built installers at `/downloads` — it lists only artifacts that actually exist in `dist/` (name-allowlisted), never fake links.
 
-## Сборка
+## Security notes
 
-Сборка portable-клиента под macOS (проверено на arm64), Windows и Linux: команды, артефакты, системные зависимости, разрешения macOS, подпись — [`docs/BUILD.md`](docs/BUILD.md). Фактический вес macOS-сборки: zip 112,1 МиБ (сжатие maximum, только ru/en ресурсы Electron), в приложение не попадают тесты и упаковочные иконки; старт из исходников — ~3,7 с до первой SMOKE-строки (включая фиксированную 2,5-секундную паузу смоука). Замеры и метод — в BUILD.md.
+- **Unsigned builds.** Releases are not code-signed yet (no certificates budgeted). On first launch: **macOS** — right-click the app → “Open” (and grant Screen Recording + Accessibility permissions); **Windows** — SmartScreen → “More info” → “Run anyway”; **Linux** — `chmod +x` the AppImage.
+- **Network.** The server listens on `127.0.0.1:8080` by default; exposing it requires HTTPS/WSS (Caddy in the docker setup, or your own reverse proxy — see SERVER.md). TURN credentials are issued only to authenticated session participants.
+- **Data.** Passwords and tokens are stored in the database only as hashes; secrets never reach the renderer process (`contextIsolation: true`, `sandbox: true`, communication only via the preload bridge). Never commit your `.env`.
+- **Protocol.** Keys, buttons, scroll deltas and SDP sizes are allowlisted and bounded; file serving is name-allowlisted and rejects path traversal; input decisions belong to the main process behind a WS-state gate, never to renderer claims.
+- **Honest status.** Unavailable platform features report `native-unavailable` / `wayland-unsupported-control` instead of pretending to work. Input injection on Wayland is not supported (use X11).
 
-## Платформы
+## Platforms
 
-| Платформа | Сборка (npm run) | Артефакт | Проверено |
+| Platform | Build (npm run) | Artifact | Verified |
 |---|---|---|---|
-| macOS (arm64) | `pack:mac` | `dist/EnotDesk-mac-arm64.zip` с portable `EnotDesk.app` | Да: сборка, запуск, смоук-скриншот |
-| Windows | `pack:win` | portable `.exe` | Нет: конфигурация настроена, на реальной Windows не прогонялась |
-| Linux | `pack:linux` | `AppImage` | Нет: конфигурация настроена, на реальном Linux не прогонялась |
+| macOS (arm64) | `pack:mac` | `dist/EnotDesk-mac-arm64.zip` with portable `EnotDesk.app` | Yes: build, run, smoke screenshot |
+| Windows | `pack:win` | portable `.exe` | Not yet: configured, but not exercised on a live Windows machine |
+| Linux | `pack:linux` | `AppImage` | Not yet: configured, but not exercised on a live Linux machine |
 
-Название и иконка артефактов — EnotDesk (assets/icon.icns / icon.ico / icon.png; перегенерация — `npm run icons`; скрипт использует macOS-утилиты sips/iconutil и работает только на macOS).
+Artifacts are branded EnotDesk (`assets/icon.icns` / `icon.ico` / `icon.png`).
 
-## Разрешения macOS
+## Development
 
-- **Запись экрана (Screen Recording)** — оператор увидит экран только после разрешения в «Системные настройки → Конфиденциальность → Запись экрана». Без него захват честно сообщит об отказе.
-- **Универсальный доступ (Accessibility)** — требуется для передачи управления мышью/клавиатурой. Без него приложение показывает статус, но не вводит.
-- Сборка не подписана (identity: null): при первом запуске macOS может попросить подтвердить запуск правой кнопкой → «Открыть». Подпись/notarization — задача владельца.
+```bash
+npm test          # 135 node:test tests: server HTTP/WS + client lib shims + renderer contract
+npm run lint      # ESLint
+npm run smoke:local
+```
 
-## Ограничение Linux/Wayland
+CI runs lint + tests on an ubuntu/windows/macos matrix (smoke on ubuntu); Windows/macOS jobs are non-blocking while those adapters are verified manually (see the Platforms table). Stack: Node 24 ESM, no frameworks — `ws` + `koffi` only, Electron 44 (exact pins — do not bump casually), `node:test`, ESLint. Native input goes through koffi adapters: Windows SendInput, macOS CoreGraphics, Linux X11/XTest.
 
-Захват и просмотр работают, но **передача управления вводом на Wayland не поддерживается** — приложение диагностирует Wayland и честно сообщает об этом (unsupported-control). Для управления запустите сеанс X11 (адаптер X11/XTest).
+Architectural decisions live in [`docs/adr/`](docs/adr/) (in Russian); project conventions for agents/maintainers in [AGENTS.md](AGENTS.md).
 
-## Сервер и конфигурация
+## Community
 
-Сервер: Node 24 + SQLite (`node:sqlite`) + ws; API `/api/v1` и сигналинг `/signal`; пароли и токены в БД только хэшами; порт по умолчанию 127.0.0.1:8080 (loopback; внешний адрес требует HTTPS/WSS). Имена переменных — в `.env.example`:
+- Contributing — [CONTRIBUTING.md](CONTRIBUTING.md)
+- Report a vulnerability (private channel) — [SECURITY.md](SECURITY.md)
+- Code of Conduct — [CODE_OF_CONDUCT.md](CODE_OF_CONDUCT.md)
+- Documentation on this README is in Russian where noted; the full Russian readme is [README.ru.md](README.ru.md)
 
-- `ENOT_HOST`, `ENOT_PORT`, `ENOT_DB`, `ENOT_PUBLIC_URL` — адрес/порт/база/публичный URL страницы скачивания;
-- `ENOT_TURN_URLS`, `ENOT_TURN_USERNAME`, `ENOT_TURN_PASSWORD` — STUN/TURN для сложных NAT. TURN-данные выдаются только аутентифицированным участникам сессии.
+## License
 
-Значения вы задаёте сами локально. Секреты в репозиторий и отчёты не попадают.
+Copyright © 2026 the EnotDesk authors.
 
-## Страница скачиваний
-
-`/downloads` показывает только реально собранные артефакты из `dist/` (allowlist имён). Отсутствующие сборки помечены как неготовые — фальшивых ссылок нет.
-
-## Хостинг
-
-Публичный хостинг/домен — позже по решению владельца. Сейчас всё запускается локально; интернет-доставка клиентам останется заблокирована, пока сервер не размещён и end-to-end не проверен (включая TURN).
-
-## Нативный ввод
-
-Windows SendInput, macOS CoreGraphics, Linux X11/XTest — через [koffi](https://www.npmjs.com/package/koffi) (точный пин в `package.json`), без устанавливаемых служб. Нет koffi или API недоступен — приложение честно сообщает о недоступности управления.
-
-## Лицензия
-
-Заготовка: лицензия не выбрана окончательно (заглушка до решения владельца). Ассеты — оригинальная авторская графика, см. assets/README.md. Зависимости — со своими лицензиями (electron MIT, ws MIT, koffi MIT).
+This program is free software: you can redistribute it and/or modify it under the terms of the **GNU Affero General Public License** as published by the Free Software Foundation, either version 3 of the License, or (at your option) any later version — see [LICENSE](LICENSE). AGPL-3.0 is chosen so that anyone offering EnotDesk as a network service must share the source of their modified version. Assets are original artwork (see assets/README.md); bundled dependencies keep their own licenses (electron MIT, ws MIT, koffi MIT).
