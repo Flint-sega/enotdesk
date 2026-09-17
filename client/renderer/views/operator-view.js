@@ -2,18 +2,10 @@
 
 import { $, enot, text, show, hide, setBusy, roleName } from '../dom.js';
 import { state } from '../state.js';
+import { t } from '../../lib/i18n.mjs';
 import { cleanupSession } from '../session-media.js';
 import { loadContactsIntoSelect } from './contacts.js';
 import { parseCredentials } from '../../lib/credentials.mjs';
-
-const PASTE_HINT_DEFAULT = 'Можно вставить данные доступа целиком — ID и пароль подставятся сами';
-const PASTE_HINT_DONE = 'ID и пароль заполнены — проверьте и нажмите «Подключиться»';
-
-export function showConnectForm() {
-  show($('op-connect-form')); hide($('op-waiting')); hide($('op-remote'));
-  text($('conn-paste-hint'), PASTE_HINT_DEFAULT);
-  hide($('conn-paste-hint'));
-}
 
 function handleCredentialPaste(e) {
   const parsed = parseCredentials(e.clipboardData?.getData('text') ?? '');
@@ -22,23 +14,29 @@ function handleCredentialPaste(e) {
   if (parsed.sessionId) $('conn-session-id').value = parsed.sessionId;
   if (parsed.password) $('conn-password').value = parsed.password;
   text($('conn-error'), '');
-  text($('conn-paste-hint'), parsed.sessionId && parsed.password ? PASTE_HINT_DONE : PASTE_HINT_DEFAULT);
+  text($('conn-paste-hint'), parsed.sessionId && parsed.password ? t('op.pasteHintDone') : t('op.pasteHint'));
   show($('conn-paste-hint'));
 }
 $('conn-session-id').addEventListener('paste', handleCredentialPaste);
 $('conn-password').addEventListener('paste', handleCredentialPaste);
 
+export function showConnectForm() {
+  show($('op-connect-form')); hide($('op-waiting')); hide($('op-remote'));
+  text($('conn-paste-hint'), t('op.pasteHint'));
+  hide($('conn-paste-hint'));
+}
+
 $('form-login').addEventListener('submit', async (e) => {
   e.preventDefault();
   const btn = $('btn-login');
-  setBusy(btn, true, 'Входим…');
+  setBusy(btn, true, t('op.loginBusy'));
   text($('login-error'), '');
   try {
     const res = await enot.request('login', {
       login: $('login-name').value.trim(),
       password: $('login-password').value,
     });
-    if (res.status !== 200) throw new Error(res.body?.error?.message ?? 'Не удалось войти');
+    if (res.status !== 200) throw new Error(res.body?.error?.message ?? t('op.loginFail'));
     state.me = res.body.user;
     text($('op-who'), `${state.me.name} (${roleName(state.me.role)})`);
     hide($('op-login'));
@@ -71,7 +69,7 @@ $('btn-password-close').addEventListener('click', () => hide($('password-overlay
 $('form-password').addEventListener('submit', async (e) => {
   e.preventDefault();
   const btn = $('btn-password-save');
-  setBusy(btn, true, 'Меняем…');
+  setBusy(btn, true, t('password.busy'));
   text($('password-error'), '');
   text($('password-status'), '');
   try {
@@ -79,8 +77,8 @@ $('form-password').addEventListener('submit', async (e) => {
       oldPassword: $('password-old').value,
       newPassword: $('password-new').value,
     });
-    if (res.status !== 200) throw new Error(res.body?.error?.message ?? 'Не удалось сменить пароль');
-    text($('password-status'), 'Пароль изменён. Активные сеансы с вашим участием завершены.');
+    if (res.status !== 200) throw new Error(res.body?.error?.message ?? t('password.fail'));
+    text($('password-status'), t('password.changed'));
     setTimeout(() => hide($('password-overlay')), 1500);
   } catch (err) {
     text($('password-error'), err.message);
@@ -92,7 +90,7 @@ $('form-password').addEventListener('submit', async (e) => {
 $('form-invite-accept').addEventListener('submit', async (e) => {
   e.preventDefault();
   const btn = $('btn-accept-invite');
-  setBusy(btn, true, 'Принимаем…');
+  setBusy(btn, true, t('op.acceptBusy'));
   text($('invite-accept-error'), ''); text($('invite-accept-status'), '');
   try {
     // из ссылки берём фрагмент #token=…, иначе считаем, что введён сам код
@@ -105,8 +103,8 @@ $('form-invite-accept').addEventListener('submit', async (e) => {
       name: $('invite-name').value.trim(),
       password: $('invite-password').value,
     });
-    if (res.status !== 200) throw new Error(res.body?.error?.message ?? 'Приглашение не принято');
-    text($('invite-accept-status'), 'Готово! Теперь войдите с вашим логином и паролем.');
+    if (res.status !== 200) throw new Error(res.body?.error?.message ?? t('op.inviteFail'));
+    text($('invite-accept-status'), t('op.inviteDone'));
   } catch (err) {
     text($('invite-accept-error'), err.message);
   } finally {
@@ -116,7 +114,7 @@ $('form-invite-accept').addEventListener('submit', async (e) => {
 
 $('btn-connect').addEventListener('click', async () => {
   const btn = $('btn-connect');
-  setBusy(btn, true, 'Подключаемся…');
+  setBusy(btn, true, t('op.connectBusy'));
   text($('conn-error'), '');
   try {
     const idEl = $('conn-session-id');
@@ -132,7 +130,7 @@ $('btn-connect').addEventListener('click', async () => {
       password: passEl.value.trim(),
       contactId: $('conn-contact').value || undefined,
     });
-    if (res.status !== 201) throw new Error(res.body?.error?.message ?? 'Не удалось подключиться');
+    if (res.status !== 201) throw new Error(res.body?.error?.message ?? t('op.connectFail'));
     state.connect = { sessionId: res.body.sessionId, claimId: res.body.claimId };
     await enot.openSignal({ role: 'operator', sessionId: res.body.sessionId, claimId: res.body.claimId });
     hide($('op-connect-form'));

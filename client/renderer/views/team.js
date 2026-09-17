@@ -2,13 +2,14 @@
 
 import { $, enot, text, setBusy, roleName, fetchList } from '../dom.js';
 import { state } from '../state.js';
+import { t } from '../../lib/i18n.mjs';
 import { inviteStatus } from '../../lib/invites.mjs';
 
 export async function renderTeam() {
   const box = $('members-list');
   const ibox = $('invites-list');
   box.textContent = ''; ibox.textContent = '';
-  text($('team-status'), 'Загрузка…');
+  text($('team-status'), t('common.loading'));
   text($('team-error'), '');
   try {
     const [members, invites] = await Promise.all([
@@ -19,7 +20,7 @@ export async function renderTeam() {
     if (!members.items.length) {
       const empty = document.createElement('p');
       empty.className = 'empty';
-      empty.textContent = 'Команда пуста. Создайте приглашение ниже и отправьте его коллеге.';
+      empty.textContent = t('team.empty');
       box.appendChild(empty);
     }
     for (const m of members.items) {
@@ -27,33 +28,33 @@ export async function renderTeam() {
       item.className = 'list-item';
       const main = document.createElement('div');
       main.className = 'grow';
-      main.innerHTML = `<div class="title"></div><div class="sub"></div>`;
+      main.innerHTML = '<div class="title"></div><div class="sub"></div>';
       main.querySelector('.title').textContent = `${m.name} (@${m.login})`;
-      main.querySelector('.sub').textContent = m.active ? 'активен' : 'отключён';
+      main.querySelector('.sub').textContent = m.active ? t('team.active') : t('team.disabled');
       item.appendChild(main);
       if (state.me?.role === 'admin') {
         const roleSel = document.createElement('select');
-        roleSel.setAttribute('aria-label', `Роль: ${m.name}`);
-        for (const [v, label] of [['admin', 'Администратор'], ['operator', 'Оператор'], ['auditor', 'Наблюдатель']]) {
+        roleSel.setAttribute('aria-label', t('team.roleAria', { name: m.name }));
+        for (const v of ['admin', 'operator', 'auditor']) {
           const o = document.createElement('option');
-          o.value = v; o.textContent = label;
+          o.value = v; o.textContent = t(`team.roleSelect.${v}`);
           roleSel.appendChild(o);
         }
         roleSel.value = m.role;
         roleSel.addEventListener('change', () => patchMember(m, { role: roleSel.value }));
         const toggle = document.createElement('button');
         toggle.className = 'btn small';
-        toggle.textContent = m.active ? 'Отключить' : 'Включить';
+        toggle.textContent = m.active ? t('team.disable') : t('team.enable');
         toggle.addEventListener('click', () => patchMember(m, { active: !m.active }));
         item.append(roleSel, toggle);
         if (state.me?.id !== m.id) {
           const del = document.createElement('button');
           del.className = 'btn small danger-ghost';
-          del.textContent = 'Удалить';
+          del.textContent = t('common.delete');
           del.addEventListener('click', async () => {
-            if (del.textContent !== 'Точно удалить?') { del.textContent = 'Точно удалить?'; return; }
+            if (del.textContent !== t('team.sureDelete')) { del.textContent = t('team.sureDelete'); return; }
             const res = await enot.request('members.delete', { id: m.id });
-            if (res.status !== 200) text($('team-error'), res.body?.error?.message ?? 'Не удалось удалить участника');
+            if (res.status !== 200) text($('team-error'), res.body?.error?.message ?? t('team.deleteFail'));
             else renderTeam();
           });
           item.appendChild(del);
@@ -65,7 +66,7 @@ export async function renderTeam() {
     if (!invites.items.length) {
       const empty = document.createElement('p');
       empty.className = 'empty';
-      empty.textContent = 'Активных приглашений нет. Создайте одноразовое приглашение и передайте его в чате.';
+      empty.textContent = t('team.invitesEmpty');
       ibox.appendChild(empty);
     }
     for (const inv of invites.items) {
@@ -74,17 +75,17 @@ export async function renderTeam() {
       const main = document.createElement('div');
       main.className = 'grow';
       main.innerHTML = '<div class="title"></div><div class="sub"></div>';
-      main.querySelector('.title').textContent = `Приглашение на роль: ${roleName(inv.role)}`;
+      main.querySelector('.title').textContent = t('team.inviteFor', { role: roleName(inv.role) });
       const status = inviteStatus(inv);
       main.querySelector('.sub').textContent = status.label;
       item.append(main);
       if (status.state === 'active') {
         const revoke = document.createElement('button');
         revoke.className = 'btn small danger-ghost';
-        revoke.textContent = 'Отозвать';
+        revoke.textContent = t('team.revoke');
         revoke.addEventListener('click', async () => {
           const res = await enot.request('invites.revoke', { id: inv.id });
-          if (res.status !== 200) text($('team-error'), res.body?.error?.message ?? 'Не удалось отозвать');
+          if (res.status !== 200) text($('team-error'), res.body?.error?.message ?? t('team.revokeFail'));
           else renderTeam();
         });
         item.appendChild(revoke);
@@ -100,21 +101,21 @@ export async function renderTeam() {
 
 async function patchMember(m, patch) {
   const res = await enot.request('members.patch', { id: m.id, ...patch });
-  if (res.status !== 200) text($('team-error'), res.body?.error?.message ?? 'Не удалось изменить участника');
+  if (res.status !== 200) text($('team-error'), res.body?.error?.message ?? t('team.patchFail'));
   else renderTeam();
 }
 
 $('form-invite').addEventListener('submit', async (e) => {
   e.preventDefault();
   const btn = $('btn-invite-create');
-  setBusy(btn, true, 'Создаём…');
+  setBusy(btn, true, t('team.createBusy'));
   text($('invite-result'), ''); text($('team-error'), '');
   try {
     const res = await enot.request('invites.create', { role: $('invite-role').value });
-    if (res.status !== 201) throw new Error(res.body?.error?.message ?? 'Не удалось создать приглашение');
+    if (res.status !== 201) throw new Error(res.body?.error?.message ?? t('team.createFail'));
     // одноразовый токен приглашения — единственный токен, отдаваемый на рендерер
     const url = res.body.url || `${res.body.token}`;
-    text($('invite-result'), `Приглашение (одноразовое, скопируйте и отправьте): ${url}`);
+    text($('invite-result'), t('team.inviteResult', { url }));
     await enot.copy(url);
     renderTeam();
   } catch (err) {

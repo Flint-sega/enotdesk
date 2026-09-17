@@ -3,6 +3,7 @@
 // allowlist — единый источник в main (protocol.mjs), приходит через permissions().
 
 import { $, text } from './dom.js';
+import { t } from '../lib/i18n.mjs';
 import { keyFromCode } from '../lib/keymap.mjs';
 import { wheelToLines } from '../lib/protocol.mjs';
 
@@ -17,9 +18,9 @@ function ensureKeys() {
 let keyErrorReset = null;
 function showKeyError(key) {
   // неподдерживаемая клавиша честно отклоняется с видимой ошибкой, не молча
-  text($('remote-status'), `Клавиша «${key}» не поддерживается`);
+  text($('remote-status'), t('op.keyUnsupported', { key }));
   clearTimeout(keyErrorReset);
-  keyErrorReset = setTimeout(() => text($('remote-status'), 'Подключено'), 2000);
+  keyErrorReset = setTimeout(() => text($('remote-status'), t('status.connected')), 2000);
 }
 
 export function wireOperatorInput(dc) {

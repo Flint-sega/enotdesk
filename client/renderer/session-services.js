@@ -3,6 +3,7 @@
 
 import { $, enot, text } from './dom.js';
 import { state } from './state.js';
+import { t } from '../lib/i18n.mjs';
 import { parseChatMessage, chatMessage } from '../lib/chat.mjs';
 import { parseClipMessage, clipMessage } from '../lib/clipboard-sync.mjs';
 import {
@@ -11,20 +12,22 @@ import {
 } from '../lib/file-transfer.mjs';
 
 let unreadChat = 0;
-export function appendChat(logId, who, value) {
+// whoKey: 'you' | 'operator' | 'client' | 'system' — подпись берётся из словаря,
+// а класс строки (me/them) определяется ключом, не переведённым текстом.
+export function appendChat(logId, whoKey, value) {
   const log = $(logId);
   const line = document.createElement('p');
-  line.className = `chat-line chat-${who === 'Вы' ? 'me' : 'them'}`;
+  line.className = `chat-line chat-${whoKey === 'you' ? 'me' : 'them'}`;
   const name = document.createElement('strong');
-  name.textContent = `${who}: `;
+  name.textContent = `${t(`chat.${whoKey}`)}: `;
   line.appendChild(name);
   line.appendChild(document.createTextNode(value));
   log.appendChild(line);
   log.scrollTop = log.scrollHeight;
   // оператор в другой вкладке — честный счётчик непрочитанного на вкладке «Подключение»
-  if (logId === 'op-chat-log' && who !== 'Вы' && state.activePane !== 'connect') {
+  if (logId === 'op-chat-log' && whoKey !== 'you' && state.activePane !== 'connect') {
     unreadChat += 1;
-    text(document.querySelector('.side-tab[data-pane="connect"]'), `Подключение (${unreadChat})`);
+    text(document.querySelector('.side-tab[data-pane="connect"]'), t('op.paneConnectUnread', { count: unreadChat }));
   }
 }
 
@@ -42,7 +45,7 @@ function sendChat(side) {
   const dc = state.dcs?.chat;
   if (!dc || dc.readyState !== 'open') return;
   try { dc.send(wire); } catch { /* канал закрывается */ return; }
-  appendChat(logId, 'Вы', value);
+  appendChat(logId, 'you', value);
   input.value = '';
 }
 $('client-chat-send').addEventListener('click', () => sendChat('client'));
@@ -62,7 +65,7 @@ export function wireHostChannel(ch) {
   } else if (ch.label === 'chat') {
     ch.onmessage = (m) => {
       const msg = parseChatMessage(m.data);
-      if (msg) appendChat('client-chat-log', 'Оператор', msg.text);
+      if (msg) appendChat('client-chat-log', 'operator', msg.text);
     };
   } else if (ch.label === 'clip') {
     ch.onmessage = (m) => {
@@ -93,7 +96,10 @@ function showFileProgress(size) {
   return () => {
     const rx = state.fileRx?.rx;
     if (!rx || rx.meta.size !== size) return;
-    state.fileRx.prog.textContent = `Получено ${(rx.received / 1048576).toFixed(1)} из ${(size / 1048576).toFixed(1)} МБ`;
+    state.fileRx.prog.textContent = t('files.progress', {
+      got: (rx.received / 1048576).toFixed(1),
+      total: (size / 1048576).toFixed(1),
+    });
   };
 }
 
@@ -102,7 +108,7 @@ function saveReceivedBlob(blob, name, box) {
   const a = document.createElement('a');
   a.href = url;
   a.download = name;
-  a.textContent = `Сохранить «${name}» (${(blob.size / 1048576).toFixed(1)} МБ)`;
+  a.textContent = t('files.saveLink', { name, size: (blob.size / 1048576).toFixed(1) });
   box.textContent = '';
   box.appendChild(a);
   setTimeout(() => URL.revokeObjectURL(url), 60_000);
@@ -121,10 +127,10 @@ function hostFileMessage(ch, data) {
       const box = $('client-file-prompt');
       box.textContent = '';
       const label = document.createElement('p');
-      label.textContent = `Оператор отправляет файл «${ctl.name}» (${(ctl.size / 1048576).toFixed(1)} МБ). Принять?`;
+      label.textContent = t('files.fromOperator', { name: ctl.name, size: (ctl.size / 1048576).toFixed(1) });
       const accept = document.createElement('button');
       accept.className = 'btn';
-      accept.textContent = 'Принять';
+      accept.textContent = t('files.accept');
       accept.addEventListener('click', () => {
         try { ch.send(fileAccept(ctl.id)); } catch { /* канал закрыт */ }
         box.textContent = '';
@@ -132,7 +138,7 @@ function hostFileMessage(ch, data) {
       });
       const reject = document.createElement('button');
       reject.className = 'btn danger-ghost';
-      reject.textContent = 'Отклонить';
+      reject.textContent = t('files.reject');
       reject.addEventListener('click', () => {
         state.fileRx = null;
         box.textContent = '';
@@ -145,7 +151,7 @@ function hostFileMessage(ch, data) {
       const blob = rx.complete();
       const name = rx.meta.name;
       state.fileRx = null;
-      if (!blob) { appendChat('client-chat-log', 'Система', 'Файл получен с ошибкой — передача прервана.'); return; }
+      if (!blob) { appendChat('client-chat-log', 'system', t('files.broken')); return; }
       saveReceivedBlob(blob, name, $('client-file-prompt'));
     }
     return;
@@ -162,7 +168,7 @@ export function operatorFileMessage(ch, data) {
     if (ctl.kind === 'meta') {
       state.fileRx = { rx: createFileReceiver(ctl), dc: ch, prog: null };
       try { ch.send(fileAccept(ctl.id)); } catch { /* канал закрыт */ }
-      text($('file-op-status'), `Клиент отправляет «${ctl.name}»…`);
+      text($('file-op-status'), t('files.clientSending', { name: ctl.name }));
     } else if (ctl.kind === 'done') {
       const { rx } = state.fileRx ?? {};
       if (!rx) return;
@@ -170,17 +176,17 @@ export function operatorFileMessage(ch, data) {
       const name = rx.meta.name;
       state.fileRx = null;
       text($('file-op-status'), '');
-      if (!blob) { text($('file-op-status'), 'Файл получен с ошибкой'); return; }
+      if (!blob) { text($('file-op-status'), t('files.brokenShort')); return; }
       saveReceivedBlob(blob, name, $('op-file-list'));
     } else if (ctl.kind === 'reject') {
-      text($('file-op-status'), 'Клиент отклонил файл.');
+      text($('file-op-status'), t('files.clientRejected'));
     }
   }
 }
 
 // Операторские приёмники чата и буфера (каналы создаёт operatorAnswer).
 export function operatorChatMessage(value) {
-  appendChat('op-chat-log', 'Клиент', value);
+  appendChat('op-chat-log', 'client', value);
 }
 export function operatorClipMessage(value) {
   if (state.clip.operator) enot.copy(value).catch(() => { /* буфер недоступен */ });
@@ -192,7 +198,7 @@ export function sendFileFrom(side, file) {
   if (!file) return;
   const dc = state.dcs?.file;
   if (!dc || dc.readyState !== 'open') {
-    if (side === 'op') text($('file-op-status'), 'Канал передачи недоступен');
+    if (side === 'op') text($('file-op-status'), t('files.noChannel'));
     return;
   }
   const id = makeFileId();
@@ -200,7 +206,7 @@ export function sendFileFrom(side, file) {
     dc.send(fileMeta(id, file.name, file.size));
     createFileSender({ file, dc, id }).start();
   } catch { /* канал закрыт */ return; }
-  if (side === 'op') text($('file-op-status'), `Отправляем «${file.name}»…`);
+  if (side === 'op') text($('file-op-status'), t('files.sending', { name: file.name }));
 }
 function sendFile(side) {
   const input = $(side === 'client' ? 'client-file-input' : 'op-file-input');

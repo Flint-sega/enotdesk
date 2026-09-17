@@ -1,13 +1,16 @@
 // Презентация серверных страниц (/downloads, /invite): стили, иконки, разметка.
-// Чистый модуль без сети — app.mjs только маршрутизирует.
+// Чистый модуль без сети — app.mjs только маршрутизирует. Тексты — из общего
+// словаря i18n (spec §i18n), язык выбирает app.mjs по Accept-Language.
+
+import { t } from '../client/lib/i18n.mjs';
 
 function esc(s) {
   return String(s).replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
 }
 
-function formatSize(bytes) {
+function formatSize(bytes, locale) {
   if (!Number.isFinite(bytes) || bytes <= 0) return '—';
-  const units = ['Б', 'КБ', 'МБ', 'ГБ'];
+  const units = ['server.units.b', 'server.units.kb', 'server.units.mb', 'server.units.gb'].map((k) => t(k, {}, locale));
   let n = bytes; let i = 0;
   while (n >= 1024 && i < units.length - 1) { n /= 1024; i += 1; }
   return `${i === 0 ? n : n.toFixed(n < 10 ? 1 : 0)} ${units[i]}`;
@@ -133,89 +136,90 @@ function icon(name) {
   return `<svg viewBox="0 0 24 24" ${paint} aria-hidden="true">${ICONS[name]}</svg>`;
 }
 
-function page(res, title, bodyHtml) {
+function page(res, title, bodyHtml, locale) {
   res.writeHead(200, {
     'Content-Type': 'text/html; charset=utf-8',
     'Content-Security-Policy': "default-src 'none'; img-src 'self'; style-src 'unsafe-inline'",
     'X-Content-Type-Options': 'nosniff',
     'X-Frame-Options': 'DENY',
   });
-  res.end(`<!doctype html><html lang="ru"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">` +
+  res.end(`<!doctype html><html lang="${esc(locale)}"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">` +
     `<title>${esc(title)}</title><link rel="icon" href="/brand/enot-icon.svg" type="image/svg+xml">` +
     `<style>${BASE_STYLE}</style></head><body>${bodyHtml}</body></html>`);
 }
 
-function siteHeader() {
+function siteHeader(locale) {
   return `<header class="site-head"><div class="wrap head-inner">` +
     `<a class="brand" href="/downloads"><img src="/brand/enot-icon.svg" alt="" width="40" height="40">` +
     `<span class="brand-name">EnotDesk</span><span class="brand-sep" aria-hidden="true"></span>` +
-    `<span class="brand-sub">Удалённая поддержка</span></a>` +
-    `<nav class="head-nav" aria-label="Основная навигация">` +
-    `<a class="nav-btn" href="/downloads#download" aria-label="Помощь">${icon('help')}<span>Помощь</span></a>` +
-    `<a class="nav-btn" href="/invite" aria-label="Оператор">${icon('chat')}<span>Оператор</span></a>` +
+    `<span class="brand-sub">${esc(t('app.subtitle', {}, locale))}</span></a>` +
+    `<nav class="head-nav" aria-label="${esc(t('server.nav.ariaMain', {}, locale))}">` +
+    `<a class="nav-btn" href="/downloads#download" aria-label="${esc(t('server.nav.ariaHelp', {}, locale))}">${icon('help')}<span>${esc(t('server.nav.help', {}, locale))}</span></a>` +
+    `<a class="nav-btn" href="/invite" aria-label="${esc(t('server.nav.ariaOperator', {}, locale))}">${icon('chat')}<span>${esc(t('server.nav.operator', {}, locale))}</span></a>` +
     `</nav></div></header>`;
 }
 
-function siteFooter(version) {
+function siteFooter(version, locale) {
   return `<footer class="site-foot"><div class="wrap foot-inner">` +
     `<p>EnotDesk <span class="foot-ver">v${esc(version)}</span></p>` +
-    `<p class="foot-love">${icon('heart')}<span>С заботой о ваших задачах</span></p>` +
+    `<p class="foot-love">${icon('heart')}<span>${esc(t('app.care', {}, locale))}</span></p>` +
     `</div></footer>`;
 }
 
-const STEPS = [
-  { title: 'Получите ссылку', text: 'Специалист поддержки отправит вам ссылку на эту страницу в чате.', icon: 'link' },
-  { title: 'Запустите программу', text: 'Скачайте файл и откройте его — установка не нужна.', icon: 'playCircle' },
-  { title: 'Передайте ID и пароль', text: 'В окне программы появятся ID и одноразовый пароль — сообщите их специалисту.', icon: 'idCard' },
-  { title: 'Подключение и завершение', text: 'Специалист подключится и поможет. Закрыли программу — доступ сразу прекратился.', icon: 'checkCircle' },
-];
+function steps(locale) {
+  return [1, 2, 3, 4].map((n) => ({
+    title: t(`server.step${n}.title`, {}, locale),
+    text: t(`server.step${n}.text`, {}, locale),
+    icon: ['link', 'playCircle', 'idCard', 'checkCircle'][n - 1],
+  }));
+}
 
-function platformCard(platform, files) {
+function platformCard(platform, files, locale) {
   const head = `<div class="card-head"><span class="os-icon">${icon(platform.icon)}</span><h3>${esc(platform.label)}</h3></div>`;
   const f = files[0];
   if (!f) {
-    return `<article class="card">${head}<p class="meta">Сборка ещё не готова</p><span class="soon">Скоро будет</span></article>`;
+    return `<article class="card">${head}<p class="meta">${esc(t('server.notReady', {}, locale))}</p><span class="soon">${esc(t('server.soon', {}, locale))}</span></article>`;
   }
   return `<article class="card active">${head}` +
     `<p class="file">${esc(f.name)}</p>` +
-    `<p class="meta">${esc(formatSize(f.size))} · ${esc(f.arch)}</p>` +
-    `<a class="btn" href="${esc(f.url)}">${icon('download')}<span>Скачать</span></a></article>`;
+    `<p class="meta">${esc(formatSize(f.size, locale))} · ${esc(f.arch)}</p>` +
+    `<a class="btn" href="${esc(f.url)}">${icon('download')}<span>${esc(t('server.download', {}, locale))}</span></a></article>`;
 }
 
-function downloadsHtml(items, version) {
+function downloadsHtml(items, version, locale) {
   const byPlatform = new Map();
   for (const f of items) {
     if (!byPlatform.has(f.platform)) byPlatform.set(f.platform, []);
     byPlatform.get(f.platform).push(f);
   }
-  const cards = PLATFORMS.map((p) => platformCard(p, byPlatform.get(p.key) || [])).join('');
-  const steps = STEPS.map((s, i) =>
+  const cards = PLATFORMS.map((p) => platformCard(p, byPlatform.get(p.key) || [], locale)).join('');
+  const stepItems = steps(locale).map((s, i) =>
     `<li class="step"><div class="step-head"><span class="step-num">${i + 1}</span>${icon(s.icon)}</div>` +
     `<h3>${esc(s.title)}</h3><p>${esc(s.text)}</p></li>`).join('');
-  return siteHeader() +
+  return siteHeader(locale) +
     `<main><section class="wrap hero"><div class="hero-copy">` +
-    `<p class="eyebrow">Удалённая поддержка</p><h1>EnotDesk</h1>` +
-    `<p class="lead">Быстрый и безопасный доступ к вашему устройству. Программа запускается без установки, а пароль действует только пока приложение открыто.</p>` +
-    `<p class="cta"><a class="btn" href="#download">${icon('download')}<span>Скачать</span></a>` +
-    `<a class="btn btn-ghost" href="#how">${icon('play')}<span>Как это работает</span></a></p>` +
-    `<ul class="chips"><li>${icon('shield')}<span>Безопасное соединение</span></li>` +
-    `<li>${icon('bolt')}<span>Быстрое подключение</span></li>` +
-    `<li>${icon('lock')}<span>Без установки</span></li></ul>` +
-    `</div><img class="mascot" src="/brand/mascot-site.png" alt="Енот EnotDesk в наушниках и очках за ноутбуком" width="736" height="372"></section>` +
-    `<section id="download" class="wrap section"><h2>Скачать для вашей системы</h2><div class="cards">${cards}</div></section>` +
-    `<section id="how" class="wrap section"><h2>Как это работает</h2><ol class="steps">${steps}</ol></section></main>` +
-    siteFooter(version);
+    `<p class="eyebrow">${esc(t('app.subtitle', {}, locale))}</p><h1>EnotDesk</h1>` +
+    `<p class="lead">${esc(t('server.hero.lead', {}, locale))}</p>` +
+    `<p class="cta"><a class="btn" href="#download">${icon('download')}<span>${esc(t('server.download', {}, locale))}</span></a>` +
+    `<a class="btn btn-ghost" href="#how">${icon('play')}<span>${esc(t('server.how', {}, locale))}</span></a></p>` +
+    `<ul class="chips"><li>${icon('shield')}<span>${esc(t('server.chip.secure', {}, locale))}</span></li>` +
+    `<li>${icon('bolt')}<span>${esc(t('server.chip.fast', {}, locale))}</span></li>` +
+    `<li>${icon('lock')}<span>${esc(t('server.chip.noInstall', {}, locale))}</span></li></ul>` +
+    `</div><img class="mascot" src="/brand/mascot-site.png" alt="${esc(t('server.mascotAlt', {}, locale))}" width="736" height="372"></section>` +
+    `<section id="download" class="wrap section"><h2>${esc(t('server.downloadFor', {}, locale))}</h2><div class="cards">${cards}</div></section>` +
+    `<section id="how" class="wrap section"><h2>${esc(t('server.how', {}, locale))}</h2><ol class="steps">${stepItems}</ol></section></main>` +
+    siteFooter(version, locale);
 }
 
-function inviteHtml(version) {
-  return siteHeader() +
+function inviteHtml(version, locale) {
+  return siteHeader(locale) +
     `<main class="wrap invite-page"><section class="invite-card">` +
-    `<p class="eyebrow">Приглашение</p>` +
-    `<h1>Приглашение в команду EnotDesk</h1>` +
-    `<p class="lead">Вас пригласили в команду поддержки. Откройте приложение EnotDesk и вставьте код приглашения из сообщения в форму принятия приглашения.</p>` +
-    `<p class="cta"><a class="btn" href="/downloads">${icon('download')}<span>Открыть EnotDesk</span></a></p>` +
-    `<p class="meta">Если приложение ещё не установлено, скачайте подходящую сборку на странице загрузки.</p>` +
-    `</section></main>` + siteFooter(version);
+    `<p class="eyebrow">${esc(t('server.invite.eyebrow', {}, locale))}</p>` +
+    `<h1>${esc(t('server.invite.title', {}, locale))}</h1>` +
+    `<p class="lead">${esc(t('server.invite.lead', {}, locale))}</p>` +
+    `<p class="cta"><a class="btn" href="/downloads">${icon('download')}<span>${esc(t('server.invite.open', {}, locale))}</span></a></p>` +
+    `<p class="meta">${esc(t('server.invite.note', {}, locale))}</p>` +
+    `</section></main>` + siteFooter(version, locale);
 }
 
 export { esc, page, downloadsHtml, inviteHtml };
