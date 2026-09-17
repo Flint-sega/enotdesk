@@ -150,20 +150,23 @@ test('downloads-files: ETag + If-None-Match → 304 без тела; измен�
   const { base } = await startServer(t);
   const url = `${base}/api/v1/downloads-files/${name}`;
 
-  const first = await fetch(url);
+  // Connection: close — каждый ответ парсится на своём соединении: пул undici
+  // не переиспользует keep-alive сокет, и сбой парсинга одного ответа не
+  // перекидывается на соседний запрос (на CI с новым undici падало именно так).
+  const first = await fetch(url, { headers: { Connection: 'close' } });
   assert.equal(first.status, 200);
   const etag = first.headers.get('etag');
   assert.ok(etag && etag.length >= 4, 'ETag присутствует');
   assert.ok(first.headers.get('last-modified'));
 
-  const cached = await fetch(url, { headers: { 'If-None-Match': etag } });
+  const cached = await fetch(url, { headers: { Connection: 'close', 'If-None-Match': etag } });
   assert.equal(cached.status, 304);
   assert.equal(await cached.text(), '', '304 отдаётся без тела');
 
   // файл заменили — кэш инвалидируется
   fs.writeFileSync(path.join(dir, name), 'BODY-2-LONGER');
   fs.utimesSync(path.join(dir, name), new Date(), new Date(Date.now() + 5000));
-  const after = await fetch(url, { headers: { 'If-None-Match': etag } });
+  const after = await fetch(url, { headers: { Connection: 'close', 'If-None-Match': etag } });
   assert.equal(after.status, 200);
   assert.notEqual(after.headers.get('etag'), etag);
 });
