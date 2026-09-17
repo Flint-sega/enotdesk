@@ -17,6 +17,12 @@ export function summarizeStats(report) {
       packetsLost += stat.packetsLost ?? 0;
       packetsReceived += stat.packetsReceived ?? 0;
     }
+    // Отправитель не получает видео: потери своего потока он видит только в
+    // remote-inbound-rtp — отчёте приёмника (использует адаптивный битрейт).
+    if (stat.type === 'remote-inbound-rtp' && stat.kind === 'video') {
+      packetsLost += stat.packetsLost ?? 0;
+      packetsReceived += stat.packetsReceived ?? 0;
+    }
   });
   const total = packetsLost + packetsReceived;
   if (rttMs === null && total === 0) return null;

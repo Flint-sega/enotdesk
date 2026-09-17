@@ -8,6 +8,7 @@ import { wireOperatorInput } from './operator-input.js';
 import { wireHostChannel } from './session-services.js';
 import { setVideoEnabled } from '../lib/media-toggle.mjs';
 import { summarizeStats, formatQuality } from '../lib/rtc-stats.mjs';
+import { nextTarget, TOP_BITRATE } from '../lib/adaptive-bitrate.mjs';
 
 // Пауза трансляции: чёрные кадры оператору, явный статус у клиента.
 let streamPaused = false;
@@ -51,6 +52,33 @@ function stopQualityPolling() {
   qualityTimer = null;
 }
 
+// Адаптивный битрейт (A3): решение по тем же rtc-stats принимает чистая
+// политика (adaptive-bitrate.mjs), применяет — host-сторона, потому что
+// sender.setParameters есть только у отправителя видео. Потери своего
+// исходящего потока host видит в remote-inbound-rtp (их дополняет
+// summarizeStats), rtt — из candidate-pair своей стороны.
+let adaptive = { target: TOP_BITRATE, lastChangeAt: 0 };
+let adaptiveTimer = null;
+function startAdaptive(pc) {
+  stopAdaptive();
+  adaptive = { target: TOP_BITRATE, lastChangeAt: 0 };
+  adaptiveTimer = setInterval(async () => {
+    try {
+      const summary = summarizeStats(await pc.getStats());
+      if (!summary) return;
+      const now = Date.now();
+      const { target, changed } = nextTarget(summary, adaptive.target, adaptive.lastChangeAt, now);
+      if (!changed) return;
+      adaptive = { target, lastChangeAt: now };
+      applyVideoCap(pc, target);
+    } catch { /* соединение закрывается — не критично */ }
+  }, 2000);
+}
+function stopAdaptive() {
+  clearInterval(adaptiveTimer);
+  adaptiveTimer = null;
+}
+
 export function cleanupSession() {
   stopMedia();
   enot.closeSignal().catch(() => {});
@@ -72,6 +100,8 @@ export function stopMedia() {
   $('remote-video').srcObject = null;
   stopSessionTimer();
   stopQualityPolling();
+  stopAdaptive();
+  adaptive = { target: TOP_BITRATE, lastChangeAt: 0 };
 }
 
 export function makePc(iceServers) {
@@ -128,6 +158,7 @@ export async function startHostRtc() {
     state.pc = pc;
     for (const track of stream.getTracks()) pc.addTrack(track, stream);
     applyVideoCap(pc);
+    startAdaptive(pc);
     const offer = await pc.createOffer();
     await pc.setLocalDescription(offer);
     await enot.sendSignal({ type: 'signal', data: { description: { type: 'offer', sdp: pc.localDescription.sdp } } });
@@ -181,8 +212,10 @@ async function acquireStream(id, pickEl) {
   }
 }
 
-// Потолок качества исходящего видео: 2.5 Мбит/с хватает для читаемого экрана.
-function applyVideoCap(pc, maxBitrate = 2_500_000) {
+// Потолок качества исходящего видео: по умолчанию — текущая ступень
+// адаптивного битрейта (в начале сеанса это верхняя, 2.5 Мбит/с), дальше
+// startAdaptive ведёт её сам по качеству сети.
+function applyVideoCap(pc, maxBitrate = adaptive.target) {
   try {
     for (const sender of pc.getSenders()) {
       if (sender.track?.kind !== 'video') continue;
@@ -250,6 +283,7 @@ $('btn-switch-source').addEventListener('click', () => {
     const videoSender = state.pc.getSenders().find((s) => s.track?.kind === 'video');
     if (videoSender) await videoSender.replaceTrack(stream.getVideoTracks()[0]);
     else for (const track of stream.getTracks()) state.pc.addTrack(track, stream);
+    // Смена источника: держим текущую адаптивную ступень, не сбрасывая наверх.
     applyVideoCap(state.pc);
     old?.getTracks().forEach((track) => track.stop());
   }).catch((e) => text($('client-error-text'), e.message));
