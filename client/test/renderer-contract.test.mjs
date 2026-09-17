@@ -82,6 +82,44 @@ test('каждый data-i18n* ключ из index.html есть в словар�
   }
 });
 
+test('эвристика: кириллица в index.html только под data-i18n* — текст-ноды и атрибуты', () => {
+  const cyrRe = /[\u0400-\u04FF]/;
+  // Атрибуты: у переводимого атрибута обязана быть своя data-i18n-* метка,
+  // в непереводимых атрибутах кириллицы быть не должно вовсе.
+  const markers = {
+    'aria-label': 'data-i18n-aria-label',
+    title: 'data-i18n-title',
+    placeholder: 'data-i18n-placeholder',
+    alt: 'data-i18n-alt',
+  };
+  for (const m of html.matchAll(/<([a-zA-Z][^>\s]*)(\s[^>]*)?>/g)) {
+    const [, tag, attrs = ''] = m;
+    for (const a of attrs.matchAll(/\s([a-zA-Z-]+)="([^"]*)"/g)) {
+      const [, attr, value] = a;
+      if (!cyrRe.test(value) || attr.startsWith('data-i18n')) continue;
+      const marker = markers[attr];
+      assert.ok(
+        marker !== undefined && attrs.includes(`${marker}="`),
+        `кириллический атрибут ${attr}="…" у <${tag}> без метки ${marker ?? 'data-i18n*'}`,
+      );
+    }
+  }
+  // Текст-ноды: кириллица допустима только как fallback внутри элемента с
+  // data-i18n / data-i18n-html (до applyI18n). Комментарии — не текст-ноды.
+  const body = html.replace(/<!--[\s\S]*?-->/g, '');
+  const stack = [];
+  for (const part of body.split(/(<[^>]+>)/g)) {
+    if (!part) continue;
+    if (part.startsWith('<')) {
+      if (part.startsWith('</')) stack.pop();
+      else if (!part.endsWith('/>')) stack.push(part);
+    } else if (cyrRe.test(part)) {
+      const marked = stack.some((open) => /\sdata-i18n(?:-html)?=/.test(open));
+      assert.ok(marked, `кириллическая текст-нода без data-i18n: «${part.trim().slice(0, 40)}»`);
+    }
+  }
+});
+
 test('эвристика: в UI-модулях и серверных страницах нет кириллических строк-литералов', () => {
   // Ищем кириллицу только внутри строковых литералов — комментарии на русском разрешены.
   const literalRe = /'[^'\n]*'|"[^"\n]*"|`[^`]*`/g;

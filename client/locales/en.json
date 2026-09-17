@@ -6,6 +6,8 @@
   "app.aria.getHelp": "Get help",
   "app.aria.sections": "Sections",
   "app.aria.remoteVideo": "Client screen",
+  "app.aria.operatorMode": "Operator mode",
+  "app.alt.mascotHero": "EnotDesk raccoon specialist",
   "app.subtitle": "Remote support",
   "app.care": "With care for your tasks",
 
@@ -23,6 +25,7 @@
   "common.saveBusy": "Saving…",
   "common.untitled": "(untitled)",
   "common.httpError": "Error {status}",
+  "error.badLocale": "Invalid locale",
 
   "client.start": "Get help",
   "client.startBusy": "Connecting…",
@@ -137,6 +140,8 @@
   "settings.allowHttp": "Allow unencrypted HTTP (test servers only)",
   "settings.allowHttpNote": "Traffic is not encrypted — suitable only for a test server, not for the internet.",
   "settings.language": "Interface language",
+  "settings.langRu": "Russian",
+  "settings.langEn": "English",
   "settings.save": "Save and check",
   "settings.close": "Close",
   "settings.firstRun": "First run: enter the EnotDesk server address.",

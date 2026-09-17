@@ -89,10 +89,16 @@ function showStatus(value) {
   text($('remote-status'), value);
 }
 
+// Возврат статус-строки после временных сообщений: «Подключено» — только при
+// живом соединении (state.pc), иначе честный нейтральный текст без сеанса.
+function restoreStatus() {
+  showStatus(state.pc ? t('status.connected') : t('web.status.idle'));
+}
+
 function showKeyError(key) {
   showStatus(t('op.keyUnsupported', { key }));
   clearTimeout(keyErrorReset);
-  keyErrorReset = setTimeout(() => showStatus(t('status.connected')), 2000);
+  keyErrorReset = setTimeout(restoreStatus, 2000);
 }
 
 // ---- состояния страницы ----
@@ -253,7 +259,7 @@ async function onSignal(msg) {
       // транзиентные ошибки (rate_limited, bad_signal) управление не рвут
       showStatus(msg.message ?? t('common.serverError'));
       clearTimeout(keyErrorReset);
-      keyErrorReset = setTimeout(() => showStatus(t('status.connected')), 3000);
+      keyErrorReset = setTimeout(restoreStatus, 3000);
       break;
     default:
       break;

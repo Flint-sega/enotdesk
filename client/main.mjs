@@ -17,6 +17,7 @@ import { normalizeServerUrl } from './lib/server-url.mjs';
 import { createAgent, createAgentApi } from './lib/agent.mjs';
 import { UPDATE_REPO, updateFeedUrl, platformFeedName, updateDecision } from './lib/updater.mjs';
 import { isNewerVersion } from './lib/version-check.mjs';
+import { t, setLocale } from './lib/i18n.mjs';
 
 const SMOKE = process.env.EDESK_SMOKE === '1';
 // Режим агента-службы (EDESK_AGENT=1): без окна, логи честные в stdout.
@@ -87,6 +88,7 @@ function loadSettings() {
   } catch {
     // первый запуск — файл настроек ещё не существует
   }
+  setLocale(settings.locale); // строки main-процесса — тоже из словаря (null оставляет ru по умолчанию)
   api = createApi({ baseUrl: settings.serverUrl });
 }
 
@@ -247,8 +249,9 @@ function registerIpc() {
   // Выбор языка интерфейса (R08.2): только известные локали, null снимает выбор.
   ipcMain.handle('enot:setLocale', (e, locale) => {
     guard(e);
-    if (locale !== 'ru' && locale !== 'en' && locale !== null) throw new Error('Некорректная локаль');
+    if (locale !== 'ru' && locale !== 'en' && locale !== null) throw new Error(t('error.badLocale'));
     settings.locale = locale;
+    setLocale(locale); // словарные строки main держатся в одном языке с интерфейсом
     const saved = saveSettings();
     return { ...saved, locale: settings.locale };
   });
