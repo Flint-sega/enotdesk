@@ -3,13 +3,14 @@
 # Идемпотентен: повторный запуск с тем же tarball переиспользует релиз.
 #
 # Использование:
-#   bash scripts/install-server.sh <app.tar.gz> [--dry-run] [--open-firewall]
+#   bash scripts/install-server.sh <app.tar.gz> [--dry-run] [--no-turn] [--no-tls] [--open-firewall]
 #   bash scripts/install-server.sh --update <app.tar.gz>
 #   bash scripts/install-server.sh --uninstall [--purge-data]
 #   bash scripts/install-server.sh --help
 #
 # Env (имена, значения задаются снаружи): ENOT_PORT, ENOT_BIND, ENOT_PUBLIC_URL,
 # ENOT_DB, ENOT_TURN_URLS, ENOT_TURN_USERNAME, ENOT_TURN_PASSWORD, NODE_VERSION.
+# ENOT_TURN_SECRET управляется установщиком (secret coturn, хранится в env-файле 0600).
 set -euo pipefail
 
 ENOT_USER="enotdesk"
@@ -32,6 +33,16 @@ PUBLIC_URL=""
 TURN_URLS="${ENOT_TURN_URLS:-}"
 TURN_USERNAME="${ENOT_TURN_USERNAME:-}"
 TURN_PASSWORD="${ENOT_TURN_PASSWORD:-}"
+TURN_SECRET=""
+TURN_CONF="/etc/turnserver.conf"
+CADDYFILE="/etc/caddy/Caddyfile"
+SETUP_TURN=1
+SETUP_TLS=1
+RESET_TURN=0
+EDGE_HOST=""
+REALM=""
+DOMAIN=""
+TLS_ACTIVE=0
 
 MODE="install"
 TARBALL=""
@@ -52,22 +63,33 @@ EnotDesk — установщик сервера.
   install-server.sh --help
 
 Опции:
-  <app.tar.gz>       tarball приложения (server/, package.json, package-lock.json)
+  <app.tar.gz>       tarball приложения (server/, client/lib/i18n.mjs, client/locales/, package.json, package-lock.json)
   --dry-run          показать план и выйти, ничего не меняя
   --update <tar>     то же, что установка с явным tarball (атомарная смена symlink)
   --backup           дамп БД (VACUUM INTO, безопасно на живом сервере); BACKUP_KEEP — сколько дампов хранить (по умолчанию 10)
   --uninstall        остановить и удалить unit и релизы; БД сохраняется
   --purge-data       вместе с --uninstall удалить и /var/lib/enotdesk
   --open-firewall    открыть порт в ufw, если ufw активен (иначе только сообщить)
+  --no-turn          не ставить coturn; TURN настраивается снаружи (ENOT_TURN_* в env)
+  --no-tls           не ставить Caddy; сервер останется в локальном http-режиме
+  --reset-turn       перенастроить встроенный coturn, даже если в env уже есть ENOT_TURN_URLS
   --help             эта справка
 
 Переменные окружения:
   ENOT_PORT          порт сервера (по умолчанию 8080)
-  ENOT_BIND          адрес привязки (по умолчанию 0.0.0.0)
-  ENOT_PUBLIC_URL    публичный URL (по умолчанию http://<первый IP>:<порт>)
+  ENOT_BIND          адрес привязки (по умолчанию 0.0.0.0; при TLS принудительно 127.0.0.1)
+  ENOT_PUBLIC_URL    публичный URL (по умолчанию http://<первый IP>:<порт>; https://<домен> включает TLS)
   ENOT_DB            путь к БД (по умолчанию /var/lib/enotdesk/enotdesk.db)
   NODE_VERSION       версия Node.js из tarball nodejs.org (по умолчанию 24.12.0)
-  ENOT_TURN_URLS, ENOT_TURN_USERNAME, ENOT_TURN_PASSWORD — TURN для WebRTC
+  ENOT_TURN_URLS, ENOT_TURN_USERNAME, ENOT_TURN_PASSWORD — внешний TURN (--no-turn)
+
+По умолчанию установщик сам ставит TURN (coturn: порт 3478 tcp/udp, relay 49160–49200/udp,
+static-auth-secret генерируется в env-файл 0600, realm — из ENOT_PUBLIC_URL) и TLS
+(Caddy из официального репозитория: авто-HTTPS на 80/443 tcp+udp, домен из ENOT_PUBLIC_URL
+→ 127.0.0.1:PORT). Уже настроенный внешний TURN из env-файла не перезаписывается;
+принудительная перенастройка встроенного coturn — --reset-turn. Для Caddy и coturn нужен
+работающий apt; без домена в ENOT_PUBLIC_URL TLS честно пропускается с предупреждением
+(локальный http-режим).
 EOF
 }
 
@@ -91,6 +113,9 @@ while [ $# -gt 0 ]; do
     --backup) MODE="backup" ;;
     --purge-data) PURGE_DATA=1 ;;
     --open-firewall) OPEN_FIREWALL=1 ;;
+    --no-turn) SETUP_TURN=0 ;;
+    --no-tls) SETUP_TLS=0 ;;
+    --reset-turn) RESET_TURN=1 ;;
     -*) die "неизвестный аргумент: $1 (справка: --help)" ;;
     *) TARBALL="$1" ;;
   esac
@@ -126,6 +151,18 @@ check_tarball() {
   local list
   list="$(tar -tzf "$TARBALL" 2>/dev/null)" || die "tarball повреждён или это не tar.gz: $TARBALL"
   printf '%s\n' "$list" | grep -qE '(^|\./)server/main\.mjs$' || die "в tarball нет server/main.mjs — это не сборка EnotDesk"
+  printf '%s\n' "$list" | grep -qE '(^|\./)client/lib/i18n\.mjs$' || die "в tarball нет client/lib/i18n.mjs (нужен для страниц /downloads и /invite) — соберите tarball свежим scripts/deploy-server.sh"
+}
+
+# SHA256 (12 символов); shasum — запасной путь, чтобы --dry-run показывал план на любой машине.
+hash_file() {
+  if command -v sha256sum >/dev/null 2>&1; then
+    sha256sum "$1" | cut -c1-12
+  elif command -v shasum >/dev/null 2>&1; then
+    shasum -a 256 "$1" | cut -c1-12
+  else
+    die "не найден sha256sum — он нужен для именования релизов"
+  fi
 }
 
 check_port() {
@@ -207,6 +244,145 @@ resolve_public_url() {
   PUBLIC_URL="http://${ip}:${PORT}"
 }
 
+# Хост из ENOT_PUBLIC_URL без схемы/порта; домен для TLS и realm для coturn.
+derive_edge() {
+  local host="$PUBLIC_URL"
+  host="${host#*://}"
+  host="${host%%/*}"
+  host="${host%%:*}"
+  host="${host#[}"
+  host="${host%]}"
+  EDGE_HOST="$host"
+  DOMAIN=""
+  case "$host" in
+    ''|localhost|*.local) ;;         # пусто, localhost, mDNS — домена нет
+    [0-9]*.[0-9]*.[0-9]*.[0-9]*) ;;  # IPv4-литерал — домена нет
+    *:*) ;;                          # IPv6-литерал
+    *.*) DOMAIN="$host" ;;
+  esac
+  REALM="${DOMAIN:-$EDGE_HOST}"
+  [ -n "$REALM" ] || REALM="enotdesk"
+  if [ "$SETUP_TLS" = "1" ] && [ -n "$DOMAIN" ]; then
+    TLS_ACTIVE=1
+  else
+    TLS_ACTIVE=0
+  fi
+}
+
+apt_ready() {
+  command -v apt-get >/dev/null 2>&1 || die "apt-get не найден — $1 ставится через apt (или запустите с $2)"
+}
+
+# Креды TURN для клиентов: username — метка «годен до», password — HMAC от секрета.
+# Секрет/username прокидываются через окружение: значения ENOT_* не попадают в argv.
+compute_turn_creds() {
+  TURN_USERNAME="2000000000"
+  TURN_PASSWORD="$(TURN_USERNAME="$TURN_USERNAME" TURN_SECRET="$TURN_SECRET" "$NODE_BIN" \
+    -e 'const c=require("crypto");const u=process.env.TURN_USERNAME,s=process.env.TURN_SECRET;console.log(c.createHmac("sha1",s).update(u).digest("base64"))')"
+  TURN_URLS="stun:$REALM:3478,turn:$REALM:3478?transport=udp,turn:$REALM:3478?transport=tcp"
+}
+
+# coturn: apt-пакет + static-auth-secret (секрет живёт в env-файле 0600, чтобы
+# повторные запуски давали те же креды TURN), realm из ENOT_PUBLIC_URL.
+# Уже настроенный стек (конфиг с маркером) — только обновление env-файла; внешний
+# TURN из env (ENOT_TURN_URLS) не трогается; принудительно — только --reset-turn.
+setup_turn() {
+  local managed=0
+  if [ -f "$TURN_CONF" ] && grep -q ENOTDESK_MANAGED "$TURN_CONF"; then managed=1; fi
+  if [ "$RESET_TURN" != "1" ]; then
+    if [ "$managed" = "1" ]; then
+      info "coturn уже настроен (ENOTDESK_MANAGED в $TURN_CONF) — apt и рестарт не нужны"
+      if [ -z "$TURN_SECRET" ]; then
+        TURN_SECRET="$(sed -n 's/^static-auth-secret=//p' "$TURN_CONF" | tail -n 1)"
+      fi
+      if [ -z "$TURN_SECRET" ]; then
+        die "секрет TURN не найден ни в env-файле, ни в $TURN_CONF — перенастройте: --reset-turn"
+      fi
+      compute_turn_creds
+      return 0
+    fi
+    if [ -n "$TURN_URLS" ]; then
+      info "в env-файле уже есть ENOT_TURN_URLS — TURN-переменные не трогаю (внешний TURN)"
+      info "  перенастроить встроенный coturn: перезапустите установщик с --reset-turn"
+      return 0
+    fi
+  fi
+  info "настраиваю TURN (coturn), realm $REALM"
+  apt_ready "coturn" "--no-turn"
+  if ! command -v turnserver >/dev/null 2>&1; then
+    apt-get update -qq || die "apt-get update не удался — apt нужен для установки coturn (или запустите с --no-turn)"
+    DEBIAN_FRONTEND=noninteractive apt-get install -y coturn >/dev/null || die "не удалось установить пакет coturn"
+  fi
+  if [ -z "$TURN_SECRET" ]; then
+    TURN_SECRET="$("$NODE_BIN" -e 'console.log(require("crypto").randomBytes(32).toString("hex"))')"
+    info "сгенерирован static-auth-secret (сохранён в env-файл, 0600)"
+  fi
+  compute_turn_creds
+  local external_ip=""
+  case "$EDGE_HOST" in
+    ''|localhost) ;;
+    [0-9]*.[0-9]*.[0-9]*.[0-9]*) external_ip="$EDGE_HOST" ;;
+    *) external_ip="$(getent ahostsv4 "$EDGE_HOST" 2>/dev/null | awk '{print $1; exit}')" ;;
+  esac
+  if [ -f "$TURN_CONF" ] && ! grep -q ENOTDESK_MANAGED "$TURN_CONF"; then
+    local bak="$TURN_CONF.bak-$(date -u +%Y%m%d%H%M%S)"
+    cp -a "$TURN_CONF" "$bak"
+    info "существующий $TURN_CONF сохранён как $bak"
+  fi
+  {
+    echo "# EnotDesk managed (ENOTDESK_MANAGED) — перезаписывается install-server.sh"
+    echo "listening-port=3478"
+    echo "fingerprint"
+    echo "use-auth-secret"
+    echo "static-auth-secret=$TURN_SECRET"
+    echo "realm=$REALM"
+    echo "server-name=$REALM"
+    echo "min-port=49160"
+    echo "max-port=49200"
+    echo "no-cli"
+    echo "no-multicast-peers"
+    [ -n "$external_ip" ] && echo "external-ip=$external_ip"
+  } > "$TURN_CONF"
+  chmod 0600 "$TURN_CONF"
+  systemctl enable --now coturn >/dev/null 2>&1 || die "не удалось включить службу coturn (journalctl -u coturn)"
+  systemctl restart coturn || die "coturn не запустился — смотрите journalctl -u coturn"
+  info "coturn настроен: 3478 tcp/udp, relay 49160–49200/udp, креды TURN — в env-файле"
+}
+
+# Caddy из официального репозитория (как в docs/SERVER.md): авто-HTTPS для домена,
+# обратный прокси на 127.0.0.1:PORT. Вызывается только при домене в ENOT_PUBLIC_URL.
+ensure_caddy() {
+  info "настраиваю TLS (Caddy): $DOMAIN → 127.0.0.1:$PORT"
+  apt_ready "Caddy" "--no-tls"
+  if ! command -v caddy >/dev/null 2>&1; then
+    apt-get update -qq || die "apt-get update не удался — apt нужен для Caddy (или запустите с --no-tls)"
+    DEBIAN_FRONTEND=noninteractive apt-get install -y debian-keyring debian-archive-keyring apt-transport-https gnupg curl >/dev/null \
+      || die "не удалось установить зависимости репозитория Caddy"
+    curl -1sLf 'https://dl.cloudsmith.io/public/caddy/stable/gpg.key' | gpg --dearmor -o /usr/share/keyrings/caddy-stable-archive-keyring.gpg \
+      || die "не удалось получить ключ репозитория Caddy (dl.cloudsmith.io)"
+    curl -1sLf 'https://dl.cloudsmith.io/public/caddy/stable/debian.deb.txt' > /etc/apt/sources.list.d/caddy-stable.list \
+      || die "не удалось подключить репозиторий Caddy"
+    chmod o+r /usr/share/keyrings/caddy-stable-archive-keyring.gpg /etc/apt/sources.list.d/caddy-stable.list
+    apt-get update -qq || die "apt-get update не удался после подключения репозитория Caddy"
+    DEBIAN_FRONTEND=noninteractive apt-get install -y caddy >/dev/null || die "не удалось установить пакет caddy"
+  fi
+  if [ -f "$CADDYFILE" ] && ! grep -q ENOTDESK_MANAGED "$CADDYFILE"; then
+    local bak="$CADDYFILE.bak-$(date -u +%Y%m%d%H%M%S)"
+    cp -a "$CADDYFILE" "$bak"
+    info "существующий $CADDYFILE сохранён как $bak"
+  fi
+  {
+    echo "# EnotDesk managed (ENOTDESK_MANAGED) — перезаписывается install-server.sh"
+    echo "$DOMAIN {"
+    echo "    reverse_proxy 127.0.0.1:$PORT"
+    echo "}"
+  } > "$CADDYFILE"
+  caddy validate --config "$CADDYFILE" >/dev/null 2>&1 || die "Caddyfile не прошёл проверку (caddy validate --config $CADDYFILE)"
+  systemctl enable --now caddy >/dev/null 2>&1 || die "не удалось включить службу caddy"
+  systemctl reload caddy >/dev/null 2>&1 || systemctl restart caddy || die "caddy не запустился — смотрите journalctl -u caddy"
+  info "Caddy настроен: авто-HTTPS для $DOMAIN (порты 80/443)"
+}
+
 find_or_name_release() {
   local hash="$1" d=""
   for d in "$RELEASES_DIR"/*-"$hash"; do
@@ -246,6 +422,7 @@ merge_env_file() {
   if [ -z "$TURN_URLS" ]; then TURN_URLS="$(read_env_value ENOT_TURN_URLS)"; fi
   if [ -z "$TURN_USERNAME" ]; then TURN_USERNAME="$(read_env_value ENOT_TURN_USERNAME)"; fi
   if [ -z "$TURN_PASSWORD" ]; then TURN_PASSWORD="$(read_env_value ENOT_TURN_PASSWORD)"; fi
+  if [ -z "$TURN_SECRET" ]; then TURN_SECRET="$(read_env_value ENOT_TURN_SECRET)"; fi
   if [ -z "${ENOT_GRACE_MS:-}" ]; then GRACE_MS="$(read_env_value ENOT_GRACE_MS)"; else GRACE_MS="$ENOT_GRACE_MS"; fi
   if [ -z "${ENOT_RETENTION_DAYS:-}" ]; then RETENTION_DAYS="$(read_env_value ENOT_RETENTION_DAYS)"; else RETENTION_DAYS="$ENOT_RETENTION_DAYS"; fi
   if [ -z "${ENOT_MAX_SESSIONS:-}" ]; then MAX_SESSIONS="$(read_env_value ENOT_MAX_SESSIONS)"; else MAX_SESSIONS="$ENOT_MAX_SESSIONS"; fi
@@ -284,10 +461,32 @@ print_plan() {
   echo "  unit:               $UNIT_FILE (Restart=on-failure, EnvironmentFile)"
   echo "  bind/port:          $BIND:$PORT"
   echo "  публичный URL:      $PUBLIC_URL"
+  if [ "$SETUP_TURN" = "1" ]; then
+    if [ -f "$TURN_CONF" ] && grep -q ENOTDESK_MANAGED "$TURN_CONF"; then
+      echo "  TURN (coturn):      уже настроен — обновление только env-файла (без apt и рестарта)"
+    elif [ -n "$TURN_URLS" ]; then
+      echo "  TURN (coturn):      пропущен — в env уже есть ENOT_TURN_URLS (внешний TURN; перенастроить: --reset-turn)"
+    else
+      echo "  TURN (coturn):      поставить apt-пакет; realm $REALM; static-auth-secret — в env-файл (0600)"
+      echo "                      порты: 3478 tcp/udp, relay 49160–49200/udp"
+    fi
+  else
+    echo "  TURN (coturn):      пропущен (--no-turn)"
+  fi
+  if [ "$SETUP_TLS" = "0" ]; then
+    echo "  TLS (Caddy):        пропущен (--no-tls) — локальный http-режим"
+  elif [ "$TLS_ACTIVE" = "1" ]; then
+    echo "  TLS (Caddy):        поставить apt-пакет (официальный репозиторий); $DOMAIN → reverse_proxy 127.0.0.1:$PORT, авто-HTTPS"
+  else
+    echo "  TLS (Caddy):        пропущен — в ENOT_PUBLIC_URL нет домена; локальный http-режим (незащищённый)"
+  fi
   echo "  Node.js:            $node_state"
   echo "  health-poll:        http://127.0.0.1:$PORT/api/v1/health (до 30 с)"
   if [ "$OPEN_FIREWALL" = "1" ]; then
-    echo "  ufw:                открыть $PORT/tcp, если ufw активен"
+    local fw_ports=""
+    if [ "$TLS_ACTIVE" = "1" ]; then fw_ports="80,443/tcp, 443/udp (HTTP/3)"; else fw_ports="$PORT/tcp"; fi
+    if [ "$SETUP_TURN" = "1" ]; then fw_ports="$fw_ports, 3478 tcp/udp, 49160:49200/udp"; fi
+    echo "  ufw:                открыть $fw_ports, если ufw активен"
   else
     echo "  ufw:                не трогать"
   fi
@@ -313,7 +512,10 @@ if [ "$MODE" = "backup" ]; then
   exit 0
 fi
 
-preflight
+# --dry-run только показывает план и ничего не меняет — root/Debian для него не требуются.
+if [ "$DRY_RUN" != "1" ]; then
+  preflight
+fi
 
 if [ "$MODE" = "uninstall" ]; then
   if [ "$DRY_RUN" = "1" ]; then
@@ -340,11 +542,12 @@ merge_env_file
 check_tarball
 check_port
 
-HASH="$(sha256sum "$TARBALL" | cut -c1-12)"
+HASH="$(hash_file "$TARBALL")"
 find_or_name_release "$HASH"
 
 if [ "$DRY_RUN" = "1" ]; then
   [ -n "$PUBLIC_URL" ] || resolve_public_url
+  derive_edge
   print_plan
   exit 0
 fi
@@ -388,6 +591,28 @@ mv -Tf "$CURRENT_LINK.tmp" "$CURRENT_LINK"
 info "current -> $RELEASE"
 
 [ -n "$PUBLIC_URL" ] || resolve_public_url
+derive_edge
+
+if [ "$TLS_ACTIVE" = "1" ]; then
+  if [ "$BIND" != "127.0.0.1" ]; then
+    info "TLS включён: сервер привязывается к 127.0.0.1:$PORT, наружу — только Caddy (80/443)"
+    BIND="127.0.0.1"
+  fi
+  if [ "$PUBLIC_URL" != "https://$DOMAIN" ]; then
+    info "публичный URL: https://$DOMAIN"
+    PUBLIC_URL="https://$DOMAIN"
+  fi
+  ensure_caddy
+elif [ "$SETUP_TLS" = "1" ]; then
+  info "ВНИМАНИЕ: в ENOT_PUBLIC_URL нет домена — TLS не настроен, работает локальный http-режим"
+  info "  пароли, токены и сигналинг идут по сети открытым текстом; для продакшена задайте"
+  info "  ENOT_PUBLIC_URL=https://<домен> (A-запись на этот сервер) и перезапустите установщик"
+fi
+
+if [ "$SETUP_TURN" = "1" ]; then
+  setup_turn
+fi
+
 info "пишу env-файл $ENV_FILE (0600)"
 install -m 0600 /dev/null "$ENV_FILE"
 {
@@ -396,6 +621,7 @@ install -m 0600 /dev/null "$ENV_FILE"
   echo "ENOT_DB=$DB_PATH"
   echo "ENOT_DIST_DIR=$DIST_DIR"
   echo "ENOT_PUBLIC_URL=$PUBLIC_URL"
+  if [ -n "$TURN_SECRET" ]; then echo "ENOT_TURN_SECRET=$TURN_SECRET"; fi
   if [ -n "$TURN_URLS" ]; then echo "ENOT_TURN_URLS=$TURN_URLS"; fi
   if [ -n "$TURN_USERNAME" ]; then echo "ENOT_TURN_USERNAME=$TURN_USERNAME"; fi
   if [ -n "$TURN_PASSWORD" ]; then echo "ENOT_TURN_PASSWORD=$TURN_PASSWORD"; fi
@@ -440,10 +666,23 @@ systemctl restart "$SERVICE_NAME"
 
 if [ "$OPEN_FIREWALL" = "1" ]; then
   if command -v ufw >/dev/null 2>&1 && ufw status 2>/dev/null | grep -q "Status: active"; then
-    ufw allow "$PORT/tcp" >/dev/null
-    info "ufw: порт $PORT/tcp открыт"
+    if [ "$TLS_ACTIVE" = "1" ]; then
+      ufw allow 80/tcp >/dev/null
+      ufw allow 443/tcp >/dev/null
+      ufw allow 443/udp >/dev/null
+      info "ufw: открыты 80/tcp и 443/tcp+udp (Caddy, HTTP/3); порт $PORT отвечает только на 127.0.0.1"
+    else
+      ufw allow "$PORT/tcp" >/dev/null
+      info "ufw: порт $PORT/tcp открыт"
+    fi
+    if [ "$SETUP_TURN" = "1" ]; then
+      ufw allow 3478/tcp >/dev/null
+      ufw allow 3478/udp >/dev/null
+      ufw allow 49160:49200/udp >/dev/null
+      info "ufw: открыты 3478 tcp/udp и 49160:49200/udp (TURN)"
+    fi
   else
-    info "ufw не установлен или неактивен — правило не добавлено; откройте порт $PORT/tcp вручную"
+    info "ufw не установлен или неактивен — правила не добавлены; откройте порты вручную (см. docs/SERVER.md)"
   fi
 fi
 
@@ -465,6 +704,17 @@ if [ "$healthy" != "1" ]; then
 fi
 info "health: ok"
 
+if [ "$SETUP_TURN" = "1" ]; then
+  TURN_SUMMARY="coturn, realm $REALM (3478 tcp/udp, relay 49160–49200/udp), секрет в $ENV_FILE"
+else
+  TURN_SUMMARY="пропущен (--no-turn)"
+fi
+if [ "$TLS_ACTIVE" = "1" ]; then
+  TLS_SUMMARY="Caddy, https://$DOMAIN → 127.0.0.1:$PORT"
+else
+  TLS_SUMMARY="локальный http-режим без TLS — ВНИМАНИЕ: пароли, токены и сигналинг идут по сети открытым текстом"
+fi
+
 cat <<EOF
 
 Установка завершена.
@@ -474,6 +724,8 @@ cat <<EOF
   health:    $PUBLIC_URL/api/v1/health
   БД:        $DB_PATH (вне релизов, переживает обновление и --uninstall)
   env:       $ENV_FILE (0600)
+  TURN:      $TURN_SUMMARY
+  TLS:       $TLS_SUMMARY
 
 Первый администратор (интерактивно):
   sudo -u $ENOT_USER env ENOT_DB=$DB_PATH $NODE_BIN $CURRENT_LINK/server/main.mjs bootstrap
