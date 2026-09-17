@@ -1,7 +1,8 @@
-// Презентация серверных страниц (/downloads, /invite): стили, иконки, разметка.
+// Презентация серверных страниц (/downloads, /invite, /operator): стили, иконки, разметка.
 // Чистый модуль без сети — app.mjs только маршрутизирует. Тексты — из общего
 // словаря i18n (spec §i18n), язык выбирает app.mjs по Accept-Language.
 
+import { readFileSync } from 'node:fs';
 import { t } from '../client/lib/i18n.mjs';
 
 function esc(s) {
@@ -20,6 +21,8 @@ const BASE_STYLE = `
 :root{color-scheme:dark;--bg:#070D17;--panel:#0F1A2C;--line:#1C2C44;--text:#EAF2FF;--muted:#8FA3BF;--accent:#35E0C4}
 *{box-sizing:border-box}
 html{-webkit-text-size-adjust:100%}
+.insecure-warn{display:flex;align-items:flex-start;gap:10px;background:#2A1F0E;border-bottom:1px solid #57431F;color:#F2D49B;padding:12px 24px;font-size:14.5px;line-height:1.5}
+.insecure-warn svg{width:18px;height:18px;flex:none;margin-top:2px;color:#F2C063}
 body{margin:0;background:var(--bg);color:var(--text);font:16px/1.6 -apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,"Helvetica Neue",Arial,sans-serif}
 h1,h2,h3{margin:0;line-height:1.15}
 p{margin:0}
@@ -111,6 +114,7 @@ const PLATFORMS = [
 ];
 
 const ICONS = {
+  alert: '<path d="M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"/><line x1="12" y1="9" x2="12" y2="13"/><line x1="12" y1="17" x2="12.01" y2="17"/>',
   download: '<path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/>',
   play: '<polygon points="7 4 20 12 7 20 7 4"/>',
   shield: '<path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/><polyline points="9 12 11.5 14.5 15.5 9.5"/>',
@@ -134,6 +138,24 @@ function icon(name) {
     ? 'fill="currentColor"'
     : 'fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"';
   return `<svg viewBox="0 0 24 24" ${paint} aria-hidden="true">${ICONS[name]}</svg>`;
+}
+
+// R16i.2: честный режим без TLS. Схема — из ENOT_PUBLIC_URL, иначе из
+// x-forwarded-proto (обратный прокси), иначе прямой http сокета. На loopback
+// (127.0.0.1/localhost/::1) плашки нет: локальное использование безопасно.
+const LOOPBACK_HOSTS = new Set(['127.0.0.1', 'localhost', '::1', '[::1]']);
+
+export function isInsecurePage(req, publicUrl) {
+  const hostname = String(req?.headers?.host ?? '').replace(/:\d+$/, '').toLowerCase();
+  if (LOOPBACK_HOSTS.has(hostname) || hostname.endsWith('.localhost')) return false;
+  const url = String(publicUrl ?? '').trim().toLowerCase();
+  if (url) return !url.startsWith('https');
+  const proto = String(req?.headers?.['x-forwarded-proto'] ?? '').split(',')[0].trim().toLowerCase();
+  return proto !== 'https';
+}
+
+function insecureBanner(locale) {
+  return `<div class="insecure-warn" role="alert">${icon('alert')}<span>${esc(t('server.insecureBanner', {}, locale))}</span></div>`;
 }
 
 function page(res, title, bodyHtml, locale) {
@@ -186,7 +208,7 @@ function platformCard(platform, files, locale) {
     `<a class="btn" href="${esc(f.url)}">${icon('download')}<span>${esc(t('server.download', {}, locale))}</span></a></article>`;
 }
 
-function downloadsHtml(items, version, locale) {
+function downloadsHtml(items, version, locale, insecure = false) {
   const byPlatform = new Map();
   for (const f of items) {
     if (!byPlatform.has(f.platform)) byPlatform.set(f.platform, []);
@@ -196,7 +218,7 @@ function downloadsHtml(items, version, locale) {
   const stepItems = steps(locale).map((s, i) =>
     `<li class="step"><div class="step-head"><span class="step-num">${i + 1}</span>${icon(s.icon)}</div>` +
     `<h3>${esc(s.title)}</h3><p>${esc(s.text)}</p></li>`).join('');
-  return siteHeader(locale) +
+  return (insecure ? insecureBanner(locale) : '') + siteHeader(locale) +
     `<main><section class="wrap hero"><div class="hero-copy">` +
     `<p class="eyebrow">${esc(t('app.subtitle', {}, locale))}</p><h1>EnotDesk</h1>` +
     `<p class="lead">${esc(t('server.hero.lead', {}, locale))}</p>` +
@@ -211,8 +233,8 @@ function downloadsHtml(items, version, locale) {
     siteFooter(version, locale);
 }
 
-function inviteHtml(version, locale) {
-  return siteHeader(locale) +
+function inviteHtml(version, locale, insecure = false) {
+  return (insecure ? insecureBanner(locale) : '') + siteHeader(locale) +
     `<main class="wrap invite-page"><section class="invite-card">` +
     `<p class="eyebrow">${esc(t('server.invite.eyebrow', {}, locale))}</p>` +
     `<h1>${esc(t('server.invite.title', {}, locale))}</h1>` +
@@ -222,4 +244,32 @@ function inviteHtml(version, locale) {
     `</section></main>` + siteFooter(version, locale);
 }
 
-export { esc, page, downloadsHtml, inviteHtml };
+// Браузерный оператор: разметка живёт в web/operator.html (её проверяет контракт-тест),
+// сервер подставляет только язык, заголовок и версию. JS-модули страницы отдаются
+// статикой app.mjs (/web, /client/lib, /client/renderer, /client/locales — allowlist).
+let operatorHtmlCache = null;
+
+function operatorHtml(title, locale, version) {
+  if (!operatorHtmlCache) {
+    operatorHtmlCache = readFileSync(new URL('../web/operator.html', import.meta.url), 'utf8');
+  }
+  return operatorHtmlCache
+    .replace('__TITLE__', esc(title))
+    .replace('__VERSION__', esc(version))
+    .replace('__LOCALE__', esc(locale));
+}
+
+// CSP повторяет desktop (никакого inline-кода), но странице нужны свои ES-модули,
+// same-origin fetch/WS и blob: для сохранения принятых файлов.
+function operatorPage(res, status, locale, title, version) {
+  res.writeHead(status, {
+    'Content-Type': 'text/html; charset=utf-8',
+    'Content-Security-Policy': "default-src 'none'; script-src 'self'; style-src 'unsafe-inline'; img-src 'self'; connect-src 'self'; media-src blob:",
+    'X-Content-Type-Options': 'nosniff',
+    'X-Frame-Options': 'DENY',
+    'Cache-Control': 'no-store',
+  });
+  res.end(operatorHtml(title, locale, version));
+}
+
+export { esc, page, downloadsHtml, inviteHtml, operatorPage };

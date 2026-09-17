@@ -4,7 +4,7 @@ import assert from 'node:assert/strict';
 // Шов серверных страниц (история 9): /downloads и /invite читают общий словарь,
 // язык страницы задаётся вызывающим (app.mjs — по Accept-Language).
 
-import { page, downloadsHtml, inviteHtml } from '../pages.mjs';
+import { page, downloadsHtml, inviteHtml, isInsecurePage } from '../pages.mjs';
 import { pickLocale } from '../../client/lib/i18n.mjs';
 
 function fakeRes() {
@@ -52,4 +52,34 @@ test('pickLocale: сервер выбирает ru/en из Accept-Language, бе
   assert.equal(pickLocale('en-US,en;q=0.9'), 'en');
   assert.equal(pickLocale('de-DE'), 'ru');
   assert.equal(pickLocale(undefined), 'ru');
+});
+
+// R16i.2: честное предупреждение на страницах при http наружу (не loopback).
+
+test('http на не-loopback хосте: на страницах есть плашка о незащищённом соединении', () => {
+  const ru = downloadsHtml([], '1.0.0', 'ru', true);
+  assert.match(ru, /Соединение не защищено/);
+  assert.match(ru, /docs\/SERVER\.md/);
+  const en = inviteHtml('1.0.0', 'en', true);
+  assert.match(en, /not secure/i);
+  assert.match(en, /docs\/SERVER\.md/);
+  assert.match(downloadsHtml([], '1.0.0', 'ru', true), /role="alert"/);
+});
+
+test('https или loopback: плашки нет (по умолчанию флаг выключен)', () => {
+  for (const html of [downloadsHtml([], '1.0.0', 'ru'), inviteHtml('1.0.0', 'ru'), inviteHtml('1.0.0', 'ru', false)]) {
+    assert.doesNotMatch(html, /Соединение не защищено/);
+  }
+});
+
+test('isInsecurePage: http наружу — да; https, loopback, https из publicUrl и прокси — нет', () => {
+  const req = (host, proto) => ({ headers: { host, ...(proto ? { 'x-forwarded-proto': proto } : {}) } });
+  assert.equal(isInsecurePage(req('example.com'), ''), true); // прямой http наружу
+  assert.equal(isInsecurePage(req('example.com'), ''), true);
+  assert.equal(isInsecurePage(req('example.com', 'https'), ''), false); // за TLS-прокси
+  assert.equal(isInsecurePage(req('127.0.0.1'), ''), false); // loopback
+  assert.equal(isInsecurePage(req('localhost:8080'), ''), false);
+  assert.equal(isInsecurePage(req('[::1]:8080'), ''), false);
+  assert.equal(isInsecurePage(req('example.com'), 'https://demo.example.com'), false); // publicUrl https
+  assert.equal(isInsecurePage(req('example.com'), 'http://demo.example.com'), true); // publicUrl http
 });

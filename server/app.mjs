@@ -4,7 +4,8 @@ import fs from 'node:fs';
 import crypto from 'node:crypto';
 import { WebSocketServer } from 'ws';
 import { openDb, endLiveSessions, auditLog, runRetention } from './db.mjs';
-import { page, downloadsHtml, inviteHtml } from './pages.mjs';
+import { createMachinesStore } from './machines.mjs';
+import { page, downloadsHtml, inviteHtml, operatorPage, isInsecurePage } from './pages.mjs';
 import { t, pickLocale } from '../client/lib/i18n.mjs';
 import {
   hashPassword, verifyPassword, newToken, sha256,
@@ -82,6 +83,32 @@ const BRAND_FILES = {
   'mascot-app.png': 'image/png',
 };
 
+// Статика браузерного оператора: только разрешённые имена из каталогов репозитория —
+// traversal исключён, всё остальное 404. Это модули страницы (/web, переиспользуемые
+// client/lib и client/renderer/{dom,state}) и её словари.
+const OPERATOR_ASSETS = {
+  web: {
+    dir: '../web/',
+    files: { 'operator.mjs': 'text/javascript', 'input-source.mjs': 'text/javascript' },
+  },
+  'client/lib': {
+    dir: '../client/lib/',
+    files: {
+      'i18n.mjs': 'text/javascript', 'protocol.mjs': 'text/javascript', 'keymap.mjs': 'text/javascript',
+      'chat.mjs': 'text/javascript', 'clipboard-sync.mjs': 'text/javascript', 'file-transfer.mjs': 'text/javascript',
+      'media-toggle.mjs': 'text/javascript', 'rtc-stats.mjs': 'text/javascript',
+    },
+  },
+  'client/renderer': {
+    dir: '../client/renderer/',
+    files: { 'dom.js': 'text/javascript', 'state.js': 'text/javascript' },
+  },
+  'client/locales': {
+    dir: '../client/locales/',
+    files: { 'ru.json': 'application/json', 'en.json': 'application/json' },
+  },
+};
+
 // RFC 9110: невалидный/чужой Range игнорируем (null → 200), валидный неудовлетворимый → {unsatisfiable} (416),
 // единственный диапазон `bytes=start-end` / `bytes=start-` / `bytes=-suffix` → {start,end} (206).
 function parseRange(header, size) {
@@ -128,6 +155,7 @@ function validSignalData(data) {
 }
 
 const CONTACT_LIMITS = { name: 120, notes: 2000, tags: 10, tag: 30 };
+const MACHINE_LIMITS = { name: 120, group: 60, reason: 500, pin: 128 };
 
 function validateContactInput(body) {
   if (typeof body !== 'object' || body === null) return 'Некорректный запрос';
@@ -180,10 +208,16 @@ export function createServer(opts = {}) {
       claim: opts.limits?.claim ?? new RateLimiter(10, 60_000),
       claimId: opts.limits?.claimId ?? new RateLimiter(20, 60_000),
       accept: opts.limits?.accept ?? new RateLimiter(10, 60_000),
+      // unattended-машины: попытки claim с одного IP и порог неудачных политик
+      // на конкретную машину (подбор PIN/причины), регистрация агента по коду
+      machineClaim: opts.limits?.machineClaim ?? new RateLimiter(10, 60_000),
+      machineClaimId: opts.limits?.machineClaimId ?? new RateLimiter(5, 15 * 60_000),
+      agentRegister: opts.limits?.agentRegister ?? new RateLimiter(10, 60_000),
     },
   };
   const db = openDb(cfg.dbPath);
   endLiveSessions(db, 'server-restart'); // рестарт инвалидирует живые регистрации
+  const machinesStore = createMachinesStore(db);
 
   const live = new Map(); // sessionId -> {hostWs, opWs, operatorUserId, sigCount, sigReset, hostLostAt, opLostAt}
   let closed = false;
@@ -593,7 +627,8 @@ export function createServer(opts = {}) {
       const { limit, offset } = listParams(url);
       const items = db.prepare(`
         SELECT s.id, s.contact_id AS contactId, s.operator_id AS operatorId,
-               u.name AS operatorName, s.state, s.created_at AS createdAt,
+               u.name AS operatorName, s.state, s.machine_id AS machineId,
+               s.created_at AS createdAt,
                s.started_at AS startedAt, s.ended_at AS endedAt, s.end_reason AS endReason
         FROM sessions s LEFT JOIN users u ON u.id = s.operator_id
         ORDER BY s.created_at DESC LIMIT ? OFFSET ?`).all(limit, offset);
@@ -710,6 +745,167 @@ export function createServer(opts = {}) {
       return ok(res, 200, { iceServers });
     }
 
+    // ---- machines (unattended); отказные тексты — через словари i18n, язык запроса ----
+    if (p === '/machines' && req.method === 'GET') {
+      if (!user) return err(res, 401, 'unauthorized', 'Требуется авторизация');
+      if (!['admin', 'operator'].includes(user.role)) return err(res, 403, 'forbidden', 'Недостаточно прав');
+      const { limit, offset } = listParams(url);
+      return ok(res, 200, machinesStore.list({ limit, offset }));
+    }
+    if (p === '/machines' && req.method === 'POST') {
+      if (!user) return err(res, 401, 'unauthorized', 'Требуется авторизация');
+      if (user.role !== 'admin') return err(res, 403, 'forbidden', 'Недостаточно прав');
+      const locale = pickLocale(req.headers['accept-language']);
+      const { name, group } = body || {};
+      if (typeof name !== 'string' || name.trim().length < 1 || name.length > MACHINE_LIMITS.name) {
+        return err(res, 400, 'bad_request', t('machines.nameLength', {}, locale));
+      }
+      if (group !== undefined && (typeof group !== 'string' || group.trim().length > MACHINE_LIMITS.group)) {
+        return err(res, 400, 'bad_request', t('machines.groupLength', {}, locale));
+      }
+      const { machine, code, expiresAt } = machinesStore.createOnboarding({
+        name: name.trim(), groupName: (group ?? '').trim(), createdBy: user.id,
+      });
+      auditLog(db, user.id, 'machine.create', machine.id, { name: machine.name, group: machine.groupName });
+      // открытый текст кода уходит один раз; в БД останется только хеш
+      return ok(res, 201, { machine, code, expiresAt });
+    }
+    m = p.match(/^\/machines\/([^/]+)\/claim$/);
+    if (m && req.method === 'POST') {
+      const locale = pickLocale(req.headers['accept-language']);
+      if (!cfg.limits.machineClaim.take(`ip:${ip(req)}`) || cfg.limits.machineClaimId.exceeded(`id:${m[1]}`)) {
+        return err(res, 429, 'rate_limited', t('machines.claimLimited', {}, locale));
+      }
+      if (!user) return err(res, 401, 'unauthorized', 'Требуется авторизация');
+      if (!['admin', 'operator'].includes(user.role)) return err(res, 403, 'forbidden', 'Недостаточно прав');
+      const machine = machinesStore.get(m[1]);
+      if (!machine) return err(res, 404, 'not_found', t('machines.notFound', {}, locale));
+      // отказ политики фиксируется в аудите; значение PIN в тексты и журнал не подставляется
+      const deny = (code, key, status) => {
+        auditLog(db, machine.id, 'machine.claim.deny', machine.id, { unattended: true, code, operatorId: user.id });
+        return err(res, status, code, t(key, {}, locale));
+      };
+      if (machine.revoked_at) return err(res, 409, 'machine_revoked', t('machines.revoked', {}, locale));
+      if (!machine.agent_token_hash) return err(res, 409, 'not_registered', t('machines.notRegistered', {}, locale));
+      const busy = db.prepare("SELECT count(*) c FROM sessions WHERE machine_id = ? AND state != 'ended'").get(machine.id).c;
+      if (busy > 0) return err(res, 409, 'machine_busy', t('machines.busy', {}, locale));
+      const reason = typeof body?.reason === 'string' ? body.reason.trim() : '';
+      if (reason.length < 1 || reason.length > MACHINE_LIMITS.reason) {
+        return deny('reason_required', 'machines.reasonRequired', 400);
+      }
+      if (machine.pin_hash) {
+        const pin = body?.pin;
+        if (typeof pin !== 'string' || !pin) return deny('pin_required', 'machines.pinRequired', 400);
+        if (!machinesStore.verifyPin(machine, pin)) {
+          // порог бьют только неудачные попытки: верный PIN не остаётся запертым
+          cfg.limits.machineClaimId.take(`id:${machine.id}`);
+          return deny('bad_pin', 'machines.badPin', 403);
+        }
+      }
+      // успех: host сеанса — агент с машинным токеном; согласие человека не нужно,
+      // политику (причина + PIN) сервер уже проверил сам
+      const sessionId = newSessionId(db);
+      const claimId = newClaimId();
+      const nowIso = new Date().toISOString();
+      const lease = new Date(Date.now() + cfg.leaseMs).toISOString();
+      db.prepare(`INSERT INTO sessions (id, password_hash, host_token_hash, state, operator_id, claim_id, machine_id, created_at, started_at, lease_expires_at)
+                  VALUES (?,?,?,?,?,?,?,?,?,?)`)
+        .run(sessionId, hashPassword(sessionPassword(8)), machine.agent_token_hash, 'pending-consent',
+             user.id, claimId, machine.id, nowIso, nowIso, lease);
+      auditLog(db, machine.id, 'machine.claim', sessionId, { unattended: true, reason, operatorId: user.id });
+      return ok(res, 201, {
+        sessionId, claimId, machineId: machine.id,
+        operator: { id: user.id, name: user.name },
+        state: 'pending-consent',
+      });
+    }
+    m = p.match(/^\/machines\/([^/]+)\/pin$/);
+    if (m && req.method === 'POST') {
+      if (!user) return err(res, 401, 'unauthorized', 'Требуется авторизация');
+      if (user.role !== 'admin') return err(res, 403, 'forbidden', 'Недостаточно прав');
+      const locale = pickLocale(req.headers['accept-language']);
+      const machine = machinesStore.get(m[1]);
+      if (!machine) return err(res, 404, 'not_found', t('machines.notFound', {}, locale));
+      const pin = body?.pin;
+      if (pin == null || pin === '') {
+        machinesStore.setPin(machine.id, null);
+        auditLog(db, user.id, 'machine.pin', machine.id, { set: false });
+        return ok(res, 200, { ok: true, hasPin: false });
+      }
+      if (typeof pin !== 'string' || pin.length < 4 || pin.length > MACHINE_LIMITS.pin) {
+        return err(res, 400, 'bad_request', t('machines.pinLength', {}, locale));
+      }
+      machinesStore.setPin(machine.id, pin);
+      auditLog(db, user.id, 'machine.pin', machine.id, { set: true });
+      return ok(res, 200, { ok: true, hasPin: true });
+    }
+    m = p.match(/^\/machines\/([^/]+)\/revoke$/);
+    if (m && req.method === 'POST') {
+      if (!user) return err(res, 401, 'unauthorized', 'Требуется авторизация');
+      if (user.role !== 'admin') return err(res, 403, 'forbidden', 'Недостаточно прав');
+      const locale = pickLocale(req.headers['accept-language']);
+      const machine = machinesStore.get(m[1]);
+      if (!machine || !machinesStore.revoke(machine.id)) {
+        return err(res, 404, 'not_found', t('machines.revokeNotFound', {}, locale));
+      }
+      // живые сеансы отозванной машины завершаются честной причиной
+      for (const row of db.prepare("SELECT id FROM sessions WHERE machine_id = ? AND state != 'ended'").all(machine.id)) {
+        endSession(row.id, 'machine-revoked');
+      }
+      auditLog(db, user.id, 'machine.revoke', machine.id, { name: machine.name });
+      return ok(res, 200, { ok: true });
+    }
+    m = p.match(/^\/machines\/([^/]+)$/);
+    if (m && req.method === 'DELETE') {
+      if (!user) return err(res, 401, 'unauthorized', 'Требуется авторизация');
+      if (user.role !== 'admin') return err(res, 403, 'forbidden', 'Недостаточно прав');
+      const locale = pickLocale(req.headers['accept-language']);
+      const machine = machinesStore.get(m[1]);
+      if (!machine) return err(res, 404, 'not_found', t('machines.notFound', {}, locale));
+      machinesStore.delete(machine.id);
+      auditLog(db, user.id, 'machine.delete', machine.id, { name: machine.name });
+      return ok(res, 200, { ok: true });
+    }
+
+    // ---- agent (машина как клиент; аутентификация токеном машины) ----
+    if (p === '/agent/register' && req.method === 'POST') {
+      const locale = pickLocale(req.headers['accept-language']);
+      if (!cfg.limits.agentRegister.take(ip(req))) return err(res, 429, 'rate_limited', t('machines.registerLimited', {}, locale));
+      const { code, name, os, version } = body || {};
+      if (typeof code !== 'string' || !code ||
+          typeof name !== 'string' || name.trim().length < 1 || name.length > MACHINE_LIMITS.name ||
+          (os !== undefined && (typeof os !== 'string' || os.length > 60)) ||
+          (version !== undefined && (typeof version !== 'string' || version.length > 60))) {
+        return err(res, 400, 'bad_request', t('machines.registerBad', {}, locale));
+      }
+      const r = machinesStore.register({ code, name: name.trim(), os: os ?? '', version: version ?? '' });
+      if (!r) return err(res, 400, 'bad_code', t('machines.badCode', {}, locale));
+      auditLog(db, r.machine.id, 'machine.register', r.machine.id, { os: r.machine.os, version: r.machine.agentVersion });
+      return ok(res, 201, { machineId: r.machine.id, name: r.machine.name, token: r.token });
+    }
+    if (p === '/agent/session' && req.method === 'GET') {
+      const locale = pickLocale(req.headers['accept-language']);
+      const machine = machinesStore.machineByToken(bearer(req) ?? '');
+      if (!machine) return err(res, 401, 'unauthorized', t('machines.tokenRequired', {}, locale));
+      const s = db.prepare(`
+        SELECT s.id, s.state, s.claim_id, u.id AS opId, u.name AS opName
+        FROM sessions s LEFT JOIN users u ON u.id = s.operator_id
+        WHERE s.machine_id = ? AND s.state != 'ended'
+        ORDER BY s.created_at DESC LIMIT 1`).get(machine.id);
+      if (!s) return err(res, 404, 'no_session', t('machines.noSession', {}, locale));
+      return ok(res, 200, {
+        sessionId: s.id, state: s.state, claimId: s.claim_id,
+        operator: s.opId ? { id: s.opId, name: s.opName } : null,
+      });
+    }
+    if (p === '/agent/heartbeat' && req.method === 'POST') {
+      const locale = pickLocale(req.headers['accept-language']);
+      const machine = machinesStore.machineByToken(bearer(req) ?? '');
+      if (!machine) return err(res, 401, 'unauthorized', t('machines.tokenRequired', {}, locale));
+      machinesStore.touch(machine.id);
+      return ok(res, 200, { ok: true });
+    }
+
     // ---- pages / brand / downloads ----
     if (p === '/' && req.method === 'GET' && !req.url.startsWith('/api')) {
       res.writeHead(302, { Location: '/downloads' });
@@ -718,7 +914,8 @@ export function createServer(opts = {}) {
     }
     if (p === '/downloads' && req.method === 'GET' && !req.url.startsWith('/api')) {
       const locale = pickLocale(req.headers['accept-language']);
-      return page(res, t('server.titleDownloads', {}, locale), downloadsHtml(distFiles(), cfg.version, locale), locale);
+      const insecure = isInsecurePage(req, cfg.publicUrl);
+      return page(res, t('server.titleDownloads', {}, locale), downloadsHtml(distFiles(), cfg.version, locale, insecure), locale);
     }
     if (p === '/downloads' && req.method === 'GET') {
       return ok(res, 200, { items: distFiles() });
@@ -777,7 +974,35 @@ export function createServer(opts = {}) {
     }
     if (p === '/invite' && req.method === 'GET' && !req.url.startsWith('/api')) {
       const locale = pickLocale(req.headers['accept-language']);
-      return page(res, t('server.titleInvite', {}, locale), inviteHtml(cfg.version, locale), locale);
+      const insecure = isInsecurePage(req, cfg.publicUrl);
+      return page(res, t('server.titleInvite', {}, locale), inviteHtml(cfg.version, locale, insecure), locale);
+    }
+
+    // ---- браузерный оператор (spec: истории 14–19) ----
+    m = p.match(/^\/(web|client\/lib|client\/renderer|client\/locales)\/([^/]+)$/);
+    if (m && req.method === 'GET' && !req.url.startsWith('/api')) {
+      const group = OPERATOR_ASSETS[m[1]];
+      let name;
+      try { name = decodeURIComponent(m[2]); } catch { name = ''; }
+      const type = group?.files[name];
+      if (!type) return err(res, 404, 'not_found', 'Файл не найден');
+      let data;
+      try { data = fs.readFileSync(new URL(group.dir + name, import.meta.url)); }
+      catch { return err(res, 404, 'not_found', 'Файл не найден'); }
+      res.writeHead(200, { 'Content-Type': type, 'Cache-Control': 'no-cache' });
+      return res.end(data);
+    }
+    if (p === '/operator' && req.method === 'GET' && !req.url.startsWith('/api')) {
+      const locale = pickLocale(req.headers['accept-language']);
+      // Навигация браузера не шлёт Authorization: роль берём из cookie, которую
+      // ставит сама страница после login; каждый /api и WS всё равно за RBAC.
+      const cookie = /(?:^|;\s*)enot_op=([^;]+)/.exec(req.headers.cookie ?? '');
+      const opUser = user ?? (cookie
+        ? authUser({ headers: { authorization: `Bearer ${decodeURIComponent(cookie[1])}` }, socket: { remoteAddress: '' } })
+        : null);
+      const status = opUser && ['admin', 'operator'].includes(opUser.role) ? 200
+        : opUser?.role === 'auditor' ? 403 : 401;
+      return operatorPage(res, status, locale, t('web.title', {}, locale), cfg.version);
     }
 
     return err(res, 404, 'not_found', 'Маршрут не найден');
