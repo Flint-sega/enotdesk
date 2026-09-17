@@ -44,7 +44,7 @@ function memoryTokenStore() {
   return { load: () => t, save: (v) => { t = v; }, clear: () => { t = null; } };
 }
 
-export function createAgent({ api, signal, native, policy }) {
+export function createAgent({ api, signal, native, policy, termHost, rtc }) {
   const missing = !api || typeof api.register !== 'function' || typeof api.session !== 'function'
     || typeof api.heartbeat !== 'function' || typeof api.decision !== 'function' ? 'api (register/session/heartbeat/decision)'
     : typeof signal !== 'function' ? 'signal (фабрика сигнальных клиентов)'
@@ -62,6 +62,13 @@ export function createAgent({ api, signal, native, policy }) {
   const tokenStore = p.tokenStore ?? memoryTokenStore();
   const log = p.log ?? { info() {}, warn() {}, error() {} };
   const onBackoff = typeof p.onBackoff === 'function' ? p.onBackoff : null;
+  // Терминал (R09): host-сторона DC-канала `term`; агент только оповещает
+  // heartbeat'ом о факте жизни терминала (аудит переходов — на сервере) и
+  // закрывает его вместе с сеансом. Открытие канала — только approved-сеанс.
+  const term = termHost && typeof termHost.isActive === 'function' ? termHost : null;
+  // RTC-фабрика терминала (R09): возвращает pc-подобный объект или null, если
+  // в окружении нет RTCPeerConnection — тогда терминал честно недоступен.
+  const rtcFactory = typeof rtc === 'function' ? rtc : null;
 
   let running = false;
   let state = 'idle'; // idle|registering|waiting|connecting|online|backoff|revoked|error|stopped
@@ -122,6 +129,46 @@ export function createAgent({ api, signal, native, policy }) {
     let finish = null;
     const done = new Promise((resolve) => { finish = resolve; });
     resolveSessionDone = () => finish('stopped');
+    // Терминал (R09): pc без медиа-треков — данных-каналам медиа не нужно.
+    // Оператор офферит, агент отвечает answer'ом; канал 'term' уходит в termHost.
+    let termPc = null;
+    let termIce = [];
+    const closeTermRtc = () => {
+      if (termPc) { try { termPc.close(); } catch { /* уже закрыт */ } termPc = null; }
+      termIce = [];
+    };
+    const answerTermOffer = async (sdp) => {
+      const pc = termPc;
+      if (!pc) return;
+      try {
+        await pc.setRemoteDescription({ type: 'offer', sdp });
+        for (const c of termIce.splice(0)) pc.addIceCandidate(c).catch(() => { /* устаревший */ });
+        const answer = await pc.createAnswer();
+        await pc.setLocalDescription(answer);
+        client.sendSignal({ description: { type: 'answer', sdp: pc.localDescription.sdp } });
+      } catch (e) {
+        log.warn(`Агент: ответ терминала не удался (${e.message})`);
+      }
+    };
+    const openTermRtc = () => {
+      if (termPc || !term || !rtcFactory) return;
+      let pc;
+      try { pc = rtcFactory(); } catch { pc = null; }
+      if (!pc) {
+        log.warn('Агент: терминал недоступен — в этом окружении нет RTCPeerConnection');
+        return;
+      }
+      termPc = pc;
+      pc.onicecandidate = (e) => {
+        if (!e?.candidate) return;
+        try { client.sendSignal({ candidate: e.candidate.toJSON ? e.candidate.toJSON() : e.candidate }); } catch { /* сигнал уже закрыт */ }
+      };
+      pc.ondatachannel = (e) => {
+        const ch = e?.channel;
+        if (ch && ch.label === 'term') term.handleChannel(ch); // открытие — только approved-сеанс: мы уже в нём
+        else if (ch) { try { ch.close(); } catch { /* уже закрыт */ } }
+      };
+    };
     const unsubscribe = client.onMessage((msg) => {
       gate.onSignal(msg);
       if (gate.needInputReset()) native.end();
@@ -133,11 +180,23 @@ export function createAgent({ api, signal, native, policy }) {
           })
           .catch(() => { /* транзиентно: replay approved придёт при переподключении */ });
       }
+      if (msg.type === 'approved') openTermRtc();
+      if (msg.type === 'signal' && termPc) {
+        const d = msg.data;
+        if (d?.description?.type === 'offer' && typeof d.description.sdp === 'string') {
+          void answerTermOffer(d.description.sdp);
+        } else if (d?.candidate) {
+          if (termPc.remoteDescription) termPc.addIceCandidate(d.candidate).catch(() => { /* устаревший */ });
+          else termIce.push(d.candidate);
+        }
+      }
       if (msg.type === 'ended') finish('over');
       if (msg.type === 'socket-closed') finish('dropped');
     });
     const wsBeat = setInterval(() => {
-      try { client.heartbeat(); } catch { /* сокет уже мёртв — разрыв обработается выше */ }
+      try {
+        client.heartbeat({ termActive: term ? !!term.isActive() : false });
+      } catch { /* сокет уже мёртв — разрыв обработается выше */ }
     }, heartbeatMs);
     try {
       await client.open({ role: 'host', sessionId: body.sessionId, token });
@@ -154,6 +213,8 @@ export function createAgent({ api, signal, native, policy }) {
       clearInterval(wsBeat);
       unsubscribe();
       releaseInput();
+      closeTermRtc();
+      if (term) { try { term.close(); } catch { /* терминал мог уже умереть */ } }
       try { client.close(); } catch { /* уже закрыт */ }
       currentSignal = null;
       resolveSessionDone = null;

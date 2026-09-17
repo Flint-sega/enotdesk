@@ -95,8 +95,15 @@ export function createSignalClient({ url, wsFactory = (u) => new WebSocket(u), a
       ws.send(JSON.stringify(message));
     },
 
-    heartbeat() {
-      if (ws && ws.readyState === 1) ws.send(JSON.stringify({ type: 'heartbeat' }));
+    // extra — allowlist-расширение heartbeat (R09): только termActive boolean,
+    // прочие поля не уходят; без аргумента сообщение как раньше.
+    heartbeat(extra) {
+      if (!ws || ws.readyState !== 1) return;
+      const payload = { type: 'heartbeat' };
+      if (extra && typeof extra === 'object' && typeof extra.termActive === 'boolean') {
+        payload.termActive = extra.termActive;
+      }
+      ws.send(JSON.stringify(payload));
     },
 
     close() {

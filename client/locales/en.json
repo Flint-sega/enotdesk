@@ -334,6 +334,7 @@
   "term.exited": "Shell exited ({reason})",
   "term.busy": "A terminal is already open on this machine.",
   "term.failed": "Terminal failed to start.",
+  "term.unavailable": "Terminal is available only in machine sessions.",
   "term.closed": "Terminal closed.",
   "term.placeholder": "command…",
   "term.send": "Send",

@@ -16,6 +16,8 @@ import { INPUT_KEYS } from './lib/protocol.mjs';
 import { normalizeServerUrl } from './lib/server-url.mjs';
 import { resolveServerUrl, DEFAULT_SERVER_URL } from './lib/first-run.mjs';
 import { createAgent, createAgentApi } from './lib/agent.mjs';
+import { createBridgeRelay, BRIDGE_IPC } from './agent-bridge/relay.mjs';
+import { createTermHost } from './lib/term.mjs';
 import { UPDATE_REPO, updateFeedUrl, platformFeedName, updateDecision } from './lib/updater.mjs';
 import { isNewerVersion } from './lib/version-check.mjs';
 import { t, setLocale } from './lib/i18n.mjs';
@@ -408,6 +410,66 @@ function createWindow() {
   win.loadFile(path.join(import.meta.dirname, 'renderer', 'index.html'));
 }
 
+// Скрытый renderer-мост RTC терминала (R09): по approved (rtc()) создаётся
+// невидимое BrowserWindow со страницей client/agent-bridge/, где есть нативный
+// RTCPeerConnection. Offer/answer/ICE и данные DataChannel релеются по
+// фиксированным IPC-каналам (BRIDGE_IPC) через createBridgeRelay. Мост живёт
+// только внутри сеанса: pcLike.close() на ended/stop; краш страницы не роняет
+// агента — терминал честно закрывается (relay.destroy → onclose канала).
+function createAgentRtc() {
+  return () => {
+    let win = null;
+    let relay = null;
+    const ipcHandlers = [];
+    const cleanup = () => {
+      for (const [channel, handler] of ipcHandlers.splice(0)) ipcMain.removeListener(channel, handler);
+      if (win) {
+        const w = win;
+        win = null;
+        try { w.destroy(); } catch { /* уже мёртв */ }
+      }
+    };
+    try {
+      win = new BrowserWindow({
+        show: false,
+        webPreferences: {
+          preload: path.join(import.meta.dirname, 'agent-bridge', 'preload.cjs'),
+          contextIsolation: true,
+          nodeIntegration: false,
+          sandbox: true,
+        },
+      });
+    } catch (e) {
+      console.error(`[enotdesk-agent] мост RTC недоступен: ${e.message}`);
+      return null;
+    }
+    win.on('closed', () => { win = null; });
+    relay = createBridgeRelay({
+      send: (channel, payload) => { if (win && !win.isDestroyed()) win.webContents.send(channel, payload); },
+      onClosed: cleanup,
+      log: console,
+    });
+    // отправитель — только наше окно: чужие ipc-посылки не проходят
+    for (const channel of Object.values(BRIDGE_IPC)) {
+      const handler = (e, payload) => {
+        if (win && !win.isDestroyed() && e.sender === win.webContents) relay.handleMessage(channel, payload);
+      };
+      ipcMain.on(channel, handler);
+      ipcHandlers.push([channel, handler]);
+    }
+    win.webContents.on('did-finish-load', () => relay.markReady()); // мост готов получать offer
+    win.webContents.on('render-process-gone', () => {
+      console.warn('[enotdesk-agent] мост RTC упал — терминал честно закрывается');
+      relay.destroy();
+    });
+    win.loadFile(path.join(import.meta.dirname, 'agent-bridge', 'page.html')).catch((e) => {
+      console.error(`[enotdesk-agent] страница моста не загрузилась: ${e.message}`);
+      relay.destroy();
+    });
+    return relay.pcLike;
+  };
+}
+
 // Агент-служба (EDESK_AGENT=1): тот же цикл, что у клиента-помощника, но без
 // окна и рендерера. Токен машины — файл в отдельном agent-профиле (0600),
 // в рендерер не попадает никогда — рендерера нет. Логи честные, в stdout.
@@ -432,6 +494,12 @@ function startAgentMode() {
     api: createAgentApi({ baseUrl: settings.serverUrl }),
     signal: () => createSignalClient({ url: new URL('/signal', settings.serverUrl).toString().replace(/^http/, 'ws') }),
     native: nativeInput,
+    // Терминал (R09): оболочка поднимается от контекста службы; консольный
+    // пользователь неизвестен v1 — spawnShellFor честно пометит 'service'.
+    termHost: createTermHost({ platform: process.platform }),
+    // pc терминала живёт в скрытом renderer-мосте: в main-процессе Electron
+    // нет RTCPeerConnection. Не собрали мост — createAgent честно предупредит.
+    rtc: createAgentRtc(),
     policy: {
       name: process.env.EDESK_AGENT_NAME || os.hostname(),
       os: process.platform,
