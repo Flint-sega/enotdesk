@@ -1,5 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
+import { readFileSync } from 'node:fs';
+import path from 'node:path';
 import { createAgent, createAgentApi, createIceServersFetcher } from '../lib/agent.mjs';
 import { createNativeInput, inertAdapter } from '../lib/native-input.mjs';
 
@@ -405,4 +407,35 @@ test('инвентарь (R06): getInventory уходит с машинным he
     agent.stop();
     await sleep(10);
   }
+});
+
+test('проводка TURN (R09): вся цепь — createAgentApi → createIceServersFetcher → хук релея', async () => {
+  const reqs = [];
+  const servers = [{ urls: ['turn:t:3478'], username: 'u', credential: 'p' }];
+  const fetchImpl = async (url, init) => {
+    reqs.push({ url: String(url), auth: init.headers.Authorization });
+    return { status: 200, json: async () => ({ iceServers: servers }) };
+  };
+  const api = createAgentApi({ baseUrl: 'http://srv:8080', fetchImpl });
+  const tokenStore = memoryStore();
+  tokenStore.save('tok-machine');
+  // токен берётся из store на момент открытия терминала, не при старте агента
+  const fetchIceServers = createIceServersFetcher({ api, tokenLoad: () => tokenStore.load() });
+  assert.deepEqual(await fetchIceServers(), { iceServers: servers }, 'iceServers дошли до хука createBridgeRelay');
+  assert.deepEqual(reqs, [{ url: 'http://srv:8080/api/v1/rtc-config', auth: 'Bearer tok-machine' }],
+    'rtc-config запрошен с машинным (host-)токеном');
+  // токен отозван из store — хук честно падает, релей деградирует в []
+  tokenStore.clear();
+  await assert.rejects(fetchIceServers(), /токена машины ещё нет/);
+});
+
+test('проводка TURN (R09): main подключает fetchIceServers к createBridgeRelay и собирает его из tokenStore', () => {
+  // createAgentRtc живёт в Electron-main (импорт невозможен) — контракт проводки
+  // проверяем по тексту, как контракт-тесты рендерера и web-оператора.
+  const main = readFileSync(path.join(import.meta.dirname, '..', 'main.mjs'), 'utf8');
+  assert.match(main, /createBridgeRelay\(\{[\s\S]{0,400}?\bfetchIceServers\b,/,
+    'createBridgeRelay вызывается с fetchIceServers — иначе ICE_CONFIG не уходит мосту');
+  assert.match(main, /createAgentRtc\(\{[\s\S]{0,400}?fetchIceServers\b/);
+  assert.match(main, /createIceServersFetcher\(\{[\s\S]{0,200}?tokenStore\.load\(\)/,
+    'fetcher собирается с машинным токеном из tokenStore');
 });

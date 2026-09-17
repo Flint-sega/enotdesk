@@ -14,6 +14,7 @@ contextBridge.exposeInMainWorld('agentRtc', {
   // main → мост
   onOffer: (cb) => subscribe('enot:rtc-offer', cb),
   onIce: (cb) => subscribe('enot:rtc-ice', cb),
+  onIceConfig: (cb) => subscribe('enot:rtc-ice-config', cb),
   onToDc: (cb) => subscribe('enot:term-dc-to', cb),
   // мост → main
   sendAnswer: (sdp) => ipcRenderer.send('enot:rtc-answer', sdp),

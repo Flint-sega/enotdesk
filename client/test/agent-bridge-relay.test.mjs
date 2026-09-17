@@ -5,6 +5,9 @@
 
 import test from 'node:test';
 import assert from 'node:assert/strict';
+import fs from 'node:fs';
+import path from 'node:path';
+import { fileURLToPath } from 'node:url';
 import { createBridgeRelay, BRIDGE_IPC } from '../agent-bridge/relay.mjs';
 
 function makeRelay(overrides = {}) {
@@ -94,15 +97,97 @@ test('бэкпрешшн: PAUSE ставит отправку в очередь 
   relay.handleMessage(BRIDGE_IPC.RESUME);
   const flushed = dcTos(sends).map(([, p]) => JSON.parse(p).data[0]);
   assert.deepEqual(flushed, ['a', 'b']); // порядок очереди сохранён
+});
 
-  // потолок очереди: сверх 1 МБ свежие куски роняются (хвост хранит кольцо терминала)
+test('кап очереди: после переполнения остаётся точный хвост ≤ 1 МБ, свежий кусок свыше капа роняется', () => {
+  const { relay, sends } = makeRelay();
+  let channel = null;
+  relay.pcLike.ondatachannel = (e) => { channel = e.channel; };
+  relay.handleMessage(BRIDGE_IPC.DC_OPEN, 'term');
+  assert.ok(channel, 'канал для капа не создан');
+
   relay.handleMessage(BRIDGE_IPC.PAUSE);
-  const big = 'x'.repeat(700 * 1024);
-  channel.send({ type: 'out', data: big });
-  channel.send({ type: 'out', data: big }); // 1.4 МБ > капа — этот и следующие роняются
+  const chunk = (i) => `k${String(i).padStart(3, '0')}${'x'.repeat(99_996)}`; // ровно 100000 символов
+  const chunkBytes = 100_024; // {"type":"out","data":""} — 24 байта обёртки + 100000 данных
+  for (let i = 1; i <= 12; i += 1) channel.send({ type: 'out', data: chunk(i) }); // 12 × 100024 > кап
+  channel.send({ type: 'out', data: `BIG${'y'.repeat(1_500_000)}` }); // сам больше капа — роняется целиком
   relay.handleMessage(BRIDGE_IPC.RESUME);
-  const total = dcTos(sends).map(([, p]) => JSON.parse(p).data.length).reduce((s, n) => s + n, 0);
-  assert.ok(total <= 1.5 * 1024 * 1024, `очередь превысила кап: ${total}`);
+
+  const flushed = dcTos(sends).map(([, p]) => JSON.parse(p).data);
+  assert.equal(flushed.length, 10, `в очереди ${flushed.length} кусков — кап не держит хвост ≤ 1 МБ`);
+  assert.ok(flushed[0].startsWith('k003'), `хвост должен начинаться с k003, а начался с ${flushed[0].slice(0, 4)}`);
+  assert.ok(flushed.at(-1).startsWith('k012'), 'хвост должен заканчиваться на k012');
+  assert.ok(flushed.every((d) => !d.startsWith('BIG')), 'кусок крупнее капа попал в очередь');
+  // точная сумма хвоста (10 кусков × 100024 байта, посчитано вручную), а не «что-то ≤ 1.5 МБ»:
+  // без капа в очереди 13 кусков (1.3 МБ+), при «роняем свежий» — голова k001 — оба красные
+  assert.equal(flushed.length * chunkBytes, 1_000_240, 'сумма хвоста не 10 кусков — кап или куски сломались');
+  assert.ok(flushed.length * chunkBytes <= 1 << 20, 'хвост превысил кап 1 МБ');
+});
+
+test('rtc-config: iceServers уходят мосту до offer, один раз за релей', async () => {
+  const ice = [{ urls: ['turn:turn.example:3478'], username: 'u', credential: 'p' }];
+  const { relay, sends } = makeRelay({ fetchIceServers: async () => ({ iceServers: ice }) });
+  relay.markReady();
+  await relay.pcLike.setRemoteDescription({ type: 'offer', sdp: 'v=0 op-offer' });
+  const idxCfg = sends.findIndex(([ch]) => ch === BRIDGE_IPC.ICE_CONFIG);
+  const idxOffer = sends.findIndex(([ch]) => ch === BRIDGE_IPC.OFFER);
+  assert.ok(idxCfg !== -1, 'iceServers не дошли до моста');
+  assert.ok(idxCfg < idxOffer, 'конфиг ушёл позже offer — мост создаст pc без TURN');
+  assert.deepEqual(sends[idxCfg][1], { iceServers: ice, reason: null });
+  assert.deepEqual(relay.iceServersInfo(), { iceServers: ice, reason: null });
+  // повторный offer не перезапрашивает rtc-config — одно открытие терминала
+  await relay.pcLike.setRemoteDescription({ type: 'offer', sdp: 'v=0 again' });
+  assert.equal(sends.filter(([ch]) => ch === BRIDGE_IPC.ICE_CONFIG).length, 1);
+});
+
+test('rtc-config недоступен/пуст — мост получает iceServers:[] с честной причиной, offer не теряется', async () => {
+  const fail = makeRelay({ fetchIceServers: async () => { throw new Error('сеть недоступна'); } });
+  fail.relay.markReady();
+  await fail.relay.pcLike.setRemoteDescription({ type: 'offer', sdp: 'v=0' });
+  const cfg = fail.sends.find(([ch]) => ch === BRIDGE_IPC.ICE_CONFIG)?.[1];
+  assert.deepEqual(cfg, { iceServers: [], reason: 'rtc-config недоступен: сеть недоступна' });
+  assert.ok(fail.sends.some(([ch, p]) => ch === BRIDGE_IPC.OFFER && p === 'v=0'), 'offer потерян после сбоя rtc-config');
+  assert.deepEqual(fail.relay.iceServersInfo().iceServers, []);
+
+  const empty = makeRelay({ fetchIceServers: async () => ({ iceServers: [] }) });
+  empty.relay.markReady();
+  await empty.relay.pcLike.setRemoteDescription({ type: 'offer', sdp: 'v=0' });
+  assert.deepEqual(empty.sends.find(([ch]) => ch === BRIDGE_IPC.ICE_CONFIG)?.[1], {
+    iceServers: [],
+    reason: 'rtc-config пуст: TURN не настроен',
+  });
+});
+
+test('без fetchIceServers релей ведёт себя как прежде: конфиг не уходит, offer доходит', async () => {
+  const { relay, sends } = makeRelay();
+  relay.markReady();
+  await relay.pcLike.setRemoteDescription({ type: 'offer', sdp: 'v=0' });
+  assert.equal(sends.filter(([ch]) => ch === BRIDGE_IPC.ICE_CONFIG).length, 0);
+  assert.ok(sends.some(([ch, p]) => ch === BRIDGE_IPC.OFFER && p === 'v=0'));
+});
+
+test('гонка: ANSWER пришёл раньше createAnswer — ранний ответ применяется, кэш одноразовый', async () => {
+  const { relay } = makeRelay();
+  relay.markReady();
+  relay.handleMessage(BRIDGE_IPC.ANSWER, 'v=0 early-answer'); // мост ответил раньше запроса
+  let boom;
+  try {
+    const early = await Promise.race([
+      relay.pcLike.createAnswer(),
+      new Promise((_, rej) => { boom = setTimeout(() => rej(new Error('createAnswer завис: ранний answer потерян')), 500); }),
+    ]);
+    assert.deepEqual(early, { type: 'answer', sdp: 'v=0 early-answer' });
+  } finally {
+    clearTimeout(boom); // страховка от зависания не тормозит зелёный прогон
+  }
+  // кэш одноразовый: следующий createAnswer ждёт свежий answer моста
+  let late = null;
+  const second = relay.pcLike.createAnswer().then((a) => { late = a; });
+  await new Promise((r) => setTimeout(r, 0));
+  assert.equal(late, null, 'ранний answer применился дважды');
+  relay.handleMessage(BRIDGE_IPC.ANSWER, 'v=0 second-answer');
+  await second;
+  assert.deepEqual(late, { type: 'answer', sdp: 'v=0 second-answer' });
 });
 
 test('отказ моста (FAIL) честно отклоняет ждущий answer и закрывает канал', async () => {
@@ -141,4 +226,21 @@ test('посторонние IPC-каналы не проходят allowlist', 
   relay.markReady();
   relay.handleMessage('enot:evil', { evil: true });
   assert.ok(!sends.some(([ch]) => ch !== BRIDGE_IPC.OFFER));
+});
+
+// Паритет каналов моста: единый источник имён — BRIDGE_IPC в relay.mjs. preload.cjs
+// живёт в sandbox-preload (main.mjs: sandbox true) и не может подключить общий
+// модуль, поэтому имена там — литералы; контракт сверяет их по исходнику файла.
+test('паритет каналов: литералы preload.cjs повторяют Object.values(BRIDGE_IPC) один в один', () => {
+  const declared = [...new Set(Object.values(BRIDGE_IPC))].sort();
+  assert.ok(declared.length >= 10, 'BRIDGE_IPC подозрительно пуст');
+
+  const preloadPath = path.join(path.dirname(fileURLToPath(import.meta.url)), '..', 'agent-bridge', 'preload.cjs');
+  const preload = fs.readFileSync(preloadPath, 'utf8');
+  const used = [...new Set(preload.match(/'enot:[a-z-]+'/g)?.map((s) => s.slice(1, -1)) ?? [])].sort();
+  assert.deepEqual(
+    used,
+    declared,
+    'preload.cjs разошёлся с BRIDGE_IPC: переименовали канал в одном месте без сверки — сообщение молча пропадёт',
+  );
 });
