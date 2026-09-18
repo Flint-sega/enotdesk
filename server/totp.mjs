@@ -60,13 +60,6 @@ function hotp(keyBytes, counter) {
   return String(num % 1_000_000).padStart(6, '0');
 }
 
-// Код в момент now (мс). Публичный: нужен тестам полного пути и подтверждению.
-export function codeAt(secret, { now = Date.now() } = {}) {
-  const keyBytes = base32Decode(secret);
-  if (!keyBytes) return null;
-  return hotp(keyBytes, Math.floor(now / 1000 / STEP_SEC));
-}
-
 function sameCode(expected, given) {
   const a = Buffer.from(expected, 'utf8');
   const b = Buffer.from(given, 'utf8');

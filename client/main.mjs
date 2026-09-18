@@ -18,6 +18,7 @@ import { resolveServerUrl, DEFAULT_SERVER_URL } from './lib/first-run.mjs';
 import { createAgent, createAgentApi, createIceServersFetcher } from './lib/agent.mjs';
 import { createBridgeRelay, BRIDGE_IPC } from './agent-bridge/relay.mjs';
 import { createTermHost } from './lib/term.mjs';
+import { showToast } from './lib/notify.mjs';
 import { UPDATE_REPO, updateFeedUrl, platformFeedName, updateDecision } from './lib/updater.mjs';
 import { isNewerVersion } from './lib/version-check.mjs';
 import { t, setLocale } from './lib/i18n.mjs';
@@ -525,6 +526,9 @@ function startAgentMode() {
       // зарегистрирована; отзыв/не-200/зависание хук честно отчитает.
       fetchIceServers: createIceServersFetcher({ api: agentApi, tokenLoad: () => tokenStore.load() }),
     }),
+    // Сообщение на экран машины (R08): платформа известна здесь, текст приходит
+    // из heartbeat-ответа сервера. Показ не блокирует цикл (см. deliverToast).
+    notify: (text) => showToast(process.platform, text),
     policy: {
       name: process.env.EDESK_AGENT_NAME || os.hostname(),
       os: process.platform,

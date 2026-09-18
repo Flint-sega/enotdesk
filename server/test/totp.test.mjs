@@ -1,8 +1,36 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { generateSecret, verifyCode, codeAt, backupCodes, normalizeBackupCode, secretKeyBytes, encryptSecret, decryptSecret } from '../totp.mjs';
+import crypto from 'node:crypto';
+import { generateSecret, verifyCode, backupCodes, normalizeBackupCode, secretKeyBytes, encryptSecret, decryptSecret } from '../totp.mjs';
 import { sha256 } from '../crypto.mjs';
 import { startServer, api, adminLogin, tmpDb, ADMIN } from './util.mjs';
+
+// Независимая реализация (HMAC-SHA1 + динамическая обрезка, RFC 4227/6238) —
+// только чтобы получить валидный код для заданного счётчика в тестах окна и
+// полного пути. Известные ответы (правильность самих цифр) закрепляют
+// RFC-векторы ниже, а не эта функция.
+function refCode(base32Secret, timeSec) {
+  const alpha = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ234567';
+  let bits = 0;
+  let value = 0;
+  const key = [];
+  for (const ch of String(base32Secret).toUpperCase()) {
+    const idx = alpha.indexOf(ch);
+    if (idx === -1) continue; // паддинг/разделители
+    value = (value << 5) | idx;
+    bits += 5;
+    if (bits >= 8) {
+      key.push((value >>> (bits - 8)) & 0xff);
+      bits -= 8;
+    }
+  }
+  const counter = Buffer.alloc(8);
+  counter.writeBigUInt64BE(BigInt(Math.floor(timeSec / 30)));
+  const mac = crypto.createHmac('sha1', Buffer.from(key)).update(counter).digest();
+  const off = mac[mac.length - 1] & 0xf;
+  const num = ((mac[off] & 0x7f) << 24) | (mac[off + 1] << 16) | (mac[off + 2] << 8) | mac[off + 3];
+  return String(num % 1_000_000).padStart(6, '0');
+}
 
 // Ожидаемые значения — RFC 6238, приложение B (SHA-1): секрет ASCII
 // "12345678901234567890" → base32 GEZDGNBVGY3TQOJQGEZDGNBVGY3TQOJQ.
@@ -40,9 +68,9 @@ test('verifyCode: регистр и разделители не важны (ру
 
 test('окно ±1: соседние 30-секундные шаги принимаются, дальние — нет', () => {
   // T=59 попадает в счётчик 1: коды счётчиков 0 и 2 принимаются, 3 — нет
-  assert.equal(verifyCode(RFC_SECRET, codeAt(RFC_SECRET, { now: 29_000 }), { now: 59_000 }), true, 'шаг −1');
-  assert.equal(verifyCode(RFC_SECRET, codeAt(RFC_SECRET, { now: 89_000 }), { now: 59_000 }), true, 'шаг +1');
-  assert.equal(verifyCode(RFC_SECRET, codeAt(RFC_SECRET, { now: 119_000 }), { now: 59_000 }), false, 'шаг +2 отвергнут');
+  assert.equal(verifyCode(RFC_SECRET, refCode(RFC_SECRET, 29), { now: 59_000 }), true, 'шаг −1');
+  assert.equal(verifyCode(RFC_SECRET, refCode(RFC_SECRET, 89), { now: 59_000 }), true, 'шаг +1');
+  assert.equal(verifyCode(RFC_SECRET, refCode(RFC_SECRET, 119), { now: 59_000 }), false, 'шаг +2 отвергнут');
 });
 
 test('generateSecret: 32 символа base32, каждый секрет новый и рабочий', () => {
@@ -50,7 +78,7 @@ test('generateSecret: 32 символа base32, каждый секрет нов
   assert.match(a, /^[A-Z2-7]{32}$/);
   const b = generateSecret();
   assert.notEqual(a, b);
-  assert.equal(verifyCode(a, codeAt(a, { now: Date.now() }), { now: Date.now() }), true);
+  assert.equal(verifyCode(a, refCode(a, Date.now() / 1000), { now: Date.now() }), true);
 });
 
 test('backupCodes: 10 одноразовых кодов формата XXXX-XXXX, без повторов', () => {
@@ -130,7 +158,7 @@ test('полный путь: включение → подтверждение �
   assert.equal(badConfirm.status, 400);
   assert.equal(badConfirm.json.error.code, 'bad_code');
 
-  const code = codeAt(secret, { now: Date.now() });
+  const code = refCode(secret, Date.now() / 1000);
   const confirm = await api(base, 'POST', '/auth/totp/enable', { ...auth, body: { password: admin.password, code } });
   assert.equal(confirm.status, 200);
   assert.equal(confirm.json.enabled, true);
@@ -151,7 +179,7 @@ test('полный путь: включение → подтверждение �
   assert.deepEqual(wrongPw.json.error, noCode.json.error, 'totp_required не раскрывает верность пароля');
 
   // верный пароль + неверный код → тот же invalid_credentials, что и при неверном пароле (нет оракула)
-  const stale = codeAt(RFC_SECRET, { now: 60_000 }); // давний код чужого секрета точно мимо
+  const stale = refCode(RFC_SECRET, 60); // давний код (счётчик 2) точно мимо нынешнего окна
   const wrongCode = await api(base, 'POST', '/auth/login', { body: { login: ADMIN.login, password: ADMIN.password, totp: stale } });
   assert.equal(wrongCode.status, 401);
   assert.equal(wrongCode.json.error.code, 'invalid_credentials');
@@ -160,7 +188,7 @@ test('полный путь: включение → подтверждение �
 
   // верный пароль + верный код → 200
   const good = await api(base, 'POST', '/auth/login', {
-    body: { login: ADMIN.login, password: ADMIN.password, totp: codeAt(secret, { now: Date.now() }) },
+    body: { login: ADMIN.login, password: ADMIN.password, totp: refCode(secret, Date.now() / 1000) },
   });
   assert.equal(good.status, 200);
   assert.ok(good.json.token);

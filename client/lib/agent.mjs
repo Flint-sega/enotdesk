@@ -34,11 +34,16 @@ export function createAgentApi({ baseUrl, fetchImpl = fetch } = {}) {
   return {
     register: ({ code, name, os, version }) => call('/agent/register', { method: 'POST', body: { code, name, os, version } }),
     session: (token) => call('/agent/session', { token }),
-    heartbeat: (token, inventory) => call('/agent/heartbeat', {
+    heartbeat: (token, inventory, toastResult) => call('/agent/heartbeat', {
       method: 'POST',
       token,
-      // без инвентаря — тело не отправляется вовсе (старые серверы не заметят)
-      ...(inventory !== undefined ? { body: { inventory } } : {}),
+      // без инвентаря и результата — тело не отправляется вовсе (старые серверы не заметят)
+      ...((inventory !== undefined || toastResult !== undefined) ? {
+        body: {
+          ...(inventory !== undefined ? { inventory } : {}),
+          ...(toastResult !== undefined ? { toastResult } : {}),
+        },
+      } : {}),
     }),
     rtcConfig: (token) => call('/rtc-config', { token }),
     decision: ({ sessionId, token, claimId, allow }) => call(`/sessions/${encodeURIComponent(String(sessionId))}/decision`, { method: 'POST', token, body: { claimId, allow } }),
@@ -79,7 +84,7 @@ export function createIceServersFetcher({ api, tokenLoad, timeoutMs = 5000 }) {
   };
 }
 
-export function createAgent({ api, signal, native, policy, termHost, rtc }) {
+export function createAgent({ api, signal, native, policy, termHost, rtc, notify }) {
   const missing = !api || typeof api.register !== 'function' || typeof api.session !== 'function'
     || typeof api.heartbeat !== 'function' || typeof api.decision !== 'function' ? 'api (register/session/heartbeat/decision)'
     : typeof signal !== 'function' ? 'signal (фабрика сигнальных клиентов)'
@@ -107,6 +112,9 @@ export function createAgent({ api, signal, native, policy, termHost, rtc }) {
   // RTC-фабрика терминала (R09): возвращает pc-подобный объект или null, если
   // в окружении нет RTCPeerConnection — тогда терминал честно недоступен.
   const rtcFactory = typeof rtc === 'function' ? rtc : null;
+  // Toast (R08): показчик сообщений с машины (notify.mjs) может отсутствовать —
+  // тогда запрос честно отвечает 'notify-unavailable', оператор не ждёт впустую.
+  const showToast = typeof notify === 'function' ? notify : null;
 
   let running = false;
   let state = 'idle'; // idle|registering|waiting|connecting|online|backoff|revoked|error|stopped
@@ -121,6 +129,32 @@ export function createAgent({ api, signal, native, policy, termHost, rtc }) {
   let machineBeat = null;
   let wake = null;
   let resolveSessionDone = null;
+
+  // Очередь результатов toast (R08): уходит по одному за heartbeat, повторяется
+  // только при сетевом сбое; потолок очереди — старшие теряются (не копим).
+  const toastResults = [];
+
+  // Показ toast не блокирует heartbeat (WTSSendMessageW с timeout 0 может
+  // ждать нажатия минуты): результат встаёт в очередь и уедет следующим beat-ом.
+  function deliverToast(toast) {
+    const settle = (res) => {
+      const entry = {
+        id: toast.id,
+        ok: res?.ok === true,
+        ...(res && typeof res.reason === 'string' && res.reason ? { reason: res.reason.slice(0, 60) } : {}),
+      };
+      if (toastResults.length >= 16) toastResults.shift();
+      toastResults.push(entry);
+    };
+    try {
+      return Promise.resolve(showToast ? showToast(toast.text) : { ok: false, reason: 'notify-unavailable' })
+        .then(settle)
+        .catch(() => settle({ ok: false, reason: 'notify-unavailable' }));
+    } catch {
+      settle({ ok: false, reason: 'notify-unavailable' });
+      return Promise.resolve();
+    }
+  }
 
   // Прерываемый сон: stop()/revoke() будят цикл немедленно.
   const sleep = (ms) => new Promise((resolve) => {
@@ -308,8 +342,21 @@ export function createAgent({ api, signal, native, policy, termHost, rtc }) {
         Promise.resolve()
           .then(() => (getInventory ? getInventory() : undefined))
           .catch(() => undefined)
-          .then((inventory) => api.heartbeat(token, inventory))
-          .then((r) => { if (r.status === 401) revoke('Токен машины отозван (heartbeat 401)'); })
+          .then((inventory) => {
+            // Toast (R08): результат прошлого показа уезжает одним полем; не ушёл
+            // из-за сети — повторится следующим beat-ом (остаётся в очереди).
+            const toastResult = toastResults.length ? toastResults[0] : undefined;
+            return api.heartbeat(token, inventory, toastResult).then((r) => {
+              if (r.status === 200) {
+                if (toastResult) toastResults.shift(); // сервер принял — не повторяем
+                const toast = r.body?.toast;
+                if (toast && typeof toast.id === 'string' && typeof toast.text === 'string') {
+                  void deliverToast(toast);
+                }
+              }
+              if (r.status === 401) revoke('Токен машины отозван (heartbeat 401)');
+            });
+          })
           .catch(() => { /* сеть — видеть будет следующий цикл опроса */ });
       }, heartbeatMs);
 

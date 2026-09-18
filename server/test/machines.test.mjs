@@ -563,3 +563,142 @@ test('отказы машинных маршрутов локализуются 
   const okEn = await call(claimUrl, { body: { reason: 'Diagnostics', pin: '7777' }, language: 'en' });
   assert.equal(okEn.status, 201);
 });
+
+// ---- сообщение на экран машины (R08): POST /machines/:id/toast ----
+// Выбранный путь: toast живёт в ПАМЯТИ сервера (TTL 60с), агент забирает его
+// следующим машинным heartbeat (поле toast в ответе) и отвечает результатом
+// (toastResult в следующем heartbeat). WS-реле не расширяется. Ожидания:
+// честные отказы (нет машины/агента/сети), лимит текста 500, RBAC claim-уровня.
+
+test('toast API: RBAC и честные отказы — не-текст, чужая/отозванная/безагентная/офлайн машина', async (t) => {
+  const { base, admin } = await setup(t);
+  const operator = await makeUser(base, admin, 'operator', 'op-toast');
+  const auditor = await makeUser(base, admin, 'auditor', 'aud-toast');
+
+  const { created } = await onboardAndRegister(base, admin);
+
+  assert.equal((await api(base, 'POST', `/machines/${created.machine.id}/toast`)).status, 401, 'без токена нельзя');
+  assert.equal((await api(base, 'POST', `/machines/${created.machine.id}/toast`, { token: auditor.token, body: { text: 'х' } })).status, 403, 'аудитор — только чтение');
+  // оператору можно (как claim): сообщение — операция поддержки, не админская
+  const badText = await api(base, 'POST', `/machines/${created.machine.id}/toast`, { token: operator.token, body: { text: '   ' } });
+  assert.equal(badText.status, 400, 'пустой текст отклонён');
+  const longText = await api(base, 'POST', `/machines/${created.machine.id}/toast`, { token: operator.token, body: { text: 'х'.repeat(501) } });
+  assert.equal(longText.status, 400, 'лимит 500 символов честный');
+  assert.match(longText.json.error.message, /500/);
+
+  const unknown = await api(base, 'POST', '/machines/no-such/toast', { token: operator.token, body: { text: 'х' } });
+  assert.equal(unknown.status, 404);
+
+  const offline = await api(base, 'POST', `/machines/${created.machine.id}/toast`, { token: operator.token, body: { text: 'х' } });
+  assert.equal(offline.status, 409, 'зарегистрированная, но не отвечающая машина — офлайн');
+  assert.equal(offline.json.error.code, 'machine_offline');
+
+  // отозванная машина — свой честный код
+  const second = await onboardAndRegister(base, admin, { name: 'Касса-2', groupName: '' });
+  await api(base, 'POST', `/machines/${second.created.machine.id}/revoke`, { token: admin.token });
+  const revoked = await api(base, 'POST', `/machines/${second.created.machine.id}/toast`, { token: operator.token, body: { text: 'х' } });
+  assert.equal(revoked.status, 409);
+  assert.equal(revoked.json.error.code, 'machine_revoked');
+
+  // незарегистрированная (код выдан, агент не приходил) — «нет агента»
+  const third = await api(base, 'POST', '/machines', { token: admin.token, body: { name: 'Касса-3', group: '' } });
+  const noAgent = await api(base, 'POST', `/machines/${third.json.machine.id}/toast`, { token: operator.token, body: { text: 'х' } });
+  assert.equal(noAgent.status, 409);
+  assert.equal(noAgent.json.error.code, 'not_registered');
+});
+
+test('toast API: агент забирает toast машинным heartbeat-ом и отвечает результатом — оператор получает статус', async (t) => {
+  const { base, admin } = await setup(t, { toastWaitMs: 5000 });
+  const operator = await makeUser(base, admin, 'operator', 'op-toast2');
+  const { created, reg } = await onboardAndRegister(base, admin);
+
+  // машины «нет в сети» → агент сначала делает heartbeat (touch), затем оператор шлёт toast
+  const beat = await api(base, 'POST', '/agent/heartbeat', { token: reg.token, body: {} });
+  assert.equal(beat.status, 200);
+  assert.deepEqual(beat.json, { ok: true }, 'без ожидающего toast ответ прежний');
+
+  // ожидание оператора и выдача toast агенту идут параллельно
+  const pending = api(base, 'POST', `/machines/${created.machine.id}/toast`, { token: operator.token, body: { text: 'Перезагрузите кассу' } });
+
+  // агент забирает toast следующим heartbeat-ом
+  const pickup = await api(base, 'POST', '/agent/heartbeat', { token: reg.token, body: {} });
+  assert.equal(pickup.status, 200);
+  assert.equal(typeof pickup.json.toast?.id, 'string', 'агент получил id запроса');
+  assert.equal(pickup.json.toast.text, 'Перезагрузите кассу', 'текст дошёл без изменений');
+
+  // повторный heartbeat без результата: toast уже забран, повторно не выдаётся
+  const again = await api(base, 'POST', '/agent/heartbeat', { token: reg.token, body: {} });
+  assert.equal(again.json.toast, undefined, 'ожидающий toast выдаётся один раз');
+
+  // агент отчитывается результатом — запрос оператора завершается честным статусом
+  const answer = await api(base, 'POST', '/agent/heartbeat', {
+    token: reg.token,
+    body: { toastResult: { id: pickup.json.toast.id, ok: true } },
+  });
+  assert.equal(answer.status, 200);
+  const done = await pending;
+  assert.equal(done.status, 200);
+  assert.deepEqual(done.json, { ok: true, result: { ok: true } }, 'оператору пришло подтверждение машины');
+});
+
+test('toast API: отказ агента доходит с причиной; нет ответа за срок — result null; TTL и замена', async (t) => {
+  const { base, admin } = await setup(t, { toastWaitMs: 300 });
+  const operator = await makeUser(base, admin, 'operator', 'op-toast3');
+  const { created, reg } = await onboardAndRegister(base, admin);
+  await api(base, 'POST', '/agent/heartbeat', { token: reg.token, body: {} });
+
+  // агент честно не смог показать (например, нет консольного пользователя)
+  const pending = api(base, 'POST', `/machines/${created.machine.id}/toast`, { token: operator.token, body: { text: 'х' } });
+  const pickup = await api(base, 'POST', '/agent/heartbeat', { token: reg.token, body: {} });
+  await api(base, 'POST', '/agent/heartbeat', {
+    token: reg.token,
+    body: { toastResult: { id: pickup.json.toast.id, ok: false, reason: 'no-console-user' } },
+  });
+  const done = await pending;
+  assert.deepEqual(done.json, { ok: true, result: { ok: false, reason: 'no-console-user' } }, 'отказ агента честен');
+
+  // агент молчит — оператор получает result null за отведённый срок
+  const silentStarted = Date.now();
+  const silent = await api(base, 'POST', `/machines/${created.machine.id}/toast`, { token: operator.token, body: { text: 'х' } });
+  assert.equal(silent.status, 200);
+  assert.deepEqual(silent.json, { ok: true, result: null }, 'нет подтверждения — честный null');
+  assert.ok(Date.now() - silentStarted < 2000, 'ожидание ограничено toastWaitMs');
+
+  // результат по чужому/устаревшему id никуда не идёт: waiter уже разрешён
+  await api(base, 'POST', '/agent/heartbeat', { token: reg.token, body: { toastResult: { id: 'чужой', ok: true } } });
+
+  // мусорный toastResult не роняет heartbeat
+  const junk = await api(base, 'POST', '/agent/heartbeat', { token: reg.token, body: { toastResult: 'мусор' } });
+  assert.equal(junk.status, 200);
+});
+
+test('toast API: TTL просроченного toast — агенту не выдаётся', async (t) => {
+  const { base, admin } = await setup(t, { toastTtlMs: -1 });
+  const operator = await makeUser(base, admin, 'operator', 'op-toast4');
+  const { created, reg } = await onboardAndRegister(base, admin);
+  await api(base, 'POST', '/agent/heartbeat', { token: reg.token, body: {} });
+
+  await api(base, 'POST', `/machines/${created.machine.id}/toast`, { token: operator.token, body: { text: 'устарело' } });
+  const expired = await api(base, 'POST', '/agent/heartbeat', { token: reg.token, body: {} });
+  assert.equal(expired.json.toast, undefined, 'просроченный toast не выдаётся (TTL 60с в проде)');
+});
+
+test('toast API: новый toast заменяет ожидающий — уезжает последний, чужие ожидания не разрешаются', async (t) => {
+  const { base, admin } = await setup(t, { toastWaitMs: 200 });
+  const operator = await makeUser(base, admin, 'operator', 'op-toast5');
+  const { created, reg } = await onboardAndRegister(base, admin);
+  await api(base, 'POST', '/agent/heartbeat', { token: reg.token, body: {} });
+
+  const first = api(base, 'POST', `/machines/${created.machine.id}/toast`, { token: operator.token, body: { text: 'первый' } });
+  const second = api(base, 'POST', `/machines/${created.machine.id}/toast`, { token: admin.token, body: { text: 'второй' } });
+  const pickup = await api(base, 'POST', '/agent/heartbeat', { token: reg.token, body: {} });
+  assert.equal(pickup.json.toast?.text, 'второй', 'уехал последний');
+  await api(base, 'POST', '/agent/heartbeat', {
+    token: reg.token,
+    body: { toastResult: { id: pickup.json.toast.id, ok: true } },
+  });
+  const firstDone = await first;
+  const secondDone = await second;
+  assert.deepEqual(firstDone.json, { ok: true, result: null }, 'первый оператор — честное «нет подтверждения»');
+  assert.deepEqual(secondDone.json, { ok: true, result: { ok: true } }, 'второй получил результат');
+});
