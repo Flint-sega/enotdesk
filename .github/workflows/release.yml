@@ -54,7 +54,7 @@ jobs:
         if: runner.os == 'Linux'
         shell: bash
         run: npx electron-builder --config build/electron-builder.yml -c.publish.provider=generic -c.publish.url="$ENOT_FEED_URL" --linux --publish never
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         with:
           name: dist-${{ matrix.os }}
           if-no-files-found: error
