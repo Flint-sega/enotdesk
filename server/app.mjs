@@ -231,7 +231,7 @@ export function createServer(opts = {}) {
   const db = openDb(cfg.dbPath);
   endLiveSessions(db, 'server-restart'); // рестарт инвалидирует живые регистрации
   const machinesStore = createMachinesStore(db);
-  const webhooks = createWebhooks(db);
+  const webhooks = createWebhooks(db, { secretKey: cfg.secretKey });
   // байты ключа шифрования секретов; null — ключ не задан (включение 2FA честно отказывает)
   const secretKey = secretKeyBytes(cfg.secretKey);
 
@@ -239,6 +239,7 @@ export function createServer(opts = {}) {
   const WEBHOOK_ERR_TEXT = {
     bad_url: 'URL должен быть http(s)-адресом',
     url_too_long: 'URL слишком длинный (до 2048 символов)',
+    bad_key: 'Не задан ENOT_SECRET_KEY (например, в .env сервера) — им шифруется секрет webhooks',
     secret_required: 'Укажите секрет подписи',
     secret_too_long: 'Секрет слишком длинный (до 256 символов)',
   };
