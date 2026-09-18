@@ -1,7 +1,7 @@
 window.STATE =
 {
   "slug": "enotdesk-upgrade-v2",
-  "dir": "2026-09-17-enotdesk-upgrade-v2--wip",
+  "dir": "2026-09-17-enotdesk-upgrade-v2",
   "title": "EnotDesk — клиентский апгрейд v2: размер, first-run, видео, unattended, 2FA",
   "mode": "semi",
   "depth": "deep",
