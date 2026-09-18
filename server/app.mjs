@@ -12,6 +12,10 @@ import {
   hashPassword, verifyPassword, newToken, sha256,
   sessionPassword, newSessionId, newClaimId,
 } from './crypto.mjs';
+import {
+  generateSecret, verifyCode, backupCodes, normalizeBackupCode,
+  secretKeyBytes, encryptSecret, decryptSecret,
+} from './totp.mjs';
 
 const ROLES = ['admin', 'operator', 'auditor'];
 const SIGNAL_WINDOW_MS = 5000;
@@ -191,6 +195,8 @@ export function createServer(opts = {}) {
     turnUrls: opts.turnUrls ?? '',
     turnUsername: opts.turnUsername ?? '',
     turnPassword: opts.turnPassword ?? '',
+    // ключ шифрования секретов (2FA и др.): значение никогда не попадает в ответы и журнал
+    secretKey: opts.secretKey ?? process.env.ENOT_SECRET_KEY ?? '',
     leaseMs: opts.leaseMs ?? 20000,
     heartbeatMs: opts.heartbeatMs ?? 5000,
     // грейс на переподключение участника в состоянии approved; 0 — старое fail-closed
@@ -220,6 +226,8 @@ export function createServer(opts = {}) {
   endLiveSessions(db, 'server-restart'); // рестарт инвалидирует живые регистрации
   const machinesStore = createMachinesStore(db);
   const webhooks = createWebhooks(db);
+  // байты ключа шифрования секретов; null — ключ не задан (включение 2FA честно отказывает)
+  const secretKey = secretKeyBytes(cfg.secretKey);
 
   // Коды ошибок настройки webhooks → честные тексты маршрута
   const WEBHOOK_ERR_TEXT = {
@@ -316,11 +324,13 @@ export function createServer(opts = {}) {
     if (!token) return null;
     const now = new Date().toISOString();
     const row = db.prepare(`
-      SELECT u.id, u.login, u.name, u.role, u.active
+      SELECT u.id, u.login, u.name, u.role, u.active, u.totp_enabled
       FROM auth_tokens t JOIN users u ON u.id = t.user_id
       WHERE t.token_hash = ? AND t.expires_at > ? AND u.active = 1
     `).get(sha256(token), now);
-    return row || null;
+    return row
+      ? { id: row.id, login: row.login, name: row.name, role: row.role, active: !!row.active, totpEnabled: !!row.totp_enabled }
+      : null;
   }
 
   function hostTokenSession(req) {
@@ -392,10 +402,41 @@ export function createServer(opts = {}) {
         return err(res, 429, 'rate_limited', 'Слишком много неудачных попыток, попробуйте позже');
       }
       const user = db.prepare('SELECT * FROM users WHERE login = ?').get(login.trim().toLowerCase());
+      const locale = pickLocale(req.headers['accept-language']);
+      const twoFactor = !!(user && user.active && user.totp_enabled);
+      // 2FA (R11): без кода — честный totp_required ДО проверки пароля: ответ один
+      // и тот же при любом пароле и не раскрывает, верен ли он.
+      if (twoFactor && (typeof body?.totp !== 'string' || !body.totp.trim())) {
+        return err(res, 401, 'totp_required', t('totp.loginRequired', {}, locale));
+      }
       if (!user || !user.active || !verifyPassword(password, user.password)) {
         cfg.limits.loginId.take(loginKey);
         auditLog(db, null, 'login.failure', null, { login: String(login).slice(0, 120) });
-        return err(res, 401, 'invalid_credentials', 'Неверный логин или пароль');
+        return err(res, 401, 'invalid_credentials',
+          twoFactor ? t('totp.invalidCredentials', {}, locale) : 'Неверный логин или пароль');
+      }
+      if (twoFactor) {
+        // код из аутентификатора, иначе — одноразовый резервный код: потребляется
+        // только при верном пароле, чтобы чужак не сжёг коды неверным паролем
+        const given = body.totp.trim();
+        const secret = user.totp_secret_enc ? decryptSecret(secretKey, user.totp_secret_enc) : null;
+        let codeOk = secret ? verifyCode(secret, given) : false;
+        if (!codeOk) {
+          const normalized = normalizeBackupCode(given);
+          const hit = normalized && db.prepare(
+            'SELECT rowid FROM totp_backup_codes WHERE user_id = ? AND code_hash = ?'
+          ).get(user.id, sha256(normalized));
+          if (hit) {
+            db.prepare('DELETE FROM totp_backup_codes WHERE user_id = ? AND code_hash = ?')
+              .run(user.id, sha256(normalized));
+            codeOk = true;
+          }
+        }
+        if (!codeOk) {
+          cfg.limits.loginId.take(loginKey);
+          auditLog(db, null, 'login.failure', null, { login: String(login).slice(0, 120) });
+          return err(res, 401, 'invalid_credentials', t('totp.invalidCredentials', {}, locale));
+        }
       }
       const token = newToken();
       const expiresAt = new Date(Date.now() + 8 * 3600 * 1000).toISOString();
@@ -404,7 +445,7 @@ export function createServer(opts = {}) {
       auditLog(db, user.id, 'login.success', user.id, {});
       return ok(res, 200, {
         token,
-        user: { id: user.id, login: user.login, name: user.name, role: user.role, active: !!user.active },
+        user: { id: user.id, login: user.login, name: user.name, role: user.role, active: !!user.active, totpEnabled: !!user.totp_enabled },
         expiresAt,
       });
     }
@@ -440,6 +481,71 @@ export function createServer(opts = {}) {
       endOperatorSessions(user.id, 'password-changed');
       auditLog(db, user.id, 'password.change', user.id, {});
       return ok(res, 200, { ok: true });
+    }
+
+    // ---- 2FA (D2, R11): включение/выключение TOTP. Секрет хранится только
+    // шифротекстом AES-256-GCM от ENOT_SECRET_KEY; без ключа включение честно
+    // отказывает. Резервные коды уходят в ответ один раз, в БД — только хеши.
+    if (p === '/auth/totp/enable' && req.method === 'POST') {
+      if (!user) return err(res, 401, 'unauthorized', 'Требуется авторизация');
+      const locale = pickLocale(req.headers['accept-language']);
+      const password = body?.password;
+      if (typeof password !== 'string' || !password) {
+        return err(res, 400, 'bad_request', t('totp.passwordRequired', {}, locale));
+      }
+      const row = db.prepare('SELECT password, totp_enabled, totp_secret_enc FROM users WHERE id = ?').get(user.id);
+      if (!row || !verifyPassword(password, row.password)) {
+        return err(res, 403, 'wrong_password', 'Текущий пароль указан неверно');
+      }
+      if (row.totp_enabled) return err(res, 409, 'totp_already', t('totp.already', {}, locale));
+      const code = typeof body?.code === 'string' ? body.code.trim() : '';
+      if (code) {
+        // подтверждение включения первым успешным кодом из аутентификатора
+        const secret = row.totp_secret_enc ? decryptSecret(secretKey, row.totp_secret_enc) : null;
+        if (!secret || !verifyCode(secret, code)) {
+          return err(res, 400, 'bad_code', t('totp.badCode', {}, locale));
+        }
+        db.prepare('UPDATE users SET totp_enabled = 1 WHERE id = ?').run(user.id);
+        auditLog(db, user.id, 'totp.enable', user.id, {});
+        return ok(res, 200, { ok: true, enabled: true });
+      }
+      if (!secretKey) {
+        return err(res, 400, 'secret_key_missing', t('totp.keyMissing', {}, locale));
+      }
+      const secret = generateSecret();
+      db.prepare('UPDATE users SET totp_secret_enc = ? WHERE id = ?').run(encryptSecret(secretKey, secret), user.id);
+      const codes = backupCodes();
+      db.prepare('DELETE FROM totp_backup_codes WHERE user_id = ?').run(user.id);
+      const nowIso = new Date().toISOString();
+      for (const c of codes) {
+        // хеш нормализованного кода: при вводе регистр и разделители не важны
+        db.prepare('INSERT INTO totp_backup_codes (user_id, code_hash, created_at) VALUES (?,?,?)')
+          .run(user.id, sha256(normalizeBackupCode(c)), nowIso);
+      }
+      auditLog(db, user.id, 'totp.setup', user.id, {});
+      const otpauth = `otpauth://totp/EnotDesk%3A${encodeURIComponent(user.login)}?secret=${secret}&issuer=EnotDesk&algorithm=SHA1&digits=6&period=30`;
+      return ok(res, 200, { ok: true, enabled: false, secret, otpauth, backupCodes: codes });
+    }
+    if (p === '/auth/totp/disable' && req.method === 'POST') {
+      if (!user) return err(res, 401, 'unauthorized', 'Требуется авторизация');
+      const locale = pickLocale(req.headers['accept-language']);
+      const password = body?.password;
+      if (typeof password !== 'string' || !password) {
+        return err(res, 400, 'bad_request', t('totp.passwordRequired', {}, locale));
+      }
+      const row = db.prepare('SELECT password, totp_enabled FROM users WHERE id = ?').get(user.id);
+      if (!row || !verifyPassword(password, row.password)) {
+        return err(res, 403, 'wrong_password', 'Текущий пароль указан неверно');
+      }
+      if (!row.totp_enabled) return err(res, 409, 'totp_not_enabled', t('totp.notEnabled', {}, locale));
+      db.prepare('UPDATE users SET totp_secret_enc = NULL, totp_enabled = 0 WHERE id = ?').run(user.id);
+      db.prepare('DELETE FROM totp_backup_codes WHERE user_id = ?').run(user.id);
+      // второй фактор снят: прочие токены умирают (как при смене пароля), текущий остаётся
+      const current = sha256(bearer(req) ?? '');
+      db.prepare('DELETE FROM auth_tokens WHERE user_id = ? AND token_hash != ?').run(user.id, current);
+      endOperatorSessions(user.id, 'totp-disabled');
+      auditLog(db, user.id, 'totp.disable', user.id, {});
+      return ok(res, 200, { ok: true, enabled: false });
     }
 
     // ---- members ----
@@ -901,22 +1007,17 @@ export function createServer(opts = {}) {
       return ok(res, 200, { ok: true });
     }
     m = p.match(/^\/machines\/([^/]+)$/);
-    if (m && req.method === 'GET') {
-      // одиночная машина (R06): инвентарь и статус — те же права, что у списка
+    if (m && (req.method === 'GET' || req.method === 'DELETE')) {
+      // одна машина: GET — наружный объект с инвентарём (R06), DELETE — удаление.
+      // 401/404 общие; права по методу: GET — admin+operator (как список),
+      // DELETE — только admin.
       if (!user) return err(res, 401, 'unauthorized', 'Требуется авторизация');
-      if (!['admin', 'operator'].includes(user.role)) return err(res, 403, 'forbidden', 'Недостаточно прав');
       const locale = pickLocale(req.headers['accept-language']);
-      const machine = machinesStore.out(machinesStore.get(m[1]));
-      if (!machine) return err(res, 404, 'not_found', t('machines.notFound', {}, locale));
-      return ok(res, 200, machine);
-    }
-    m = p.match(/^\/machines\/([^/]+)$/);
-    if (m && req.method === 'DELETE') {
-      if (!user) return err(res, 401, 'unauthorized', 'Требуется авторизация');
-      if (user.role !== 'admin') return err(res, 403, 'forbidden', 'Недостаточно прав');
-      const locale = pickLocale(req.headers['accept-language']);
+      const allowed = req.method === 'GET' ? ['admin', 'operator'] : ['admin'];
+      if (!allowed.includes(user.role)) return err(res, 403, 'forbidden', 'Недостаточно прав');
       const machine = machinesStore.get(m[1]);
       if (!machine) return err(res, 404, 'not_found', t('machines.notFound', {}, locale));
+      if (req.method === 'GET') return ok(res, 200, machinesStore.out(machine));
       machinesStore.delete(machine.id);
       auditLog(db, user.id, 'machine.delete', machine.id, { name: machine.name });
       return ok(res, 200, { ok: true });

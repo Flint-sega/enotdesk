@@ -66,3 +66,54 @@ test('web/operator.html: без inline-стилей и inline-скриптов (
   assert.equal(scripts.length, 1, 'подключается один модуль страницы');
   assert.match(scripts[0], /type="module" src="\/web\/operator\.mjs"/);
 });
+
+// ---- панель «Машины» (R07): только существующий machines API, admin-only ----
+
+test('web/operator.html: панель машин скрыта для не-admin и держит контрактные id', () => {
+  const ids = [
+    'view-machines', 'machines-list', 'machines-empty', 'machines-error',
+    'machines-page', 'btn-machines-prev', 'btn-machines-next', 'btn-machines-refresh',
+    'machines-claim', 'machines-claim-name', 'machines-claim-error',
+    'machines-claim-form', 'machines-claim-reason', 'machines-claim-pin-field', 'machines-claim-pin',
+    'btn-machines-claim', 'btn-machines-claim-cancel',
+    'btn-nav-machines', 'btn-nav-connect',
+  ];
+  for (const id of ids) {
+    assert.ok(new RegExp(`id="${id}"`).test(html), `панель машин: нет id «${id}»`);
+  }
+  // RBAC в разметке: кнопка «Машины» скрыта по умолчанию — показывает её
+  // только JS после проверки роли admin; не-admin панель не видит вовсе.
+  const nav = /<button[^>]*id="btn-nav-machines"[^>]*>/.exec(html)?.[0] ?? '';
+  assert.match(nav, /class="[^"]*\bhidden\b/, 'кнопка «Машины» должна быть скрыта в разметке (admin-only)');
+  const claimPinField = /<div[^>]*id="machines-claim-pin-field"[^>]*>/.exec(html)?.[0] ?? '';
+  assert.match(claimPinField, /class="[^"]*\bhidden\b/, 'поле PIN закрыто до проверки hasPin');
+  // PIN-поле — парольного типа, чтобы PIN не светился на экране
+  assert.match(html, /id="machines-claim-pin"[^>]*type="password"|type="password"[^>]*id="machines-claim-pin"/, 'PIN вводится закрытым полем');
+});
+
+test('web/*.mjs: панель машин показывается только admin и ходит только в существующий machines API', () => {
+  assert.match(operatorJs, /user\.role === 'admin'/, 'кнопку «Машины» показывает только роль admin');
+  const paths = [...operatorJs.matchAll(/api\('(?:GET|POST|DELETE)',\s*(`[^`]*`|'[^']*')/g)].map((m) => m[1]);
+  const machinePaths = paths.filter((p) => p.includes('/machines'));
+  assert.ok(machinePaths.length >= 4, 'панель машин должна использовать machines API (список, claim, pin, revoke, delete)');
+  const allowed = [
+    /^`\/machines\?[^`]*`$/, // список с пагинацией limit/offset
+    /^`\/machines\/\$\{[^`]+\}\/(claim|pin|revoke)`$/, // действия одной машины
+    /^`\/machines\/\$\{[^`]+\}`$/, // GET/DELETE одной машины
+  ];
+  for (const p of machinePaths) {
+    assert.ok(allowed.some((re) => re.test(p)), `неизвестный machines-маршрут (нового серверного кода нет): ${p}`);
+  }
+  // сообщение на экран и отдельный inventory-маршрут — не эта таска (T08);
+  // инвентарь приезжает в списке машин
+  assert.ok(!machinePaths.some((p) => /toast|inventory/.test(p)), 'toast/inventory-маршруты на странице машин не вызываются');
+});
+
+test('web/*.mjs: действия строк машин подключены через data-action (анти-мёртвые-кнопки)', () => {
+  const listDecl = /MACHINE_ACTIONS = \[([^\]]+)\]/.exec(allJs)?.[1] ?? '';
+  const declared = [...listDecl.matchAll(/'([a-zA-Z]+)'/g)].map((m) => m[1]);
+  assert.ok(declared.length >= 4, 'у строк машин должны быть действия (терминал, PIN, отзыв, удаление)');
+  for (const action of declared) {
+    assert.ok(allJs.includes(`action === '${action}'`), `действие «${action}» не обрабатывается в делегировании machines-list`);
+  }
+});
