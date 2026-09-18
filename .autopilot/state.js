@@ -13,7 +13,7 @@ window.STATE =
   "conventionsFile": "AGENTS.md",
   "skillDir": "/Users/admin/.zcode/skills/foreman",
   "startedAt": "2026-09-17T23:37:45+03:00",
-  "updatedAt": "2026-09-18T02:28:37+03:00",
+  "updatedAt": "2026-09-18T04:00:19+03:00",
   "finishedAt": null,
   "stages": [
     {
@@ -57,13 +57,15 @@ window.STATE =
     },
     {
       "id": "final",
-      "status": "pending"
+      "status": "done",
+      "startedAt": "2026-09-18T02:30:00+03:00",
+      "finishedAt": "2026-09-18T04:00:19+03:00"
     }
   ],
   "requirements": {
     "total": 12,
-    "done": 0,
-    "inTicket": 12,
+    "done": 12,
+    "inTicket": 0,
     "inSpec": 0,
     "placeholder": 0,
     "deferred": 0,
@@ -303,7 +305,7 @@ window.STATE =
   ],
   "singlePass": null,
   "tests": {
-    "passed": 200,
+    "passed": 297,
     "failed": 0
   },
   "debt": {
@@ -316,21 +318,24 @@ window.STATE =
   "additions": [],
   "coverage": null,
   "concerns": [
-    "T02 craft: adaptiveTimer дублирует qualityTimer (два опроса одного pc) — объединить в один цикл",
-    "T03 craft: EDESK_SMOKE_FIRSTRUN сравнивается на истинность вместо '1' — унифицировать в дозапросе",
-    "T04: claim отозванной машины (machine_revoked) не шлёт machine.claim.denied — решить, входит ли revoked в событие",
-    "T04: дефолтные ретраи [1,10,60]с не зафиксированы тестом (тесты на инжектированных) — допустимо",
-    "T04: тексты ошибок webhook-маршрута hardcoded ru вместо словарей — косметика, единообразие с machines-маршрутом",
-    "T05 craft (→ T10): мост с iceServers:[] — терминал только по LAN; нужен /rtc-config с токеном машины",
-    "T05 craft (→ T10): тест капа очереди не мог быть красным; гонка ANSWER-раньше-createAnswer не покрыта",
-    "T05 craft (→ T10): имена BRIDGE_IPC продублированы литералами в preload без сверки",
-    "T10: runtime-подключение fetchIceServers (main/agent) — дозапрос исполнителю 06-зоны в полёте",
-    "T10 craft: канон BRIDGE_IPC захардкожен в контракте (sandbox-preload не импортирует модули) — приемлемо, пометить",
-    "T06: дубль match-блоков GET /machines/:id в app.mjs (косметика)"
+    "[Report] T01: npm audit шаг advisory (намеренно не блокирует CI)",
+    "[Report] T02: серверные страницы — язык только по Accept-Language, переключателя нет",
+    "[Report] T04: claim отозванной машины не шлёт machine.claim.denied (webhook) — следующим проходом",
+    "[Report] T04: ретраи [1,10,60]с не зафиксированы тестом дефолта — допустимо",
+    "[Report] T04/T09: webhook secret лежит открыто; шифрование AES-GCM — хелперы готовы в totp.mjs, подключить следующим проходом",
+    "[Report] T04/T09: часть текстов маршрутов hardcoded ru вместо словарей — унифицировать",
+    "[Report] T06: дубль match-блоков /machines/:id в app.mjs (косметика)",
+    "[Report] T07: PIN через window.prompt (не поле в панели)",
+    "[Report] T09: QR-канваса нет — otpauth-URI текстом (приёмка вручную)",
+    "[Drop] T05: keep-alive поверхность Range-теста — документирована как известная",
+    "[Drop] T08: второй тост заменяет незабранный первый — задокументировано в MANUAL-QA"
   ],
   "reviewers": {
     "manifestSpec": null,
     "craft": null
   },
-  "blind": null
+  "blind": {
+    "verdict": "все пункты брифа реализованы и запускаются: 297 тестов, lint, smoke, сервер+health, compose config (TURN_SECRET-гейт), RBAC 401-маршруты; A1 (срез с проверкой собранного бинарника), A3, B1/B2/B3, C1 (SYSTEM, швы), C2 (UI), C4, C5, D1, D2 — реализованы; A2 — осознанно не делается; непроверяемое без машин (живые службы, TURN-релей, TLS, сквозной терминал, тосты) честно в docs/MANUAL-QA.md",
+    "drift": 0
+  }
 }
