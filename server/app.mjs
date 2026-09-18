@@ -160,7 +160,7 @@ function validSignalData(data) {
 }
 
 const CONTACT_LIMITS = { name: 120, notes: 2000, tags: 10, tag: 30 };
-const MACHINE_LIMITS = { name: 120, group: 60, reason: 500, pin: 128 };
+const MACHINE_LIMITS = { name: 120, group: 60, reason: 500, pin: 128, toast: 500 };
 
 function validateContactInput(body) {
   if (typeof body !== 'object' || body === null) return 'Некорректный запрос';
@@ -201,6 +201,10 @@ export function createServer(opts = {}) {
     heartbeatMs: opts.heartbeatMs ?? 5000,
     // грейс на переподключение участника в состоянии approved; 0 — старое fail-closed
     graceMs: opts.graceMs ?? 30_000,
+    // toast на экран машины (R08): сколько ждать подтверждения агента и сколько
+    // живёт не забранный агентом запрос (агент ходит heartbeat-ом раз в 5с)
+    toastWaitMs: opts.toastWaitMs ?? 12_000,
+    toastTtlMs: opts.toastTtlMs ?? 60_000,
     // сколько дней хранить завершённые сеансы; 0 — хранить вечно
     retentionDays: opts.retentionDays ?? 90,
     // потолок живых (WS) сеансов — защита памяти публичного сервера
@@ -220,6 +224,8 @@ export function createServer(opts = {}) {
       machineClaim: opts.limits?.machineClaim ?? new RateLimiter(10, 60_000),
       machineClaimId: opts.limits?.machineClaimId ?? new RateLimiter(5, 15 * 60_000),
       agentRegister: opts.limits?.agentRegister ?? new RateLimiter(10, 60_000),
+      // toast на экран машины: нечастая операция, лимит на всякий случай
+      machineToast: opts.limits?.machineToast ?? new RateLimiter(10, 60_000),
     },
   };
   const db = openDb(cfg.dbPath);
@@ -239,6 +245,14 @@ export function createServer(opts = {}) {
 
   const live = new Map(); // sessionId -> {hostWs, opWs, operatorUserId, sigCount, sigReset, hostLostAt, opLostAt, termActive}
   let closed = false;
+
+  // Toast на экран машины (R08): память процесса, не БД — состояние одноразовое.
+  // Один ожидающий toast на машину (новый заменяет старый); выдаётся агенту
+  // один раз (машинный heartbeat, поле toast), результат приходит toastResult'ом
+  // в следующем heartbeat — ожидавшие HTTP-запросы операторов разрешаются им.
+  // Каждый оператор ждёт свой id: замена toast не разрешает чужое ожидание.
+  const pendingToasts = new Map(); // machineId -> {id, text, at, issued}
+  const toastWaiters = new Map(); // machineId -> [{id, done, resolve}]
 
   function send(ws, obj) {
     if (ws && ws.readyState === ws.OPEN) ws.send(JSON.stringify(obj));
@@ -1006,6 +1020,44 @@ export function createServer(opts = {}) {
       auditLog(db, user.id, 'machine.revoke', machine.id, { name: machine.name });
       return ok(res, 200, { ok: true });
     }
+    m = p.match(/^\/machines\/([^/]+)\/toast$/);
+    if (m && req.method === 'POST') {
+      const locale = pickLocale(req.headers['accept-language']);
+      if (!cfg.limits.machineToast.take(`ip:${ip(req)}`)) {
+        return err(res, 429, 'rate_limited', t('machines.toastLimited', {}, locale));
+      }
+      if (!user) return err(res, 401, 'unauthorized', 'Требуется авторизация');
+      // операция поддержки, как claim: admin+operator; аудитор — нет
+      if (!['admin', 'operator'].includes(user.role)) return err(res, 403, 'forbidden', 'Недостаточно прав');
+      const machine = machinesStore.get(m[1]);
+      if (!machine) return err(res, 404, 'not_found', t('machines.notFound', {}, locale));
+      const text = typeof body?.text === 'string' ? body.text.trim() : '';
+      if (text.length < 1 || text.length > MACHINE_LIMITS.toast) {
+        return err(res, 400, 'bad_request', t('machines.toastLength', {}, locale));
+      }
+      if (machine.revoked_at) return err(res, 409, 'machine_revoked', t('machines.revoked', {}, locale));
+      if (!machine.agent_token_hash) return err(res, 409, 'not_registered', t('machines.notRegistered', {}, locale));
+      if (!machinesStore.out(machine).online) return err(res, 409, 'machine_offline', t('machines.machineOffline', {}, locale));
+      // один ожидающий toast на машину: новый заменяет не забранный старый
+      const id = crypto.randomUUID();
+      pendingToasts.set(machine.id, { id, text, at: Date.now(), issued: false });
+      auditLog(db, user.id, 'machine.toast', machine.id, { length: text.length });
+      // ожидаем подтверждения агента (придёт машинным heartbeat-ом) ограниченное время;
+      // по чужому id не разрешаемся — ждём свой или истечение срока
+      const result = await new Promise((resolve) => {
+        const list = toastWaiters.get(machine.id) ?? [];
+        const waiter = { id, done: false, resolve };
+        list.push(waiter);
+        toastWaiters.set(machine.id, list);
+        setTimeout(() => {
+          waiter.done = true;
+          const rest = toastWaiters.get(machine.id);
+          if (rest) toastWaiters.set(machine.id, rest.filter((w) => !w.done));
+          resolve(null);
+        }, cfg.toastWaitMs);
+      });
+      return ok(res, 200, { ok: true, result });
+    }
     m = p.match(/^\/machines\/([^/]+)$/);
     if (m && (req.method === 'GET' || req.method === 'DELETE')) {
       // одна машина: GET — наружный объект с инвентарём (R06), DELETE — удаление.
@@ -1062,7 +1114,38 @@ export function createServer(opts = {}) {
       // мусор отбрасывается, прошлый инвентарь остаётся.
       const inventory = body && Object.hasOwn(body, 'inventory') ? sanitizeInventory(body.inventory) : undefined;
       machinesStore.touch(machine.id, { inventory });
-      return ok(res, 200, { ok: true });
+
+      // Toast (R08): ответ агента по забранному ранее запросу. Результат
+      // принимаем только по актуальному id и в allowlist-форме; мусор молча
+      // игнорируется — heartbeat не ломается.
+      const pendingToast = pendingToasts.get(machine.id);
+      const tr = body && typeof body.toastResult === 'object' && body.toastResult !== null ? body.toastResult : null;
+      if (pendingToast && tr && tr.id === pendingToast.id) {
+        pendingToasts.delete(machine.id);
+        const result = { ok: tr.ok === true };
+        if (typeof tr.reason === 'string' && tr.reason) result.reason = tr.reason.slice(0, 60);
+        const waiters = toastWaiters.get(machine.id) ?? [];
+        toastWaiters.set(machine.id, waiters.filter((w) => {
+          if (w.done) return false; // истёкшие ожидания выбрасываются
+          if (w.id !== pendingToast.id) return true; // чужой id — оператор ждёт свой результат
+          w.done = true;
+          w.resolve(result);
+          return false;
+        }));
+      }
+
+      // выдача ожидающего toast этому агенту: один раз и пока не истёк TTL
+      let toast = null;
+      const queued = pendingToasts.get(machine.id);
+      if (queued && !queued.issued) {
+        if (Date.now() - queued.at <= cfg.toastTtlMs) {
+          queued.issued = true;
+          toast = { id: queued.id, text: queued.text };
+        } else {
+          pendingToasts.delete(machine.id);
+        }
+      }
+      return ok(res, 200, { ok: true, ...(toast ? { toast } : {}) });
     }
 
     // ---- pages / brand / downloads ----

@@ -91,22 +91,23 @@ test('web/operator.html: панель машин скрыта для не-admin 
   assert.match(html, /id="machines-claim-pin"[^>]*type="password"|type="password"[^>]*id="machines-claim-pin"/, 'PIN вводится закрытым полем');
 });
 
-test('web/*.mjs: панель машин показывается только admin и ходит только в существующий machines API', () => {
+test('web/*.mjs: панель машин показывается только admin и ходит в machines API (включая toast R08)', () => {
   assert.match(operatorJs, /user\.role === 'admin'/, 'кнопку «Машины» показывает только роль admin');
   const paths = [...operatorJs.matchAll(/api\('(?:GET|POST|DELETE)',\s*(`[^`]*`|'[^']*')/g)].map((m) => m[1]);
   const machinePaths = paths.filter((p) => p.includes('/machines'));
-  assert.ok(machinePaths.length >= 4, 'панель машин должна использовать machines API (список, claim, pin, revoke, delete)');
+  assert.ok(machinePaths.length >= 5, 'панель машин должна использовать machines API (список, claim, pin, revoke, delete, toast)');
   const allowed = [
     /^`\/machines\?[^`]*`$/, // список с пагинацией limit/offset
-    /^`\/machines\/\$\{[^`]+\}\/(claim|pin|revoke)`$/, // действия одной машины
+    /^`\/machines\/\$\{[^`]+\}\/(claim|pin|revoke|toast)`$/, // действия одной машины
     /^`\/machines\/\$\{[^`]+\}`$/, // GET/DELETE одной машины
   ];
   for (const p of machinePaths) {
-    assert.ok(allowed.some((re) => re.test(p)), `неизвестный machines-маршрут (нового серверного кода нет): ${p}`);
+    assert.ok(allowed.some((re) => re.test(p)), `неизвестный machines-маршрут: ${p}`);
   }
-  // сообщение на экран и отдельный inventory-маршрут — не эта таска (T08);
-  // инвентарь приезжает в списке машин
-  assert.ok(!machinePaths.some((p) => /toast|inventory/.test(p)), 'toast/inventory-маршруты на странице машин не вызываются');
+  // сообщение на экран (R08, T08) вызывается со страницы машин;
+  // инвентарь приезжает в списке машин — отдельного inventory-вызова нет
+  assert.ok(machinePaths.some((p) => /toast/.test(p)), 'toast-маршрут вызывается со страницы машин');
+  assert.ok(!machinePaths.some((p) => /inventory/.test(p)), 'отдельного inventory-маршрута на странице нет');
 });
 
 test('web/*.mjs: действия строк машин подключены через data-action (анти-мёртвые-кнопки)', () => {

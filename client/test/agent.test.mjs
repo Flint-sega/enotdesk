@@ -21,7 +21,7 @@ function memoryStore() {
 }
 
 function fakeApi(script = {}) {
-  const calls = { register: [], session: [], heartbeat: [], heartbeatBodies: [], decision: [] };
+  const calls = { register: [], session: [], heartbeat: [], heartbeatBodies: [], toastResults: [], decision: [] };
   return {
     calls,
     api: {
@@ -31,9 +31,10 @@ function fakeApi(script = {}) {
       async session(token) { calls.session.push(token); return script.session
         ? script.session(token)
         : { status: 404, body: { error: 'no_session', message: 'Активного сеанса у машины нет' } }; },
-      async heartbeat(token, inventory) {
+      async heartbeat(token, inventory, toastResult) {
         calls.heartbeat.push(token);
         calls.heartbeatBodies.push(inventory);
+        calls.toastResults.push(toastResult);
         return script.heartbeat
           ? script.heartbeat(token)
           : { status: 200, body: { ok: true } };
@@ -438,4 +439,90 @@ test('проводка TURN (R09): main подключает fetchIceServers к 
   assert.match(main, /createAgentRtc\(\{[\s\S]{0,400}?fetchIceServers\b/);
   assert.match(main, /createIceServersFetcher\(\{[\s\S]{0,200}?tokenStore\.load\(\)/,
     'fetcher собирается с машинным токеном из tokenStore');
+});
+
+// ---- сообщение на экран машины (R08): heartbeat-обмен toast ----
+// Выбранный путь (без расширения WS-реле): агент забирает запрос полем toast
+// в ответе /agent/heartbeat и отвечает toastResult'ом в следующем heartbeat.
+
+test('toast (R08): запрос из heartbeat показывается через notify, результат уезжает один раз', async () => {
+  const notifyCalls = [];
+  const beats = [
+    { status: 200, body: { ok: true, toast: { id: 't-1', text: 'покажите это' } } },
+    { status: 200, body: { ok: true } },
+    { status: 200, body: { ok: true } },
+  ];
+  const { calls, api } = fakeApi({
+    heartbeat: () => beats.shift() ?? { status: 200, body: { ok: true } },
+  });
+  const agent = createAgent({
+    api,
+    signal: fakeSignalFactory().factory,
+    native: createNativeInput({ adapter: inertAdapter() }),
+    notify: async (text) => { notifyCalls.push(text); return { ok: true }; },
+    policy: { tokenStore: memoryStore(), heartbeatMs: 5, backoffBaseMs: 10, backoffMaxMs: 40 },
+  });
+  try {
+    assert.equal(agent.start({ code: 'C1' }).ok, true);
+    await sleep(40);
+    assert.deepEqual(notifyCalls, ['покажите это'], 'текст дошёл до показчика без изменений');
+    assert.equal(calls.toastResults[0], undefined, 'первый heartbeat без результата');
+    assert.deepEqual(calls.toastResults[1], { id: 't-1', ok: true }, 'результат уехал следующим heartbeat-ом');
+    assert.equal(calls.toastResults[2], undefined, 'результат не повторяется');
+    assert.equal(agent.status().state, 'waiting', 'обмен toast не портит состояние агента');
+  } finally {
+    agent.stop();
+    await sleep(10);
+  }
+});
+
+test('toast (R08): notify нет/упал — честный отказ вместо молчания', async () => {
+  const beats = [
+    { status: 200, body: { ok: true, toast: { id: 't-2', text: 'текст' } } },
+    { status: 200, body: { ok: true } },
+  ];
+  const { calls, api } = fakeApi({
+    heartbeat: () => beats.shift() ?? { status: 200, body: { ok: true } },
+  });
+  const agent = createAgent({
+    api,
+    signal: fakeSignalFactory().factory,
+    native: createNativeInput({ adapter: inertAdapter() }),
+    // показчика нет — агент всё равно отвечает, чтобы оператор не ждал впустую
+    policy: { tokenStore: memoryStore(), heartbeatMs: 5, backoffBaseMs: 10, backoffMaxMs: 40 },
+  });
+  try {
+    assert.equal(agent.start({ code: 'C1' }).ok, true);
+    await sleep(40);
+    assert.deepEqual(calls.toastResults[1], { id: 't-2', ok: false, reason: 'notify-unavailable' },
+      'без показчика — честный отказ');
+
+    // notify выбрасывает исключение — цикл жив, отказ всё равно доезжает
+    beats.push({ status: 200, body: { ok: true, toast: { id: 't-3', text: 'текст' } } });
+    await sleep(30);
+    const seen = calls.toastResults.filter((r) => r?.id === 't-3');
+    assert.equal(seen.length, 1, 'отказ по t-3 уехал один раз');
+    assert.deepEqual(seen[0], { id: 't-3', ok: false, reason: 'notify-unavailable' });
+    assert.equal(agent.status().state, 'waiting', 'упавший показчик не рвёт цикл');
+  } finally {
+    agent.stop();
+    await sleep(10);
+  }
+});
+
+test('toast (R08): createAgentApi передаёт toastResult третьим аргументом heartbeat-а', async () => {
+  const bodies = [];
+  const fetchImpl = async (url, init) => {
+    bodies.push(init.body ? JSON.parse(init.body) : undefined);
+    return { status: 200, json: async () => ({ ok: true }) };
+  };
+  const api = createAgentApi({ baseUrl: 'http://srv:8080', fetchImpl });
+  await api.heartbeat('tok-9'); // без всего — тела нет (совместимость со старыми серверами)
+  await api.heartbeat('tok-9', { os: 'linux' });
+  await api.heartbeat('tok-9', undefined, { id: 't-1', ok: false, reason: 'native-unavailable' });
+  assert.deepEqual(bodies, [
+    undefined,
+    { inventory: { os: 'linux' } },
+    { toastResult: { id: 't-1', ok: false, reason: 'native-unavailable' } },
+  ]);
 });
