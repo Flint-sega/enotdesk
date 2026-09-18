@@ -7,6 +7,8 @@ const OPERATIONS = {
   login: { method: 'POST', path: '/auth/login' },
   logout: { method: 'POST', path: '/auth/logout', auth: 'bearer' },
   'password.change': { method: 'PATCH', path: '/auth/password', auth: 'bearer' },
+  'totp.enable': { method: 'POST', path: '/auth/totp/enable', auth: 'bearer' },
+  'totp.disable': { method: 'POST', path: '/auth/totp/disable', auth: 'bearer' },
   me: { method: 'GET', path: '/auth/me', auth: 'bearer' },
   'session.create': { method: 'POST', path: '/sessions' },
   'session.claim': { method: 'POST', path: (p) => `/sessions/${p.sessionId}/claim`, auth: 'bearer' },

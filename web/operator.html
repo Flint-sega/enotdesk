@@ -63,6 +63,20 @@ video.fit-cover{object-fit:cover}
 .file-list a{font-size:14px}
 .op-foot{border-top:1px solid var(--line);padding:16px 24px;color:var(--muted);font-size:14px}
 .wait-note{color:var(--muted)}
+.machines-head{display:flex;align-items:center;justify-content:space-between;gap:12px;flex-wrap:wrap}
+.machines-list{display:flex;flex-direction:column;gap:10px;margin-top:14px}
+.machine-item{display:flex;gap:12px;align-items:flex-start;justify-content:space-between;border:1px solid var(--line);border-radius:12px;padding:12px 14px;flex-wrap:wrap}
+.machine-item .grow{min-width:0;flex:1}
+.machine-item .title{font-weight:700;display:flex;align-items:center;gap:8px;flex-wrap:wrap}
+.machine-item .sub{color:var(--muted);font-size:14px;overflow-wrap:anywhere}
+.machine-actions{display:flex;gap:8px;flex-wrap:wrap}
+.machines-pager{display:flex;align-items:center;gap:10px;margin-top:14px;flex-wrap:wrap}
+.machines-page{color:var(--muted)}
+.btn.sm{padding:6px 12px;font-size:14px}
+.badge.on{color:var(--accent);border-color:var(--accent)}
+.badge.off{color:var(--danger);border-color:var(--danger)}
+.machines-claim{margin-top:16px;display:flex;flex-direction:column;gap:10px}
+.machines-claim-row{display:flex;gap:10px;flex-wrap:wrap}
 @media (max-width:900px){.session{grid-template-columns:1fr}.connect-grid{grid-template-columns:1fr}}
 </style>
 </head>
@@ -119,6 +133,42 @@ video.fit-cover{object-fit:cover}
       <button id="btn-claim" class="btn" type="submit" data-i18n="web.connect.submit">Подключиться</button>
     </form>
     <p class="form-error" id="conn-error" aria-live="polite"></p>
+    <button id="btn-nav-machines" class="btn ghost hidden" type="button" data-i18n="web.machines.open">Машины</button>
+  </section>
+
+  <section id="view-machines" class="card hidden">
+    <div class="machines-head">
+      <h1 data-i18n="web.machines.title">Машины</h1>
+      <button id="btn-nav-connect" class="btn ghost" type="button" data-i18n="web.machines.backConnect">К подключению</button>
+    </div>
+    <p class="form-error" id="machines-error" aria-live="polite"></p>
+    <div id="machines-list" class="machines-list"></div>
+    <p class="note hidden" id="machines-empty" data-i18n="web.machines.empty"></p>
+    <div class="machines-pager">
+      <button id="btn-machines-prev" class="btn ghost" type="button" data-i18n="web.machines.prev">← Назад</button>
+      <span class="machines-page" id="machines-page"></span>
+      <button id="btn-machines-next" class="btn ghost" type="button" data-i18n="web.machines.next">Вперёд →</button>
+      <button id="btn-machines-refresh" class="btn ghost" type="button" data-i18n="web.machines.refresh">Обновить</button>
+    </div>
+    <div class="card machines-claim hidden" id="machines-claim">
+      <h2 data-i18n="web.machines.claimTitle">Открыть терминал</h2>
+      <p class="note" id="machines-claim-name"></p>
+      <form id="machines-claim-form">
+        <div class="field">
+          <label for="machines-claim-reason" data-i18n="web.machines.claimReason">Причина подключения (обязательно)</label>
+          <input id="machines-claim-reason" maxlength="500">
+        </div>
+        <div class="field hidden" id="machines-claim-pin-field">
+          <label for="machines-claim-pin" data-i18n="web.machines.claimPin">PIN машины</label>
+          <input id="machines-claim-pin" type="password" autocomplete="off">
+        </div>
+        <div class="machines-claim-row">
+          <button id="btn-machines-claim" class="btn" type="submit" data-i18n="web.machines.claimSubmit">Подключиться</button>
+          <button id="btn-machines-claim-cancel" class="btn ghost" type="button" data-i18n="web.machines.claimCancel">Отмена</button>
+        </div>
+      </form>
+      <p class="form-error" id="machines-claim-error" aria-live="polite"></p>
+    </div>
   </section>
 
   <section id="op-waiting" class="card center-card hidden">
@@ -174,6 +224,7 @@ video.fit-cover{object-fit:cover}
         <div class="row">
           <input id="op-term-input" data-i18n-placeholder="term.placeholder" placeholder="команда…" autocomplete="off" spellcheck="false">
           <button id="btn-term-send" class="btn" type="button" data-i18n="term.send">Отправить</button>
+          <button id="btn-term-retry" class="btn ghost hidden" type="button" data-i18n="term.retry">Повторить</button>
           <button id="btn-term-close" class="btn ghost" type="button" data-i18n="term.close">Закрыть</button>
         </div>
       </div>

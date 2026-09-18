@@ -13,13 +13,24 @@ if (!api) {
   let pc = null;
   let dc = null;
   let paused = false;
+  // TURN-конфиг приходит из main до offer (ICE_CONFIG); пусто или сбой —
+  // прямое LAN-соединение, причина честно видна в логе окна и в сообщении об отказе.
+  let iceServers = [];
+  let iceReason = null;
   const HIGH_WATER = 1 << 20; // байт в буфере DataChannel — просим main притормозить
   const LOW_WATER = 256 * 1024; // опустело ниже — разрешаем снова
 
+  api.onIceConfig?.((cfg) => {
+    iceServers = Array.isArray(cfg?.iceServers) ? cfg.iceServers : [];
+    iceReason = typeof cfg?.reason === 'string' && cfg.reason ? cfg.reason : null;
+    if (iceReason) console.warn(`agent-bridge: ${iceReason}`);
+  });
+
   function openPeer(offerSdp) {
     if (pc) return;
-    // Данным-каналам медиа и TURN для прямой связи не нужно; живые сети — MANUAL-QA.
-    pc = new RTCPeerConnection({ iceServers: [] });
+    // iceServers приходят до offer (ICE_CONFIG); TURN нужен в NAT-сетях, LAN
+    // работает и без него. Живые сети — MANUAL-QA.
+    pc = new RTCPeerConnection({ iceServers });
     pc.onicecandidate = (e) => {
       if (e.candidate) api.sendIce(e.candidate.toJSON ? e.candidate.toJSON() : e.candidate);
     };
@@ -48,7 +59,11 @@ if (!api) {
       .then(() => pc.createAnswer())
       .then((answer) => pc.setLocalDescription(answer))
       .then(() => api.sendAnswer(pc.localDescription.sdp))
-      .catch((err) => api.fail(`rtc: ${err?.message ?? err}`));
+      .catch((err) => {
+        // честный отказ: при пустом iceServers добавляем причину, почему TURN не был
+        const ice = !iceServers.length && iceReason ? ` (ice: ${iceReason})` : '';
+        api.fail(`rtc: ${err?.message ?? err}${ice}`);
+      });
   }
 
   api.onOffer((sdp) => openPeer(sdp));
