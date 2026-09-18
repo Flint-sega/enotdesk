@@ -189,6 +189,11 @@
             <label for="login-password" data-i18n="op.password">Пароль</label>
             <input id="login-password" name="password" type="password" autocomplete="current-password" required>
           </div>
+          <!-- Второй фактор: поле скрыто, пока сервер не ответит totp_required -->
+          <div class="field hidden" id="field-login-totp">
+            <label for="login-totp" data-i18n="op.totpCode">Код подтверждения</label>
+            <input id="login-totp" name="totp" inputmode="numeric" autocomplete="one-time-code" data-i18n-placeholder="op.totpPlaceholder" placeholder="6 цифр или резервный код">
+          </div>
           <p id="login-error" class="err-text" role="alert"></p>
           <button type="submit" id="btn-login" class="cta wide" data-i18n="op.loginBtn">Войти</button>
         </form>
@@ -231,6 +236,7 @@
             <span id="op-who" class="muted"></span>
             <div class="sidebar-actions">
               <button id="btn-password" class="btn small" data-i18n="op.changePassword">Сменить пароль</button>
+              <button id="btn-totp" class="btn small" data-i18n="op.twofa">2FA</button>
               <button id="btn-logout" class="btn small" data-i18n="op.logout">Выйти</button>
             </div>
           </div>
@@ -413,6 +419,65 @@
           </div>
         </form>
         <p id="password-status" class="note" role="status"></p>
+      </div>
+    </div>
+
+    <!-- ======================= 2FA (TOTP) ======================= -->
+    <div id="totp-overlay" class="overlay hidden" role="dialog" aria-modal="true" aria-labelledby="totp-title">
+      <div class="card narrow">
+        <h2 id="totp-title" data-i18n="totp.title">Двухфакторная аутентификация</h2>
+        <p id="totp-status" class="note" role="status"></p>
+        <!-- 2FA выключена: настройка по текущему паролю -->
+        <div id="totp-off">
+          <p class="muted" data-i18n="totp.offLead">Второй фактор: одноразовый код из приложения-аутентификатора при каждом входе.</p>
+          <form id="form-totp-enable" novalidate>
+            <div class="field">
+              <label for="totp-enable-password" data-i18n="totp.passwordLabel">Текущий пароль</label>
+              <input id="totp-enable-password" type="password" autocomplete="current-password" required>
+            </div>
+            <p id="totp-enable-error" class="err-text" role="alert"></p>
+            <button type="submit" id="btn-totp-enable" class="cta" data-i18n="totp.enableBtn">Настроить 2FA</button>
+          </form>
+          <!-- Настройка: otpauth/секрет и резервные коды показываются один раз -->
+          <div id="totp-setup" class="hidden">
+            <p class="muted" data-i18n="totp.setupLead">Добавьте аккаунт в приложение-аутентификатор:</p>
+            <div class="field">
+              <label for="totp-uri" data-i18n="totp.uriLabel">Ссылка otpauth (вставьте в приложение-аутентификатор)</label>
+              <input id="totp-uri" readonly>
+            </div>
+            <div class="field">
+              <label for="totp-secret" data-i18n="totp.secretLabel">Секрет для ручного ввода</label>
+              <input id="totp-secret" readonly>
+            </div>
+            <div class="field">
+              <span data-i18n="totp.backupLead">Резервные коды (показаны один раз — сохраните):</span>
+              <p id="totp-backup-codes" class="note"></p>
+            </div>
+            <form id="form-totp-confirm" novalidate>
+              <div class="field">
+                <label for="totp-confirm-code" data-i18n="totp.codeLabel">Код из приложения для подтверждения</label>
+                <input id="totp-confirm-code" inputmode="numeric" autocomplete="one-time-code" required>
+              </div>
+              <p id="totp-confirm-error" class="err-text" role="alert"></p>
+              <button type="submit" id="btn-totp-confirm" class="cta" data-i18n="totp.confirmBtn">Подтвердить и включить</button>
+            </form>
+          </div>
+        </div>
+        <!-- 2FA включена: отключение по текущему паролю -->
+        <div id="totp-on" class="hidden">
+          <p class="muted" data-i18n="totp.onLead">Вход требует код из приложения-аутентификатора или одноразовый резервный код.</p>
+          <form id="form-totp-disable" novalidate>
+            <div class="field">
+              <label for="totp-disable-password" data-i18n="totp.passwordLabel">Текущий пароль</label>
+              <input id="totp-disable-password" type="password" autocomplete="current-password" required>
+            </div>
+            <p id="totp-disable-error" class="err-text" role="alert"></p>
+            <button type="submit" id="btn-totp-disable" class="btn danger-ghost" data-i18n="totp.disableBtn">Отключить 2FA</button>
+          </form>
+        </div>
+        <div class="row gap">
+          <button type="button" id="btn-totp-close" class="btn" data-i18n="settings.close">Закрыть</button>
+        </div>
       </div>
     </div>
 

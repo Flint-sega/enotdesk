@@ -27,6 +27,19 @@ files:
 asarUnpack:
   - node_modules/koffi/**
 artifactName: "EnotDesk-${os}-${arch}.${ext}"
+# Вшитый адрес сервера (R03): значение попадает в package.json внутри app.asar,
+# клиент читает его как baked (client/lib/first-run.mjs: pkg → process.env →
+# порядок saved → файл → baked → дефолт). ВАЖНО: макрос ${env.*} electron-builder
+# раскрывает только в file patterns / artifactName / publish url — в extraMetadata
+# он остаётся литералом (проверено сборкой 26.15.3), поэтому адрес задаётся так:
+#   статически:   ENOT_BAKED_SERVER_URL: https://enot.example.com
+#   при сборке:   ENOT_BAKED_SERVER_URL=https://demo.example \
+#                 npx electron-builder --config build/electron-builder.yml \
+#                   -c.extraMetadata.ENOT_BAKED_SERVER_URL="$ENOT_BAKED_SERVER_URL" ...
+# Пустая строка (по умолчанию) = «не задано»: клиент честно уходит в следующий
+# источник резолва.
+extraMetadata:
+  ENOT_BAKED_SERVER_URL: ""
 mac:
   target:
     - zip

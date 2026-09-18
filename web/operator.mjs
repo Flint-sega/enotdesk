@@ -103,7 +103,7 @@ function showKeyError(key) {
 
 // ---- состояния страницы ----
 
-const VIEWS = ['view-login', 'view-denied', 'view-connect', 'op-waiting', 'op-reconnect', 'op-remote'];
+const VIEWS = ['view-login', 'view-denied', 'view-connect', 'view-machines', 'op-waiting', 'op-reconnect', 'op-remote'];
 function showOnly(...ids) {
   for (const id of VIEWS) (ids.includes(id) ? show : hide)($(id));
 }
@@ -113,6 +113,7 @@ function showConnectForm() {
   state.connect = null;
   showOnly('view-connect');
   hide($('op-term')); // панель терминала живёт только внутри сеанса
+  hide($('btn-term-retry'));
   text($('op-term-out'), '');
   text($('op-term-status'), '');
   text($('remote-status'), '');
@@ -234,6 +235,18 @@ async function machineOffer() {
     state.dcs = { term: termCh };
     pc.ontrack = (e) => { $('remote-video').srcObject = e.streams[0]; };
     startTimers(pc);
+    // Повторное открытие терминала (R09): новый DataChannel требует
+    // ренеготиации. Первый раунд — offer ниже, поэтому пока нет remote
+    // description, хук молчит; дальше каждый новый канал офферится сам.
+    // Агент (answerTermOffer) отвечает на каждый offer, пока жив сеанс.
+    pc.onnegotiationneeded = async () => {
+      if (!pc.remoteDescription) return;
+      try {
+        const offer = await pc.createOffer();
+        await pc.setLocalDescription(offer);
+        sendSignal({ description: { type: 'offer', sdp: pc.localDescription.sdp } });
+      } catch { /* раунд не собрался — дедлайн открытия честно отчитается */ }
+    };
     const offer = await pc.createOffer();
     await pc.setLocalDescription(offer);
     sendSignal({ description: { type: 'offer', sdp: pc.localDescription.sdp } });
@@ -277,6 +290,16 @@ async function onSignal(msg) {
           drainIce(state.pc);
           showOnly('op-remote');
           showStatus(t('status.connected'));
+        } else if (msg.data?.description?.type === 'answer'
+                   && state.connect?.machineId && state.pc
+                   && state.pc.signalingState === 'have-local-offer') {
+          // ренеготиация терминала (R09): агент ответил на повторный offer.
+          // Раунд best-effort: не сошёлся — сеанс жив, дедлайн открытия
+          // терминала честно отчитается.
+          try {
+            await state.pc.setRemoteDescription({ type: 'answer', sdp: msg.data.description.sdp });
+            drainIce(state.pc);
+          } catch { /* устаревший/несошедшийся раунд */ }
         } else if (msg.data?.candidate) {
           const c = msg.data.candidate;
           if (state.pc && state.pc.remoteDescription) state.pc.addIceCandidate(c).catch(() => {});
@@ -414,10 +437,28 @@ function sendFile(file) {
 
 // ---- терминал машины (R09): DC-канал `term`, только внутри сеанса с машиной ----
 
+// Дедлайн открытия (craft-ревью R09): канал может не открыться вовсе (мост
+// агента мёртв, answer не пришёл) — без него панель навсегда висит на
+// «Открываю терминал…», и отказ не виден оператору.
+const TERM_OPEN_TIMEOUT_MS = 10000;
+
+// Честный отказ вместо вечного «Открываю…»: причина и кнопка «Повторить».
+function termFail(reason) {
+  showStatusId(t('term.unavailableWith', { reason }));
+  show($('btn-term-retry'));
+}
+
 function wireTermChannel(ch) {
   show($('op-term'));
   text($('op-term-out'), '');
   showStatusId(t('term.opening'));
+  hide($('btn-term-retry'));
+  let alive = false; // терминал подтвердил открытие ({opened} или вывод)
+  let settled = false; // честный статус уже показан — поздние события не перебивают
+  const deadline = setTimeout(() => {
+    if (!settled) termFail(t('term.reasonTimeout'));
+  }, TERM_OPEN_TIMEOUT_MS);
+  const settle = () => { settled = true; clearTimeout(deadline); hide($('btn-term-retry')); };
   ch.onmessage = (m) => {
     let msg;
     try { msg = JSON.parse(m.data); } catch { return; } // не-JSON не проходит allowlist
@@ -425,23 +466,47 @@ function wireTermChannel(ch) {
     switch (msg.type) {
       case 'opened':
         // честная пометка контекста исполнения (SYSTEM v1, R09.1)
+        settle();
+        alive = true;
         showStatusId(t('term.context', { context: typeof msg.context === 'string' ? msg.context : '?' }));
         break;
       case 'out':
+        if (!alive) { settle(); alive = true; }
         termAppend(String(msg.data ?? ''));
         break;
       case 'exit':
+        clearTimeout(deadline);
         showStatusId(t('term.exited', { reason: typeof msg.reason === 'string' ? msg.reason : 'exit' }));
         break;
       case 'error':
+        settled = true;
+        clearTimeout(deadline);
         showStatusId(t(msg.code === 'term-busy' ? 'term.busy'
           : msg.code === 'term-unavailable' ? 'term.unavailable' : 'term.failed'));
+        show($('btn-term-retry'));
         break;
       default:
         break;
     }
   };
-  ch.onclose = () => showStatusId(t('term.closed'));
+  ch.onclose = () => {
+    clearTimeout(deadline);
+    if (alive) showStatusId(t('term.closed'));
+    else if (!settled) termFail(t('term.reasonClosed'));
+  };
+}
+
+// Повторить (R09): старый канал закрывается, новый «term» требует ренеготиации —
+// её ведёт onnegotiationneeded в machineOffer; не сошлось — дедлайн открытия
+// снова честно отчитается.
+function retryTerm() {
+  const pc = state.pc;
+  if (!pc || pc.connectionState === 'closed') return;
+  const old = state.dcs?.term;
+  if (old && old.readyState !== 'closed') { try { old.close(); } catch { /* уже закрыт */ } }
+  const ch = pc.createDataChannel('term');
+  state.dcs = { ...(state.dcs ?? {}), term: ch };
+  wireTermChannel(ch);
 }
 
 function showStatusId(value) {
@@ -463,6 +528,184 @@ function sendTermLine() {
   const line = input.value.slice(0, 8192);
   input.value = '';
   try { dc.send(JSON.stringify({ type: 'in', data: `${line}\r` })); } catch { /* канал закрывается */ }
+}
+
+// ---- панель «Машины» (R07): список/пагинация/PIN/отзыв/удаление/терминал ----
+// Только существующий machines API (spec §UI машин): нового серверного кода нет.
+// Панель показывается только admin; оператор её не видит, а любой прямой запрос
+// всё равно честно получит отказ сервера (403).
+
+const MACHINES_PAGE = 25;
+const PIN_MIN = 4;
+const PIN_MAX = 128;
+// Действия строки машины: и значения data-action, и хвосты словарных ключей
+// web.machines.action.* — контракт-тест проверяет, что каждое обработано.
+const MACHINE_ACTIONS = ['terminal', 'pin', 'revoke', 'deleteAction'];
+let machinesOffset = 0;
+let machinesTotal = 0;
+let machinesCache = []; // текущая страница: данные строк для действий по data-id
+let claimMachine = null; // машина, для которой открыт терминальный claim
+
+// Инвентарь (R06) приходит прямо в списке машин; поля может не быть —
+// агент не прислал (например, statfs недоступен) — это честно показываем.
+function inventoryParts(inv) {
+  if (!inv || typeof inv !== 'object') return [t('web.machines.invNone')];
+  const parts = [];
+  if (typeof inv.os === 'string') parts.push(t('web.machines.invOs', { value: inv.os }));
+  if (typeof inv.appVersion === 'string') parts.push(t('web.machines.invVersion', { value: inv.appVersion }));
+  if (Number.isFinite(inv.uptimeSec)) parts.push(t('web.machines.invUptime', { value: fmtUptime(inv.uptimeSec) }));
+  if (Number.isFinite(inv.diskFreeGb)) parts.push(t('web.machines.invDisk', { value: inv.diskFreeGb }));
+  return parts.length ? parts : [t('web.machines.invNone')];
+}
+
+function fmtUptime(sec) {
+  const total = Math.max(0, Math.floor(sec));
+  const d = Math.floor(total / 86400);
+  const h = Math.floor((total % 86400) / 3600);
+  const m = Math.floor((total % 3600) / 60);
+  const parts = [];
+  if (d) parts.push(`${d}${t('web.machines.uDay')}`);
+  if (h) parts.push(`${h}${t('web.machines.uHour')}`);
+  if (m || (!d && !h)) parts.push(`${m}${t('web.machines.uMin')}`);
+  return parts.join(' ');
+}
+
+function machineBadge(m) {
+  const span = document.createElement('span');
+  span.className = 'badge';
+  if (m.revokedAt) { span.classList.add('off'); span.textContent = t('web.machines.badgeRevoked'); }
+  else if (!m.registered) { span.textContent = t('web.machines.badgeNoAgent'); }
+  else if (m.online) { span.classList.add('on'); span.textContent = t('web.machines.online'); }
+  else if (m.lastSeenAt) { span.classList.add('off'); span.textContent = t('web.machines.offline', { date: new Date(m.lastSeenAt).toLocaleString(getLocale()) }); }
+  else { span.classList.add('off'); span.textContent = t('web.machines.offlineNever'); }
+  return span;
+}
+
+function machineActionButton(m, action) {
+  const btn = document.createElement('button');
+  btn.type = 'button';
+  btn.className = `btn ghost sm${action === 'terminal' ? '' : ' danger'}`;
+  btn.dataset.action = action;
+  btn.dataset.id = m.id;
+  btn.textContent = t(`web.machines.action.${action}`);
+  if (action === 'terminal') btn.disabled = Boolean(m.revokedAt) || !m.registered;
+  if (action === 'revoke') btn.disabled = Boolean(m.revokedAt);
+  return btn;
+}
+
+function renderMachineRows(items) {
+  const box = $('machines-list');
+  box.textContent = '';
+  for (const m of items) {
+    const row = document.createElement('div');
+    row.className = 'machine-item';
+    const grow = document.createElement('div');
+    grow.className = 'grow';
+    const title = document.createElement('div');
+    title.className = 'title';
+    title.appendChild(document.createTextNode(m.name));
+    title.appendChild(machineBadge(m));
+    if (m.hasPin) {
+      const pin = document.createElement('span');
+      pin.className = 'badge';
+      pin.textContent = t('web.machines.badgePin');
+      title.appendChild(pin);
+    }
+    grow.appendChild(title);
+    const subs = [
+      m.groupName ? t('web.machines.group', { value: m.groupName }) : '',
+      ...inventoryParts(m.inventory),
+    ].filter(Boolean);
+    for (const line of subs) {
+      const sub = document.createElement('div');
+      sub.className = 'sub';
+      sub.textContent = line;
+      grow.appendChild(sub);
+    }
+    row.appendChild(grow);
+    const actions = document.createElement('div');
+    actions.className = 'machine-actions';
+    for (const action of MACHINE_ACTIONS) actions.appendChild(machineActionButton(m, action));
+    row.appendChild(actions);
+    box.appendChild(row);
+  }
+}
+
+async function renderMachines() {
+  const res = await api('GET', `/machines?limit=${MACHINES_PAGE}&offset=${machinesOffset}`);
+  if (res.status !== 200) {
+    // отказ сервера честен: не-admin получит свой 403, остальные — свой текст
+    text($('machines-error'), res.body?.error?.message ?? t('common.serverError'));
+    return;
+  }
+  machinesTotal = res.body.total ?? res.body.items?.length ?? 0;
+  machinesCache = res.body.items ?? [];
+  text($('machines-error'), '');
+  renderMachineRows(machinesCache);
+  const empty = $('machines-empty');
+  (machinesCache.length ? hide : show)(empty);
+  text($('machines-page'), t('common.pageOf', { page: Math.floor(machinesOffset / MACHINES_PAGE) + 1, total: machinesTotal }));
+  $('btn-machines-prev').disabled = machinesOffset === 0;
+  $('btn-machines-next').disabled = machinesOffset + MACHINES_PAGE >= machinesTotal;
+}
+
+function machineActionError(res) {
+  text($('machines-error'), res.body?.error?.message ?? t('common.serverError'));
+}
+
+async function machinePin(m) {
+  const raw = window.prompt(t('web.machines.pinPrompt', { name: m.name }));
+  if (raw === null) return; // отмена
+  const pin = raw.trim();
+  const body = pin ? { pin } : {}; // пустое значение — снять PIN (сервер так и понимает)
+  if (pin && (pin.length < PIN_MIN || pin.length > PIN_MAX)) {
+    text($('machines-error'), t('machines.pinLength'));
+    return;
+  }
+  if (!pin && m.hasPin && !window.confirm(t('web.machines.pinClearConfirm', { name: m.name }))) return;
+  const res = await api('POST', `/machines/${encodeURIComponent(m.id)}/pin`, body);
+  if (res.status !== 200) machineActionError(res);
+  await renderMachines();
+}
+
+async function machineRevoke(m) {
+  if (!window.confirm(t('web.machines.revokeConfirm', { name: m.name }))) return;
+  const res = await api('POST', `/machines/${encodeURIComponent(m.id)}/revoke`);
+  if (res.status !== 200) machineActionError(res);
+  await renderMachines();
+}
+
+async function machineDelete(m) {
+  if (!window.confirm(t('web.machines.deleteConfirm', { name: m.name }))) return;
+  const res = await api('DELETE', `/machines/${encodeURIComponent(m.id)}`);
+  if (res.status !== 200) machineActionError(res);
+  await renderMachines();
+}
+
+// Открытие терминала машины (R09): claim с обязательной причиной (+PIN, если
+// задан) — политику проверяет сервер; дальше работает существующий flow
+// machine-сеанса, терминал откроется в своей панели.
+function openMachineClaim(m) {
+  claimMachine = m;
+  text($('machines-claim-name'), t('web.machines.claimTarget', { name: m.name }));
+  (m.hasPin ? show : hide)($('machines-claim-pin-field'));
+  $('machines-claim-reason').value = '';
+  $('machines-claim-pin').value = '';
+  text($('machines-claim-error'), '');
+  show($('machines-claim'));
+  $('machines-claim-reason').focus();
+}
+
+function closeMachineClaim() {
+  claimMachine = null;
+  hide($('machines-claim'));
+}
+
+function showMachines() {
+  if (state.connect) return; // во время сеанса панель машин недоступна
+  closeMachineClaim();
+  showOnly('view-machines');
+  void renderMachines();
 }
 
 // ---- действия страницы ----
@@ -549,6 +792,7 @@ function wire() {
   });
 
   $('btn-term-send')?.addEventListener('click', () => sendTermLine());
+  $('btn-term-retry')?.addEventListener('click', () => retryTerm());
   $('op-term-input')?.addEventListener('keydown', (e) => {
     if (e.key === 'Enter') { e.preventDefault(); sendTermLine(); }
   });
@@ -556,6 +800,62 @@ function wire() {
     const dc = state.dcs?.term;
     if (!dc || dc.readyState !== 'open') return;
     try { dc.send(JSON.stringify({ type: 'close' })); } catch { /* канал закрывается */ }
+  });
+
+  // Панель «Машины» (R07): делегирование клика по строкам, пагинация, claim.
+  $('machines-list')?.addEventListener('click', (e) => {
+    const btn = e.target.closest?.('button[data-action]');
+    if (!btn || btn.disabled) return;
+    const m = machinesCache.find((x) => x.id === btn.dataset.id);
+    if (!m) return;
+    const action = btn.dataset.action;
+    if (action === 'terminal') openMachineClaim(m);
+    else if (action === 'pin') void machinePin(m);
+    else if (action === 'revoke') void machineRevoke(m);
+    else if (action === 'deleteAction') void machineDelete(m);
+  });
+
+  $('btn-machines-prev')?.addEventListener('click', () => {
+    machinesOffset = Math.max(0, machinesOffset - MACHINES_PAGE);
+    void renderMachines();
+  });
+  $('btn-machines-next')?.addEventListener('click', () => {
+    if (machinesOffset + MACHINES_PAGE < machinesTotal) machinesOffset += MACHINES_PAGE;
+    void renderMachines();
+  });
+  $('btn-machines-refresh')?.addEventListener('click', () => void renderMachines());
+
+  $('machines-claim-form')?.addEventListener('submit', async (e) => {
+    e.preventDefault();
+    if (!claimMachine) return;
+    const btn = $('btn-machines-claim');
+    setBusy(btn, true, t('web.machines.claimBusy'));
+    try {
+      const body = { reason: $('machines-claim-reason').value.trim() };
+      if (claimMachine.hasPin) body.pin = $('machines-claim-pin').value;
+      const res = await api('POST', `/machines/${encodeURIComponent(claimMachine.id)}/claim`, body);
+      if (res.status !== 201) {
+        // reason_required / pin_required / bad_pin / machine_revoked — тексты сервера
+        text($('machines-claim-error'), res.body?.error?.message ?? t('common.serverError'));
+        return;
+      }
+      const { sessionId, claimId, machineId } = res.body;
+      closeMachineClaim();
+      text($('machines-error'), '');
+      // дальше — существующий flow machine-сеанса: approved → терминал
+      state.connect = { sessionId, claimId, machineId: machineId ?? claimMachine.id };
+      showOnly('op-waiting');
+      openSignal();
+    } finally {
+      setBusy(btn, false);
+    }
+  });
+  $('btn-machines-claim-cancel')?.addEventListener('click', () => closeMachineClaim());
+
+  $('btn-nav-machines')?.addEventListener('click', () => showMachines());
+  $('btn-nav-connect')?.addEventListener('click', () => {
+    closeMachineClaim();
+    showConnectForm();
   });
 
   // Drag&drop файла на экран сеанса, как в desktop.
@@ -614,6 +914,8 @@ function wire() {
       showOnly('view-denied');
       return;
     }
+    // Панель машин — только admin (spec §UI машин); оператор её не видит.
+    if (user.role === 'admin') show($('btn-nav-machines'));
     showOnly('view-connect');
     showStatus(t('web.status.idle'));
     return;

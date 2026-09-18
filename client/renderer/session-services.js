@@ -5,6 +5,7 @@ import { $, enot, text } from './dom.js';
 import { state } from './state.js';
 import { t } from '../lib/i18n.mjs';
 import { parseChatMessage, chatMessage } from '../lib/chat.mjs';
+import { rejectTermChannel } from '../lib/term.mjs';
 import { parseClipMessage, clipMessage } from '../lib/clipboard-sync.mjs';
 import {
   parseFileControl, createFileReceiver, createFileSender,
@@ -75,6 +76,9 @@ export function wireHostChannel(ch) {
   } else if (ch.label === 'file') {
     ch.binaryType = 'arraybuffer';
     ch.onmessage = (m) => hostFileMessage(ch, m.data);
+  } else if (ch.label === 'term') {
+    // Терминал — только machine-сеанс (R09): человек-хост честно отказывает.
+    rejectTermChannel(ch);
   }
 }
 
