@@ -6,14 +6,16 @@ import { createWebhooks, WEBHOOK_EVENTS } from '../webhooks.mjs';
 import { openDb } from '../db.mjs';
 import { startServer, api, adminLogin, tmpDb } from './util.mjs';
 
-// ---- createWebhooks: подпись, ретраи, фильтр (фейк-fetch, без сети) ----
-// Эталон подписи посчитан вручную (node:crypto по спеке), не кодом модуля:
-// body = {"event":"session.started","payload":{"sessionId":"42"},"ts":"2026-01-02T03:04:05.678Z"},
-// secret = "секрет-webhook-123".
+// ---- createWebhooks: подпись, ретраи, фильтр, шифрование секрета ----
+// Фейк-fetch, без сети. Эталон подписи посчитан вручную (node:crypto по спеке),
+// не кодом модуля: body = {"event":"session.started","payload":{"sessionId":"42"},
+// "ts":"2026-01-02T03:04:05.678Z"}, secret = "секрет-webhook-123".
 const FIXED_MS = 1767323045678; // 2026-01-02T03:04:05.678Z
 const EXPECTED_BODY = '{"event":"session.started","payload":{"sessionId":"42"},"ts":"2026-01-02T03:04:05.678Z"}';
 const EXPECTED_SIG = 'e125da223feae3950b41be3aaf61ced1db50fb4358927a6760d8b5916ec5aa91';
 const SECRET = 'секрет-webhook-123';
+const TEST_KEY = 'ключ-webhooks-тестов-0123456789abcdef';
+const OTHER_KEY = 'чужой-ключ-ротации-9876543210fedcba';
 
 test('подпись: известное тело подписывается точной hex-подписью X-Enot-Signature', async () => {
   const db = openDb(':memory:');
@@ -21,6 +23,7 @@ test('подпись: известное тело подписывается т�
   const wh = createWebhooks(db, {
     fetchImpl: async (url, opts) => { calls.push({ url, opts }); return { ok: true }; },
     nowMs: () => FIXED_MS,
+    secretKey: TEST_KEY,
   });
   assert.deepEqual(WEBHOOK_EVENTS, ['session.started', 'session.ended', 'machine.claim.denied']);
 
@@ -42,6 +45,7 @@ test('ретраи: постоянный сбой — 3 ретрая, потом
   const wh = createWebhooks(db, {
     fetchImpl: async () => { calls += 1; return { ok: false }; },
     retryDelays: [1, 1, 1],
+    secretKey: TEST_KEY,
   });
   wh.configure('http://127.0.0.1:9/hook', SECRET);
   const delivered = await wh.emit('session.ended', { sessionId: 's1' });
@@ -60,6 +64,7 @@ test('ретраи: разовый сбой сети (throw) — вторая п
       return { ok: true };
     },
     retryDelays: [1, 1, 1],
+    secretKey: TEST_KEY,
   });
   wh.configure('http://127.0.0.1:9/hook', SECRET);
   assert.equal(await wh.emit('session.started', {}), true);
@@ -70,7 +75,7 @@ test('ретраи: разовый сбой сети (throw) — вторая п
 test('фильтр: событие вне списка не доставляется, пустой список — все события', async () => {
   const db = openDb(':memory:');
   const calls = [];
-  const wh = createWebhooks(db, { fetchImpl: async () => { calls.push(1); return { ok: true }; } });
+  const wh = createWebhooks(db, { fetchImpl: async () => { calls.push(1); return { ok: true }; }, secretKey: TEST_KEY });
   wh.configure('http://127.0.0.1:9/hook', SECRET, ['session.started']);
 
   await wh.emit('session.ended', {});
@@ -88,7 +93,7 @@ test('фильтр: событие вне списка не доставляет
 test('выключение: пустой url гасит доставку; не настроенные webhooks молчат', async () => {
   const db = openDb(':memory:');
   let calls = 0;
-  const wh = createWebhooks(db, { fetchImpl: async () => { calls += 1; return { ok: true }; } });
+  const wh = createWebhooks(db, { fetchImpl: async () => { calls += 1; return { ok: true }; }, secretKey: TEST_KEY });
   await wh.emit('session.started', {});
   assert.equal(calls, 0, 'без настроек доставки нет');
 
@@ -107,7 +112,7 @@ test('выключение: пустой url гасит доставку; не �
 
 test('настройка: не-http URL и пустой секрет отклоняются; events чистятся по allowlist', () => {
   const db = openDb(':memory:');
-  const wh = createWebhooks(db);
+  const wh = createWebhooks(db, { secretKey: TEST_KEY });
   assert.equal(wh.configure('ftp://example.com/hook', SECRET).ok, false);
   assert.equal(wh.configure('не-адрес', SECRET).ok, false);
   assert.equal(wh.configure('http://example.com/hook', '').ok, false, 'без секрета подписывать нечем');
@@ -117,13 +122,98 @@ test('настройка: не-http URL и пустой секрет откло�
   db.close();
 });
 
+test('шифрование: в БД v1-шифтекст, а подпись после расшифровки сходится с секретом', async () => {
+  const db = openDb(':memory:');
+  const calls = [];
+  const wh = createWebhooks(db, {
+    fetchImpl: async (url, opts) => { calls.push({ url, opts }); return { ok: true }; },
+    nowMs: () => FIXED_MS,
+    secretKey: TEST_KEY,
+  });
+  assert.equal(wh.configure('http://127.0.0.1:9/hook', SECRET).ok, true);
+
+  // в БД лежит шифротекст, открытого секрета там нет
+  const stored = db.prepare('SELECT secret FROM webhook_settings WHERE id = 1').get();
+  assert.ok(stored.secret.startsWith('v1:'), 'секрет хранится шифрованным (формат v1:)');
+  assert.ok(!stored.secret.includes(SECRET), 'открытого секрета в БД нет');
+
+  // round-trip: расшифрованный секрет подписывает так же, как исходный
+  await wh.emit('session.started', { sessionId: '42' });
+  assert.equal(calls.length, 1);
+  assert.equal(calls[0].opts.body, EXPECTED_BODY);
+  const expected = crypto.createHmac('sha256', SECRET).update(calls[0].opts.body, 'utf8').digest('hex');
+  assert.equal(calls[0].opts.headers['X-Enot-Signature'], expected, 'round-trip шифрования прозрачен для подписи');
+  db.close();
+});
+
+test('шифрование: старая строка с plaintext-секретом читается, подпись корректна', async () => {
+  const db = openDb(':memory:');
+  db.prepare("INSERT INTO webhook_settings (id, url, secret, events) VALUES (1, 'http://127.0.0.1:9/hook', ?, '[]')")
+    .run(SECRET); // значение, записанное до введения шифрования
+  const calls = [];
+  // ключ даже не задан: legacy-plaintext читается как есть (decryptSecret)
+  const wh = createWebhooks(db, {
+    fetchImpl: async (url, opts) => { calls.push({ url, opts }); return { ok: true }; },
+    nowMs: () => FIXED_MS,
+    secretKey: '',
+  });
+  await wh.emit('session.started', { sessionId: '42' });
+  assert.equal(calls.length, 1, 'легаси-строка не падает и доставляется');
+  assert.equal(calls[0].opts.body, EXPECTED_BODY);
+  const expected = crypto.createHmac('sha256', SECRET).update(calls[0].opts.body, 'utf8').digest('hex');
+  assert.equal(calls[0].opts.headers['X-Enot-Signature'], expected);
+  db.close();
+});
+
+test('шифрование: чужой ключ — доставка честно отказывает; переконфигурация новым ключом чинит', async () => {
+  const db = openDb(':memory:');
+  let calls = 0;
+  const fetchOk = async () => { calls += 1; return { ok: true }; };
+  createWebhooks(db, { fetchImpl: fetchOk, secretKey: TEST_KEY })
+    .configure('http://127.0.0.1:9/hook', SECRET);
+
+  const logLines = [];
+  const whOther = createWebhooks(db, {
+    fetchImpl: fetchOk, secretKey: OTHER_KEY, log: (m) => logLines.push(String(m)),
+  });
+  const delivered = await whOther.emit('session.started', {});
+  assert.equal(delivered, false, 'чужим ключом шифротекст не расшифровывается');
+  assert.equal(calls, 0, 'POST с невозможной подписью не отправляется');
+  assert.ok(logLines.some((m) => m.includes('ENOT_SECRET_KEY')), 'в журнале подсказка про ключ');
+  assert.ok(!logLines.join('\n').includes(SECRET), 'секрета в журнале нет');
+
+  // ротация ключа: владелец переконфигурирует — доставка восстанавливается
+  assert.equal(whOther.configure('http://127.0.0.1:9/hook', SECRET).ok, true);
+  assert.equal(await whOther.emit('session.started', {}), true);
+  assert.equal(calls, 1);
+  db.close();
+});
+
+test('настройка без ENOT_SECRET_KEY: configure отказывает (bad_key) с подсказкой про .env', () => {
+  const db = openDb(':memory:');
+  const logLines = [];
+  const wh = createWebhooks(db, { secretKey: '', log: (m) => logLines.push(String(m)) });
+
+  const refused = wh.configure('http://example.com/hook', SECRET);
+  assert.equal(refused.ok, false);
+  assert.equal(refused.error, 'bad_key');
+  assert.ok(refused.hint.includes('ENOT_SECRET_KEY'), 'подсказка называет переменную');
+  assert.ok(refused.hint.includes('.env'), 'подсказка говорит, где её задать');
+  assert.ok(logLines.some((m) => m.includes('ENOT_SECRET_KEY')), 'отказ журналируется с подсказкой');
+  assert.equal(db.prepare('SELECT count(*) c FROM webhook_settings').get().c, 0, 'ничего не сохранено');
+
+  // выключение не требует ключа и всегда работает
+  assert.equal(wh.configure('', '').ok, true);
+  db.close();
+});
+
 test('секрет не попадает в журнал доставки и в наружное состояние', async () => {
   const db = openDb(':memory:');
   const captured = [];
   const orig = console.error;
   console.error = (...a) => captured.push(a.map(String).join(' '));
   try {
-    const wh = createWebhooks(db, { fetchImpl: async () => ({ ok: false }), retryDelays: [1, 1, 1] });
+    const wh = createWebhooks(db, { fetchImpl: async () => ({ ok: false }), retryDelays: [1, 1, 1], secretKey: TEST_KEY });
     wh.configure('http://127.0.0.1:9/hook', SECRET);
     await wh.emit('session.started', {});
   } finally {
@@ -134,7 +224,7 @@ test('секрет не попадает в журнал доставки и в 
   assert.ok(!logText.includes(SECRET), 'секрета нет в журнале');
   assert.ok(!logText.includes('127.0.0.1:9'), 'URL доставки тоже не журналируется');
 
-  const wh2 = createWebhooks(db);
+  const wh2 = createWebhooks(db, { secretKey: TEST_KEY });
   wh2.configure('http://127.0.0.1:9/hook', SECRET);
   const state = wh2.get();
   assert.equal(state.configured, true);
@@ -148,7 +238,7 @@ test('секрет не попадает в журнал доставки и в 
 
 async function setup(t, extra = {}) {
   const dbPath = tmpDb(t);
-  const { base, port } = await startServer(t, { dbPath, ...extra });
+  const { base, port } = await startServer(t, { dbPath, secretKey: TEST_KEY, ...extra });
   const admin = await adminLogin(dbPath, base);
   return { base, port, admin };
 }
@@ -310,4 +400,17 @@ test('фильтр на живом сервере: разрешено тольк
   await api(base, 'POST', `/sessions/${sessionId}/end`, { token: hostToken });
   await new Promise((r) => setTimeout(r, 150));
   assert.equal(hook.received.length, 1, 'session.ended отфильтрован и не доставлен');
+});
+
+test('на живом сервере без ENOT_SECRET_KEY: настройка webhooks отказывает с bad_key', async (t) => {
+  const dbPath = tmpDb(t);
+  const { base, admin } = await startServer(t, { dbPath, secretKey: '' }).then(async (s) => ({ ...s, admin: await adminLogin(dbPath, s.base) }));
+
+  const refused = await api(base, 'POST', '/settings/webhooks', {
+    token: admin.token, body: { url: 'http://127.0.0.1:9/hook', secret: 'x'.repeat(20) },
+  });
+  assert.equal(refused.status, 400);
+  assert.equal(refused.json.error.code, 'bad_key');
+  assert.ok(refused.json.error.message.includes('ENOT_SECRET_KEY'), 'подсказка доезжает до HTTP-ответа');
+  assert.ok(refused.json.error.message.includes('.env'));
 });
