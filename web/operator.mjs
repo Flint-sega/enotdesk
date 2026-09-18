@@ -540,7 +540,7 @@ const PIN_MIN = 4;
 const PIN_MAX = 128;
 // Действия строки машины: и значения data-action, и хвосты словарных ключей
 // web.machines.action.* — контракт-тест проверяет, что каждое обработано.
-const MACHINE_ACTIONS = ['terminal', 'pin', 'revoke', 'deleteAction'];
+const MACHINE_ACTIONS = ['toast', 'terminal', 'pin', 'revoke', 'deleteAction'];
 let machinesOffset = 0;
 let machinesTotal = 0;
 let machinesCache = []; // текущая страница: данные строк для действий по data-id
@@ -582,13 +582,16 @@ function machineBadge(m) {
 }
 
 function machineActionButton(m, action) {
+  // «Сообщение» и «Терминал» — рабочие действия, остальные (PIN/отзыв/удаление)
+  // помечены как опасные. Тост требует живого зарегистрированного агента.
+  const danger = action !== 'terminal' && action !== 'toast';
   const btn = document.createElement('button');
   btn.type = 'button';
-  btn.className = `btn ghost sm${action === 'terminal' ? '' : ' danger'}`;
+  btn.className = `btn ghost sm${danger ? ' danger' : ''}`;
   btn.dataset.action = action;
   btn.dataset.id = m.id;
   btn.textContent = t(`web.machines.action.${action}`);
-  if (action === 'terminal') btn.disabled = Boolean(m.revokedAt) || !m.registered;
+  if (action === 'terminal' || action === 'toast') btn.disabled = Boolean(m.revokedAt) || !m.registered;
   if (action === 'revoke') btn.disabled = Boolean(m.revokedAt);
   return btn;
 }
@@ -680,6 +683,30 @@ async function machineDelete(m) {
   const res = await api('DELETE', `/machines/${encodeURIComponent(m.id)}`);
   if (res.status !== 200) machineActionError(res);
   await renderMachines();
+}
+
+// Сообщение на экран машины (R08): POST /machines/:id/toast — сервер держит
+// запрос до ответа агента (машинный heartbeat) ограниченное время. Каждый
+// исход честен: показано / отказ машины с причиной / нет подтверждения.
+const TOAST_MAX = 500;
+
+async function machineToast(m) {
+  const raw = window.prompt(t('web.machines.toastPrompt', { name: m.name }));
+  if (raw === null) return; // отмена
+  const value = raw.trim();
+  if (!value || value.length > TOAST_MAX) {
+    text($('machines-error'), t('machines.toastLength'));
+    return;
+  }
+  const res = await api('POST', `/machines/${encodeURIComponent(m.id)}/toast`, { text: value });
+  if (res.status !== 200) {
+    machineActionError(res); // 404/409/429 — честные тексты сервера (офлайн/отозвана/нет агента)
+    return;
+  }
+  const outcome = res.body?.result;
+  if (outcome && outcome.ok === true) text($('machines-error'), t('web.machines.toastDelivered'));
+  else if (outcome && outcome.ok === false) text($('machines-error'), t('web.machines.toastFailed', { reason: outcome.reason ?? '?' }));
+  else text($('machines-error'), t('web.machines.toastNoConfirm'));
 }
 
 // Открытие терминала машины (R09): claim с обязательной причиной (+PIN, если
@@ -809,7 +836,8 @@ function wire() {
     const m = machinesCache.find((x) => x.id === btn.dataset.id);
     if (!m) return;
     const action = btn.dataset.action;
-    if (action === 'terminal') openMachineClaim(m);
+    if (action === 'toast') void machineToast(m);
+    else if (action === 'terminal') openMachineClaim(m);
     else if (action === 'pin') void machinePin(m);
     else if (action === 'revoke') void machineRevoke(m);
     else if (action === 'deleteAction') void machineDelete(m);
