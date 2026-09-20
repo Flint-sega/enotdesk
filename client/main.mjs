@@ -15,6 +15,7 @@ import { createInputPipeline } from './lib/input-pipeline.mjs';
 import { INPUT_KEYS } from './lib/protocol.mjs';
 import { normalizeServerUrl } from './lib/server-url.mjs';
 import { resolveServerUrl, DEFAULT_SERVER_URL } from './lib/first-run.mjs';
+import { parseJoinLink, reportJoin } from './lib/join.mjs';
 import { createAgent, createAgentApi, createIceServersFetcher } from './lib/agent.mjs';
 import { createBridgeRelay, BRIDGE_IPC } from './agent-bridge/relay.mjs';
 import { createTermHost } from './lib/term.mjs';
@@ -64,12 +65,80 @@ let settings = { serverUrl: DEFAULT_SERVER_URL, allowInsecureHttp: false, locale
 const allowMulti = process.env.EDESK_ALLOW_MULTI === '1';
 const gotLock = allowMulti || app.requestSingleInstanceLock();
 if (!gotLock) app.quit();
-app.on('second-instance', () => {
+
+// One-click (R04): протокол enotdesk://join регистрирует только упакованное
+// приложение. dev/SMOKE не должны мусорить в системе и перехватывать ссылки
+// у установленной сборки; агент-службе (без окна и клиентских сеансов) он не нужен.
+const PROTOCOL_REGISTERED = !SMOKE && !AGENT && app.isPackaged;
+if (PROTOCOL_REGISTERED) app.setAsDefaultProtocolClient('enotdesk');
+
+// Join-ссылка может прийти до готовности окна: argv на win/linux (запуск по
+// ссылке) и 'open-url' на macOS до ready. Парсим отложенно — после loadSettings,
+// рендереру отправляем после загрузки окна (flushPendingJoin на did-finish-load).
+let pendingRawJoin = null;
+let pendingJoin = null; // {server, token} — разобранная, ждёт загрузки окна
+let winLoaded = false;
+
+function applyJoinLink(raw) {
+  if (AGENT) {
+    console.log('[enotdesk] join-ссылка игнорируется: режим службы агента');
+    return;
+  }
+  const parsed = parseJoinLink(raw);
+  if (!parsed) {
+    console.log('[enotdesk] получена некорректная join-ссылка — проигнорирована');
+    return;
+  }
+  // Сервер из ссылки заменяет текущий адрес: сохраняем и пересоздаём api, затем
+  // автостарт сеанса рендерером (тот же путь, что кнопка «Получить помощь»).
+  // Галочку «Разрешить HTTP» ссылка не трогает: допуск для не-loopback http живёт
+  // только в памяти процесса (пока жив join-сеанс), settings.json не ослабляем —
+  // при следующем старте адрес пройдёт ту же валидацию, что любой сохранённый.
+  settings.serverUrl = parsed.server;
+  const saved = saveSettings();
+  if (!saved.ok) console.error(`[enotdesk] join: не удалось сохранить адрес сервера: ${saved.error}`);
+  api = createApi({ baseUrl: settings.serverUrl });
+  pendingJoin = { server: settings.serverUrl, token: parsed.token };
   if (win && !win.isDestroyed()) {
     if (win.isMinimized()) win.restore();
     win.focus();
   }
+  flushPendingJoin();
+}
+
+function flushPendingJoin() {
+  if (!pendingJoin || !win || win.isDestroyed() || !winLoaded) return;
+  sendToRenderer('enot:onJoinStart', pendingJoin);
+  pendingJoin = null;
+}
+
+function processPendingJoinLink() {
+  if (!pendingRawJoin || !app.isReady()) return;
+  const raw = pendingRawJoin;
+  pendingRawJoin = null;
+  applyJoinLink(raw);
+}
+
+app.on('second-instance', (_event, argv) => {
+  if (win && !win.isDestroyed()) {
+    if (win.isMinimized()) win.restore();
+    win.focus();
+  }
+  // Повторный запуск с join-ссылкой (win/linux) доставляется первому инстансу сюда
+  const link = (argv ?? []).find((a) => typeof a === 'string' && parseJoinLink(a));
+  if (link) applyJoinLink(link);
 });
+
+// macOS: ссылка приходит через open-url — и до ready (сохраняем до loadSettings),
+// и в живом приложении (обрабатываем сразу)
+app.on('open-url', (event, url) => {
+  event.preventDefault();
+  pendingRawJoin = url;
+  processPendingJoinLink();
+});
+
+// win/linux: ссылка в argv первого запуска (применяется после ready)
+const STARTUP_JOIN_LINK = process.argv.slice(1).find((a) => typeof a === 'string' && parseJoinLink(a)) ?? null;
 
 // Токены живут только здесь (main). Рендереру не возвращаются.
 let api = createApi({ baseUrl: settings.serverUrl });
@@ -376,6 +445,15 @@ function registerIpc() {
 
   ipcMain.handle('enot:quit', (e) => { guard(e); app.quit(); return { ok: true }; });
 
+  // One-click (R04): репорт {sessionId,password} на hub идёт из main — CSP
+  // рендерера (connect-src 'self' file:) не пускает fetch на чужой origin.
+  // reportJoin сам валидирует вход и шлёт строго {sessionId,password};
+  // hostToken не покидает main (interfaces.md).
+  ipcMain.handle('enot:joinReport', (e, server, token, creds) => {
+    guard(e);
+    return reportJoin(server, token, creds ?? {}, fetch);
+  });
+
   // Внешние ссылки — только одобренные https-адреса, через системный браузер
   ipcMain.handle('enot:openExternal', (e, url) => {
     guard(e);
@@ -443,7 +521,10 @@ function createWindow() {
     });
   }, { useSystemPicker: false });
 
-  win.on('closed', () => { win = null; });
+  win.on('closed', () => { win = null; winLoaded = false; });
+  // Join-ссылка, пришедшая до загрузки страницы, уходит рендереру, когда
+  // слушатели (client-view) уже установлены (R04)
+  win.webContents.on('did-finish-load', () => { winLoaded = true; flushPendingJoin(); });
   win.loadFile(path.join(import.meta.dirname, 'renderer', 'index.html'));
 }
 
@@ -631,6 +712,10 @@ app.whenReady().then(() => {
     }
   }
   loadSettings();
+  // Join-ссылка, пришедшая до ready (mac open-url / win-linux argv, R04):
+  // применяем после loadSettings — настройки и api уже готовы
+  if (STARTUP_JOIN_LINK) pendingRawJoin = STARTUP_JOIN_LINK;
+  processPendingJoinLink();
   if (AGENT) {
     // Агент-служба: окно, IPC и рендерер не создаются — только цикл и логи
     startAgentMode();
@@ -652,6 +737,8 @@ app.whenReady().then(() => {
       lines.push(`SMOKE gate closed before approved: ${!gateCheck.isOpen()}`);
       gateCheck.onSignal({ type: 'approved', claimId: 'c' });
       lines.push(`SMOKE gate open after approved: ${gateCheck.isOpen()}`);
+      // Протокол enotdesk:// (R04): фактическое состояние регистрации этого прогона
+      lines.push(`SMOKE protocol: ${PROTOCOL_REGISTERED ? 'registered' : 'not registered'} (enotdesk://)`);
       // Чип статуса сервера (B3): фактическое состояние после health-проверки рендерера
       try {
         lines.push(`SMOKE server chip: ${await win.webContents.executeJavaScript('(document.getElementById("server-chip")||{}).className + " | " + (document.getElementById("server-chip")||{}).textContent')}`);

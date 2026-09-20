@@ -18,6 +18,9 @@ contextBridge.exposeInMainWorld('enot', {
   copy: (text) => ipcRenderer.invoke('enot:copy', text),
   openExternal: (url) => ipcRenderer.invoke('enot:openExternal', url),
   quit: () => ipcRenderer.invoke('enot:quit'),
+  // One-click (R04): репорт {sessionId,password} на hub — сеть только в main
+  // (CSP рендерера connect-src 'self' file:); ответ {ok,status}
+  joinReport: (server, token, creds) => ipcRenderer.invoke('enot:joinReport', server, token, creds),
   onSignal: (callback) => {
     if (typeof callback !== 'function') return () => {};
     const listener = (_event, message) => callback(message);
@@ -29,5 +32,12 @@ contextBridge.exposeInMainWorld('enot', {
     const listener = (_event, payload) => callback(payload);
     ipcRenderer.on('enot:update', listener);
     return () => ipcRenderer.removeListener('enot:update', listener);
+  },
+  // One-click (R04): main разобрал enotdesk://join и просит автостарт сеанса
+  onJoinStart: (callback) => {
+    if (typeof callback !== 'function') return () => {};
+    const listener = (_event, payload) => callback(payload);
+    ipcRenderer.on('enot:onJoinStart', listener);
+    return () => ipcRenderer.removeListener('enot:onJoinStart', listener);
   },
 });
