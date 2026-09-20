@@ -24,6 +24,12 @@ ENV_DIR="/etc/enotdesk"
 ENV_FILE="$ENV_DIR/enotdesk.env"
 UNIT_FILE="/etc/systemd/system/enotdesk.service"
 SERVICE_NAME="enotdesk"
+# EnotDesk Hub (опционально): включается ENOT_HUB=1 в окружении установщика
+# (quick-setup передаёт решение установки), второй systemd-юнит рядом с сервером.
+UNIT_HUB_FILE="/etc/systemd/system/enotdesk-hub.service"
+SERVICE_HUB_NAME="enotdesk-hub"
+HUB_PORT="${ENOT_HUB_PORT:-8090}"
+ENABLE_HUB=0
 NODE_PREFIX="/opt/node-24"
 
 NODE_VERSION="${NODE_VERSION:-24.12.0}"
@@ -197,7 +203,7 @@ check_tarball() {
   printf '%s\n' "$list" | grep -qE '(^|\./)server/main\.mjs$' || die "в tarball нет server/main.mjs — это не сборка EnotDesk"
   printf '%s\n' "$list" | grep -qE '(^|\./)client/lib/i18n\.mjs$' || die "в tarball нет client/lib/i18n.mjs (нужен для страниц /downloads и /invite) — соберите tarball свежим scripts/deploy-server.sh"
   # P2-14: распаковке подлежат только пути из allowlist deploy-server.sh
-  # (server/, assets/, client/lib/i18n.mjs, client/locales/, package.json,
+  # (server/, hub/, assets/, client/lib/i18n.mjs, client/locales/, package.json,
   # package-lock.json, scripts/install-server.sh). Абсолютные пути, «..»
   # в компонентах пути и ссылки (symlink/hardlink) запрещены — отказ до распаковки.
   # Ссылки ищутся в ПОДРОБНОМ листинге (строка «l…» и « -> цель»): GNU tar и bsdtar
@@ -215,7 +221,7 @@ check_tarball() {
       n = split(p, parts, "/")
       for (i = 1; i <= n; i++)
         if (parts[i] == "..") { print "переход выше корня (..): " $0; exit 1 }
-      ok = (index(p, "server/") == 1 || index(p, "assets/") == 1 \
+      ok = (index(p, "server/") == 1 || index(p, "hub/") == 1 || index(p, "assets/") == 1 \
          || index(p, "client/locales/") == 1 \
          || p == "client/lib/i18n.mjs" || p == "scripts/install-server.sh" \
          || p == "package.json" || p == "package-lock.json")
@@ -223,7 +229,7 @@ check_tarball() {
     }
   ' 2>/dev/null)" || true
   if [ -n "$reason" ]; then
-    die "tarball отклонён, распаковка отменена: $reason (ожидается сборка scripts/deploy-server.sh: server/, assets/, client/lib/i18n.mjs, client/locales/, package.json, package-lock.json, scripts/install-server.sh)"
+    die "tarball отклонён, распаковка отменена: $reason (ожидается сборка scripts/deploy-server.sh: server/, hub/, assets/, client/lib/i18n.mjs, client/locales/, package.json, package-lock.json, scripts/install-server.sh)"
   fi
 }
 
@@ -452,6 +458,12 @@ ensure_caddy() {
   {
     echo "# EnotDesk managed (ENOTDESK_MANAGED) — перезаписывается install-server.sh"
     echo "$DOMAIN {"
+    if [ "$ENABLE_HUB" = "1" ]; then
+      echo "    @hub path /hub /hub/* /widget.js /w /join /api/hub/*"
+      echo "    handle @hub {"
+      echo "        reverse_proxy 127.0.0.1:$HUB_PORT"
+      echo "    }"
+    fi
     echo "    reverse_proxy 127.0.0.1:$PORT"
     echo "}"
   } > "$CADDYFILE"
@@ -515,6 +527,9 @@ merge_env_file() {
   if [ -z "${ENOT_MAX_SESSIONS:-}" ]; then MAX_SESSIONS="$(read_env_value ENOT_MAX_SESSIONS)"; else MAX_SESSIONS="$ENOT_MAX_SESSIONS"; fi
   if [ -z "${ENOT_SECRET_KEY:-}" ]; then SECRET_KEY="$(read_env_value ENOT_SECRET_KEY)"; else SECRET_KEY="$ENOT_SECRET_KEY"; fi
   if [ -z "${ENOT_TRUSTED_PROXY:-}" ]; then TRUSTED_PROXY="$(read_env_value ENOT_TRUSTED_PROXY)"; else TRUSTED_PROXY="$ENOT_TRUSTED_PROXY"; fi
+  # Hub: без явного ENOT_HUB берём прежнее решение из env-файла (--update не сносит хаб молча)
+  if [ -z "${ENOT_HUB:-}" ] && [ "$(read_env_value ENOT_HUB)" = "1" ]; then ENOT_HUB="1"; fi
+  if [ "${ENOT_HUB:-}" = "1" ]; then ENABLE_HUB=1; fi
 }
 
 print_plan() {
@@ -548,6 +563,9 @@ print_plan() {
   echo "  артефакты:          $DIST_DIR"
   echo "  env-файл:           $ENV_FILE (0600)"
   echo "  unit:               $UNIT_FILE (Restart=on-failure, EnvironmentFile)"
+  if [ "$ENABLE_HUB" = "1" ]; then
+    echo "  hub:                enotdesk-hub (127.0.0.1:$HUB_PORT, юнит; маршруты Caddy — при TLS)"
+  fi
   echo "  bind/port:          $BIND:$PORT"
   echo "  публичный URL:      $PUBLIC_URL"
   if [ -n "$SECRET_KEY" ]; then
@@ -622,6 +640,8 @@ if [ "$MODE" = "uninstall" ]; then
   info "останавливаю и удаляю сервис $SERVICE_NAME"
   systemctl disable --now "$SERVICE_NAME" >/dev/null 2>&1 || true
   rm -f "$UNIT_FILE"
+  systemctl disable --now "$SERVICE_HUB_NAME" >/dev/null 2>&1 || true
+  rm -f "$UNIT_HUB_FILE"
   systemctl daemon-reload
   rm -rf "$OPT_DIR" "$ENV_DIR"
   if [ "$PURGE_DATA" = "1" ]; then
@@ -727,6 +747,14 @@ install -m 0600 /dev/null "$ENV_FILE"
   if [ -n "$MAX_SESSIONS" ]; then env_kv ENOT_MAX_SESSIONS "$MAX_SESSIONS"; fi
   if [ -n "$SECRET_KEY" ]; then env_kv ENOT_SECRET_KEY "$SECRET_KEY"; fi
   if [ -n "$TRUSTED_PROXY" ]; then env_kv ENOT_TRUSTED_PROXY "$TRUSTED_PROXY"; fi
+  if [ "$ENABLE_HUB" = "1" ]; then
+    env_kv ENOT_HUB "1"
+    env_kv ENOT_HUB_HOST "127.0.0.1"
+    env_kv ENOT_HUB_PORT "$HUB_PORT"
+    env_kv ENOT_HUB_DB "$DATA_DIR/hub.db"
+    env_kv ENOTDESK_URL "http://127.0.0.1:$PORT"
+    env_kv HUB_URL "$PUBLIC_URL"
+  fi
 } | tee "$ENV_FILE" >/dev/null
 chmod 0600 "$ENV_FILE"
 
@@ -762,6 +790,62 @@ info "включаю и запускаю сервис"
 systemctl daemon-reload
 systemctl enable --now "$SERVICE_NAME" >/dev/null
 systemctl restart "$SERVICE_NAME"
+
+if [ "$ENABLE_HUB" = "1" ]; then
+  if [ ! -f "$CURRENT_LINK/hub/main.mjs" ]; then
+    die "ENOT_HUB=1, но в релизе нет hub/main.mjs — в этой версии релиза hub отсутствует; соберите tarball свежим scripts/deploy-server.sh (или GitHub Release новее этого релиза) и перезапустите установщик, либо запустите без ENOT_HUB=1"
+  fi
+  info "пишу unit $UNIT_HUB_FILE (EnotDesk Hub)"
+  install -m 0644 /dev/null "$UNIT_HUB_FILE"
+  tee "$UNIT_HUB_FILE" >/dev/null <<EOF
+[Unit]
+Description=EnotDesk Hub — tickets & chat console
+After=network-online.target enotdesk.service
+Requires=enotdesk.service
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=$ENOT_USER
+Group=$ENOT_USER
+WorkingDirectory=$CURRENT_LINK
+EnvironmentFile=$ENV_FILE
+ExecStart=$NODE_BIN $CURRENT_LINK/hub/main.mjs
+Restart=on-failure
+RestartSec=3
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=true
+ReadWritePaths=$DATA_DIR
+
+[Install]
+WantedBy=multi-user.target
+EOF
+  systemctl daemon-reload
+  systemctl enable --now "$SERVICE_HUB_NAME" >/dev/null
+  systemctl restart "$SERVICE_HUB_NAME"
+  HUB_HEALTH_URL="http://127.0.0.1:$HUB_PORT/api/hub/health"
+  info "проверяю health хаба: $HUB_HEALTH_URL"
+  hub_ok=0
+  hub_deadline=$((SECONDS + 30))
+  while [ "$SECONDS" -lt "$hub_deadline" ]; do
+    if curl -fsS --max-time 1 "$HUB_HEALTH_URL" >/dev/null 2>&1; then hub_ok=1; break; fi
+    sleep 1
+  done
+  if [ "$hub_ok" != "1" ]; then
+    echo "--- последние строки журнала $SERVICE_HUB_NAME ---" >&2
+    journalctl -u "$SERVICE_HUB_NAME" -n 20 --no-pager >&2 || true
+    die "hub не ответил на health за 30 секунд"
+  fi
+  info "hub health: ok (зависимость от EnotDesk видна в поле enotdesk ответа)"
+elif [ -f "$UNIT_HUB_FILE" ]; then
+  # --update без ENOT_HUB=1: хаб осознанно выключают — снимаем юнит
+  info "ENOT_HUB != 1 — отключаю и удаляю $SERVICE_HUB_NAME"
+  systemctl disable --now "$SERVICE_HUB_NAME" >/dev/null 2>&1 || true
+  rm -f "$UNIT_HUB_FILE"
+  systemctl daemon-reload
+fi
 
 if [ "$OPEN_FIREWALL" = "1" ]; then
   if command -v ufw >/dev/null 2>&1 && ufw status 2>/dev/null | grep -q "Status: active"; then
@@ -813,6 +897,11 @@ if [ "$TLS_ACTIVE" = "1" ]; then
 else
   TLS_SUMMARY="локальный http-режим без TLS — ВНИМАНИЕ: пароли, токены и сигналинг идут по сети открытым текстом"
 fi
+if [ "$ENABLE_HUB" = "1" ]; then
+  HUB_SUMMARY="enotdesk-hub, http://127.0.0.1:$HUB_PORT (наружу $PUBLIC_URL/hub/ через Caddy при TLS; без TLS — только локально)"
+else
+  HUB_SUMMARY="не установлен (ENOT_HUB=1 включает; перезапуск установщика с ним)"
+fi
 
 cat <<EOF
 
@@ -825,6 +914,7 @@ cat <<EOF
   env:       $ENV_FILE (0600)
   TURN:      $TURN_SUMMARY
   TLS:       $TLS_SUMMARY
+  hub:       $HUB_SUMMARY
 
 Первый администратор (интерактивно):
   sudo -u $ENOT_USER env ENOT_DB=$DB_PATH $NODE_BIN $CURRENT_LINK/server/main.mjs bootstrap

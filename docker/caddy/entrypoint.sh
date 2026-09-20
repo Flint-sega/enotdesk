@@ -32,10 +32,26 @@ else
 fi
 
 mkdir -p /tmp/enotdesk
-cat > /tmp/enotdesk/Caddyfile <<EOF
+# HUB задан (compose передаёт HUB=1 из .env) — hub-маршруты уходят на hub:8090
+# раньше основного reverse_proxy: handle-блоки исключительны и упорядочены, поэтому
+# /api/v1/* EnotDesk не перехватывается (совпадений с @hub у него нет). Консоль
+# живёт по /hub/ с абсолютными путями /hub/... — strip prefix не нужен.
+if [ -n "${HUB:-}" ]; then
+  cat > /tmp/enotdesk/Caddyfile <<EOF
+$addr {
+	@hub path /hub /hub/* /widget.js /w /join /api/hub/*
+	handle @hub {
+		reverse_proxy hub:8090
+	}
+	reverse_proxy enotdesk:8080
+}
+EOF
+else
+  cat > /tmp/enotdesk/Caddyfile <<EOF
 $addr {
 	reverse_proxy enotdesk:8080
 }
 EOF
+fi
 
 exec caddy run --config /tmp/enotdesk/Caddyfile --adapter caddyfile

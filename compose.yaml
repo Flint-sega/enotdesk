@@ -59,6 +59,34 @@ services:
       retries: 5
       start_period: 15s
 
+  hub:
+    # EnotDesk Hub — тикет-система + чат-виджет (ADR 0023), тот же образ, своя БД.
+    # Включается профилем: COMPOSE_PROFILES=hub в .env (quick-setup пишет сам при HUB=1).
+    # Наружу порт НЕ публикуется — /hub/, /widget.js, /w, /join, /api/hub/* отдаёт Caddy.
+    profiles: ["hub"]
+    build: .
+    image: enotdesk-server:local
+    restart: unless-stopped
+    <<: *hardening
+    tmpfs:
+      - /tmp
+    depends_on:
+      enotdesk:
+        condition: service_healthy
+    environment:
+      ENOT_HUB_HOST: 0.0.0.0
+      ENOT_HUB_PORT: 8090
+      ENOT_HUB_DB: /data/hub.db
+      # SSO: логин хаба проксируется в EnotDesk (health тоже считается от него)
+      ENOTDESK_URL: http://enotdesk:8080
+      HUB_URL: ${HUB_URL:-}
+      ENOT_SECRET_KEY: ${ENOT_SECRET_KEY:-}
+      # Доверенный прокси (Caddy): без него X-Forwarded-For не принимается и
+      # лимит логина считается по адресу контейнера caddy (см. .env.example)
+      ENOT_TRUSTED_PROXY: ${ENOT_TRUSTED_PROXY:-}
+    volumes:
+      - hub-data:/data
+
   coturn:
     # TURN из коробки (история 4): static-auth-secret из env, realm из DOMAIN.
     # Секрет НЕ передаётся через argv (виден в docker inspect/ps): entrypoint
@@ -106,6 +134,8 @@ services:
       - "443:443/udp"
     environment:
       DOMAIN: ${DOMAIN:-}
+      # Hub включён — Caddy добавляет маршруты /hub, /widget.js, /w, /join, /api/hub/*
+      HUB: ${HUB:-}
     volumes:
       - ./docker/caddy/entrypoint.sh:/entrypoint.sh:ro
       - caddy-data:/data
@@ -115,5 +145,6 @@ services:
 volumes:
   enotdesk-data:
   enotdesk-dist:
+  hub-data:
   caddy-data:
   caddy-config:

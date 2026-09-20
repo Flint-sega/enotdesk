@@ -1,0 +1,214 @@
+<!doctype html>
+<html lang="__LOCALE__">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>__TITLE__</title>
+<style>
+:root{color-scheme:dark;--bg:#070D17;--panel:#0F1A2C;--line:#1C2C44;--text:#EAF2FF;--muted:#8FA3BF;--accent:#35E0C4;--danger:#FF7A7A;--note:#F2C94C}
+*{box-sizing:border-box}
+body{margin:0;min-height:100vh;display:flex;flex-direction:column;background:var(--bg);color:var(--text);font:16px/1.6 -apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,"Helvetica Neue",Arial,sans-serif}
+h1,h2{margin:0;line-height:1.2}
+p{margin:0}
+.head{display:flex;align-items:center;justify-content:space-between;gap:16px;padding:14px 24px;border-bottom:1px solid var(--line);background:rgba(9,15,27,.92)}
+.brand{font-weight:800}
+.head .who{display:flex;align-items:center;gap:12px;flex-wrap:wrap}
+.badge{border:1px solid var(--line);border-radius:999px;padding:2px 10px;color:var(--muted);font-size:13px}
+label{color:var(--muted);font-size:14px}
+button,select,input,textarea{font:inherit}
+input,select,textarea{background:var(--panel);color:var(--text);border:1px solid var(--line);border-radius:10px;padding:11px 12px}
+input{width:100%}
+textarea{width:100%;resize:vertical;min-height:88px}
+.btn{display:inline-flex;align-items:center;justify-content:center;gap:8px;background:var(--accent);border:1px solid var(--accent);color:#05231D;font-weight:700;padding:11px 20px;border-radius:12px;cursor:pointer}
+.btn:disabled{opacity:.55;cursor:default}
+.btn.ghost{background:transparent;color:var(--text);border-color:#2B3D5E}
+.btn.ghost:hover{border-color:var(--accent)}
+.btn.sm{padding:6px 12px;font-size:14px}
+main{flex:1;width:100%;max-width:980px;margin:0 auto;padding:28px 24px 40px}
+.card{background:var(--panel);border:1px solid var(--line);border-radius:14px;padding:26px}
+.card+.card{margin-top:18px}
+.auth-card{max-width:460px;margin:8vh auto 0;display:flex;flex-direction:column;gap:14px}
+.auth-card h1{font-size:28px}
+.lead{color:var(--muted)}
+.field{display:flex;flex-direction:column;gap:6px}
+.form-error{color:var(--danger);min-height:1.2em}
+.note{color:var(--muted);font-size:14px}
+.lang{display:flex;gap:8px}
+.lang .btn{padding:6px 12px;font-size:14px}
+.hidden{display:none!important}
+.bar{display:flex;gap:10px;flex-wrap:wrap;align-items:center;margin-bottom:14px}
+.bar h2{margin-right:auto}
+.bar input{width:auto}
+.bar .grow{flex:1;min-width:180px}
+.row{display:flex;align-items:center;gap:14px;padding:12px 14px;border:1px solid var(--line);border-radius:12px;cursor:pointer;margin-bottom:8px}
+.row:hover{border-color:var(--accent)}
+.row .col{flex:1;min-width:0}
+.row .subject{font-weight:700}
+.row .sub{color:var(--muted);font-size:14px;display:flex;gap:10px;flex-wrap:wrap}
+.row .side{color:var(--muted);font-size:14px;text-align:right;white-space:nowrap}
+.pager{display:flex;align-items:center;gap:12px;margin-top:14px}
+.pager .info{color:var(--muted);font-size:14px}
+.empty{color:var(--muted);text-align:center;padding:36px 12px;border:1px dashed var(--line);border-radius:12px}
+.chip{border-radius:999px;padding:1px 10px;font-size:13px;border:1px solid var(--line);color:var(--muted)}
+.chip.open{color:var(--accent);border-color:var(--accent)}
+.chip.pending{color:var(--note);border-color:var(--note)}
+.chip.resolved{color:#7CB9FF;border-color:#7CB9FF}
+.thread-head{display:flex;align-items:center;gap:12px;flex-wrap:wrap}
+.thread-head h2{flex:1;min-width:200px}
+.msgs{display:flex;flex-direction:column;gap:10px;margin:16px 0}
+.bubble{max-width:78%;padding:10px 14px;border-radius:14px;border:1px solid var(--line);white-space:pre-wrap;word-break:break-word}
+.bubble .who{display:block;font-size:12px;color:var(--muted);margin-bottom:4px}
+.bubble.contact{align-self:flex-start;background:#14243C}
+.bubble.agent{align-self:flex-end;background:#0E2E29;border-color:#1F4A42}
+.bubble.system{align-self:center;background:transparent;color:var(--muted);font-size:14px;max-width:100%}
+.bubble.note{align-self:flex-end;background:#2E2A14;border-color:#5C5223}
+.badgeword{display:inline-block;font-size:12px;color:var(--note);margin-left:8px}
+.meta{color:var(--muted);font-size:14px;display:flex;gap:10px;align-items:center;flex-wrap:wrap;margin:10px 0}
+.tags{display:flex;gap:8px;flex-wrap:wrap;align-items:center;margin:10px 0}
+.tag{display:inline-flex;gap:6px;align-items:center;border:1px solid var(--line);border-radius:999px;padding:2px 10px;font-size:14px}
+.tag button{background:none;border:none;color:var(--muted);cursor:pointer;padding:0 2px}
+.tag button:hover{color:var(--danger)}
+.tagform{display:flex;gap:8px;margin:10px 0}
+.tagform input{max-width:180px}
+.statuses{display:flex;gap:8px;flex-wrap:wrap}
+.reply{position:relative;margin-top:14px;display:flex;flex-direction:column;gap:10px}
+.reply .actions{display:flex;gap:10px;flex-wrap:wrap}
+.canned{position:absolute;bottom:100%;left:0;right:0;max-height:240px;overflow:auto;background:var(--panel);border:1px solid var(--line);border-radius:12px;z-index:5}
+.canned button{display:block;width:100%;text-align:left;background:none;border:none;color:var(--text);padding:10px 14px;cursor:pointer;border-bottom:1px solid var(--line)}
+.canned button:hover{background:#16283F}
+.canned .none{color:var(--muted);padding:10px 14px}
+.new-grid{display:flex;flex-direction:column;gap:14px;max-width:560px}
+.presence{display:flex;align-items:center;gap:8px}
+.presence select{padding:6px 10px;font-size:14px}
+</style>
+</head>
+<body>
+<div id="hub-root" data-state="__STATE__">
+  <header class="head">
+    <div class="brand">EnotDesk Hub <span class="badge">__VERSION__</span></div>
+    <div class="who">
+      <div id="hub-presence-box" class="presence hidden">
+        <label for="hub-presence" data-i18n="hub.presence.label"></label>
+        <select id="hub-presence">
+          <option value="online" id="hub-presence-online" data-i18n="hub.presence.online"></option>
+          <option value="away" id="hub-presence-away" data-i18n="hub.presence.away"></option>
+          <option value="offline" id="hub-presence-offline" data-i18n="hub.presence.offline"></option>
+        </select>
+        <span id="hub-presence-error" class="form-error" role="alert"></span>
+      </div>
+      <button id="hub-new-ticket-btn" class="btn hidden" type="button" data-i18n="hub.btn.newTicket"></button>
+      <span id="hub-user" class="hidden"><span id="hub-user-name"></span> <span id="hub-user-role" class="badge"></span></span>
+      <div class="lang">
+        <button id="hub-lang-ru" class="btn ghost" type="button">RU</button>
+        <button id="hub-lang-en" class="btn ghost" type="button">EN</button>
+      </div>
+      <button id="hub-logout" class="btn ghost hidden" type="button" data-i18n="hub.console.logout"></button>
+    </div>
+  </header>
+  <main>
+    <form id="hub-login" class="card auth-card hidden">
+      <h1 id="hub-login-title" data-i18n="hub.login.title"></h1>
+      <p class="lead" id="hub-login-lead" data-i18n="hub.login.lead"></p>
+      <div class="field"><label for="hub-login-name" id="hub-login-name-label" data-i18n="hub.login.login"></label>
+        <input id="hub-login-name" name="login" autocomplete="username" required></div>
+      <div class="field"><label for="hub-login-pass" id="hub-login-pass-label" data-i18n="hub.login.password"></label>
+        <input id="hub-login-pass" name="password" type="password" autocomplete="current-password" required></div>
+      <div class="field hidden" id="hub-totp-field"><label for="hub-login-totp" id="hub-totp-label" data-i18n="hub.login.totp"></label>
+        <input id="hub-login-totp" name="totp" inputmode="numeric" autocomplete="one-time-code"></div>
+      <p class="form-error" id="hub-login-error" role="alert"></p>
+      <button class="btn" type="submit" id="hub-login-submit" data-i18n="hub.login.submit"></button>
+    </form>
+    <section id="hub-console" class="hidden">
+      <div id="hub-inbox">
+        <div class="bar">
+          <h2 data-i18n="hub.inbox.title"></h2>
+          <select id="hub-f-status" aria-label="status">
+            <option value="" id="hub-f-status-all" data-i18n="hub.filter.status"></option>
+            <option value="open" id="hub-f-status-open" data-i18n="hub.status.open"></option>
+            <option value="pending" id="hub-f-status-pending" data-i18n="hub.status.pending"></option>
+            <option value="resolved" id="hub-f-status-resolved" data-i18n="hub.status.resolved"></option>
+          </select>
+          <select id="hub-f-channel" aria-label="channel">
+            <option value="" id="hub-f-channel-all" data-i18n="hub.filter.channel"></option>
+            <option value="chat" id="hub-f-channel-chat" data-i18n="hub.channel.chat"></option>
+            <option value="email" id="hub-f-channel-email" data-i18n="hub.channel.email"></option>
+            <option value="manual" id="hub-f-channel-manual" data-i18n="hub.channel.manual"></option>
+          </select>
+          <input id="hub-f-tag" data-i18n-placeholder="hub.filter.tag">
+          <input id="hub-f-search" class="grow" data-i18n-placeholder="hub.filter.search">
+          <button id="hub-f-reset" class="btn ghost sm" type="button" data-i18n="hub.new.cancel"></button>
+        </div>
+        <div id="hub-list"></div>
+        <div id="hub-list-empty" class="empty hidden"></div>
+        <p class="form-error" id="hub-list-error" role="alert"></p>
+        <div class="pager">
+          <button id="hub-page-prev" class="btn ghost sm" type="button" data-i18n="hub.page.prev"></button>
+          <button id="hub-page-next" class="btn ghost sm" type="button" data-i18n="hub.page.next"></button>
+          <span id="hub-page-info" class="info"></span>
+        </div>
+      </div>
+      <div id="hub-thread" class="hidden">
+        <div class="thread-head">
+          <button id="hub-thread-back" class="btn ghost sm" type="button" data-i18n="hub.btn.back"></button>
+          <h2 id="hub-thread-subject"></h2>
+        </div>
+        <div class="meta">
+          <span id="hub-thread-channel" class="chip"></span>
+          <span id="hub-thread-status" class="chip"></span>
+          <span id="hub-thread-assignee"></span>
+          <span id="hub-thread-rating"></span>
+        </div>
+        <div class="statuses">
+          <button id="hub-st-open" class="btn ghost sm" type="button" data-i18n="hub.status.open"></button>
+          <button id="hub-st-pending" class="btn ghost sm" type="button" data-i18n="hub.status.pending"></button>
+          <button id="hub-st-resolved" class="btn ghost sm" type="button" data-i18n="hub.status.resolved"></button>
+          <button id="hub-thread-take" class="btn ghost sm" type="button"></button>
+        </div>
+        <div class="tags">
+          <span data-i18n="hub.thread.tags"></span>
+          <span id="hub-thread-taglist"></span>
+        </div>
+        <form id="hub-tag-form" class="tagform">
+          <input id="hub-tag-input" data-i18n-placeholder="hub.thread.addTag">
+          <button id="hub-tag-add" class="btn ghost sm" type="submit" data-i18n="hub.thread.add"></button>
+        </form>
+        <div id="hub-msgs" class="msgs"></div>
+        <p class="form-error" id="hub-thread-error" role="alert"></p>
+        <form id="hub-reply-form" class="reply">
+          <div id="hub-canned-pop" class="canned hidden"></div>
+          <textarea id="hub-reply" data-i18n-placeholder="hub.reply.placeholder"></textarea>
+          <div class="actions">
+            <button id="hub-reply-send" class="btn" type="submit" data-i18n="hub.reply.send"></button>
+            <button id="hub-reply-note" class="btn ghost" type="button" data-i18n="hub.reply.note"></button>
+            <button id="hub-canned-save" class="btn ghost sm" type="button" data-i18n="hub.canned.saveBtn"></button>
+          </div>
+        </form>
+      </div>
+      <form id="hub-new" class="card hidden">
+        <h2 data-i18n="hub.new.title"></h2>
+        <div class="new-grid">
+          <div class="field"><label for="hub-new-subject" data-i18n="hub.new.subject"></label>
+            <input id="hub-new-subject" required></div>
+          <div class="field"><label for="hub-new-text" data-i18n="hub.new.text"></label>
+            <textarea id="hub-new-text" required></textarea></div>
+          <div class="field"><label for="hub-new-name" data-i18n="hub.new.contactName"></label>
+            <input id="hub-new-name"></div>
+          <div class="field"><label for="hub-new-email" data-i18n="hub.new.contactEmail"></label>
+            <input id="hub-new-email" type="email"></div>
+          <p class="form-error" id="hub-new-error" role="alert"></p>
+          <div class="actions">
+            <button id="hub-new-submit" class="btn" type="submit" data-i18n="hub.new.submit"></button>
+            <button id="hub-new-cancel" class="btn ghost" type="button" data-i18n="hub.new.cancel"></button>
+          </div>
+        </div>
+      </form>
+    </section>
+    <section id="hub-forbidden" class="card hidden">
+      <h1 id="hub-forbidden-title" data-i18n="hub.forbidden.title"></h1>
+      <p class="lead" id="hub-forbidden-body" data-i18n="hub.forbidden.body"></p>
+    </section>
+  </main>
+</div>
+<script type="module" src="/hub/app.mjs"></script>
+</body>
+</html>
