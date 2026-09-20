@@ -9,9 +9,12 @@ import path from 'node:path';
 // страницы нет кириллических литералов (тексты только из словаря).
 
 const webDir = path.join(import.meta.dirname, '..', '..', 'web');
-const html = readFileSync(path.join(webDir, 'operator.html'), 'utf8');
-const operatorJs = readFileSync(path.join(webDir, 'operator.mjs'), 'utf8');
-const inputJs = readFileSync(path.join(webDir, 'input-source.mjs'), 'utf8');
+// чтение нормализует CRLF→LF: checkout на Windows конвертит LF→CRLF, а шаблоны
+// ниже матчат \n (семантика ассертов не меняется — это только концы строк)
+const readSrc = (name) => readFileSync(path.join(webDir, name), 'utf8').replace(/\r\n/g, '\n');
+const html = readSrc('operator.html');
+const operatorJs = readSrc('operator.mjs');
+const inputJs = readSrc('input-source.mjs');
 const allJs = `${operatorJs}\n${inputJs}`;
 
 import ru from '../locales/ru.mjs';
