@@ -75,7 +75,7 @@ test('hub.db: schema_version поднимается до текущей', async 
   try {
     const row = h.db.prepare('SELECT version FROM schema_version').get();
     assert.equal(row.version, SCHEMA_VERSION);
-    assert.equal(SCHEMA_VERSION, 2); // 1 — каркас SSO (T01), 2 — тикеты (T02)
+    assert.equal(SCHEMA_VERSION, 3); // 1 — каркас SSO (T01), 2 — тикеты (T02), 3 — настройки виджета+consent (T03)
   } finally { h.close(); }
 });
 
@@ -274,19 +274,31 @@ test('статика консоли: app.mjs и i18n-модули под /hub/, 
   } finally { h.close(); }
 });
 
-test('заглушки: /widget.js — 501 с комментарием, /w и /join — каркасные страницы', async () => {
+test('виджет (T03): /widget.js — лоадер с кэшем, /w — страница iframe с consent-cookie, /join — каркасная', async () => {
   const h = await startHub({ enotFetch: fakeEnotDesk().enotFetch });
   try {
     const w = await fetch(`${h.base}/widget.js`);
-    assert.equal(w.status, 501);
-    assert.match(await w.text(), /T03/);
-    for (const p of ['/w', '/join']) {
+    assert.equal(w.status, 200);
+    assert.match(w.headers.get('content-type'), /application\/javascript/);
+    assert.match(w.headers.get('cache-control'), /max-age=3600/);
+    assert.match(await w.text(), /data-server/);
+    for (const p of ['/join']) {
       const res = await fetch(`${h.base}${p}`, { headers: { 'accept-language': 'ru' } });
       assert.equal(res.status, 200);
       const html = await res.text();
       assert.match(html, /lang="ru"/);
       assert.match(html, /скоро|Скоро/);
     }
+    const page = await fetch(`${h.base}/w`, { headers: { 'accept-language': 'ru' } });
+    assert.equal(page.status, 200);
+    assert.match(page.headers.get('content-security-policy'), /script-src 'self'/);
+    const setCookie = page.headers.getSetCookie().find((c) => c.startsWith('enot_wv='));
+    assert.ok(setCookie, 'страница виджета выдаёт visitor-cookie');
+    assert.match(setCookie, /Path=\/w/);
+    assert.match(setCookie, /HttpOnly/);
+    const pageHtml = await page.text();
+    assert.match(pageHtml, /id="w-msgs"/);
+    assert.match(pageHtml, /\/hub\/widget\/w\.mjs/);
   } finally { h.close(); }
 });
 
