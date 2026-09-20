@@ -11,6 +11,8 @@
 # Env (имена, значения задаются снаружи): ENOT_PORT, ENOT_BIND, ENOT_PUBLIC_URL,
 # ENOT_DB, ENOT_TURN_URLS, ENOT_TURN_USERNAME, ENOT_TURN_PASSWORD, NODE_VERSION.
 # ENOT_TURN_SECRET управляется установщиком (secret coturn, хранится в env-файле 0600).
+# ENOT_SECRET_KEY и ENOT_TRUSTED_PROXY опциональны: заданы — уходят в env-файл
+# (сервер читает их из окружения, не из argv), пустые — в env-файл не пишутся.
 set -euo pipefail
 
 ENOT_USER="enotdesk"
@@ -82,6 +84,10 @@ EnotDesk — установщик сервера.
   ENOT_DB            путь к БД (по умолчанию /var/lib/enotdesk/enotdesk.db)
   NODE_VERSION       версия Node.js из tarball nodejs.org (по умолчанию 24.12.0)
   ENOT_TURN_URLS, ENOT_TURN_USERNAME, ENOT_TURN_PASSWORD — внешний TURN (--no-turn)
+  ENOT_SECRET_KEY    ключ шифрования 2FA-секретов и секретов webhooks (AES-256-GCM);
+                     пусто — их включение честно отказывает (secret_key_missing)
+  ENOT_TRUSTED_PROXY доверенные обратные прокси: IP или IPv4-CIDR через запятую
+                     (доверие X-Forwarded-For); пусто — заголовок не доверяется
 
 По умолчанию установщик сам ставит TURN (coturn: порт 3478 tcp/udp, relay 49160–49200/udp,
 static-auth-secret генерируется в env-файл 0600, realm — из ENOT_PUBLIC_URL) и TLS
@@ -507,6 +513,8 @@ merge_env_file() {
   if [ -z "${ENOT_GRACE_MS:-}" ]; then GRACE_MS="$(read_env_value ENOT_GRACE_MS)"; else GRACE_MS="$ENOT_GRACE_MS"; fi
   if [ -z "${ENOT_RETENTION_DAYS:-}" ]; then RETENTION_DAYS="$(read_env_value ENOT_RETENTION_DAYS)"; else RETENTION_DAYS="$ENOT_RETENTION_DAYS"; fi
   if [ -z "${ENOT_MAX_SESSIONS:-}" ]; then MAX_SESSIONS="$(read_env_value ENOT_MAX_SESSIONS)"; else MAX_SESSIONS="$ENOT_MAX_SESSIONS"; fi
+  if [ -z "${ENOT_SECRET_KEY:-}" ]; then SECRET_KEY="$(read_env_value ENOT_SECRET_KEY)"; else SECRET_KEY="$ENOT_SECRET_KEY"; fi
+  if [ -z "${ENOT_TRUSTED_PROXY:-}" ]; then TRUSTED_PROXY="$(read_env_value ENOT_TRUSTED_PROXY)"; else TRUSTED_PROXY="$ENOT_TRUSTED_PROXY"; fi
 }
 
 print_plan() {
@@ -542,6 +550,12 @@ print_plan() {
   echo "  unit:               $UNIT_FILE (Restart=on-failure, EnvironmentFile)"
   echo "  bind/port:          $BIND:$PORT"
   echo "  публичный URL:      $PUBLIC_URL"
+  if [ -n "$SECRET_KEY" ]; then
+    echo "  2FA/webhooks:       ENOT_SECRET_KEY задан (значение уходит в env-файл, в план не печатается)"
+  fi
+  if [ -n "$TRUSTED_PROXY" ]; then
+    echo "  trusted proxy:      ENOT_TRUSTED_PROXY=$TRUSTED_PROXY"
+  fi
   if [ "$SETUP_TURN" = "1" ]; then
     if [ -f "$TURN_CONF" ] && grep -q ENOTDESK_MANAGED "$TURN_CONF"; then
       echo "  TURN (coturn):      уже настроен — обновление только env-файла (без apt и рестарта)"
@@ -711,6 +725,8 @@ install -m 0600 /dev/null "$ENV_FILE"
   if [ -n "$GRACE_MS" ]; then env_kv ENOT_GRACE_MS "$GRACE_MS"; fi
   if [ -n "$RETENTION_DAYS" ]; then env_kv ENOT_RETENTION_DAYS "$RETENTION_DAYS"; fi
   if [ -n "$MAX_SESSIONS" ]; then env_kv ENOT_MAX_SESSIONS "$MAX_SESSIONS"; fi
+  if [ -n "$SECRET_KEY" ]; then env_kv ENOT_SECRET_KEY "$SECRET_KEY"; fi
+  if [ -n "$TRUSTED_PROXY" ]; then env_kv ENOT_TRUSTED_PROXY "$TRUSTED_PROXY"; fi
 } | tee "$ENV_FILE" >/dev/null
 chmod 0600 "$ENV_FILE"
 

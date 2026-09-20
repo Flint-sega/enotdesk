@@ -20,6 +20,14 @@ Portable-приложение удалённой поддержки для Windo
 
 ## Быстрый старт
 
+**Установка одной командой (сервер):** интерактивный мастер на чистом Ubuntu/Debian-хосте (или любом хосте с Docker) — спросит домен, логин/имя/пароль администратора (пустой пароль = автогенерация, покажется один раз), порт и firewall, сам сгенерирует секреты TURN и `ENOT_SECRET_KEY`, поставит сервер, дождётся health и создаст первого администратора. Пароли и секреты передаются только через stdin-пайпы и окружение процесса — никогда через argv и логи.
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/Flint-sega/enotdesk/main/scripts/quick-setup.sh | sudo bash
+```
+
+Варианты: `--docker` (стек compose в `./enotdesk-docker`), `--tarball <path>` (локальная сборка вместо релиза), `--update` (обновление; умолчания — из существующей установки), `--dry-run` (показать план, ничего не меняя), неинтерактивные флаги для CI (`--domain --admin-login --admin-name --port --no-firewall --admin-password-stdin`). Подробности: `scripts/quick-setup.sh --help` и [`docs/SERVER.md`](docs/SERVER.md).
+
 **Docker (сервер одной командой):** `docker compose up -d` из каталога [`docker/`](docker/) — сервер EnotDesk + coturn (TURN) + Caddy (авто-HTTPS) сразу; подробности — README этого каталога.
 
 **Локально из исходников** — требуется Node.js ≥ 24.12:

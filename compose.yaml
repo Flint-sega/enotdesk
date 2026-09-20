@@ -40,6 +40,11 @@ services:
       # Секрет уходит и серверу (эфемерные TURN-креды из ENOT_TURN_SECRET, server/),
       # и контейнеру coturn — оба через окружение контейнера, не через argv.
       ENOT_TURN_SECRET: ${TURN_SECRET:?Задай TURN_SECRET в .env — секрет TURN-сервера, см. .env.example}
+      # Ключ шифрования 2FA/webhook-секретов и доверенные обратные прокси: пустые =
+      # прежнее поведение (шифрование недоступно / X-Forwarded-For не доверяется);
+      # читаются app.mjs и main.mjs из окружения процесса, не из argv.
+      ENOT_SECRET_KEY: ${ENOT_SECRET_KEY:-}
+      ENOT_TRUSTED_PROXY: ${ENOT_TRUSTED_PROXY:-}
     volumes:
       - enotdesk-data:/data
       - enotdesk-dist:/data/dist

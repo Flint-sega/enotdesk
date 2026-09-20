@@ -6,6 +6,9 @@
 # Сборки НЕ подписаны (бюджета на сертификаты нет) — запуск без подписи описан в
 # README «Unsigned builds» и в теле релиза; блок подписи ниже закомментирован и
 # включается без переделки (история 36).
+# + серверный тарболл enotdesk-server.tar.gz (job server-tarball, без Node):
+# состав = scripts/deploy-server.sh; чексумма попадает в checksums-sha256.txt
+# автоматически — шаг релиза считает sha256 по всем файлам в dist/.
 
 name: release
 
@@ -64,8 +67,32 @@ jobs:
             dist/latest.yml
             dist/latest-linux.yml
 
+  # Серверный тарболл для install-server.sh — параллельно с matrix-сборками;
+  # tar есть на раннере из коробки, Node не нужен. Имя артефекта dist-server-tarball
+  # попадает под pattern dist-* шага download-artifact релиза и мержится в dist/.
+  server-tarball:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      # Версия артефакта = тег (как в matrix-сборках), но без npm: job сознательно
+      # без Node, а npm version требует npm. В package.json ровно одно поле
+      # "version" — sed меняет его на тот же формат; package-lock.json не трогаем
+      # (npm ci в install-server.sh сверяет дерево зависимостей, не корневую версию).
+      - name: Sync version from tag
+        shell: bash
+        run: |
+          sed -i "s/\"version\": \"[^\"]*\"/\"version\": \"${GITHUB_REF_NAME#v}\"/" package.json
+      - name: Pack server tarball (состав = scripts/deploy-server.sh)
+        shell: bash
+        run: tar -czf enotdesk-server.tar.gz server assets package.json package-lock.json scripts/install-server.sh client/lib/i18n.mjs client/locales
+      - uses: actions/upload-artifact@v4
+        with:
+          name: dist-server-tarball
+          if-no-files-found: error
+          path: enotdesk-server.tar.gz
+
   release:
-    needs: build
+    needs: [build, server-tarball]
     runs-on: ubuntu-latest
     steps:
       - uses: actions/download-artifact@v8
@@ -148,6 +175,7 @@ jobs:
             Целостность: `sha256sum -c checksums-sha256.txt`. Клиент проверяет обновление раз в сутки по фиду этого релиза (latest*.yml); Windows-сборка portable обновляется скачиванием новой версии со страницы релизов.
           files: |
             dist/EnotDesk-*
+            dist/enotdesk-server.tar.gz
             dist/checksums-sha256.txt
             dist/latest-mac.yml
             dist/latest.yml
