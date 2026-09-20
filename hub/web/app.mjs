@@ -3,6 +3,7 @@
 // Тексты — только из словарей (data-i18n в разметке, t() в JS); кириллических
 // литералов в этом модуле нет — это проверяет контракт-тест.
 import { t, initLocale, setLocale, getLocale } from './lib/i18n.mjs';
+import { safeCardHref } from './card-url.mjs';
 
 const root = document.getElementById('hub-root');
 const pageState = root?.dataset.state ?? 'login';
@@ -190,10 +191,34 @@ function messageBubble(m) {
   }
   el.appendChild(who);
   if (m.type === 'card') {
-    // карточка «Подключиться» (T05) пока показывается честной заглушкой с JSON
-    const pre = document.createElement('code');
-    pre.textContent = m.body;
-    el.appendChild(pre);
+    // карточка «Подключиться» (T05): дружелюбные ссылки вместо сырого JSON;
+    // href — только enotdesk:/https: (safeCardHref), чужой/битый JSON и чужие
+    // схемы честно показываются как есть (фолбэк-текст)
+    let card = null;
+    try { card = JSON.parse(m.body); } catch { /* сырой fallback ниже */ }
+    const url = card && card.kind === 'remote-offer' ? safeCardHref(card.url, 'enotdesk:') : null;
+    if (url) {
+      const wrap = document.createElement('span');
+      wrap.className = 'cardlinks';
+      const open = document.createElement('a');
+      open.href = url;
+      open.textContent = t('hub.join.cardOpen');
+      wrap.appendChild(open);
+      const page = safeCardHref(card.joinPage, 'https:');
+      if (page) {
+        const link = document.createElement('a');
+        link.href = page;
+        link.target = '_blank';
+        link.rel = 'noopener noreferrer';
+        link.textContent = t('hub.join.cardPage');
+        wrap.appendChild(link);
+      }
+      el.appendChild(wrap);
+    } else {
+      const pre = document.createElement('code');
+      pre.textContent = m.body;
+      el.appendChild(pre);
+    }
   } else {
     el.appendChild(document.createTextNode(m.body));
   }
@@ -217,11 +242,31 @@ async function openThread(id) {
   hide($('hub-thread-error'));
   clearUnread(currentThread?.id);
   $('hub-thread-subject').textContent = currentThread?.subject ?? '';
+  // «Подключиться» — для чат-тредов: гостю карточку можно доставить виджетом
+  $('hub-join-btn').classList.toggle('hidden', currentThread?.channel !== 'chat');
   setThreadStatusLine(currentThread);
   renderTags(currentThread);
   renderMessages(res.body?.messages ?? []);
   showThreadView();
   hideCannedPop();
+}
+
+// Кнопка «Подключиться» (T05): join-токен + карточка клиенту и в тред.
+async function createJoinCard() {
+  if (!currentThread) return;
+  const btn = $('hub-join-btn');
+  btn.disabled = true;
+  try {
+    const res = await api('POST', `/threads/${encodeURIComponent(currentThread.id)}/join`);
+    if (res.status !== 201) {
+      $('hub-thread-error').textContent = res.body?.error?.message ?? t('hub.error.generic');
+      return;
+    }
+    hide($('hub-thread-error'));
+    await openThread(currentThread.id); // карточка видна в переписке
+  } finally {
+    btn.disabled = false;
+  }
 }
 
 function showInboxView() {
@@ -483,6 +528,14 @@ async function loadWidgetSettings() {
   $('hub-widget-policy').value = s.policyUrl ?? '';
 }
 
+// Webhook-секрет приёма /hooks/enotdesk (T05): генерится на сервере, админ
+// копирует его в настройки webhooks EnotDesk.
+async function loadWebhookSettings() {
+  const res = await api('GET', '/settings/webhook');
+  if (res.status !== 200) return;
+  $('hub-webhook-secret').value = res.body?.secret ?? '';
+}
+
 async function saveWidgetSettings() {
   const errEl = $('hub-widget-error');
   const savedEl = $('hub-widget-saved');
@@ -581,7 +634,9 @@ if (pageState === 'login') {
     connectConsole(); // live-обновления инбокса (new-message/typing/presence)
     if (me.role === 'admin') {
       show($('hub-widget-admin'));
+      show($('hub-webhook-admin'));
       void loadWidgetSettings();
+      void loadWebhookSettings();
     }
   });
 } else {
@@ -614,8 +669,9 @@ $('hub-page-next').addEventListener('click', () => {
   void loadInbox();
 });
 
-// тред: статусы, assignee, теги, ответ, canned
+// тред: статусы, assignee, теги, ответ, canned, one-click
 $('hub-thread-back').addEventListener('click', showInboxView);
+$('hub-join-btn').addEventListener('click', () => void createJoinCard());
 // каждая кнопка подключена статически — это проверяет анти-мёртвый контракт
 $('hub-st-open').addEventListener('click', () => void setThreadStatus('open'));
 $('hub-st-pending').addEventListener('click', () => void setThreadStatus('pending'));
@@ -675,6 +731,18 @@ $('hub-new').addEventListener('submit', (e) => void submitNewTicket(e));
 
 // настройки виджета (админ)
 $('hub-widget-save').addEventListener('click', () => void saveWidgetSettings());
+
+// webhook-секрет: копирование в буфер — с честным фидбеком при отказе
+$('hub-webhook-copy').addEventListener('click', async () => {
+  const value = $('hub-webhook-secret').value;
+  if (!value) return;
+  try {
+    await navigator.clipboard.writeText(value);
+    $('hub-webhook-copied').textContent = t('hub.webhook.copied');
+  } catch {
+    $('hub-webhook-secret').select(); // буфер недоступен — выделяем для ручного копирования
+  }
+});
 
 // presence
 $('hub-presence').addEventListener('change', () => void savePresence());

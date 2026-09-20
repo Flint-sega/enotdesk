@@ -1,7 +1,10 @@
-// Настройки хаба (T03): сейчас — виджет (allowlist origins, consent-гейт,
-// ссылка на политику). Ключ 'widget' — одна строка в hub_settings с JSON.
-// Ничего секретного здесь нет (origins/ссылка не тайна), но мусор не проходит:
-// hostname — строгий regex, policyUrl — только http(s).
+// Настройки хаба (T03/T05): виджет (allowlist origins, consent-гейт, ссылка
+// на политику) и webhook-секрет приёма /hooks/enotdesk. Ключи — строки в
+// hub_settings с JSON. Секрет по правилу «токены/секреты — хеши или
+// AES-256-GCM»: есть ENOT_SECRET_KEY — шифротекст (как bearer в hub/auth.mjs),
+// нет — хранится как есть, но наружу отдаётся только админу консоли.
+import { secretKeyBytes, encryptSecret, decryptSecret } from '../server/totp.mjs';
+import crypto from 'node:crypto';
 
 export const WIDGET_SETTINGS_LIMITS = { origins: 20, origin: 253, policyUrl: 500 };
 
@@ -54,8 +57,10 @@ export function sanitizeWidgetSettings(raw) {
 
 export const DEFAULT_WIDGET_SETTINGS = { origins: [], consentRequired: false, policyUrl: '' };
 
-export function createSettingsStore(db, { nowMs = Date.now } = {}) {
+export function createSettingsStore(db, { nowMs = Date.now, secretKey = '' } = {}) {
   const KEY = 'widget';
+  const HOOK_KEY = 'webhook_secret';
+  const keyBytes = secretKey ? secretKeyBytes(secretKey) : null;
 
   function getWidget() {
     const row = db.prepare('SELECT value FROM hub_settings WHERE key = ?').get(KEY);
@@ -77,5 +82,35 @@ export function createSettingsStore(db, { nowMs = Date.now } = {}) {
     return clean;
   }
 
-  return { getWidget, setWidget };
+  // Секрет приёма webhooks EnotDesk (/hooks/enotdesk): генерируется при первом
+  // старте хаба и живёт в hub_settings; EnotDesk подписывает им события, админ
+  // копирует его в настройках webhooks сервера.
+  // Возврат {secret, rotated}: rotated=true — прежний секрет не расшифрован
+  // (сменили/убрали ENOT_SECRET_KEY) и сгенерирован новый — админ обязан
+  // обновить его в настройках webhooks EnotDesk. Первое создание — не ротация.
+  function ensureWebhookSecret() {
+    const row = db.prepare('SELECT value FROM hub_settings WHERE key = ?').get(HOOK_KEY);
+    if (row) {
+      if (!keyBytes) return { secret: row.value, rotated: false };
+      // decryptSecret возвращает null при неудаче (чужой ключ/порча) — не бросает
+      const secret = decryptSecret(keyBytes, row.value);
+      if (secret) return { secret, rotated: false };
+    }
+    const generated = crypto.randomBytes(24).toString('base64url');
+    const stored = keyBytes ? encryptSecret(keyBytes, generated) : generated;
+    db.prepare(`
+      INSERT INTO hub_settings (key, value, updated_at) VALUES (?,?,?)
+      ON CONFLICT(key) DO UPDATE SET value = excluded.value, updated_at = excluded.updated_at
+    `).run(HOOK_KEY, stored, new Date(nowMs()).toISOString());
+    return { secret: generated, rotated: Boolean(row) };
+  }
+
+  function getWebhookSecret() {
+    const row = db.prepare('SELECT value FROM hub_settings WHERE key = ?').get(HOOK_KEY);
+    if (!row) return '';
+    if (!keyBytes) return row.value;
+    try { return decryptSecret(keyBytes, row.value); } catch { return ''; }
+  }
+
+  return { getWidget, setWidget, ensureWebhookSecret, getWebhookSecret };
 }

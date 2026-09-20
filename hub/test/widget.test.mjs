@@ -4,13 +4,19 @@ import { mkdtempSync, readFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import WebSocket from 'ws';
-import { createHub } from '../app.mjs';
+import { createHub, VISITOR_RE } from '../app.mjs';
 import ruDict from '../../client/locales/ru.mjs';
 import enDict from '../../client/locales/en.mjs';
 
 // T03: чат-виджет. Швы — createHub HTTP/WS (фейк-EnotDesk через enotFetch):
 // WS-цикл гостя↔агента, offline→тикет, CORS-эхо, consent-гейт, rating,
 // история по visitor_id, лимиты/мусор WS, контракты страниц.
+
+// Сильные visitor-токены — известные величины ('v-'+32 base64url), не вывод
+// из кода под тестом; 'visitor-…' — предсказуемый мусор, сервер его не примет.
+const STRONG_VISITOR = 'v-' + 'A'.repeat(32);
+const STRONG_VISITOR_2 = 'v-' + 'C'.repeat(32);
+const STRONG_VISITOR_3 = 'v-' + 'D'.repeat(32);
 
 function fakeEnotDesk(overrides = {}) {
   const state = { loginStatus: 200, meStatus: 200, meThrow: false, healthOk: true, role: 'operator', ...overrides };
@@ -137,14 +143,15 @@ test('виджет: статика отдаётся честно — /widget.js 
     assert.equal(page.status, 200);
     assert.match(page.headers.get('content-security-policy'), /script-src 'self'/);
     const setCookie = page.headers.getSetCookie().find((c) => c.startsWith('enot_wv='));
-    assert.match(setCookie ?? '', /Path=\/w/, 'cookievisitor на Path=/w');
+    assert.match(setCookie ?? '', /Path=\//, 'visitor-cookie на Path=/ (иначе не дойдёт до /ws/widget)');
     assert.match(setCookie ?? '', /HttpOnly/);
 
     const app = await fetch(`${h.base}/hub/widget/w.mjs`);
     assert.equal(app.status, 200, 'модуль страницы доступен под /hub/widget/w.mjs');
 
+    // T05: /join без токена — честная 404 (живая страница — в hub/test/join.test)
     const joinPage = await fetch(`${h.base}/join`);
-    assert.equal(joinPage.status, 200, '/join остаётся каркасной');
+    assert.equal(joinPage.status, 404, '/join без токена — честная 404');
   } finally { h.close(); }
 });
 
@@ -172,6 +179,70 @@ test('контракты w.html: все id из w.mjs есть в разметк
   for (const lit of wJs.match(/'[^'\n]*'|"[^"\n]*"|`[^`]*`/g) ?? []) {
     assert.ok(!cyr.test(lit), `кириллический литерал в w.mjs: ${lit.slice(0, 50)}`);
   }
+});
+
+// ---- cookie enot_wv: path-match до /ws/widget и SameSite-скоуплинг ----
+
+// RFC 6265 §5.1.4: кука совпадает с путём запроса только на границе сегмента —
+// Path=/w НЕ матчится с /ws/widget, реальный браузер куку на WS не пошлёт бы.
+function cookiePathMatches(cookiePath, requestPath) {
+  if (requestPath === cookiePath) return true;
+  return requestPath.startsWith(cookiePath)
+    && (cookiePath.endsWith('/') || requestPath[cookiePath.length] === '/');
+}
+
+test('cookie enot_wv: Path=/ матчится с /ws/widget по RFC 6265; SameSite скоуплен с Secure', async () => {
+  const fHttp = fakeEnotDesk();
+  const insecure = await startHub({ enotFetch: fHttp.enotFetch });
+  try {
+    const page = await fetch(`${insecure.base}/w`);
+    const sc = page.headers.getSetCookie().find((c) => c.startsWith('enot_wv='));
+    assert.ok(sc, 'страница /w выдаёт visitor-cookie');
+    const cookiePath = (sc.match(/Path=([^;]+)/) ?? [])[1] ?? '';
+    assert.equal(cookiePathMatches(cookiePath, '/ws/widget'), true,
+      `кука с Path=${cookiePath} не уйдёт браузером на WS-эндпоинт /ws/widget`);
+    assert.equal(cookiePathMatches(cookiePath, '/w'), true, 'кука работает и на самой странице');
+    assert.equal((sc.match(/SameSite=(\w+)/) ?? [])[1], 'Lax', 'без https — SameSite=Lax');
+    assert.ok(!sc.includes('Secure'), 'без https Secure не ставится');
+
+    const fHttps = fakeEnotDesk();
+    const secure = await startHub({ enotFetch: fHttps.enotFetch, publicUrl: 'https://hub.example' });
+    try {
+      const page2 = await fetch(`${secure.base}/w`);
+      const sc2 = page2.headers.getSetCookie().find((c) => c.startsWith('enot_wv='));
+      assert.equal((sc2.match(/SameSite=(\w+)/) ?? [])[1], 'None', 'сторонний iframe на https — SameSite=None');
+      assert.match(sc2, /Secure/, 'SameSite=None обязан идти с Secure');
+    } finally { secure.close(); }
+  } finally { insecure.close(); }
+});
+
+test('visitor_id: только сильные токены — слабый hello-токен игнорируется, сильный принимается', async () => {
+  // RE-контракт: 'v-'+32..128 base64url; uuid и предсказуемые 'visitor-…' не проходят
+  assert.ok(VISITOR_RE.test(STRONG_VISITOR));
+  assert.ok(!VISITOR_RE.test('visitor-allowed-01'), 'предсказуемый токен не матчится');
+  assert.ok(!VISITOR_RE.test('6cf1a9a8-4b7d-4f0e-9a2f-8f0d3f7c9b11'), 'uuid не матчится');
+  assert.ok(!VISITOR_RE.test('v-короткий10'), 'короткий хвост не матчится');
+  assert.ok(!VISITOR_RE.test('v-' + 'A'.repeat(31)), 'меньше 32 символов — слабо');
+
+  const { h } = await setup();
+  let ws;
+  try {
+    const vc = await guestCookie(h.base);
+    ws = wsOpen(h.port, '/ws/widget', { cookie: vc });
+    await ws.opened;
+    ws.send(JSON.stringify({ type: 'hello', visitorId: 'visitor-allowed-01' }));
+    let ready = await ws.wait((m) => m.type === 'ready');
+    assert.match(ready.visitorId, VISITOR_RE, 'fallback — сильный серверный токен');
+    assert.notEqual(ready.visitorId, 'visitor-allowed-01', 'слабый токен отброшен, не запомнен');
+    ws.close();
+
+    const ws2 = wsOpen(h.port, '/ws/widget'); // куки блокированы — localStorage-fallback
+    await ws2.opened;
+    ws2.send(JSON.stringify({ type: 'hello', visitorId: STRONG_VISITOR_2 }));
+    ready = await ws2.wait((m) => m.type === 'ready');
+    assert.equal(ready.visitorId, STRONG_VISITOR_2, 'сильный сохранённый токен принят как есть');
+    ws = ws2;
+  } finally { ws?.close(); h.close(); }
 });
 
 // ---- WS-цикл гостя ↔ агента ----
@@ -348,7 +419,7 @@ test('CORS: эхо разрешённого Origin, чужой и отсутст
 
     const allowed = await api(h.base, 'POST', '/api/hub/widget/create', {
       headers: { origin: 'https://site.example' },
-      body: { visitorId: 'visitor-allowed-01' },
+      body: { visitorId: STRONG_VISITOR },
     });
     assert.equal(allowed.status, 201);
     assert.equal(allowed.headers.get('access-control-allow-origin'), 'https://site.example');
@@ -356,19 +427,19 @@ test('CORS: эхо разрешённого Origin, чужой и отсутст
 
     const evil = await api(h.base, 'POST', '/api/hub/widget/create', {
       headers: { origin: 'https://evil.example' },
-      body: { visitorId: 'visitor-allowed-01' },
+      body: { visitorId: STRONG_VISITOR },
     });
     assert.equal(evil.status, 403);
     assert.equal(evil.json.error.code, 'cors_denied');
 
     const silent = await api(h.base, 'POST', '/api/hub/widget/create', {
-      body: { visitorId: 'visitor-allowed-01' },
+      body: { visitorId: STRONG_VISITOR },
     });
     assert.equal(silent.status, 403, 'без Origin и без same-origin — 403');
 
     const same = await api(h.base, 'POST', '/api/hub/widget/create', {
       headers: { 'sec-fetch-site': 'same-origin' },
-      body: { visitorId: 'visitor-same-origin' },
+      body: { visitorId: STRONG_VISITOR_2 },
     });
     assert.equal(same.status, 201, 'same-origin странице CORS не нужен');
 
@@ -422,7 +493,7 @@ test('rating после resolve пишется в store; не-ваш тред и
     assert.equal(foreign.status, 400, 'мусорный формат visitorId отклонён');
     const stranger = await api(h.base, 'POST', '/api/hub/widget/rating', {
       headers: { 'sec-fetch-site': 'same-origin' },
-      body: { visitorId: 'visitor-stranger-01', threadId: sent.threadId, rating: 5 },
+      body: { visitorId: STRONG_VISITOR_3, threadId: sent.threadId, rating: 5 },
     });
     assert.equal(stranger.status, 403, 'чужой visitorId не оценивает чужой тред');
 
