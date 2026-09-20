@@ -564,6 +564,115 @@ async function saveWidgetSettings() {
   }
 }
 
+// ---- настройки email-канала (только админ) ----
+// Пароли с сервера не приходят (только hasPass): пустое поле = «оставить
+// прежний», plaintext уходит только при вводе нового.
+
+function emailSide(side) {
+  return {
+    host: $(`hub-email-${side}-host`).value.trim(),
+    port: Number.parseInt($(`hub-email-${side}-port`).value, 10) || 0,
+    tls: $(`hub-email-${side}-tls`).checked,
+    user: $(`hub-email-${side}-user`).value.trim(),
+    pass: $(`hub-email-${side}-pass`).value,
+  };
+}
+
+async function loadEmailSettings() {
+  const res = await api('GET', '/settings/email');
+  if (res.status !== 200) return;
+  const s = res.body?.settings ?? {};
+  const imap = s.imap ?? {};
+  const smtp = s.smtp ?? {};
+  $('hub-email-imap-host').value = imap.host ?? '';
+  $('hub-email-imap-port').value = imap.port || '';
+  $('hub-email-imap-tls').checked = imap.tls !== false;
+  $('hub-email-imap-user').value = imap.user ?? '';
+  $('hub-email-smtp-host').value = smtp.host ?? '';
+  $('hub-email-smtp-port').value = smtp.port || '';
+  $('hub-email-smtp-tls').checked = smtp.tls !== false;
+  $('hub-email-smtp-user').value = smtp.user ?? '';
+  $('hub-email-from').value = smtp.from ?? '';
+  for (const [side, conf] of [['imap', imap], ['smtp', smtp]]) {
+    const pass = $(`hub-email-${side}-pass`);
+    pass.value = '';
+    pass.placeholder = conf?.hasPass === true ? t('hub.email.passStored') : t('hub.email.passHint');
+  }
+  $('hub-email-status').textContent = res.body?.enabled === true
+    ? t('hub.email.statusOn')
+    : t('hub.email.statusOff');
+  const last = res.body?.lastTest;
+  $('hub-email-lasttest').textContent = last
+    ? t(last.ok === true ? 'hub.email.lastOk' : 'hub.email.lastFail', { at: new Date(last.at).toLocaleString() })
+    : '';
+}
+
+async function saveEmailSettings() {
+  const errEl = $('hub-email-error');
+  const savedEl = $('hub-email-saved');
+  errEl.textContent = '';
+  savedEl.textContent = '';
+  const btn = $('hub-email-save');
+  btn.disabled = true;
+  try {
+    const res = await api('POST', '/settings/email', {
+      imap: emailSide('imap'),
+      smtp: { ...emailSide('smtp'), from: $('hub-email-from').value.trim() },
+    });
+    if (res.status !== 200) {
+      errEl.textContent = res.body?.error?.code === 'secret_key_missing'
+        ? t('hub.email.errSecretKey')
+        : (res.body?.error?.message ?? t('hub.email.errGeneric'));
+      return;
+    }
+    savedEl.textContent = t('hub.email.saved');
+    void loadEmailSettings();
+  } finally {
+    btn.disabled = false;
+  }
+}
+
+async function testEmailSettings() {
+  const errEl = $('hub-email-error');
+  const savedEl = $('hub-email-saved');
+  errEl.textContent = '';
+  savedEl.textContent = '';
+  const btn = $('hub-email-test');
+  btn.disabled = true;
+  try {
+    const res = await api('POST', '/settings/email/test', {});
+    if (res.status !== 200) {
+      errEl.textContent = res.body?.error?.message ?? t('hub.email.errGeneric');
+      return;
+    }
+    const r = res.body?.result ?? {};
+    savedEl.textContent = r.ok === true ? t('hub.email.testOk') : t('hub.email.testFail');
+    const details = [r.imap?.error, r.smtp?.error].filter(Boolean).join('; ');
+    if (details) errEl.textContent = details;
+    void loadEmailSettings();
+  } finally {
+    btn.disabled = false;
+  }
+}
+
+async function disableEmailSettings() {
+  const errEl = $('hub-email-error');
+  errEl.textContent = '';
+  const btn = $('hub-email-disable');
+  btn.disabled = true;
+  try {
+    const res = await api('DELETE', '/settings/email');
+    if (res.status !== 200) {
+      errEl.textContent = t('hub.email.errGeneric');
+      return;
+    }
+    $('hub-email-saved').textContent = t('hub.email.disabled');
+    void loadEmailSettings();
+  } finally {
+    btn.disabled = false;
+  }
+}
+
 // ---- запуск ----
 
 async function loadMe() {
@@ -635,8 +744,10 @@ if (pageState === 'login') {
     if (me.role === 'admin') {
       show($('hub-widget-admin'));
       show($('hub-webhook-admin'));
+      show($('hub-email-admin'));
       void loadWidgetSettings();
       void loadWebhookSettings();
+      void loadEmailSettings();
     }
   });
 } else {
@@ -731,6 +842,11 @@ $('hub-new').addEventListener('submit', (e) => void submitNewTicket(e));
 
 // настройки виджета (админ)
 $('hub-widget-save').addEventListener('click', () => void saveWidgetSettings());
+
+// email-канал (админ): сохранить / проверить связь / выключить
+$('hub-email-save').addEventListener('click', () => void saveEmailSettings());
+$('hub-email-test').addEventListener('click', () => void testEmailSettings());
+$('hub-email-disable').addEventListener('click', () => void disableEmailSettings());
 
 // webhook-секрет: копирование в буфер — с честным фидбеком при отказе
 $('hub-webhook-copy').addEventListener('click', async () => {
