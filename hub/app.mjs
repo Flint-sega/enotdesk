@@ -6,6 +6,7 @@ import { openHubDb } from './db.mjs';
 import { createAuth } from './auth.mjs';
 import { createThreadsStore, sanitizeText, sanitizeEmail, sanitizeTags, sanitizeShortcut } from './threads.mjs';
 import { createSettingsStore } from './settings.mjs';
+import { createEmailChannel } from './email.mjs';
 import { createJoinStore, createJoinReporter, SESSION_ID_RE, SYSTEM_LOCALE } from './join.mjs';
 import { secretKeyBytes, decryptSecret } from '../server/totp.mjs';
 import { RateLimiter } from '../server/app.mjs';
@@ -201,6 +202,24 @@ export function createHub(opts = {}) {
   const threads = createThreadsStore(db, { nowMs: cfg.now });
   const settings = createSettingsStore(db, { nowMs: cfg.now, secretKey: cfg.secretKey });
   settings.ensureWebhookSecret(); // секрет приёма /hooks/enotdesk — с первого старта
+
+  // Email-канал (T06): IMAP-поллер → тикеты, SMTP-ответы. Креды — из настроек
+  // (AES-256-GCM), сетевые клиенты — инъекцией (в проде imapflow/nodemailer
+  // подгружаются лениво внутри email.mjs, тесты кладут фейки).
+  const emailChannel = createEmailChannel({
+    db,
+    store: threads,
+    config: () => settings.getEmail(),
+    now: cfg.now,
+    intervalMs: opts.emailIntervalMs ?? 60_000,
+    ImapClient: opts.emailImapClient,
+    transporter: opts.emailTransporter,
+    log: (m) => console.error(`[hub:email] ${m}`),
+    onMessage: (threadId, message) => {
+      broadcastConsole({ type: 'new-message', thread: threads.getThread(threadId)?.thread ?? null, message });
+      pushToThreadGuests(threadId, { type: 'msg', threadId, message });
+    },
+  });
   const limits = {
     login: new RateLimiter(opts.loginLimit ?? 10, 60_000, { now: cfg.now }),
     // WS-upgrade до всякой аутентификации: аноним не держит сокеты (как у логина)
@@ -380,7 +399,8 @@ export function createHub(opts = {}) {
     if (id && sub === 'messages' && method === 'POST') {
       const user = await hubUser(req, res);
       if (!user) return true;
-      if (!threads.getThread(id)) return err(res, 404, 'not_found', 'Тред не найден');
+      const found = threads.getThread(id);
+      if (!found) return err(res, 404, 'not_found', 'Тред не найден');
       const body = await readJson(req, res, THREADS_BODY_MAX);
       if (!body || typeof body !== 'object') return err(res, body === null ? 413 : 400, 'bad_request', 'Некорректный запрос');
       const message = threads.appendMessage(id, {
@@ -392,6 +412,15 @@ export function createHub(opts = {}) {
       if (!message) return err(res, 400, 'bad_request', 'Некорректный текст сообщения');
       // ответ оператора доходит гостю в реальном времени (заметки — не доходят)
       if (message.type === 'text') pushToThreadGuests(id, { type: 'msg', threadId: id, message });
+      // Email-канал (T06): текстовый ответ агента уходит клиенту почтой;
+      // note/card остаются внутри хаба. Доставка не блокирует ответ REST,
+      // её сбой честно ложится в тред system-сообщением (см. sendReply).
+      if (message.type === 'text' && found.thread.channel === 'email' && settings.getEmail()) {
+        void emailChannel.sendReply(found.thread, user, message.body).catch((e) => {
+          // сбой автоответа не должен проходить молча: ответ клиенту не ушёл
+          console.error(`[hub:email] автоответ не удался: ${String(e?.message ?? e).slice(0, 200)}`);
+        });
+      }
       return ok(res, 201, { message });
     }
 
@@ -1061,6 +1090,38 @@ export function createHub(opts = {}) {
       return ok(res, 200, { settings: saved });
     }
 
+    // ---- настройки email-канала (T06, админ): креды IMAP/SMTP + проверка ----
+    if (p === '/api/hub/settings/email' && (req.method === 'GET' || req.method === 'POST' || req.method === 'DELETE')) {
+      const user = await hubUser(req, res);
+      if (!user) return true;
+      if (user.role !== 'admin') return err(res, 403, 'forbidden', 'Настройки email-канала — только для администратора');
+      if (req.method === 'GET') {
+        return ok(res, 200, { settings: settings.getEmailSettings(), enabled: Boolean(settings.getEmail()), lastTest: settings.getEmailTest() });
+      }
+      if (req.method === 'POST') {
+        const body = await readJson(req, res, BODY_MAX);
+        if (!body || typeof body !== 'object') return err(res, body === null ? 413 : 400, 'bad_request', 'Некорректный запрос');
+        const saved = settings.setEmail(body);
+        if (saved === 'invalid') return err(res, 400, 'bad_request', 'Некорректные настройки email-канала');
+        if (saved === 'secret_key_missing') return err(res, 400, 'secret_key_missing', 'Нужен ENOT_SECRET_KEY: пароли хранятся только в шифротексте');
+        emailChannel.start(); // идемпотентен: тик сам видит, включён ли канал
+        return ok(res, 200, { settings: settings.getEmailSettings(), enabled: Boolean(settings.getEmail()) });
+      }
+      // DELETE — выключение канала: креды и последний результат проверки стираются
+      settings.clearEmail();
+      emailChannel.stop();
+      return ok(res, 200, { settings: null, enabled: false });
+    }
+    if (p === '/api/hub/settings/email/test' && req.method === 'POST') {
+      const user = await hubUser(req, res);
+      if (!user) return true;
+      if (user.role !== 'admin') return err(res, 403, 'forbidden', 'Настройки email-канала — только для администратора');
+      if (!settings.getEmail()) return err(res, 400, 'bad_request', 'Email-канал не настроен');
+      const result = await emailChannel.testConnection();
+      settings.setEmailTest(result);
+      return ok(res, 200, { result });
+    }
+
     // ---- гостевые HTTP-эндпоинты виджета (T03): CORS-allowlist, без сессии ----
     if (p.startsWith('/api/hub/widget/')) {
       if (req.method === 'OPTIONS') {
@@ -1170,12 +1231,14 @@ export function createHub(opts = {}) {
       server.once('error', reject);
       server.listen(cfg.port, cfg.host, () => { server.removeListener('error', reject); resolve(); });
     });
+    emailChannel.start(); // IMAP-поллер: тики без включённого канала — пустые
     return server.address().port; // порт 0 → реальный эфемерный
   }
 
   // graceful close: WS-сокеты (и их close-обработчики), затем HTTP-сервер, затем БД
   async function close() {
     clearInterval(pingTimer);
+    emailChannel.stop();
     for (const ws of [...guestMeta.keys(), ...consoleMeta.keys()]) {
       try { ws.terminate(); } catch { /* уже мёртв */ }
     }
