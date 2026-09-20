@@ -263,6 +263,9 @@ export function createServer(opts = {}) {
     // живёт не забранный агентом запрос (агент ходит heartbeat-ом раз в 5с)
     toastWaitMs: opts.toastWaitMs ?? 12_000,
     toastTtlMs: opts.toastTtlMs ?? 60_000,
+    // инъекция времени для тестов (паттерн runRetention/RateLimiter):
+    // по умолчанию Date.now — поведение продакшена не меняется
+    nowMs: opts.nowMs ?? Date.now,
     // сколько дней хранить завершённые сеансы; 0 — хранить вечно
     retentionDays: opts.retentionDays ?? 90,
     // потолок живых (WS) сеансов — защита памяти публичного сервера
@@ -1171,7 +1174,7 @@ export function createServer(opts = {}) {
       if (!machinesStore.out(machine).online) return err(res, 409, 'machine_offline', t('machines.machineOffline', {}, locale));
       // один ожидающий toast на машину: новый заменяет не забранный старый
       const id = crypto.randomUUID();
-      pendingToasts.set(machine.id, { id, text, at: Date.now(), issued: false });
+      pendingToasts.set(machine.id, { id, text, at: cfg.nowMs(), issued: false });
       auditLog(db, user.id, 'machine.toast', machine.id, { length: text.length });
       // ожидаем подтверждения агента (придёт машинным heartbeat-ом) ограниченное время;
       // по чужому id не разрешаемся — ждём свой или истечение срока
@@ -1269,7 +1272,7 @@ export function createServer(opts = {}) {
       let toast = null;
       const queued = pendingToasts.get(machine.id);
       if (queued && !queued.issued) {
-        if (Date.now() - queued.at <= cfg.toastTtlMs) {
+        if (cfg.nowMs() - queued.at <= cfg.toastTtlMs) {
           queued.issued = true;
           toast = { id: queued.id, text: queued.text };
         } else {
