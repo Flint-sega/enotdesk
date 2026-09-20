@@ -15,8 +15,10 @@ export function clientShow(section) {
 $('btn-start').addEventListener('click', startHelp);
 $('btn-retry').addEventListener('click', startHelp);
 
+// Возвращает {sessionId, password} при успехе, null при отказе/ошибке
+// (статус уже показан). Один-клик (R04) переиспользует тот же путь.
 async function startHelp() {
-  if (state.session) return; // двойное начало не создаёт второй сеанс
+  if (state.session) return null; // двойное начало не создаёт второй сеанс
   setBusy($('btn-start'), true, t('client.startBusy'));
   clientShow('registering');
   try {
@@ -27,12 +29,35 @@ async function startHelp() {
     text($('client-password'), res.body.password);
     await enot.openSignal({ role: 'host', sessionId: res.body.sessionId });
     clientShow('waiting');
+    return state.session;
   } catch (e) {
     state.session = null;
     text($('client-error-text'), e.message);
     clientShow('error');
+    return null;
   } finally {
     setBusy($('btn-start'), false);
+  }
+}
+
+// One-click (R04): ссылка enotdesk://join — main уже подставил сервер из ссылки,
+// здесь автостарт сеанса и репорт {sessionId,password} на hub по одноразовому
+// токену (сеть — в main через enot.joinReport: CSP рендерера не пускает fetch
+// на hub). Сбой репорта не роняет сеанс — честный статус рядом с ID/паролем.
+enot.onJoinStart(({ server, token }) => {
+  void handleJoinStart(server, token);
+});
+
+async function handleJoinStart(server, token) {
+  const session = await startHelp();
+  if (!session) return; // сеанс уже идёт или старт не удался — статус уже показан
+  const status = $('join-status');
+  try {
+    const r = await enot.joinReport(server, token, { sessionId: session.sessionId, password: session.password });
+    if (!r.ok) throw new Error(t('common.httpError', { status: r.status }));
+    text(status, t('join.reportOk'));
+  } catch {
+    text(status, t('join.reportFailed'));
   }
 }
 
