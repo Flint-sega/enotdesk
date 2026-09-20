@@ -40,6 +40,14 @@ artifactName: "EnotDesk-${os}-${arch}.${ext}"
 # источник резолва.
 extraMetadata:
   ENOT_BAKED_SERVER_URL: ""
+# One-click (R04): протокол enotdesk://join. Регистрируется в упаковке на всех
+# трёх ОС (mac: CFBundleURLTypes в Info.plist; win: реестр; linux: MimeType
+# x-scheme-handler в .desktop). В рантайме mac дополнительно требует
+# app.setAsDefaultProtocolClient (client/main.mjs, только не-SMOKE/не-агент).
+protocols:
+  - name: EnotDesk Help
+    schemes:
+      - enotdesk
 mac:
   target:
     - zip
