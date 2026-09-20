@@ -65,12 +65,26 @@ function readRaw(req, res, maxBytes) {
     req.on('data', (c) => {
       size += c.length;
       if (size > maxBytes) {
-        // 413 + Connection: close (зеркалит server/app.mjs): Windows-клиент
-        // дочитывает ответ до закрытия вместо ECONNRESET
-        req.pause();
+        // 413 + Connection: close (зеркалит server/app.mjs, синхронизировать
+        // вручную). НЕ destroy сразу: на Windows RST от сокета с непрочитанным
+        // телом приходит раньше, чем клиент дочитает 413. Паттерн: discard
+        // (resume без data-слушателя), после ответа — FIN (socket.end),
+        // страховка от slow-body — destroy через 10 c.
         req.removeAllListeners('data');
+        req.resume();
         res.setHeader('Connection', 'close');
-        res.on('finish', () => req.destroy());
+        const kill = setTimeout(() => req.destroy(), 10000);
+        kill.unref();
+        let closed = false;
+        const closeAfterResponse = () => {
+          if (closed) return;
+          closed = true;
+          clearTimeout(kill);
+          const s = req.socket;
+          if (s && !s.destroyed) s.end();
+        };
+        res.on('finish', closeAfterResponse);
+        res.on('close', closeAfterResponse);
         finish(null);
         return;
       }
