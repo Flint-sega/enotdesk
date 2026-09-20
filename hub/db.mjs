@@ -1,7 +1,7 @@
 import { DatabaseSync } from 'node:sqlite';
 
 // Схема hub.db — собственная БД хаба, независимая от enotdesk.db.
-export const SCHEMA_VERSION = 4;
+export const SCHEMA_VERSION = 5;
 
 // Версионированные шаги схемы (тот же паттерн, что server/db.mjs): каждая база
 // проходит недостающие шаги по порядку, шаги идемпотентны.
@@ -120,6 +120,23 @@ const MIGRATIONS = [
         );
         CREATE INDEX IF NOT EXISTS idx_join_tokens_thread ON hub_join_tokens(thread_id);
         CREATE INDEX IF NOT EXISTS idx_join_tokens_session ON hub_join_tokens(session_id);
+      `);
+    },
+  },
+  {
+    // Email-канал (T06): карта message-id → тред. Дедуп входящих и трасса
+    // исходящих — In-Reply-To ответа клиента возвращает письмо в тот же тред.
+    // thread_id '' — письмо помечено виденным без треда (html-only/петля
+    // автоответов); развести seen и thread_id при втором потребителе.
+    version: 5,
+    up: (db) => {
+      db.exec(`
+        CREATE TABLE IF NOT EXISTS email_seen (
+          message_id TEXT PRIMARY KEY,
+          thread_id TEXT NOT NULL,
+          created_at TEXT NOT NULL
+        );
+        CREATE INDEX IF NOT EXISTS email_seen_thread ON email_seen(thread_id);
       `);
     },
   },
