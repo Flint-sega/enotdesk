@@ -31,6 +31,10 @@ test('backup: дамп читается, ретенция держит keep св
   const x = reopened.prepare('SELECT x FROM t').get();
   reopened.close();
   assert.equal(x.x, 42, 'дамп содержит данные');
-  const mode = fs.statSync(r.file).mode & 0o777;
-  assert.equal(mode, 0o600, `права дампа 0600 (фактически ${mode.toString(8)})`);
+  // права 0600 — только POSIX: на Windows chmod-биты не работают, mode отражает
+  // дефолт (0o666), проверка честно пропускается (chmodSync в backup.mjs безвреден)
+  if (process.platform !== 'win32') {
+    const mode = fs.statSync(r.file).mode & 0o777;
+    assert.equal(mode, 0o600, `права дампа 0600 (фактически ${mode.toString(8)})`);
+  }
 });
