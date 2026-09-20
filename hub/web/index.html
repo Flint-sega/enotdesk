@@ -80,6 +80,11 @@ main{flex:1;width:100%;max-width:980px;margin:0 auto;padding:28px 24px 40px}
 .new-grid{display:flex;flex-direction:column;gap:14px;max-width:560px}
 .presence{display:flex;align-items:center;gap:8px}
 .presence select{padding:6px 10px;font-size:14px}
+.check{display:flex;gap:10px;align-items:center}
+.check input{width:auto}
+.row.unread{border-color:var(--accent)}
+.unread-chip{border-radius:999px;background:var(--accent);color:#05231D;font-size:12px;font-weight:700;padding:1px 8px;margin-left:8px}
+.saved{color:var(--accent);font-size:14px;min-height:1.2em}
 </style>
 </head>
 <body>
@@ -202,6 +207,22 @@ main{flex:1;width:100%;max-width:980px;margin:0 auto;padding:28px 24px 40px}
           </div>
         </div>
       </form>
+      <section id="hub-widget-admin" class="card hidden">
+        <h2 data-i18n="hub.widget.adminTitle"></h2>
+        <div class="new-grid">
+          <div class="field"><label for="hub-widget-origins" data-i18n="hub.widget.origins"></label>
+            <textarea id="hub-widget-origins" data-i18n-placeholder="hub.widget.originsHint"></textarea></div>
+          <label class="check"><input type="checkbox" id="hub-widget-consent">
+            <span data-i18n="hub.widget.consent"></span></label>
+          <div class="field"><label for="hub-widget-policy" data-i18n="hub.widget.policy"></label>
+            <input id="hub-widget-policy" type="url"></div>
+          <p class="form-error" id="hub-widget-error" role="alert"></p>
+          <p class="saved" id="hub-widget-saved" role="status"></p>
+          <div class="actions">
+            <button id="hub-widget-save" class="btn" type="button" data-i18n="hub.widget.save"></button>
+          </div>
+        </div>
+      </section>
     </section>
     <section id="hub-forbidden" class="card hidden">
       <h1 id="hub-forbidden-title" data-i18n="hub.forbidden.title"></h1>

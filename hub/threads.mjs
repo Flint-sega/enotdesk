@@ -317,6 +317,41 @@ export function createThreadsStore(db, { nowMs = Date.now } = {}) {
       .run(id, agentId).changes === 1;
   }
 
+  // ---- швы виджета (T03): история по visitor_id и факт согласия ----
+
+  // Свежий тред контакта в канале: виджет переиспользует открытый чат-тред,
+  // resolved открывает новый (после rating-виджета).
+  function latestContactThread(contactId, channel) {
+    if (!contactId || !CHANNELS.includes(channel)) return null;
+    const row = db.prepare(`
+      SELECT * FROM threads WHERE contact_id = ? AND channel = ?
+      ORDER BY last_activity_at DESC, id DESC LIMIT 1
+    `).get(contactId, channel);
+    return row ? outThread(row) : null;
+  }
+
+  // Последние треды контакта (визит-история, ≤limit): наружные объекты без сообщений.
+  function listContactThreads(contactId, limit = 20) {
+    if (!contactId) return [];
+    const n = Number.isInteger(limit) && limit > 0 ? Math.min(limit, 50) : 20;
+    return db.prepare(`
+      SELECT * FROM threads WHERE contact_id = ?
+      ORDER BY last_activity_at DESC, id DESC LIMIT ?
+    `).all(contactId, n).map(outThread);
+  }
+
+  // GDPR-факт: когда посетитель согласился (строка ISO или null).
+  function setConsentAt(contactId, atIso) {
+    if (!contactId) return;
+    db.prepare('UPDATE contacts SET consent_at = ? WHERE id = ?').run(atIso, contactId);
+  }
+
+  function getContactByVisitor(visitorId) {
+    if (!visitorId) return null;
+    const row = db.prepare('SELECT * FROM contacts WHERE visitor_id = ?').get(visitorId);
+    return row ? outContact(row) : null;
+  }
+
   // ---- присутствие агентов ----
 
   function setPresence(agentId, status) {
@@ -342,6 +377,7 @@ export function createThreadsStore(db, { nowMs = Date.now } = {}) {
     listMessages, appendMessage,
     listCanned, createCanned, deleteCanned,
     setPresence, getPresence, listPresence,
+    latestContactThread, listContactThreads, setConsentAt, getContactByVisitor,
     ensureContact,
   };
 }

@@ -19,7 +19,7 @@ export function consoleHtml(state, locale, version) {
     .replace('__STATE__', esc(state));
 }
 
-// Минимальная страница-заглушка (не маркетинговый shell server/pages.mjs).
+// Страница-заглушка (не маркетинговый shell server/pages.mjs).
 export function stubHtml(title, body, locale) {
   return `<!doctype html>
 <html lang="${esc(locale)}">
@@ -35,4 +35,14 @@ h1{margin:0 0 10px;font-size:26px}.lead{color:var(--muted);margin:0}</style>
 <body><main class="card"><h1>${esc(title)}</h1><p class="lead">${esc(body)}</p></main></body>
 </html>
 `;
+}
+
+// Страница виджета (iframe /w, T03): шаблон один, подставляется только локаль —
+// остальное (state) у страницы нет, гость идентифицируется visitor-cookie.
+let widgetCache = null;
+export function widgetHtml(locale) {
+  if (!widgetCache) {
+    widgetCache = fs.readFileSync(new URL('./widget/w.html', import.meta.url), 'utf8');
+  }
+  return widgetCache.replace('__LOCALE__', esc(locale));
 }
