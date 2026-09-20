@@ -1,4 +1,7 @@
-{
+// Словарь ru (i18n): ES-модуль вместо JSON — статический import не проходит через
+// fetch, поэтому CSP рендерера обходится без connect-src file: (SEC-005).
+// Ключи 1:1 с прежним ru.json; паритет с en проверяет контракт-тест.
+export default {
   "app.tabHelp": "Помощь",
   "app.tabOperator": "Оператор",
   "app.aria.workMode": "Режим работы",
@@ -10,7 +13,6 @@
   "app.alt.mascotHero": "Енот-специалист EnotDesk",
   "app.subtitle": "Удалённая поддержка",
   "app.care": "С заботой о ваших задачах",
-
   "common.loading": "Загрузка…",
   "common.send": "Отправить",
   "common.cancel": "Отмена",
@@ -26,7 +28,6 @@
   "common.untitled": "(без названия)",
   "common.httpError": "Ошибка {status}",
   "error.badLocale": "Некорректная локаль",
-
   "client.start": "Получить помощь",
   "client.startBusy": "Соединяемся…",
   "client.explain": "Нажмите кнопку — приложение сообщит временные идентификатор и пароль. Передайте их вашему специалисту в чате.",
@@ -78,7 +79,6 @@
   "client.sourceUnavailable": "Источник недоступен",
   "client.permMac": "Разрешите запись экрана: Системные настройки → Конфиденциальность и безопасность → Запись экрана, затем перезапустите ЕнотDesk.",
   "client.permOther": "Захват экрана запрещён системой. Предоставьте разрешение и попробуйте снова.",
-
   "op.loginTitle": "Вход оператора",
   "op.login": "Логин",
   "op.password": "Пароль",
@@ -115,18 +115,16 @@
   "op.waitingConfirm": "Ожидаем подтверждение клиента…",
   "op.waitingScreen": "Ожидаем экран клиента…",
   "op.controlNote": "Управление мышью и клавиатурой активно, пока клиент не завершил сеанс.",
-  "op.clipLabel": "Буфер обмена",
+  "op.clipLabel": "Отправлять мой буфер другой стороне",
   "op.fitFill": "Заполнить",
   "op.fitFit": "Вписать",
   "op.fullscreen": "Во весь экран",
   "op.end": "Завершить",
-
   "status.connecting": "Подключение…",
   "status.connected": "Подключено",
   "op.clientReconnecting": "Клиент переподключается…",
   "op.operatorReconnecting": "Оператор переподключается…",
   "op.genericReconnecting": "Переподключение…",
-
   "password.title": "Сменить пароль",
   "password.oldLabel": "Текущий пароль",
   "password.newLabel": "Новый пароль (от 8 символов)",
@@ -134,7 +132,6 @@
   "password.busy": "Меняем…",
   "password.changed": "Пароль изменён. Активные сеансы с вашим участием завершены.",
   "password.fail": "Не удалось сменить пароль",
-
   "settings.title": "Настройки",
   "settings.serverLabel": "Адрес сервера",
   "settings.allowHttp": "Разрешить HTTP без шифрования (только для тестового сервера)",
@@ -155,7 +152,6 @@
   "settings.updateBanner": "Доступна версия {version} — обновите клиент со страницы загрузок вашего сервера EnotDesk.",
   "update.autoBanner": "Доступна версия {version} — обновление скачается и применится при перезапуске EnotDesk.",
   "update.manualBanner": "Доступна версия {version} — скачайте новую сборку со страницы релизов проекта.",
-
   "server.checking": "Проверяем сервер…",
   "server.statusOk": "Сервер доступен (v{version})",
   "server.statusDown": "Сервер недоступен",
@@ -163,7 +159,6 @@
   "firstRun.lead": "Адрес сервера уже настроен — проверим, что он доступен.",
   "firstRun.check": "Проверить",
   "firstRun.openSettings": "Настроить адрес вручную",
-
   "contacts.title": "Адресная книга",
   "contacts.searchLabel": "Поиск по имени",
   "contacts.searchPlaceholder": "Например, Иванова",
@@ -182,7 +177,6 @@
   "contacts.saveFail": "Не удалось сохранить",
   "contacts.deleteFail": "Не удалось удалить",
   "contacts.deleteConfirm": "Удалить контакт «{name}»?",
-
   "team.title": "Команда",
   "team.empty": "Команда пуста. Создайте приглашение ниже и отправьте его коллеге.",
   "team.active": "активен",
@@ -206,7 +200,6 @@
   "team.inviteFor": "Приглашение на роль: {role}",
   "team.revoke": "Отозвать",
   "team.revokeFail": "Не удалось отозвать",
-
   "history.title": "История сеансов",
   "history.empty": "История пуста. Здесь появятся завершённые сеансы помощи.",
   "history.item": "Сеанс {id} — {state}",
@@ -215,7 +208,6 @@
   "audit.title": "Журнал действий",
   "audit.empty": "Журнал пуст. Действия команды будут записываться сюда автоматически.",
   "audit.sub": "{date}{detail}",
-
   "end.ended": "Сеанс завершён.",
   "end.denied": "Вы отклонили запрос оператора.",
   "end.host-lost": "Приложение помощи закрылось — сеанс завершён.",
@@ -225,7 +217,6 @@
   "end.signal-lost": "Связь с сервером потеряна — сеанс завершён.",
   "end.rtc": "Соединение экрана прервалось.",
   "end.generic": "Сеанс завершён ({reason}).",
-
   "files.fromOperator": "Оператор отправляет файл «{name}» ({size} МБ). Принять?",
   "files.accept": "Принять",
   "files.reject": "Отклонить",
@@ -237,16 +228,13 @@
   "files.clientSending": "Клиент отправляет «{name}»…",
   "files.sending": "Отправляем «{name}»…",
   "files.noChannel": "Канал передачи недоступен",
-
   "chat.you": "Вы",
   "chat.operator": "Оператор",
   "chat.client": "Клиент",
   "chat.system": "Система",
-
   "role.admin": "администратор",
   "role.operator": "оператор",
   "role.auditor": "наблюдатель",
-
   "server.titleDownloads": "EnotDesk — загрузка",
   "server.titleInvite": "EnotDesk — приглашение",
   "server.nav.ariaMain": "Основная навигация",
@@ -323,7 +311,7 @@
   "web.chat.title": "Чат",
   "web.chat.send": "Отправить",
   "web.clip.title": "Буфер обмена",
-  "web.clip.hint": "Скопированный текст уходит другой стороне. Браузер запросит разрешение на запись буфера.",
+  "web.clip.hint": "Скопированный текст уходит другой стороне. Текст из сеанса вставляется кнопкой — буфер автоматически не меняется.",
   "web.files.title": "Файлы",
   "web.files.pick": "Выбрать файл",
   "web.files.drop": "Перетащите файл на экран сеанса",
@@ -350,7 +338,6 @@
   "web.aria.chatLog": "История чата",
   "web.aria.lang": "Выбор языка интерфейса",
   "server.insecureBanner": "Соединение не защищено — для работы через интернет настройте HTTPS (см. docs/SERVER.md)",
-
   "machines.nameLength": "Название машины: от 1 до 120 символов",
   "machines.groupLength": "Группа: до 60 символов",
   "machines.claimLimited": "Слишком много попыток подключения",
@@ -371,7 +358,6 @@
   "machines.badCode": "Код недействителен или уже использован",
   "machines.tokenRequired": "Требуется токен машины",
   "machines.noSession": "Активного сеанса у машины нет",
-
   "web.machines.open": "Машины",
   "web.machines.title": "Машины",
   "web.machines.backConnect": "К подключению",
@@ -414,7 +400,6 @@
   "web.machines.toastNoConfirm": "Запрос ушёл агенту, подтверждения нет (возможно, диалог ждёт нажатия)",
   "web.machines.toastFailed": "Машина не смогла показать сообщение ({reason})",
   "web.machines.claimCancel": "Отмена",
-
   "op.twofa": "2FA",
   "op.totpCode": "Код подтверждения",
   "op.totpPlaceholder": "6 цифр или резервный код",
@@ -446,5 +431,10 @@
   "totp.badCode": "Неверный код — проверьте код в приложении-аутентификаторе",
   "totp.keyMissing": "На сервере не задан ENOT_SECRET_KEY — включение 2FA недоступно. Задайте переменную окружения и перезапустите сервер.",
   "totp.already": "2FA уже включена — сначала отключите её",
-  "totp.notEnabled": "2FA не включена"
-}
+  "totp.notEnabled": "2FA не включена",
+  "update.installAsk": "Доступна версия {version} — установить при выходе?",
+  "update.installConfirm": "Установить при выходе",
+  "update.installLater": "Не сейчас",
+  "web.clip.paste": "Вставить из сеанса",
+  "op.clipPaste": "Вставить из сеанса",
+};

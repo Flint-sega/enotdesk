@@ -4,6 +4,27 @@
 # Сервер при этом не меняется: читает те же ENOT_* (server/main.mjs).
 set -eu
 
+# Хостнейм-валидация DOMAIN (P2-15) перед интерполяцией в env сервера:
+# ^[A-Za-z0-9.-]+(:[0-9]+)?$ — только буквы/цифры/точки/дефисы, порт опционален.
+valid_hostport() {
+  case "$1" in
+    *:*)
+      h="${1%:*}"; p="${1##*:}"
+      case "$p" in ''|*[!0-9]*) return 1 ;; esac
+      case "$h" in ''|*[!A-Za-z0-9.-]*) return 1 ;; esac
+      ;;
+    *)
+      case "$1" in ''|*[!A-Za-z0-9.-]*) return 1 ;; esac
+      ;;
+  esac
+  return 0
+}
+
+if [ -n "${DOMAIN:-}" ] && ! valid_hostport "$DOMAIN"; then
+  echo "ENOTDESK: DOMAIN не похож на имя хоста (допустимы буквы, цифры, точка, дефис; опционально :порт) — отказ." >&2
+  exit 1
+fi
+
 # Публичный адрес: по умолчанию https://$DOMAIN
 if [ -z "${ENOT_PUBLIC_URL:-}" ] && [ -n "${DOMAIN:-}" ]; then
   ENOT_PUBLIC_URL="https://$DOMAIN"
@@ -36,5 +57,7 @@ elif [ -n "${ENOT_TURN_SECRET:-}" ]; then
   echo "ENOTDESK: DOMAIN не задан — TURN клиенту не отдан (нужен публичный адрес); coturn запущен, но простаивает." >&2
 fi
 
-export ENOT_PUBLIC_URL ENOT_TURN_URLS ENOT_TURN_USERNAME ENOT_TURN_PASSWORD
+# ENOT_TURN_SECRET пробрасывается серверу как есть (эфемерные TURN-креды):
+# compose кладёт его в окружение контейнера, здесь — только явный export.
+export ENOT_PUBLIC_URL ENOT_TURN_URLS ENOT_TURN_USERNAME ENOT_TURN_PASSWORD ENOT_TURN_SECRET
 exec "$@"

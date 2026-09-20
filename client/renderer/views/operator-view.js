@@ -4,6 +4,7 @@ import { $, enot, text, show, hide, setBusy, roleName } from '../dom.js';
 import { state } from '../state.js';
 import { t } from '../../lib/i18n.mjs';
 import { cleanupSession } from '../session-media.js';
+import { resetOperatorClip } from '../session-services.js';
 import { loadContactsIntoSelect } from './contacts.js';
 import { parseCredentials } from '../../lib/credentials.mjs';
 
@@ -22,6 +23,7 @@ $('conn-password').addEventListener('paste', handleCredentialPaste);
 
 export function showConnectForm() {
   show($('op-connect-form')); hide($('op-waiting')); hide($('op-remote'));
+  resetOperatorClip(); // SEC-002: ожидающий «Вставить из сеанса» не переживает сеанс
   text($('conn-paste-hint'), t('op.pasteHint'));
   hide($('conn-paste-hint'));
 }

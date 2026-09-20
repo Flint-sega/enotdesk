@@ -1,7 +1,9 @@
 // i18n без библиотек (spec §i18n): словари, выбор языка, фолбэк en.
 // Один модуль для рендерера (Electron) и серверных страниц (Node) — без DOM и fs.
-import ru from '../locales/ru.json' with { type: 'json' };
-import en from '../locales/en.json' with { type: 'json' };
+// Словари — ES-модули (SEC-005): статический import идёт через script-src 'self',
+// а не через fetch, поэтому CSP рендерера обходится без connect-src file:.
+import ru from '../locales/ru.mjs';
+import en from '../locales/en.mjs';
 
 const DICTS = { ru, en };
 let locale = 'ru'; // до initLocale совпадает с языком статического index.html

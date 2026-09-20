@@ -47,3 +47,19 @@ export function updateDecision({ current, feedText }) {
     files: feed.files,
   };
 }
+
+// Политика установки (SEC-010): mac/linux умеют автоустановку при выходе, но
+// включается она только после явного подтверждения человеком (dialog-баннер в
+// main); по умолчанию — только уведомление. Windows-сборка v1 — portable .exe,
+// самообновление такой формат не поддерживает: только уведомление со ссылкой
+// на релизы. askConfirm — показать ли диалог подтверждения на update-downloaded.
+export function updateInstallDecision({ platform = process.platform, confirmed = false } = {}) {
+  if (platform === 'win32') {
+    return { autoDownload: false, autoInstallOnAppQuit: false, askConfirm: false };
+  }
+  return {
+    autoDownload: true,
+    autoInstallOnAppQuit: confirmed === true,
+    askConfirm: confirmed !== true,
+  };
+}

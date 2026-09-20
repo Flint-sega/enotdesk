@@ -20,3 +20,16 @@ test('неизвестный маршрут — 404 в формате {error:{co
   assert.equal(typeof res.json.error.message, 'string');
   assert.match(res.json.error.message, /./);
 });
+
+test('API-ответы не кешируются (Cache-Control: no-store), бренд-ассеты с nosniff', async (t) => {
+  const { base } = await startServer(t);
+  const res = await fetch(`${base}/api/v1/health`);
+  await res.text();
+  assert.equal(res.headers.get('cache-control'), 'no-store', 'ok() ставит no-store на API');
+  const icon = await fetch(`${base}/brand/icon.png`);
+  assert.equal(icon.status, 200);
+  assert.equal(icon.headers.get('x-content-type-options'), 'nosniff', 'nosniff на /brand');
+  const asset = await fetch(`${base}/client/lib/i18n.mjs`);
+  assert.equal(asset.status, 200);
+  assert.equal(asset.headers.get('x-content-type-options'), 'nosniff', 'nosniff на статике оператора');
+});

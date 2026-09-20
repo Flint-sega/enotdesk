@@ -10,6 +10,8 @@
 | `coturn` | TURN/STUN-релей для видео, `use-auth-secret` из `TURN_SECRET`, realm из `DOMAIN` | `3478/tcp+udp`, релей `49160-49200/udp` (host-сеть) |
 | `caddy` | обратный прокси + сертификат Let's Encrypt при заданном `DOMAIN`; без домена — HTTP `:80` с предупреждением в логах | `80`, `443` (tcp+udp) |
 
+Все три контейнера захарднены: корневая ФС только для чтения (`read_only`), `cap_drop: ALL` (caddy и coturn добавляют только `NET_BIND_SERVICE` — 80/443 у caddy и file-capability бинарника turnserver), `no-new-privileges`. `TURN_SECRET` нигде не попадает в argv: entrypoint coturn (`docker/coturn/entrypoint.sh`) генерирует конфиг `/run/turnserver.conf` (tmpfs, 0600) и запускает `turnserver -c`, а серверу секрет уходит переменной `ENOT_TURN_SECRET` (эфемерные TURN-креды). `DOMAIN`/`ENOT_PUBLIC_URL` проверяются на формат хостнейма до интерполяции в конфиги — посторонние символы честно отклоняются.
+
 Данные: том `enotdesk-data` (БД `/data/enotdesk.db`) и `enotdesk-dist` (сборки `/data/dist`). `docker compose down` их сохраняет; удаляются только `docker compose down -v` — не делай этого на живом сервере.
 
 ## Требования
