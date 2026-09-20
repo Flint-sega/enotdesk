@@ -75,7 +75,7 @@ test('hub.db: schema_version поднимается до текущей', async 
   try {
     const row = h.db.prepare('SELECT version FROM schema_version').get();
     assert.equal(row.version, SCHEMA_VERSION);
-    assert.equal(SCHEMA_VERSION, 3); // 1 — каркас SSO (T01), 2 — тикеты (T02), 3 — настройки виджета+consent (T03)
+    assert.equal(SCHEMA_VERSION, 4); // 1 — SSO (T01), 2 — тикеты (T02), 3 — виджет+consent (T03), 4 — join-токены (T05)
   } finally { h.close(); }
 });
 
@@ -274,7 +274,7 @@ test('статика консоли: app.mjs и i18n-модули под /hub/, 
   } finally { h.close(); }
 });
 
-test('виджет (T03): /widget.js — лоадер с кэшем, /w — страница iframe с consent-cookie, /join — каркасная', async () => {
+test('виджет (T03): /widget.js — лоадер с кэшем, /w — страница iframe с consent-cookie; /join — живая с T05 (404 без токена)', async () => {
   const h = await startHub({ enotFetch: fakeEnotDesk().enotFetch });
   try {
     const w = await fetch(`${h.base}/widget.js`);
@@ -282,19 +282,16 @@ test('виджет (T03): /widget.js — лоадер с кэшем, /w — ст
     assert.match(w.headers.get('content-type'), /application\/javascript/);
     assert.match(w.headers.get('cache-control'), /max-age=3600/);
     assert.match(await w.text(), /data-server/);
-    for (const p of ['/join']) {
-      const res = await fetch(`${h.base}${p}`, { headers: { 'accept-language': 'ru' } });
-      assert.equal(res.status, 200);
-      const html = await res.text();
-      assert.match(html, /lang="ru"/);
-      assert.match(html, /скоро|Скоро/);
-    }
+    // T05: /join без токена — честная 404 (живая страница — в hub/test/join.test)
+    const joinPage = await fetch(`${h.base}/join`, { headers: { 'accept-language': 'ru' } });
+    assert.equal(joinPage.status, 404);
+    assert.match(await joinPage.text(), /lang="ru"/);
     const page = await fetch(`${h.base}/w`, { headers: { 'accept-language': 'ru' } });
     assert.equal(page.status, 200);
     assert.match(page.headers.get('content-security-policy'), /script-src 'self'/);
     const setCookie = page.headers.getSetCookie().find((c) => c.startsWith('enot_wv='));
     assert.ok(setCookie, 'страница виджета выдаёт visitor-cookie');
-    assert.match(setCookie, /Path=\/w/);
+    assert.match(setCookie, /Path=\//);
     assert.match(setCookie, /HttpOnly/);
     const pageHtml = await page.text();
     assert.match(pageHtml, /id="w-msgs"/);

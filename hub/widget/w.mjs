@@ -4,6 +4,7 @@
 // (cookie enot_wv ставит сервер; fallback — localStorage, если куки блокированы).
 // Все тексты — из словарей (data-i18n в разметке, t() в JS).
 import { t, initLocale, getLocale } from '/hub/lib/i18n.mjs';
+import { safeCardHref } from '/hub/card-url.mjs';
 
 const $ = (id) => document.getElementById(id);
 const LS = { visitor: 'enot.wv', profile: 'enot.wprofile', consent: 'enot.wconsent' };
@@ -41,6 +42,7 @@ function post(type, extra = {}) {
 let ws = null;
 let retryMs = 1000;
 let helloTimer = 0;
+let joinHintTimer = 0;
 let settings = { consentRequired: false, policyUrl: '' };
 let presence = 'connecting';
 let thread = null; // открытый (или последний) тред гостя
@@ -62,9 +64,55 @@ function setStatus(status) {
   $('w-status-text').textContent = t(`widget.status.${status}`);
 }
 
+// Карточка «Подключиться» (T05): кнопка протокола (enotdesk://) и ссылка на
+// страницу скачивания/инструкции. Чужой или битый JSON — null (обычный пузырь).
+function joinCard(m) {
+  let card;
+  try { card = JSON.parse(m.body); } catch { return null; }
+  if (!card || card.kind !== 'remote-offer') return null;
+  // href — только enotdesk: (запуск) и https: (страница хаба): чужая схема —
+  // карточка не рендерится, гость видит обычный текстовый пузырь
+  const url = safeCardHref(card.url, 'enotdesk:');
+  if (!url) return null;
+  const box = document.createElement('div');
+  box.className = 'w-card';
+  const start = document.createElement('a');
+  start.id = 'w-card-start';
+  start.className = 'w-btn';
+  start.href = url;
+  start.textContent = t('widget.join.start');
+  box.appendChild(start);
+  const page = safeCardHref(card.joinPage, 'https:');
+  if (page) {
+    const pageLink = document.createElement('a');
+    pageLink.id = 'w-card-download';
+    pageLink.className = 'w-btn ghost';
+    pageLink.href = page;
+    pageLink.target = '_blank';
+    pageLink.rel = 'noopener noreferrer';
+    pageLink.textContent = t('widget.join.download');
+    box.appendChild(pageLink);
+  }
+  const hint = document.createElement('p');
+  hint.id = 'w-card-hint';
+  hint.className = 'w-error hidden';
+  hint.textContent = t('widget.join.hint');
+  box.appendChild(hint);
+  // протокол мог не сработать (клиент не установлен) — через 3 с показываем подсказку
+  start.addEventListener('click', () => {
+    clearTimeout(joinHintTimer);
+    joinHintTimer = setTimeout(() => { hint.classList.remove('hidden'); reportHeight(); }, 3000);
+  });
+  return box;
+}
+
 function bubble(m) {
   const el = document.createElement('div');
   el.className = `bubble ${m.author}`;
+  if (m.type === 'card') {
+    const card = joinCard(m);
+    if (card) { el.classList.add('card'); el.appendChild(card); return el; }
+  }
   el.textContent = m.body;
   return el;
 }

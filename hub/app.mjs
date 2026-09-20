@@ -6,14 +6,22 @@ import { openHubDb } from './db.mjs';
 import { createAuth } from './auth.mjs';
 import { createThreadsStore, sanitizeText, sanitizeEmail, sanitizeTags, sanitizeShortcut } from './threads.mjs';
 import { createSettingsStore } from './settings.mjs';
+import { createJoinStore, createJoinReporter, SESSION_ID_RE, SYSTEM_LOCALE } from './join.mjs';
+import { secretKeyBytes, decryptSecret } from '../server/totp.mjs';
 import { RateLimiter } from '../server/app.mjs';
 import { t, pickLocale } from '../client/lib/i18n.mjs';
-import { consoleHtml, stubHtml, widgetHtml } from './pages.mjs';
+import { consoleHtml, stubHtml, widgetHtml, joinHtml } from './pages.mjs';
 
 const COOKIE = 'enot_hub_sid';
 const VISITOR_COOKIE = 'enot_wv';
-// visitor_id: uuid (сервер) или сохранённый гостем токен — только «безопасные» символы
-const VISITOR_RE = /^[A-Za-z0-9][A-Za-z0-9_-]{7,127}$/;
+// visitor_id виджета: только сильные токены 'v-' + base64url(24 байт) —
+// предсказуемый/украденный-подбором id открыл бы чужую историю (T03 dosапрос).
+// Выдаётся сервером (/w, fallback WS-hello, offline), гостем лишь пересылается.
+export const VISITOR_RE = /^v-[A-Za-z0-9_-]{32,128}$/;
+
+function newVisitorId() {
+  return `v-${crypto.randomBytes(24).toString('base64url')}`;
+}
 const HEALTH_CACHE_MS = 5000; // кэш пинга апстрима
 const HEALTH_TIMEOUT_MS = 2000; // таймаут пинга апстрима
 const BODY_MAX = 4096;
@@ -25,6 +33,8 @@ const CHANNELS = ['chat', 'email', 'manual'];
 const WIDGET_HISTORY_MAX = 50;
 const WS_QUEUE_MAX = 100; // сообщений в очереди на сокет
 const WS_BUFFERED_MAX = 256 * 1024;
+const CLAIM_TIMEOUT_MS = 5000; // авто-claim в EnotDesk
+const HOOK_BODY_MAX = 16 * 1024; // тело webhook-события
 
 // Копия server/app.mjs (readJson/err/ok): там модуль-приватные и не экспортируются,
 // а server/ намеренно не трогаем. Логика совпадает 1:1 — при изменении сервера
@@ -40,8 +50,13 @@ function ok(res, status, body) {
   res.end(JSON.stringify(body));
 }
 
-// Зеркало readJson из server/app.mjs: server/ не экспортирует хелпер, а его правка — вне зоны hub; при изменении копии синхронизируй вручную.
-function readJson(req, res, maxBytes) {
+// Зеркало readJson из server/app.mjs (T01-ремонт): там модуль-приватные и не
+// экспортируются, а server/ намеренно не трогаем — третья копия паттерна слита
+// в один сырой читатель (readRaw), readJson — parse поверх него. Логика
+// совпадает 1:1 — при изменении сервера синхронизировать вручную.
+// readRaw: строка | null (тело больше maxBytes — 413, соединение рвётся после
+// ответа; подпись webhook-ов проверяется по этим точным байтам).
+function readRaw(req, res, maxBytes) {
   return new Promise((resolve) => {
     let size = 0; const chunks = [];
     let done = false;
@@ -57,12 +72,16 @@ function readJson(req, res, maxBytes) {
       }
       chunks.push(c);
     });
-    req.on('end', () => {
-      try { finish(JSON.parse(Buffer.concat(chunks).toString('utf8'))); }
-      catch { finish(undefined); }
-    });
+    req.on('end', () => finish(Buffer.concat(chunks).toString('utf8')));
     req.on('error', () => finish(null));
   });
+}
+
+// JSON-тело: parsed | undefined (не-JSON → 400 у вызывателя) | null (413)
+async function readJson(req, res, maxBytes) {
+  const raw = await readRaw(req, res, maxBytes);
+  if (raw === null) return null;
+  try { return JSON.parse(raw); } catch { return undefined; }
 }
 
 function cookieSid(req) {
@@ -124,6 +143,7 @@ function addrTrusted(addr, entry) {
 // '../locales/…' внутри i18n.mjs резолвился в тот же префикс за Caddy.
 const HUB_ASSETS = {
   'app.mjs': { file: './web/app.mjs', type: 'text/javascript' },
+  'card-url.mjs': { file: './web/card-url.mjs', type: 'text/javascript' },
   'widget/w.mjs': { file: './widget/w.mjs', type: 'text/javascript' },
   'lib/i18n.mjs': { file: '../client/lib/i18n.mjs', type: 'text/javascript' },
   'locales/ru.mjs': { file: '../client/locales/ru.mjs', type: 'text/javascript' },
@@ -160,11 +180,13 @@ export function createHub(opts = {}) {
   }
   const secureCookie = cfg.publicUrl.startsWith('https:');
 
-  // Cookie visitor_id виджета: Path=/w покрывает и /ws/widget; iframe сторонний —
-  // SameSite=None+Secure на https, иначе (и в тестах) Lax; HttpOnly: JS страницы
-  // ид не нужен (WS шлёт cookie сам).
+  // Cookie visitor_id: Path=/ — иначе (Path=/w) она не матчится с /ws/widget
+  // (RFC 6265, граница сегмента) и реальный браузер не пошлёт её на WS. Ид —
+  // случайный не-секрет (HttpOnly, шлётся только на свой хаб), попадание на
+  // прочие пути хаба безвредно. iframe сторонний: SameSite=None+Secure на
+  // https, иначе Lax; HttpOnly: JS страницы ид не нужен (WS шлёт cookie сам).
   function visitorSetCookie(id) {
-    const base = `${VISITOR_COOKIE}=${id}; Path=/w; Max-Age=31536000; HttpOnly`;
+    const base = `${VISITOR_COOKIE}=${id}; Path=/; Max-Age=31536000; HttpOnly`;
     return secureCookie ? `${base}; SameSite=None; Secure` : `${base}; SameSite=Lax`;
   }
 
@@ -177,12 +199,63 @@ export function createHub(opts = {}) {
     now: cfg.now,
   });
   const threads = createThreadsStore(db, { nowMs: cfg.now });
-  const settings = createSettingsStore(db, { nowMs: cfg.now });
+  const settings = createSettingsStore(db, { nowMs: cfg.now, secretKey: cfg.secretKey });
+  settings.ensureWebhookSecret(); // секрет приёма /hooks/enotdesk — с первого старта
   const limits = {
     login: new RateLimiter(opts.loginLimit ?? 10, 60_000, { now: cfg.now }),
     // WS-upgrade до всякой аутентификации: аноним не держит сокеты (как у логина)
     wsUpgrade: opts.wsUpgradeLimit ?? new RateLimiter(30, 10_000, { now: cfg.now }),
+    join: new RateLimiter(opts.joinLimit ?? 10, 60_000, { now: cfg.now }),
+    joinReport: new RateLimiter(opts.joinReportLimit ?? 30, 60_000, { now: cfg.now }),
+    hooks: new RateLimiter(opts.hooksLimit ?? 60, 60_000, { now: cfg.now }),
   };
+
+  // ---- one-click «Подключиться» (T05) ----
+
+  // Публичный origin для join-ссылок: адрес хаба, а без него — адрес EnotDesk
+  // (за Caddy это один домен: /api/hub/* → хаб, /api/v1/* и /downloads → сервер).
+  function publicOrigin() {
+    try { return new URL(cfg.publicUrl).origin; } catch { /* публичный адрес не задан */ }
+    return String(cfg.enotdeskUrl).replace(/\/+$/, '');
+  }
+
+  function joinUrls(token) {
+    const base = publicOrigin();
+    return {
+      url: `enotdesk://join?server=${encodeURIComponent(base)}&t=${encodeURIComponent(token)}`,
+      joinPage: `${base}/join?t=${encodeURIComponent(token)}`,
+    };
+  }
+
+  // Bearer агента для авто-claim: hub-сессии агента живы в hub_sessions, bearer
+  // хранится там же в шифротексте (см. hub/auth.mjs storeBearer/loadBearer —
+  // логика повторена, сам auth bearer наружу не отдаёт).
+  function bearerForAgent(agentId) {
+    if (typeof agentId !== 'string' || !agentId) return null;
+    const row = db.prepare(`
+      SELECT bearer FROM hub_sessions
+      WHERE json_extract(user_json, '$.id') = ? AND expires_at > ?
+      ORDER BY created_at DESC, sid_hash DESC LIMIT 1
+    `).get(agentId, new Date(cfg.now()).toISOString());
+    if (!row) return null;
+    if (!cfg.secretKey) return row.bearer;
+    try { return decryptSecret(secretKeyBytes(cfg.secretKey), row.bearer); } catch { return null; }
+  }
+
+  const joinStore = createJoinStore(db, { nowMs: cfg.now });
+  const joinReport = createJoinReporter({
+    join: joinStore,
+    threads,
+    bearerForAgent,
+    enotdeskUrl: cfg.enotdeskUrl,
+    doFetch: cfg.enotFetch ?? ((url, o = {}) => fetch(url, { ...o, signal: AbortSignal.timeout(CLAIM_TIMEOUT_MS) })),
+    nowMs: cfg.now,
+    claimTimeoutMs: CLAIM_TIMEOUT_MS,
+    onSystem: (threadId, message) => {
+      broadcastConsole({ type: 'new-message', thread: threads.getThread(threadId)?.thread ?? null, message });
+      pushToThreadGuests(threadId, { type: 'msg', threadId, message });
+    },
+  });
 
   // Гейт консольного API (R02): hub-сессия + роль из EnotDesk; auditor — 403.
   async function hubUser(req, res) {
@@ -210,7 +283,7 @@ export function createHub(opts = {}) {
   // REST тредов (T02). Маршруты под /api/hub/*, все за RBAC operator/admin.
   async function handleThreadsApi(req, res, url) {
     const p = url.pathname;
-    const m = p.match(/^\/api\/hub\/threads(?:\/([A-Za-z0-9-]{1,64})(?:\/(messages|rating))?)?$/);
+    const m = p.match(/^\/api\/hub\/threads(?:\/([A-Za-z0-9-]{1,64})(?:\/(messages|rating|join))?)?$/);
     // совпал префикс, но не маршрут — обязаны ответить, иначе запрос висит
     if (!m) return err(res, 404, 'not_found', 'Маршрут не найден');
     const [, id, sub] = m;
@@ -320,6 +393,29 @@ export function createHub(opts = {}) {
       // ответ оператора доходит гостю в реальном времени (заметки — не доходят)
       if (message.type === 'text') pushToThreadGuests(id, { type: 'msg', threadId: id, message });
       return ok(res, 201, { message });
+    }
+
+    if (id && sub === 'join' && method === 'POST') {
+      // Карточка «Подключиться» (R07): одноразовый join-токен на тред + карточка
+      // гостю (WS, если онлайн) и в тред; email/manual-тредам ссылку в письмо
+      // не шлём (v1) — карточка доступна в консоли.
+      const user = await hubUser(req, res);
+      if (!user) return true;
+      if (!limits.join.take(`ip:${ip(req)}`)) return err(res, 429, 'rate_limited', 'Слишком много запросов, попробуйте позже');
+      const created = joinStore.create({ threadId: id, agentId: user.id });
+      if (!created) return err(res, 404, 'not_found', 'Тред не найден');
+      const urls = joinUrls(created.token);
+      const message = threads.appendMessage(id, {
+        author: 'agent',
+        type: 'card',
+        agentId: user.id,
+        body: JSON.stringify({ kind: 'remote-offer', url: urls.url, joinPage: urls.joinPage, state: 'pending' }),
+      });
+      if (message) {
+        pushToThreadGuests(id, { type: 'msg', threadId: id, message });
+        broadcastConsole({ type: 'agent-message', threadId: id, message });
+      }
+      return ok(res, 201, { token: created.token, url: urls.url, joinPage: urls.joinPage, expiresAt: created.expiresAt, message });
     }
 
     if (id && sub === 'rating' && method === 'POST') {
@@ -528,7 +624,7 @@ export function createHub(opts = {}) {
         // cookie сильнее: localStorage-токен — fallback, когда куки блокированы
         let visitorId = visitorCookieId(req) || '';
         if (!visitorId && typeof msg.visitorId === 'string' && VISITOR_RE.test(msg.visitorId)) visitorId = msg.visitorId;
-        if (!visitorId) visitorId = crypto.randomUUID();
+        if (!visitorId) visitorId = newVisitorId();
         meta.visitorId = visitorId;
         meta.helloed = true;
         clearTimeout(helloTimer);
@@ -770,7 +866,7 @@ export function createHub(opts = {}) {
       const name = body.name === undefined || body.name === '' ? '' : sanitizeText(body.name, 120);
       if (body.name !== undefined && body.name !== '' && !name) return err(res, 400, 'bad_request', 'Некорректное имя');
       let visitorId = visitorIdOf(body);
-      if (!visitorId) visitorId = crypto.randomUUID();
+      if (!visitorId) visitorId = newVisitorId();
       ensureGuestContact({ visitorId, name, email, consented: false });
       const thread = threads.createThread({
         channel: 'email',
@@ -784,6 +880,72 @@ export function createHub(opts = {}) {
     }
 
     return err(res, 404, 'not_found', 'Маршрут не найден');
+  }
+
+  // ---- one-click: репорт клиента и webhook-приём (T05) ----
+
+  async function handleJoinReport(req, res, token) {
+    // Клиент Electron шлёт fetch без Origin (не браузер) — CORS не нужен;
+    // браузерный Origin проверяем как у гостевых эндпоинтов виджета.
+    if (req.headers.origin && !widgetCors(req, res)) return err(res, 403, 'cors_denied', 'Origin не разрешён');
+    if (!limits.joinReport.take(`ip:${ip(req)}`)) return err(res, 429, 'rate_limited', 'Слишком много запросов, попробуйте позже');
+    const body = await readJson(req, res, 512);
+    if (!body || typeof body !== 'object') return err(res, body === null ? 413 : 400, 'bad_request', 'Некорректный запрос');
+    const r = await joinReport(token, { sessionId: body.sessionId, password: body.password });
+    if (r.status !== 200) {
+      const messages = {
+        bad_request: 'Некорректные данные сеанса',
+        not_found: 'Токен подключения не найден',
+        gone: 'Токен уже использован или истёк',
+      };
+      return err(res, r.status, r.code, messages[r.code] ?? 'Ошибка репорта');
+    }
+    return ok(res, 200, {
+      ok: r.ok,
+      claimed: r.claimed,
+      ...(r.sessionId ? { sessionId: r.sessionId } : {}),
+      ...(r.reason ? { reason: r.reason } : {}),
+    });
+  }
+
+  async function handleHooks(req, res) {
+    if (!limits.hooks.take(`ip:${ip(req)}`)) return err(res, 429, 'rate_limited', 'Слишком много запросов, попробуйте позже');
+    const secret = settings.getWebhookSecret();
+    if (!secret) return err(res, 503, 'not_configured', 'Приём webhooks не настроен');
+    const raw = await readRaw(req, res, HOOK_BODY_MAX);
+    if (raw === null) return err(res, 413, 'too_large', 'Тело события слишком большое');
+    const sig = String(req.headers['x-enot-signature'] ?? '');
+    const expect = crypto.createHmac('sha256', secret).update(raw, 'utf8').digest('hex');
+    const sigBuf = Buffer.from(sig, 'utf8');
+    const expBuf = Buffer.from(expect, 'utf8');
+    if (sigBuf.length !== expBuf.length || !crypto.timingSafeEqual(sigBuf, expBuf)) {
+      return err(res, 401, 'bad_signature', 'Неверная подпись');
+    }
+    let body;
+    try { body = JSON.parse(raw); } catch { return err(res, 400, 'bad_request', 'Некорректный JSON'); }
+    const event = body?.event;
+    const sessionId = body?.payload?.sessionId;
+    // allowlist событий; неизвестный sessionId — тихо игнор (честный 200)
+    if ((event === 'session.started' || event === 'session.ended')
+        && typeof sessionId === 'string' && SESSION_ID_RE.test(sessionId)) {
+      const threadId = joinStore.threadIdForSession(sessionId);
+      if (threadId) {
+        const reason = event === 'session.ended' && typeof body.payload.reason === 'string' && body.payload.reason
+          ? body.payload.reason : '';
+        // SYSTEM_LOCALE: system-сообщения треда детерминированы (см. hub/join.mjs),
+        // а не языком запроса — иначе один тред получает строки на разных языках
+        const text = event === 'session.started'
+          ? t('hub.join.systemStarted', { id: sessionId }, SYSTEM_LOCALE)
+          : (reason ? t('hub.join.systemEndedReason', { id: sessionId, reason }, SYSTEM_LOCALE)
+                    : t('hub.join.systemEnded', { id: sessionId }, SYSTEM_LOCALE));
+        const message = threads.appendMessage(threadId, { author: 'system', body: text });
+        if (message) {
+          broadcastConsole({ type: 'new-message', thread: threads.getThread(threadId)?.thread ?? null, message });
+          pushToThreadGuests(threadId, { type: 'msg', threadId, message });
+        }
+      }
+    }
+    return ok(res, 200, { ok: true });
   }
 
   // health: honest зависимость от EnotDesk (R01.1) — кэш 5 с, таймаут 2 с
@@ -812,16 +974,6 @@ export function createHub(opts = {}) {
       'Cache-Control': 'no-store',
     });
     res.end(consoleHtml(state, locale, cfg.version));
-  }
-
-  function stubPage(res, locale, titleKey, bodyKey) {
-    res.writeHead(200, {
-      'Content-Type': 'text/html; charset=utf-8',
-      'Content-Security-Policy': "default-src 'none'; style-src 'unsafe-inline'; img-src 'self'",
-      'X-Content-Type-Options': 'nosniff',
-      'Cache-Control': 'no-store',
-    });
-    res.end(stubHtml(t(titleKey, {}, locale), t(bodyKey, {}, locale), locale));
   }
 
   async function handle(req, res) {
@@ -867,6 +1019,28 @@ export function createHub(opts = {}) {
     if (p.startsWith('/api/hub/threads')) return handleThreadsApi(req, res, u);
     if (p.startsWith('/api/hub/canned')) return handleCannedApi(req, res, u);
     if (p.startsWith('/api/hub/presence')) return handlePresenceApi(req, res, u);
+
+    // ---- one-click (T05): репорт клиента, webhook-приём, секрет в настройках ----
+    let jm = p.match(/^\/api\/hub\/join\/([A-Za-z0-9_-]{16,128})\/report$/);
+    if (jm) {
+      if (req.method === 'OPTIONS') {
+        if (!widgetCors(req, res)) return err(res, 403, 'cors_denied', 'Origin не разрешён для виджета');
+        res.writeHead(204);
+        return res.end();
+      }
+      if (req.method !== 'POST') return err(res, 404, 'not_found', 'Маршрут не найден');
+      return handleJoinReport(req, res, jm[1]);
+    }
+    if (p === '/hooks/enotdesk' && req.method === 'POST') return handleHooks(req, res);
+    if (p === '/api/hub/settings/webhook' && req.method === 'GET') {
+      const user = await hubUser(req, res);
+      if (!user) return true;
+      if (user.role !== 'admin') return err(res, 403, 'forbidden', 'Настройки webhooks — только для администратора');
+      // rotated=true — прежний секрет не расшифрован (сменили ENOT_SECRET_KEY),
+      // сгенерирован новый: админ должен обновить его в настройках webhooks EnotDesk
+      const { secret, rotated } = settings.ensureWebhookSecret();
+      return ok(res, 200, { secret, rotated });
+    }
 
     // ---- настройки виджета (админ) ----
     if (p === '/api/hub/settings/widget' && (req.method === 'GET' || req.method === 'POST')) {
@@ -932,10 +1106,11 @@ export function createHub(opts = {}) {
     if (p === '/w' && req.method === 'GET') {
       let visitor = visitorCookieId(req);
       const fresh = !visitor;
-      if (fresh) visitor = crypto.randomUUID();
+      if (fresh) visitor = newVisitorId();
       const headers = {
         'Content-Type': 'text/html; charset=utf-8',
-        // iframe встраивается на чужих сайтах: frame-ancestors * , X-Frame-Options не ставим
+        // iframe встраивается на чужих сайтах: встраиваемость — ОТСУТСТВИЕМ
+        // frame-ancestors в CSP (умолчание разрешает), X-Frame-Options не ставим
         'Content-Security-Policy': "default-src 'none'; script-src 'self'; style-src 'unsafe-inline'; img-src 'self'; connect-src 'self'; base-uri 'none'",
         'X-Content-Type-Options': 'nosniff',
         'Cache-Control': 'no-store',
@@ -944,7 +1119,27 @@ export function createHub(opts = {}) {
       res.writeHead(200, headers);
       return res.end(widgetHtml(locale));
     }
-    if (p === '/join' && req.method === 'GET') return stubPage(res, locale, 'hub.join.title', 'hub.join.body');
+    if (p === '/join' && req.method === 'GET') {
+      // Страница «Подключиться» для гостя (R07): токен обязателен и живой —
+      // без него честная 404 (ссылка одноразовая, утекать наружу ей нечем).
+      const token = u.searchParams.get('t') ?? '';
+      const headers = {
+        'Content-Type': 'text/html; charset=utf-8',
+        'Content-Security-Policy': "default-src 'none'; style-src 'unsafe-inline'; img-src 'self'",
+        'X-Content-Type-Options': 'nosniff',
+        'Cache-Control': 'no-store',
+      };
+      if (!joinStore.peek(token)) {
+        res.writeHead(404, headers);
+        return res.end(stubHtml(t('hub.join.missingTitle', {}, locale), t('hub.join.missingBody', {}, locale), locale));
+      }
+      const base = publicOrigin();
+      res.writeHead(200, headers);
+      return res.end(joinHtml(locale, {
+        protocolUrl: `enotdesk://join?server=${encodeURIComponent(base)}&t=${encodeURIComponent(token)}`,
+        downloadUrl: `${base}/downloads`,
+      }));
+    }
 
     return err(res, 404, 'not_found', 'Маршрут не найден');
   }

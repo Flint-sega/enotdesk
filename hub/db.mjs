@@ -1,7 +1,7 @@
 import { DatabaseSync } from 'node:sqlite';
 
 // Схема hub.db — собственная БД хаба, независимая от enotdesk.db.
-export const SCHEMA_VERSION = 3;
+export const SCHEMA_VERSION = 4;
 
 // Версионированные шаги схемы (тот же паттерн, что server/db.mjs): каждая база
 // проходит недостающие шаги по порядку, шаги идемпотентны.
@@ -99,6 +99,28 @@ const MIGRATIONS = [
         );
       `);
       db.exec('ALTER TABLE contacts ADD COLUMN consent_at TEXT');
+    },
+  },
+  {
+    // One-click (T05): одноразовые join-токены «Подключиться». Сырой токен не
+    // храним — только sha256 (правило токенов); used_at делает consumption
+    // одноразовым и держит честный 410 на повторный репорт до ленивой чистки;
+    // session_id — связь тред↔сеанс, по ней webhooks EnotDesk попадают в тред.
+    version: 4,
+    up: (db) => {
+      db.exec(`
+        CREATE TABLE IF NOT EXISTS hub_join_tokens (
+          token_hash TEXT PRIMARY KEY,
+          thread_id TEXT NOT NULL REFERENCES threads(id),
+          agent_id TEXT NOT NULL,
+          session_id TEXT,
+          created_at TEXT NOT NULL,
+          expires_at TEXT NOT NULL,
+          used_at TEXT
+        );
+        CREATE INDEX IF NOT EXISTS idx_join_tokens_thread ON hub_join_tokens(thread_id);
+        CREATE INDEX IF NOT EXISTS idx_join_tokens_session ON hub_join_tokens(session_id);
+      `);
     },
   },
 ];
