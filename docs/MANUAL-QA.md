@@ -88,3 +88,4 @@
 - Webhooks — session.started/ended + machine.claim.denied доходят с верной подписью; неверный секрет/URL → ретраи и тишина
 - Терминал (W-U11) — живой сквозной прогон через NAT: iceServers из /rtc-config доезжают до моста
 - Toast (W-U12) — живой WTSSendMessageW: тост в активной сессии; экран входа → no-active-session
+- quick-setup — `scripts/quick-setup.sh` на чистой VM: bare-metal (с доменом и без: HTTP-предупреждение, DNS-подсказка), `--docker`, автоген-пароль показан один раз и работает, повторный запуск без `--update` честно отказывает, `--update` сохраняет секреты и подхватывает умолчания из env-файла
