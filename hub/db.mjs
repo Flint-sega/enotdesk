@@ -1,7 +1,7 @@
 import { DatabaseSync } from 'node:sqlite';
 
 // Схема hub.db — собственная БД хаба, независимая от enotdesk.db.
-export const SCHEMA_VERSION = 2;
+export const SCHEMA_VERSION = 3;
 
 // Версионированные шаги схемы (тот же паттерн, что server/db.mjs): каждая база
 // проходит недостающие шаги по порядку, шаги идемпотентны.
@@ -83,6 +83,22 @@ const MIGRATIONS = [
           updated_at TEXT NOT NULL
         );
       `);
+    },
+  },
+  {
+    // Виджет (T03): настройки виджета (allowlist origins, consent-гейт, ссылка
+    // на политику) — одна строка key='widget', JSON; факт согласия посетителя
+    // (GDPR) — consent_at в контактах. Секретов нет: origins и ссылка не тайна.
+    version: 3,
+    up: (db) => {
+      db.exec(`
+        CREATE TABLE IF NOT EXISTS hub_settings (
+          key TEXT PRIMARY KEY,
+          value TEXT NOT NULL,
+          updated_at TEXT NOT NULL
+        );
+      `);
+      db.exec('ALTER TABLE contacts ADD COLUMN consent_at TEXT');
     },
   },
 ];

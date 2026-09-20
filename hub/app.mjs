@@ -1,13 +1,19 @@
 import http from 'node:http';
 import fs from 'node:fs';
+import crypto from 'node:crypto';
+import { WebSocketServer } from 'ws';
 import { openHubDb } from './db.mjs';
 import { createAuth } from './auth.mjs';
 import { createThreadsStore, sanitizeText, sanitizeEmail, sanitizeTags, sanitizeShortcut } from './threads.mjs';
+import { createSettingsStore } from './settings.mjs';
 import { RateLimiter } from '../server/app.mjs';
 import { t, pickLocale } from '../client/lib/i18n.mjs';
-import { consoleHtml, stubHtml } from './pages.mjs';
+import { consoleHtml, stubHtml, widgetHtml } from './pages.mjs';
 
 const COOKIE = 'enot_hub_sid';
+const VISITOR_COOKIE = 'enot_wv';
+// visitor_id: uuid (сервер) или сохранённый гостем токен — только «безопасные» символы
+const VISITOR_RE = /^[A-Za-z0-9][A-Za-z0-9_-]{7,127}$/;
 const HEALTH_CACHE_MS = 5000; // кэш пинга апстрима
 const HEALTH_TIMEOUT_MS = 2000; // таймаут пинга апстрима
 const BODY_MAX = 4096;
@@ -15,6 +21,10 @@ const BODY_MAX = 4096;
 const THREADS_BODY_MAX = 20480;
 const STATUSES = ['open', 'pending', 'resolved'];
 const CHANNELS = ['chat', 'email', 'manual'];
+// виджет: история при подключении и backpressure
+const WIDGET_HISTORY_MAX = 50;
+const WS_QUEUE_MAX = 100; // сообщений в очереди на сокет
+const WS_BUFFERED_MAX = 256 * 1024;
 
 // Копия server/app.mjs (readJson/err/ok): там модуль-приватные и не экспортируются,
 // а server/ намеренно не трогаем. Логика совпадает 1:1 — при изменении сервера
@@ -30,6 +40,7 @@ function ok(res, status, body) {
   res.end(JSON.stringify(body));
 }
 
+// Зеркало readJson из server/app.mjs: server/ не экспортирует хелпер, а его правка — вне зоны hub; при изменении копии синхронизируй вручную.
 function readJson(req, res, maxBytes) {
   return new Promise((resolve) => {
     let size = 0; const chunks = [];
@@ -57,6 +68,11 @@ function readJson(req, res, maxBytes) {
 function cookieSid(req) {
   const m = new RegExp(`(?:^|;\\s*)${COOKIE}=([^;]+)`).exec(req.headers.cookie ?? '');
   return m ? m[1] : '';
+}
+
+function visitorCookieId(req) {
+  const m = new RegExp(`(?:^|;\\s*)${VISITOR_COOKIE}=([^;]+)`).exec(req.headers.cookie ?? '');
+  return m && VISITOR_RE.test(m[1]) ? m[1] : '';
 }
 
 function sessionCookie(sid, secure) {
@@ -108,6 +124,7 @@ function addrTrusted(addr, entry) {
 // '../locales/…' внутри i18n.mjs резолвился в тот же префикс за Caddy.
 const HUB_ASSETS = {
   'app.mjs': { file: './web/app.mjs', type: 'text/javascript' },
+  'widget/w.mjs': { file: './widget/w.mjs', type: 'text/javascript' },
   'lib/i18n.mjs': { file: '../client/lib/i18n.mjs', type: 'text/javascript' },
   'locales/ru.mjs': { file: '../client/locales/ru.mjs', type: 'text/javascript' },
   'locales/en.mjs': { file: '../client/locales/en.mjs', type: 'text/javascript' },
@@ -125,6 +142,8 @@ export function createHub(opts = {}) {
     trustedProxy: opts.trustedProxy ?? '',
     enotFetch: opts.enotFetch, // инъекция для тестов; undefined — реальный fetch
     now: opts.now ?? Date.now,
+    widgetHelloMs: opts.widgetHelloMs ?? 10_000, // таймаут hello гостя
+    wsPingMs: opts.wsPingMs ?? 30_000, // период ping/чистки мёртвых сокетов
   };
   // ip() берёт X-Forwarded-For только от доверенных адресов сокета
   const trustedProxyList = parseTrustedProxyList(cfg.trustedProxy);
@@ -141,6 +160,14 @@ export function createHub(opts = {}) {
   }
   const secureCookie = cfg.publicUrl.startsWith('https:');
 
+  // Cookie visitor_id виджета: Path=/w покрывает и /ws/widget; iframe сторонний —
+  // SameSite=None+Secure на https, иначе (и в тестах) Lax; HttpOnly: JS страницы
+  // ид не нужен (WS шлёт cookie сам).
+  function visitorSetCookie(id) {
+    const base = `${VISITOR_COOKIE}=${id}; Path=/w; Max-Age=31536000; HttpOnly`;
+    return secureCookie ? `${base}; SameSite=None; Secure` : `${base}; SameSite=Lax`;
+  }
+
   const db = openHubDb(cfg.dbPath);
   const auth = createAuth({
     db,
@@ -150,7 +177,12 @@ export function createHub(opts = {}) {
     now: cfg.now,
   });
   const threads = createThreadsStore(db, { nowMs: cfg.now });
-  const limits = { login: new RateLimiter(opts.loginLimit ?? 10, 60_000, { now: cfg.now }) };
+  const settings = createSettingsStore(db, { nowMs: cfg.now });
+  const limits = {
+    login: new RateLimiter(opts.loginLimit ?? 10, 60_000, { now: cfg.now }),
+    // WS-upgrade до всякой аутентификации: аноним не держит сокеты (как у логина)
+    wsUpgrade: opts.wsUpgradeLimit ?? new RateLimiter(30, 10_000, { now: cfg.now }),
+  };
 
   // Гейт консольного API (R02): hub-сессия + роль из EnotDesk; auditor — 403.
   async function hubUser(req, res) {
@@ -267,6 +299,8 @@ export function createHub(opts = {}) {
       const updated = threads.updateThread(id, patch);
       if (updated === null) return err(res, 404, 'not_found', 'Тред не найден');
       if (updated === 'invalid') return err(res, 400, 'bad_request', 'Некорректные поля треда');
+      // resolve доходит до гостя — виджет показывает rating (R11)
+      if (patch.status === 'resolved') pushToThreadGuests(id, { type: 'resolved', threadId: id });
       return ok(res, 200, { thread: updated });
     }
 
@@ -283,6 +317,8 @@ export function createHub(opts = {}) {
         agentId: user.id,
       });
       if (!message) return err(res, 400, 'bad_request', 'Некорректный текст сообщения');
+      // ответ оператора доходит гостю в реальном времени (заметки — не доходят)
+      if (message.type === 'text') pushToThreadGuests(id, { type: 'msg', threadId: id, message });
       return ok(res, 201, { message });
     }
 
@@ -342,6 +378,411 @@ export function createHub(opts = {}) {
       if (!threads.setPresence(user.id, body.status)) return err(res, 400, 'bad_request', 'Статус — online | away | offline');
       return ok(res, 200, { presence: threads.getPresence(user.id) });
     }
+    return err(res, 404, 'not_found', 'Маршрут не найден');
+  }
+
+  // ---- виджет: WS-гости (/ws/widget) и агенты консоли (/ws/console) ----
+
+  const wssWidget = new WebSocketServer({ noServer: true, maxPayload: 64 * 1024 });
+  const wssConsole = new WebSocketServer({ noServer: true, maxPayload: 64 * 1024 });
+  const guestMeta = new Map(); // ws → {visitorId, consented, profile, helloed, limiter, typing}
+  const guestsByVisitor = new Map(); // visitorId → Set<ws>
+  const consoleMeta = new Map(); // ws → {user, limiter}
+  const socketsByAgent = new Map(); // agentId → Set<ws>
+  let dbClosed = false; // close-обработчики сокетов переживают закрытие БД
+
+  // Backpressure простой: очередь ≤WS_QUEUE_MAX сообщений или переполненный
+  // буфер — сокет честно закрывается, гость переподключится с экспонентой.
+  function wsSend(ws, obj) {
+    const meta = guestMeta.get(ws) ?? consoleMeta.get(ws);
+    if (!meta) return;
+    meta.pending = (meta.pending ?? 0) + 1;
+    if (meta.pending > WS_QUEUE_MAX || ws.bufferedAmount > WS_BUFFERED_MAX) {
+      ws.close(1013, 'slow-consumer');
+      return;
+    }
+    ws.send(JSON.stringify(obj), () => { meta.pending = Math.max(0, (meta.pending ?? 1) - 1); });
+  }
+
+  function widgetPresence() {
+    const items = threads.listPresence();
+    if (items.some((p) => p.status === 'online')) return { status: 'online', agentsOnline: items.filter((p) => p.status === 'online').length };
+    if (items.some((p) => p.status === 'away')) return { status: 'away', agentsOnline: 0 };
+    return { status: 'offline', agentsOnline: 0 };
+  }
+
+  function broadcastPresence() {
+    if (dbClosed) return; // close-обработчики сокетов переживают закрытие БД
+    const payload = { type: 'presence', items: threads.listPresence(), widget: widgetPresence() };
+    for (const ws of consoleMeta.keys()) wsSend(ws, payload);
+  }
+
+  function pushToVisitor(visitorId, obj) {
+    const set = guestsByVisitor.get(visitorId);
+    if (set) for (const ws of set) wsSend(ws, obj);
+  }
+
+  function pushToThreadGuests(threadId, obj) {
+    const t = threads.getThread(threadId);
+    if (t?.thread?.contact?.visitorId) pushToVisitor(t.thread.contact.visitorId, obj);
+  }
+
+  function broadcastConsole(obj) {
+    for (const ws of consoleMeta.keys()) wsSend(ws, obj);
+  }
+
+  const nowIso = () => new Date(cfg.now()).toISOString();
+
+  // Контакт гостя: находится/дополняется по visitor_id; согласие — факт GDPR.
+  function ensureGuestContact({ visitorId, name, email, consented }) {
+    // ensureContact отдаёт сырую строку (visitor_id/email/name) — нормализуем
+    // в наружный вид, чтобы швы тредов читали contact.visitorId честно.
+    const row = threads.ensureContact({
+      visitorId,
+      email: email || null,
+      name: name || null,
+    });
+    if (!row) return null;
+    if (consented) threads.setConsentAt(row.id, nowIso());
+    return { id: row.id, visitorId: row.visitor_id ?? visitorId, email: row.email ?? null, name: row.name ?? null };
+  }
+
+  // Тред чата: открытый переиспользуется, resolved открывает новый (rating-цикл).
+  function ensureGuestThread(contact, firstText) {
+    const latest = threads.latestContactThread(contact.id, 'chat');
+    if (latest && latest.status !== 'resolved') return latest;
+    const subject = firstText.slice(0, 120) || 'Чат с сайта';
+    return threads.createThread({
+      channel: 'chat',
+      subject,
+      contact: { visitorId: contact.visitorId, email: contact.email, name: contact.name },
+      firstMessage: { author: 'contact', body: firstText },
+    });
+  }
+
+  // Общая доля WS и HTTP append: гейт согласия, санитизация, тред, уведомление консоли.
+  function guestAppend({ visitorId, profile: p, consented, text }) {
+    if (settings.getWidget().consentRequired && !consented) return { error: 'consent_required' };
+    const name = p?.name === undefined || p?.name === '' ? '' : sanitizeText(p.name, 120);
+    const email = p?.email === undefined || p?.email === '' ? '' : sanitizeEmail(p.email);
+    if ((p?.name !== undefined && p?.name !== '' && !name) || (p?.email !== undefined && p?.email !== '' && !email)) {
+      return { error: 'bad_profile' };
+    }
+    const body = sanitizeText(text, 8000);
+    if (!body) return { error: 'bad_message' };
+    const contact = ensureGuestContact({ visitorId, name, email, consented });
+    const existing = threads.latestContactThread(contact.id, 'chat');
+    let thread;
+    let message;
+    if (existing && existing.status !== 'resolved') {
+      thread = existing;
+      message = threads.appendMessage(existing.id, { author: 'contact', body });
+      if (!message) return { error: 'bad_message' };
+    } else {
+      thread = ensureGuestThread(contact, body);
+      if (!thread) return { error: 'bad_message' };
+      message = threads.listMessages(thread.id).at(-1);
+    }
+    broadcastConsole({ type: 'new-message', thread, message });
+    return { thread, message };
+  }
+
+  function guestReadyPayload(visitorId) {
+    const contact = threads.getContactByVisitor(visitorId);
+    const latest = contact ? threads.latestContactThread(contact.id, 'chat') : null;
+    const messages = latest ? threads.listMessages(latest.id).slice(-WIDGET_HISTORY_MAX) : [];
+    const cfgWidget = settings.getWidget();
+    return {
+      type: 'ready',
+      visitorId,
+      settings: { consentRequired: cfgWidget.consentRequired, policyUrl: cfgWidget.policyUrl },
+      presence: widgetPresence(),
+      thread: latest,
+      messages,
+    };
+  }
+
+  function onGuestSocket(ws, req) {
+    ws.on('error', () => {});
+    ws.on('pong', () => { ws.isAlive = true; });
+    const meta = {
+      visitorId: null, helloed: false, consented: false, profile: {},
+      limiter: new RateLimiter(20, 10_000, { now: cfg.now }),
+      typing: new RateLimiter(60, 10_000, { now: cfg.now }),
+    };
+    guestMeta.set(ws, meta);
+    const helloTimer = setTimeout(() => { try { ws.close(4001, 'hello-timeout'); } catch { /* уже закрыт */ } }, cfg.widgetHelloMs);
+    helloTimer.unref();
+    ws.on('close', () => {
+      clearTimeout(helloTimer);
+      guestMeta.delete(ws);
+      const set = meta.visitorId ? guestsByVisitor.get(meta.visitorId) : null;
+      if (set) { set.delete(ws); if (!set.size) guestsByVisitor.delete(meta.visitorId); }
+    });
+    ws.on('message', (raw) => {
+      let msg;
+      try { msg = JSON.parse(raw.toString('utf8')); } catch { return ws.close(4002, 'bad-message'); }
+      if (!msg || typeof msg !== 'object') return ws.close(4002, 'bad-message');
+      if (!meta.helloed || msg.type === 'hello') {
+        if (msg.type !== 'hello') return ws.close(4002, 'hello-first');
+        // cookie сильнее: localStorage-токен — fallback, когда куки блокированы
+        let visitorId = visitorCookieId(req) || '';
+        if (!visitorId && typeof msg.visitorId === 'string' && VISITOR_RE.test(msg.visitorId)) visitorId = msg.visitorId;
+        if (!visitorId) visitorId = crypto.randomUUID();
+        meta.visitorId = visitorId;
+        meta.helloed = true;
+        clearTimeout(helloTimer);
+        if (msg.consent === true) meta.consented = true;
+        const name = msg.name === undefined ? '' : sanitizeText(msg.name, 120);
+        const email = msg.email === undefined || msg.email === '' ? '' : sanitizeEmail(msg.email);
+        if (msg.name !== undefined && msg.name !== '' && !name) return ws.close(4003, 'bad-hello');
+        if (msg.email !== undefined && msg.email !== '' && !email) return ws.close(4003, 'bad-hello');
+        meta.profile = { name, email };
+        let set = guestsByVisitor.get(visitorId);
+        if (!set) { set = new Set(); guestsByVisitor.set(visitorId, set); }
+        set.add(ws);
+        // согласие пришло позже контакта — фиксируем на контакте, если он уже есть
+        if (meta.consented) {
+          const contact = threads.getContactByVisitor(visitorId);
+          if (contact) threads.setConsentAt(contact.id, nowIso());
+        }
+        return wsSend(ws, guestReadyPayload(visitorId));
+      }
+      if (msg.type === 'consent') {
+        if (msg.accepted !== true) return ws.close(4002, 'bad-message');
+        meta.consented = true;
+        const contact = threads.getContactByVisitor(meta.visitorId);
+        if (contact) threads.setConsentAt(contact.id, nowIso());
+        return wsSend(ws, { type: 'ok' });
+      }
+      if (msg.type === 'msg') {
+        if (!meta.limiter.take(ip(req))) return ws.close(1008, 'flood');
+        const r = guestAppend({
+          visitorId: meta.visitorId,
+          profile: meta.profile,
+          consented: meta.consented,
+          text: typeof msg.text === 'string' ? msg.text : '',
+        });
+        if (r.error === 'consent_required') return wsSend(ws, { type: 'error', code: 'consent_required' });
+        if (r.error) return wsSend(ws, { type: 'error', code: 'bad_message' });
+        return wsSend(ws, { type: 'sent', threadId: r.thread.id, message: r.message });
+      }
+      if (msg.type === 'typing') {
+        if (!meta.typing.take(ip(req))) return; // индикатор не критичен — молча глотаем
+        const contact = threads.getContactByVisitor(meta.visitorId);
+        const thread = contact ? threads.latestContactThread(contact.id, 'chat') : null;
+        if (thread) broadcastConsole({ type: 'typing', threadId: thread.id });
+        return;
+      }
+      return ws.close(4002, 'bad-message');
+    });
+  }
+
+  function onConsoleSocket(ws, user, req) {
+    ws.on('error', () => {});
+    ws.on('pong', () => { ws.isAlive = true; });
+    consoleMeta.set(ws, { user, limiter: new RateLimiter(20, 10_000, { now: cfg.now }) });
+    let set = socketsByAgent.get(user.id);
+    if (!set) { set = new Set(); socketsByAgent.set(user.id, set); }
+    set.add(ws);
+    threads.setPresence(user.id, 'online'); // агент за консолью — честный онлай
+    wsSend(ws, { type: 'ready', me: { id: user.id, login: user.login, name: user.name, role: user.role }, presence: threads.listPresence() });
+    broadcastPresence();
+    ws.on('close', () => {
+      consoleMeta.delete(ws);
+      set.delete(ws);
+      if (!set.size) {
+        socketsByAgent.delete(user.id);
+        if (!dbClosed) {
+          // последний сокет агента закрылся — честный offline в presence
+          try { threads.setPresence(user.id, 'offline'); } catch { /* БД уже закрыта */ }
+        }
+      }
+      broadcastPresence();
+    });
+    ws.on('message', (raw) => {
+      let msg;
+      try { msg = JSON.parse(raw.toString('utf8')); } catch { return ws.close(4002, 'bad-message'); }
+      if (!msg || typeof msg !== 'object') return ws.close(4002, 'bad-message');
+      if (msg.type === 'reply') {
+        if (!consoleMeta.get(ws).limiter.take(ip(req))) return ws.close(1008, 'flood');
+        const threadId = typeof msg.threadId === 'string' ? msg.threadId.slice(0, 64) : '';
+        const body = sanitizeText(msg.text, 8000);
+        if (!threadId || !body || !threads.getThread(threadId)) return wsSend(ws, { type: 'error', code: 'bad_message' });
+        const message = threads.appendMessage(threadId, { author: 'agent', body, agentId: user.id });
+        if (!message) return wsSend(ws, { type: 'error', code: 'bad_message' });
+        pushToThreadGuests(threadId, { type: 'msg', threadId, message });
+        broadcastConsole({ type: 'agent-message', threadId, message });
+        return wsSend(ws, { type: 'ok' });
+      }
+      if (msg.type === 'typing') {
+        const threadId = typeof msg.threadId === 'string' ? msg.threadId.slice(0, 64) : '';
+        if (threadId && threads.getThread(threadId)) pushToThreadGuests(threadId, { type: 'agent-typing' });
+        return;
+      }
+      return ws.close(4002, 'bad-message');
+    });
+  }
+
+  function denyUpgrade(socket, status, text) {
+    if (socket.destroyed) return;
+    socket.write(`HTTP/1.1 ${status} ${text}\r\nConnection: close\r\n\r\n`);
+    socket.destroy();
+  }
+
+  // Origin гостя-WS: свой хаб или allowlist настроек; консоль — только свой origin.
+  function upgradeOriginAllowed(req) {
+    const origin = req.headers.origin;
+    if (!origin) return true; // не браузер — аутентификация всё равно на сообщениях/cookie
+    let host;
+    try { host = new URL(origin).host.toLowerCase(); } catch { return false; }
+    if (host === String(req.headers.host ?? '').toLowerCase()) return true;
+    return settings.getWidget().origins.includes(host);
+  }
+
+  function attachUpgrade() {
+    server.on('upgrade', (req, socket, head) => {
+      let path;
+      try { path = new URL(req.url, `http://${req.headers.host || 'localhost'}`).pathname; } catch { socket.destroy(); return; }
+      if (path !== '/ws/widget' && path !== '/ws/console') { socket.destroy(); return; }
+      if (!limits.wsUpgrade.take(ip(req))) return denyUpgrade(socket, 429, 'Too Many Requests');
+      if (!upgradeOriginAllowed(req)) return denyUpgrade(socket, 403, 'Forbidden');
+      if (path === '/ws/widget') {
+        wssWidget.handleUpgrade(req, socket, head, (ws) => onGuestSocket(ws, req));
+        return;
+      }
+      // /ws/console: hub-сессия по cookie до апгрейда (async authUser)
+      auth.authUser(cookieSid(req)).then((r) => {
+        if (!r.ok || (r.user.role !== 'operator' && r.user.role !== 'admin')) {
+          return denyUpgrade(socket, 401, 'Unauthorized');
+        }
+        wssConsole.handleUpgrade(req, socket, head, (ws) => onConsoleSocket(ws, r.user, req));
+      }).catch(() => socket.destroy());
+    });
+  }
+
+  // CORS гостевых HTTP-эндпоинтов: Origin-эхо только из allowlist (или свой
+  // origin); same-origin браузер помечает Sec-Fetch-Site — ему CORS не нужен.
+  function widgetCors(req, res) {
+    const sec = String(req.headers['sec-fetch-site'] ?? '').toLowerCase();
+    if (sec === 'same-origin') return true;
+    const origin = req.headers.origin;
+    if (!origin) return false; // 403 без заголовка — честно, тишина не разрешение
+    let host;
+    try { host = new URL(origin).host.toLowerCase(); } catch { return false; }
+    const same = String(req.headers.host ?? '').toLowerCase() === host;
+    if (!same && !settings.getWidget().origins.includes(host)) return false;
+    res.setHeader('Access-Control-Allow-Origin', origin);
+    res.setHeader('Vary', 'Origin');
+    res.setHeader('Access-Control-Allow-Methods', 'GET, POST, OPTIONS');
+    res.setHeader('Access-Control-Allow-Headers', 'Content-Type');
+    return true;
+  }
+
+  function visitorIdOf(body) {
+    const id = typeof body?.visitorId === 'string' ? body.visitorId : '';
+    return VISITOR_RE.test(id) ? id : null;
+  }
+
+  async function handleWidgetApi(req, res, url) {
+    if (!widgetCors(req, res)) return err(res, 403, 'cors_denied', 'Origin не разрешён для виджета');
+    const p = url.pathname;
+    const method = req.method;
+
+    if (p === '/api/hub/widget/settings' && method === 'GET') {
+      const s = settings.getWidget();
+      return ok(res, 200, { settings: { consentRequired: s.consentRequired, policyUrl: s.policyUrl } });
+    }
+
+    if (p === '/api/hub/widget/presence' && method === 'GET') {
+      return ok(res, 200, { presence: widgetPresence() });
+    }
+
+    let body = null;
+    if (method === 'POST') {
+      body = await readJson(req, res, THREADS_BODY_MAX);
+      if (!body || typeof body !== 'object') return err(res, body === null ? 413 : 400, 'bad_request', 'Некорректный запрос');
+    }
+
+    if (p === '/api/hub/widget/create' && method === 'POST') {
+      const visitorId = visitorIdOf(body);
+      if (!visitorId) return err(res, 400, 'bad_request', 'Некорректный visitorId');
+      const name = body.name === undefined || body.name === '' ? '' : sanitizeText(body.name, 120);
+      const email = body.email === undefined || body.email === '' ? '' : sanitizeEmail(body.email);
+      if (body.name !== undefined && body.name !== '' && !name) return err(res, 400, 'bad_request', 'Некорректное имя');
+      if (body.email !== undefined && body.email !== '' && !email) return err(res, 400, 'bad_request', 'Некорректный email');
+      ensureGuestContact({ visitorId, name, email, consented: body.consent === true });
+      return ok(res, 201, { ok: true, visitorId });
+    }
+
+    if (p === '/api/hub/widget/append' && method === 'POST') {
+      const visitorId = visitorIdOf(body);
+      if (!visitorId) return err(res, 400, 'bad_request', 'Некорректный visitorId');
+      const r = guestAppend({
+        visitorId,
+        profile: { name: body.name, email: body.email },
+        consented: body.consent === true,
+        text: body.text,
+      });
+      if (r.error === 'consent_required') return err(res, 403, 'consent_required', 'Нужно согласие на обработку данных');
+      if (r.error) return err(res, 400, 'bad_request', 'Некорректное сообщение');
+      return ok(res, 201, { thread: r.thread, message: r.message });
+    }
+
+    if (p === '/api/hub/widget/list' && method === 'GET') {
+      const visitorId = visitorIdOf({ visitorId: url.searchParams.get('visitorId') ?? '' });
+      if (!visitorId) return err(res, 400, 'bad_request', 'Некорректный visitorId');
+      const contact = threads.getContactByVisitor(visitorId);
+      const items = contact ? threads.listContactThreads(contact.id, 20) : [];
+      let thread = null;
+      let messages = [];
+      const wantId = (url.searchParams.get('threadId') ?? '').slice(0, 64);
+      const detail = wantId && items.find((th) => th.id === wantId);
+      if (detail) {
+        thread = detail;
+        messages = threads.listMessages(detail.id).slice(-WIDGET_HISTORY_MAX);
+      }
+      return ok(res, 200, { threads: items, thread, messages });
+    }
+
+    if (p === '/api/hub/widget/rating' && method === 'POST') {
+      const visitorId = visitorIdOf(body);
+      const threadId = typeof body.threadId === 'string' ? body.threadId.slice(0, 64) : '';
+      const rating = body.rating;
+      if (!visitorId || !threadId) return err(res, 400, 'bad_request', 'Некорректный запрос');
+      if (!Number.isInteger(rating) || rating < 1 || rating > 5) return err(res, 400, 'bad_request', 'Оценка — целое 1..5');
+      const found = threads.getThread(threadId);
+      if (!found) return err(res, 404, 'not_found', 'Тред не найден');
+      if (found.thread.contact?.visitorId !== visitorId) return err(res, 403, 'forbidden', 'Тред не ваш');
+      if (found.thread.status !== 'resolved') return err(res, 409, 'not_resolved', 'Оценить можно завершённый чат');
+      const updated = threads.setRating(threadId, rating);
+      if (!updated) return err(res, 404, 'not_found', 'Тред не найден');
+      return ok(res, 200, { thread: updated });
+    }
+
+    if (p === '/api/hub/widget/offline' && method === 'POST') {
+      const email = sanitizeEmail(body.email);
+      const subject = sanitizeText(body.subject, 200);
+      const text = sanitizeText(body.text, 8000);
+      if (!email) return err(res, 400, 'bad_request', 'Нужен корректный email');
+      if (!subject) return err(res, 400, 'bad_request', 'Нужна тема обращения');
+      if (!text) return err(res, 400, 'bad_request', 'Нужно сообщение');
+      const name = body.name === undefined || body.name === '' ? '' : sanitizeText(body.name, 120);
+      if (body.name !== undefined && body.name !== '' && !name) return err(res, 400, 'bad_request', 'Некорректное имя');
+      let visitorId = visitorIdOf(body);
+      if (!visitorId) visitorId = crypto.randomUUID();
+      ensureGuestContact({ visitorId, name, email, consented: false });
+      const thread = threads.createThread({
+        channel: 'email',
+        subject,
+        contact: { visitorId, email, name },
+        firstMessage: { author: 'contact', body: text },
+      });
+      if (!thread) return err(res, 400, 'bad_request', 'Не удалось создать обращение');
+      broadcastConsole({ type: 'new-message', thread, message: threads.listMessages(thread.id).at(-1) });
+      return ok(res, 201, { thread, visitorId });
+    }
+
     return err(res, 404, 'not_found', 'Маршрут не найден');
   }
 
@@ -427,6 +868,35 @@ export function createHub(opts = {}) {
     if (p.startsWith('/api/hub/canned')) return handleCannedApi(req, res, u);
     if (p.startsWith('/api/hub/presence')) return handlePresenceApi(req, res, u);
 
+    // ---- настройки виджета (админ) ----
+    if (p === '/api/hub/settings/widget' && (req.method === 'GET' || req.method === 'POST')) {
+      const user = await hubUser(req, res);
+      if (!user) return true;
+      if (user.role !== 'admin') return err(res, 403, 'forbidden', 'Настройки виджета — только для администратора');
+      if (req.method === 'GET') return ok(res, 200, { settings: settings.getWidget() });
+      const body = await readJson(req, res, BODY_MAX);
+      if (!body || typeof body !== 'object') return err(res, body === null ? 413 : 400, 'bad_request', 'Некорректный запрос');
+      // частичный патч: копируем только переданные ключи поверх текущих
+      const current = settings.getWidget();
+      const patch = { ...current };
+      if (body.origins !== undefined) patch.origins = body.origins;
+      if (body.consentRequired !== undefined) patch.consentRequired = body.consentRequired;
+      if (body.policyUrl !== undefined) patch.policyUrl = body.policyUrl;
+      const saved = settings.setWidget(patch);
+      if (saved === 'invalid') return err(res, 400, 'bad_request', 'Некорректные настройки виджета');
+      return ok(res, 200, { settings: saved });
+    }
+
+    // ---- гостевые HTTP-эндпоинты виджета (T03): CORS-allowlist, без сессии ----
+    if (p.startsWith('/api/hub/widget/')) {
+      if (req.method === 'OPTIONS') {
+        if (!widgetCors(req, res)) return err(res, 403, 'cors_denied', 'Origin не разрешён для виджета');
+        res.writeHead(204);
+        return res.end();
+      }
+      return handleWidgetApi(req, res, u);
+    }
+
     // ---- статика консоли ----
     let m = p.match(/^\/hub\/([a-z0-9/._-]+)$/);
     if (m && req.method === 'GET') {
@@ -446,12 +916,34 @@ export function createHub(opts = {}) {
       return sendConsole(res, 401, locale, 'login');
     }
 
-    // ---- заглушки до T03/T04 ----
+    // ---- виджет (T03): лоадер и страница iframe ----
     if (p === '/widget.js' && req.method === 'GET') {
-      res.writeHead(501, { 'Content-Type': 'text/javascript; charset=utf-8', 'Cache-Control': 'no-store' });
-      return res.end('// EnotDesk Hub widget loader: ещё не реализован (тикет T03).\n');
+      let data;
+      try { data = fs.readFileSync(new URL('./widget/loader.js', import.meta.url)); } catch {
+        return err(res, 500, 'internal', 'Лоадер виджета недоступен');
+      }
+      res.writeHead(200, {
+        'Content-Type': 'application/javascript; charset=utf-8',
+        'Cache-Control': 'public, max-age=3600', // лоадер стабилен — кэш 1ч
+        'X-Content-Type-Options': 'nosniff',
+      });
+      return res.end(data);
     }
-    if (p === '/w' && req.method === 'GET') return stubPage(res, locale, 'hub.w.title', 'hub.w.body');
+    if (p === '/w' && req.method === 'GET') {
+      let visitor = visitorCookieId(req);
+      const fresh = !visitor;
+      if (fresh) visitor = crypto.randomUUID();
+      const headers = {
+        'Content-Type': 'text/html; charset=utf-8',
+        // iframe встраивается на чужих сайтах: frame-ancestors * , X-Frame-Options не ставим
+        'Content-Security-Policy': "default-src 'none'; script-src 'self'; style-src 'unsafe-inline'; img-src 'self'; connect-src 'self'; base-uri 'none'",
+        'X-Content-Type-Options': 'nosniff',
+        'Cache-Control': 'no-store',
+      };
+      if (fresh) headers['Set-Cookie'] = visitorSetCookie(visitor);
+      res.writeHead(200, headers);
+      return res.end(widgetHtml(locale));
+    }
     if (p === '/join' && req.method === 'GET') return stubPage(res, locale, 'hub.join.title', 'hub.join.body');
 
     return err(res, 404, 'not_found', 'Маршрут не найден');
@@ -467,6 +959,17 @@ export function createHub(opts = {}) {
     try { db.close(); } catch { /* уже закрыта */ }
   });
 
+  // WS-апгрейд вешается после создания сервера; ping/чистка мёртвых сокетов
+  const pingTimer = setInterval(() => {
+    for (const ws of [...guestMeta.keys(), ...consoleMeta.keys()]) {
+      if (ws.isAlive === false) { ws.terminate(); continue; }
+      ws.isAlive = false;
+      ws.ping();
+    }
+  }, cfg.wsPingMs);
+  pingTimer.unref();
+  attachUpgrade();
+
   async function start() {
     await new Promise((resolve, reject) => {
       server.once('error', reject);
@@ -475,8 +978,16 @@ export function createHub(opts = {}) {
     return server.address().port; // порт 0 → реальный эфемерный
   }
 
-  // graceful close: HTTP-сервер, затем БД (обработчик 'close' закрывает её)
+  // graceful close: WS-сокеты (и их close-обработчики), затем HTTP-сервер, затем БД
   async function close() {
+    clearInterval(pingTimer);
+    for (const ws of [...guestMeta.keys(), ...consoleMeta.keys()]) {
+      try { ws.terminate(); } catch { /* уже мёртв */ }
+    }
+    wssWidget.close();
+    wssConsole.close();
+    await new Promise((resolve) => setImmediate(resolve)); // дать доработать close-обработчикам
+    dbClosed = true;
     await new Promise((resolve) => server.close(() => resolve()));
   }
 

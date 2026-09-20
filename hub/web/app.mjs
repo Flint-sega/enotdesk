@@ -215,6 +215,7 @@ async function openThread(id) {
   }
   currentThread = res.body?.thread ?? null;
   hide($('hub-thread-error'));
+  clearUnread(currentThread?.id);
   $('hub-thread-subject').textContent = currentThread?.subject ?? '';
   setThreadStatusLine(currentThread);
   renderTags(currentThread);
@@ -404,6 +405,112 @@ async function submitNewTicket(e) {
   }
 }
 
+// ---- live-канал консоли (/ws/console): new-message/typing/presence (T03) ----
+
+let sock = null;
+let sockRetryMs = 3000;
+const unread = new Map(); // threadId → счётчик непрочитанных от клиента
+
+function markUnread(threadId) {
+  unread.set(threadId, (unread.get(threadId) ?? 0) + 1);
+  const row = document.querySelector(`.row[data-id="${CSS.escape(threadId)}"]`);
+  if (!row) { void loadInbox(); return; }
+  row.classList.add('unread');
+  let chipEl = row.querySelector('.unread-chip');
+  if (!chipEl) {
+    chipEl = document.createElement('span');
+    chipEl.className = 'unread-chip';
+    chipEl.setAttribute('aria-label', t('hub.widget.unread'));
+    row.querySelector('.subject').appendChild(chipEl);
+  }
+  chipEl.textContent = String(unread.get(threadId));
+}
+
+function clearUnread(threadId) {
+  if (!unread.delete(threadId)) return;
+  const row = document.querySelector(`.row[data-id="${CSS.escape(threadId)}"]`);
+  if (row) {
+    row.classList.remove('unread');
+    row.querySelector('.unread-chip')?.remove();
+  }
+}
+
+function onLiveMessage(m) {
+  if (m.type === 'new-message') {
+    const id = m.thread?.id;
+    if (!id) return;
+    if (currentThread && currentThread.id === id) {
+      void openThread(id); // открытый тред обновляется сам
+    } else if (m.message?.author === 'contact') {
+      markUnread(id);
+    } else {
+      void loadInbox(); // чужой ответ/offline-тикета мог не быть в списке
+    }
+    return;
+  }
+  if (m.type === 'agent-message') {
+    if (currentThread && currentThread.id === m.threadId) void openThread(m.threadId);
+    return;
+  }
+  if (m.type === 'presence' && Array.isArray(m.items) && me) {
+    const mine = m.items.find((p) => p.agentId === me.id);
+    if (mine && document.activeElement !== $('hub-presence')) $('hub-presence').value = mine.status;
+  }
+}
+
+function connectConsole() {
+  if (pageState !== 'console' || sock) return;
+  sock = new WebSocket(`/ws/console`);
+  sock.onopen = () => { sockRetryMs = 3000; };
+  sock.onmessage = (e) => {
+    try { onLiveMessage(JSON.parse(e.data)); } catch { /* мусор игнорируем */ }
+  };
+  sock.onclose = () => {
+    sock = null;
+    setTimeout(connectConsole, sockRetryMs); // reconnect с постоянным шагом
+    sockRetryMs = Math.min(sockRetryMs * 2, 30000);
+  };
+}
+
+// ---- настройки виджета (только админ) ----
+
+async function loadWidgetSettings() {
+  const res = await api('GET', '/settings/widget');
+  if (res.status !== 200) return;
+  const s = res.body?.settings ?? {};
+  $('hub-widget-origins').value = (s.origins ?? []).join('\n');
+  $('hub-widget-consent').checked = s.consentRequired === true;
+  $('hub-widget-policy').value = s.policyUrl ?? '';
+}
+
+async function saveWidgetSettings() {
+  const errEl = $('hub-widget-error');
+  const savedEl = $('hub-widget-saved');
+  errEl.textContent = '';
+  savedEl.textContent = '';
+  const origins = $('hub-widget-origins').value
+    .split('\n')
+    .map((line) => line.trim())
+    .filter(Boolean);
+  const btn = $('hub-widget-save');
+  btn.disabled = true;
+  try {
+    const res = await api('POST', '/settings/widget', {
+      origins,
+      consentRequired: $('hub-widget-consent').checked,
+      policyUrl: $('hub-widget-policy').value.trim(),
+    });
+    if (res.status !== 200) {
+      errEl.textContent = res.body?.error?.message ?? t('hub.error.generic');
+      return;
+    }
+    savedEl.textContent = t('hub.widget.saved');
+    void loadWidgetSettings(); // честное значение от сервера (нормализация origins)
+  } finally {
+    btn.disabled = false;
+  }
+}
+
 // ---- запуск ----
 
 async function loadMe() {
@@ -471,6 +578,11 @@ if (pageState === 'login') {
     setTitle('hub.console.title');
     void loadInbox();
     void loadPresence();
+    connectConsole(); // live-обновления инбокса (new-message/typing/presence)
+    if (me.role === 'admin') {
+      show($('hub-widget-admin'));
+      void loadWidgetSettings();
+    }
   });
 } else {
   show($('hub-forbidden'));
@@ -560,6 +672,9 @@ document.addEventListener('click', (e) => {
 $('hub-new-ticket-btn').addEventListener('click', showNewView);
 $('hub-new-cancel').addEventListener('click', showInboxView);
 $('hub-new').addEventListener('submit', (e) => void submitNewTicket(e));
+
+// настройки виджета (админ)
+$('hub-widget-save').addEventListener('click', () => void saveWidgetSettings());
 
 // presence
 $('hub-presence').addEventListener('change', () => void savePresence());

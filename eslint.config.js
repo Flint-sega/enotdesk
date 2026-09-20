@@ -18,7 +18,7 @@ export default [
   {
     // main-процесс живёт в Node, рендерер и браузерный оператор — в браузере;
     // пересечение глобалов безвредно
-    files: ['client/**/*.mjs', 'client/**/*.js', 'web/**/*.mjs', 'hub/web/**/*.mjs', 'eslint.config.js'],
+    files: ['client/**/*.mjs', 'client/**/*.js', 'web/**/*.mjs', 'hub/web/**/*.mjs', 'hub/widget/**/*.mjs', 'hub/widget/**/*.js', 'eslint.config.js'],
     languageOptions: { globals: { ...globals.browser, ...globals.node } },
   },
   {
