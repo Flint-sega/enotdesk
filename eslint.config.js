@@ -12,13 +12,13 @@ export default [
   },
   js.configs.recommended,
   {
-    files: ['server/**/*.mjs', 'scripts/**/*.mjs'],
+    files: ['server/**/*.mjs', 'hub/**/*.mjs', 'scripts/**/*.mjs'],
     languageOptions: { globals: { ...globals.node } },
   },
   {
     // main-процесс живёт в Node, рендерер и браузерный оператор — в браузере;
     // пересечение глобалов безвредно
-    files: ['client/**/*.mjs', 'client/**/*.js', 'web/**/*.mjs', 'eslint.config.js'],
+    files: ['client/**/*.mjs', 'client/**/*.js', 'web/**/*.mjs', 'hub/web/**/*.mjs', 'eslint.config.js'],
     languageOptions: { globals: { ...globals.browser, ...globals.node } },
   },
   {

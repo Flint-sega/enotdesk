@@ -20,6 +20,7 @@
 #   --admin-name <n>         отображаемое имя администратора
 #   --port <p>               порт сервера, 1-65535 (по умолчанию 8080; в --docker фиксирован)
 #   --no-firewall            не предлагать и не открывать ufw
+#   --hub / --no-hub         установить / не ставить EnotDesk Hub (вопрос задаётся, если флага нет)
 #   --admin-password-stdin   пароль администратора — одной строкой из stdin (не argv);
 #                            ВСЕ остальные значения задаются флагами (недостающее —
 #                            честный отказ: stdin занят паролем, вопросы не задаются)
@@ -49,6 +50,8 @@ ADMIN_NAME=""
 PORT=""
 FIREWALL=0
 FIREWALL_SET=0
+HUB=""                    # "1" = поставить EnotDesk Hub; "" = спросить/взять прежний выбор
+HUB_SET=0                 # флаг --hub/--no-hub задан
 PASS_STDIN=0
 
 SETUP_TMP=""
@@ -92,6 +95,7 @@ EnotDesk — мастер установки сервера одной кома�
   --admin-name <n>         отображаемое имя администратора
   --port <p>               порт сервера 1-65535 (по умолчанию 8080; в --docker фиксирован compose)
   --no-firewall            не открывать ufw
+  --hub / --no-hub         установить / не ставить EnotDesk Hub (тикет-система и чат)
   --admin-password-stdin   пароль админа одной строкой из stdin (≥8 симв.; никогда не argv);
                            все остальные значения — только флагами (недостающее = отказ)
 
@@ -119,6 +123,7 @@ Non-interactive flags (anything missing is asked in a TTY):
   --admin-name <n>         admin display name
   --port <p>               server port 1-65535 (default 8080; fixed by compose in --docker)
   --no-firewall            do not open ufw
+  --hub / --no-hub         install / skip EnotDesk Hub (ticket system and chat)
   --admin-password-stdin   admin password as a single stdin line (8+ chars; never argv);
                            every other value must come from flags (missing one = refusal)
 
@@ -154,6 +159,8 @@ while [ $# -gt 0 ]; do
       shift; [ $# -gt 0 ] || die "--port требует значение"
       PORT="$1" ;;
     --no-firewall) FIREWALL=0; FIREWALL_SET=1 ;;
+    --hub) HUB="1"; HUB_SET=1 ;;
+    --no-hub) HUB="0"; HUB_SET=1 ;;
     --admin-password-stdin) PASS_STDIN=1 ;;
     -*) die "неизвестный аргумент: $1 (справка: --help)" ;;
     *) die "лишний аргумент: $1 (справка: --help)" ;;
@@ -164,6 +171,16 @@ done
 # Оверрайды источника: формат строго ограничен (значения попадают в URL).
 case "$REPO" in ''|-*|*[!A-Za-z0-9._/-]*) die "ENOT_SETUP_REPO не похож на owner/repo: '$REPO'" ;; esac
 case "$VERSION" in ''|-*|*[!A-Za-z0-9._-]*) die "ENOT_SETUP_VERSION не похож на тег или latest: '$VERSION'" ;; esac
+
+# Hub: если флага не было — берём решение прежней установки (--update не должен
+# молча сносить установленный хаб); пустое значение спросим в TTY / считаем «нет».
+if [ "$HUB_SET" = "0" ]; then
+  if [ "$MODE" = "docker" ] && [ -f "./enotdesk-docker/.env" ]; then
+    HUB="$(env_value ENOT_HUB ./enotdesk-docker/.env)"
+  elif [ -f /etc/enotdesk/enotdesk.env ]; then
+    HUB="$(env_value ENOT_HUB /etc/enotdesk/enotdesk.env)"
+  fi
+fi
 
 if [ "$MODE" = "docker" ] && [ -n "$TARBALL" ]; then
   warn "в режиме --docker флаг --tarball игнорируется (образ собирается из Dockerfile)"
@@ -568,6 +585,23 @@ collect_answers() {
       *) FIREWALL=0 ;;
     esac
   fi
+
+  # 7. EnotDesk Hub (опционально; --hub/--no-hub фиксируют выбор, в TTY спрашиваем)
+  if [ "$HUB_SET" = "0" ] && [ -z "$HUB" ]; then
+    prompt_out "$(M "Установить EnotDesk Hub? (тикет-система и чат) [y/N]: " "Install EnotDesk Hub? (ticket system and chat) [y/N]: ")"
+    read_answer
+    if [ "$PIPE_EOF" = "1" ]; then
+      die "$(M "ввод закончился на вопросе о Hub — задайте --hub или --no-hub" "input ended at the Hub question — supply --hub or --no-hub")"
+    fi
+    case "$ANSWER" in
+      y|Y|yes|YES|Yes|да|ДА|Да) HUB="1" ;;
+      *) HUB="0" ;;
+    esac
+  fi
+  case "${HUB:-}" in
+    1) HUB="1" ;;
+    *) HUB="0" ;;
+  esac
 }
 
 # ── Секреты (автоген всегда; не спрашиваем, не выводим) ──────────────────────
@@ -671,6 +705,11 @@ print_plan() {
     fi
     echo "  TURN secret:     $turn_label"
     echo "  ENOT_SECRET_KEY: $key_label"
+    if [ "$HUB" = "1" ]; then
+      echo "  hub:             да (EnotDesk Hub: /hub/, виджет, /join)"
+    else
+      echo "  hub:             нет"
+    fi
     if [ "$MODE" = "baremetal" ]; then
       if [ -n "${TRUSTED_PROXY:-}" ]; then
         echo "  trusted proxy:   $TRUSTED_PROXY"
@@ -700,6 +739,11 @@ print_plan() {
     fi
     echo "  TURN secret:     $turn_label"
     echo "  ENOT_SECRET_KEY: $key_label"
+    if [ "$HUB" = "1" ]; then
+      echo "  hub:             yes (EnotDesk Hub: /hub/, widget, /join)"
+    else
+      echo "  hub:             no"
+    fi
     if [ "$MODE" = "baremetal" ]; then
       if [ -n "${TRUSTED_PROXY:-}" ]; then
         echo "  trusted proxy:   $TRUSTED_PROXY"
@@ -815,6 +859,8 @@ baremetal_install() {
     kv ENOT_PORT "$PORT"
     kv ENOT_PUBLIC_URL "$PUBLIC_URL"
     kv ENOT_SECRET_KEY "$SECRET_KEY"
+    # решение о hub: install-server.sh ставит/снимает юнит enotdesk-hub по этому флагу
+    kv ENOT_HUB "$HUB"
     if [ -n "$DOMAIN" ]; then
       kv ENOT_TURN_SECRET "$TURN_SECRET"
       kv ENOT_TRUSTED_PROXY "$TRUSTED_PROXY"
@@ -982,6 +1028,9 @@ docker_install() {
     printf 'TURN_SECRET=%s\n' "$TURN_SECRET"
     printf 'ENOT_SECRET_KEY=%s\n' "$SECRET_KEY"
     printf 'ENOT_PUBLIC_URL=%s\n' "$PUBLIC_URL"
+    # Hub: сервис в compose под профилем hub; Caddy получает HUB и добавляет маршруты
+    printf 'HUB=%s\n' "$HUB"
+    if [ "$HUB" = "1" ]; then printf 'COMPOSE_PROFILES=hub\n'; fi
   } >> "$envf"
 
   info "$(M "поднимаю стек: docker compose up -d --build (в $DOCKER_DIR)" "bringing the stack up: docker compose up -d --build (in $DOCKER_DIR)")"
@@ -1004,6 +1053,7 @@ docker_final() {
     echo "Стек EnotDesk (docker) запущен: каталог $DOCKER_DIR."
     echo "  Страница загрузок:    $url/downloads"
     echo "  Браузерный оператор:  $url/operator"
+    if [ "$HUB" = "1" ]; then echo "  Консоль хаба:         $url/hub/"; fi
     echo "  Логин администратора: $ADMIN_LOGIN"
     if [ "$PASS_AUTO" = "1" ]; then
       echo ""
@@ -1026,6 +1076,7 @@ docker_final() {
     echo "The EnotDesk docker stack is up: directory $DOCKER_DIR."
     echo "  Downloads page:       $url/downloads"
     echo "  Web operator:         $url/operator"
+    if [ "$HUB" = "1" ]; then echo "  Hub console:          $url/hub/"; fi
     echo "  Admin login:          $ADMIN_LOGIN"
     if [ "$PASS_AUTO" = "1" ]; then
       echo ""
