@@ -40,13 +40,27 @@ function readJson(req, res, maxBytes) {
     req.on('data', (c) => {
       size += c.length;
       if (size > maxBytes) {
-        // тело больше лимита: перестаём читать (не докачиваем), отдаём 413 и
-        // рвём соединение. Connection: close — клиент (undici на Windows) ждёт
-        // закрытия и дочитывает 413 до конца, а не ловит ECONNRESET на ответе
-        req.pause();
+        // тело больше лимита: отдаём 413, но НЕ рвём сокет сразу — destroy с
+        // непрочитанным телом на Windows даёт RST раньше, чем undici дочитает
+        // 413 (fetch failed → ECONNRESET). Паттерн: discard-режим (resume без
+        // data-слушателя — поток течёт вникула, приёмный буфер пуст), после
+        // ответа — FIN (socket.end), страховка от slow-body — destroy через 10 c
+        // (DoS-защита). Connection: close остаётся — клиент ждёт конца ответа.
         req.removeAllListeners('data');
+        req.resume();
         res.setHeader('Connection', 'close');
-        res.on('finish', () => req.destroy());
+        const kill = setTimeout(() => req.destroy(), 10000);
+        kill.unref();
+        let closed = false;
+        const closeAfterResponse = () => {
+          if (closed) return;
+          closed = true;
+          clearTimeout(kill);
+          const s = req.socket;
+          if (s && !s.destroyed) s.end();
+        };
+        res.on('finish', closeAfterResponse);
+        res.on('close', closeAfterResponse);
         finish(null);
         return;
       }
