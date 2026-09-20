@@ -13,6 +13,8 @@ WORKDIR /app
 COPY --from=deps /app/node_modules ./node_modules
 COPY package.json ./
 COPY server ./server
+# Hub (тикет-система) идёт тем же образом, своим сервисом compose (profile hub)
+COPY hub ./hub
 # Серверные страницы (/downloads, /invite) читают общий словарь client/lib/i18n.mjs
 COPY client/lib/i18n.mjs ./client/lib/i18n.mjs
 COPY client/locales ./client/locales
