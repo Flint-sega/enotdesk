@@ -28,6 +28,42 @@ jobs:
       - name: smoke:local (ubuntu only — полный цикл control-plane)
         if: runner.os == 'Linux'
         run: node scripts/smoke-local.mjs
+      - name: quick-setup — синтаксис и dry-run (ubuntu only, блокирующий)
+        if: runner.os == 'Linux'
+        run: |
+          bash -n scripts/quick-setup.sh scripts/install-server.sh
+          PLAN="$(bash scripts/quick-setup.sh --dry-run --domain demo.example --admin-login boss --admin-name Boss --port 8080 --no-firewall --admin-password-stdin <<< 'Passw0rd-example')"
+          printf '%s\n' "$PLAN"
+          printf '%s\n' "$PLAN" | grep -q 'demo.example'
+          printf '%s\n' "$PLAN" | grep -q 'boss'
+          printf '%s\n' "$PLAN" | grep -q '8080'
+          # пароль администратора никогда не попадает в план/логи
+          if printf '%s\n' "$PLAN" | grep -q 'Passw0rd'; then
+            echo 'ПАРОЛЬ ПРОТЕК В ПЛАН quick-setup' >&2
+            exit 1
+          fi
+          # красные прогоны: невалидные входы обязаны отказывать
+          if bash scripts/quick-setup.sh --dry-run --domain 'a b' --admin-login boss --admin-name B --port 8080 --no-firewall --admin-password-stdin <<< 'Passw0rd-example' >/dev/null 2>&1; then
+            echo 'домен с пробелом был принят' >&2
+            exit 1
+          fi
+          if bash scripts/quick-setup.sh --dry-run --domain demo.example --admin-login boss --admin-name B --port 99999 --no-firewall --admin-password-stdin <<< 'Passw0rd-example' >/dev/null 2>&1; then
+            echo 'порт 99999 был принят' >&2
+            exit 1
+          fi
+          if bash scripts/quick-setup.sh --dry-run --domain demo.example --admin-login boss --admin-name B --port 8080 --no-firewall --admin-password-stdin <<< 'short' >/dev/null 2>&1; then
+            echo 'короткий пароль был принят' >&2
+            exit 1
+          fi
+          # --admin-password-stdin без полного набора флагов: отказ, пароль не печатается
+          MISSOUT="$(bash scripts/quick-setup.sh --dry-run --admin-login boss --admin-name B --port 8080 --no-firewall --admin-password-stdin <<< 'Passw0rd-secret' 2>&1 || true)"
+          if printf '%s\n' "$MISSOUT" | grep -q 'Passw0rd'; then
+            echo 'ПАРОЛЬ ПРОТЕК при отказе --admin-password-stdin' >&2
+            exit 1
+          fi
+      - name: quick-setup — shellcheck (advisory, не блокирует)
+        if: runner.os == 'Linux'
+        run: command -v shellcheck >/dev/null 2>&1 && shellcheck -S warning scripts/quick-setup.sh || echo 'shellcheck отсутствует — пропуск'
       - name: npm audit (производственные зависимости, не падает)
         if: runner.os == 'Linux'
         run: npm audit --omit=dev || true
