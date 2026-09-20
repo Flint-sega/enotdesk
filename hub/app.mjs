@@ -65,8 +65,11 @@ function readRaw(req, res, maxBytes) {
     req.on('data', (c) => {
       size += c.length;
       if (size > maxBytes) {
+        // 413 + Connection: close (зеркалит server/app.mjs): Windows-клиент
+        // дочитывает ответ до закрытия вместо ECONNRESET
         req.pause();
         req.removeAllListeners('data');
+        res.setHeader('Connection', 'close');
         res.on('finish', () => req.destroy());
         finish(null);
         return;

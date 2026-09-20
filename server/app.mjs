@@ -41,9 +41,11 @@ function readJson(req, res, maxBytes) {
       size += c.length;
       if (size > maxBytes) {
         // тело больше лимита: перестаём читать (не докачиваем), отдаём 413 и
-        // рвём соединение, как только ответ ушёл
+        // рвём соединение. Connection: close — клиент (undici на Windows) ждёт
+        // закрытия и дочитывает 413 до конца, а не ловит ECONNRESET на ответе
         req.pause();
         req.removeAllListeners('data');
+        res.setHeader('Connection', 'close');
         res.on('finish', () => req.destroy());
         finish(null);
         return;
