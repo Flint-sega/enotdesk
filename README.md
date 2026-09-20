@@ -30,7 +30,7 @@ Interactive wizard on a fresh Ubuntu/Debian host (or any host with Docker): asks
 curl -fsSL https://raw.githubusercontent.com/Flint-sega/enotdesk/main/scripts/quick-setup.sh | sudo bash
 ```
 
-Variants: `--docker` (compose stack in `./enotdesk-docker`), `--tarball <path>` (local build instead of a GitHub release), `--update` (upgrade; defaults from the existing installation), `--dry-run` (print the plan, change nothing), and non-interactive flags for CI (`--domain --admin-login --admin-name --port --no-firewall --admin-password-stdin`). See [`scripts/quick-setup.sh --help`](scripts/quick-setup.sh) and [`docs/SERVER.md`](docs/SERVER.md).
+Variants: `--docker` (compose stack in `./enotdesk-docker`), `--tarball <path>` (local build instead of a GitHub release), `--update` (upgrade; defaults from the existing installation), `--dry-run` (print the plan, change nothing), `--hub` / `--no-hub` (enable or skip EnotDesk Hub; without a flag it is asked interactively), and non-interactive flags for CI (`--domain --admin-login --admin-name --port --no-firewall --admin-password-stdin`). See [`scripts/quick-setup.sh --help`](scripts/quick-setup.sh) and [`docs/SERVER.md`](docs/SERVER.md).
 
 ### Docker (recommended)
 
@@ -56,6 +56,28 @@ npm start            # EnotDesk desktop app (Electron)
 Then in the app: sign in as operator (or press “Get help” on the client side) → default server address `http://127.0.0.1:8080`. Plain HTTP must be explicitly allowed in client settings and is meant for testing only; use HTTPS for anything reachable from the internet. A full control-plane smoke run (bootstrap → login → invite → session → claim → consent → signaling): `npm run smoke:local`.
 
 Downloads page: a deployed server serves built installers at `/downloads` — it lists only artifacts that actually exist in `dist/` (name-allowlisted), never fake links.
+
+## EnotDesk Hub (tickets & chat)
+
+EnotDesk Hub is an optional companion service for support teams: a ticket inbox with a live chat widget for your website, one-click "connect" links, and an email-to-ticket channel. It keeps its own SQLite database (`hub.db`) and talks to the EnotDesk server over its REST API; agents sign in to the browser console at `/hub/` with their regular EnotDesk accounts (2FA included, roles respected).
+
+Install it together with the server:
+
+- one-line install: quick-setup asks whether to enable the Hub (`--hub` / `--no-hub` fix the choice for CI);
+- docker: add `COMPOSE_PROFILES=hub` and `HUB=1` to `.env`, then `docker compose up -d` — Caddy routes `/hub`, `/widget.js`, `/w`, `/join` and `/api/hub/*`; the hub port itself is not published;
+- from sources: `node hub/main.mjs` (listens on `127.0.0.1:8090`).
+
+Embed the chat widget on any page with one script line (`data-server` points at the hub origin):
+
+```html
+<script src="https://hub.example/widget.js" data-server="https://hub.example"></script>
+```
+
+One-click help: an agent drops a "Connect" card into a chat thread; on the visitor's machine the `enotdesk://` protocol opens the installed EnotDesk client (registered by the packaged builds on all three OSes), which starts a session and reports it back — the hub auto-claims it for that agent. If the client is not installed, the `/join` fallback page offers the protocol button plus a download link.
+
+Email channel: point the hub at a real IMAP mailbox and SMTP account in the admin settings ("Test connection" checks both). Incoming mail becomes tickets, agent replies go out over SMTP with proper `In-Reply-To` threading, and auto-generated mail from your own addresses (bounces, autoresponders) is skipped. Mailbox passwords are stored encrypted — this requires `ENOT_SECRET_KEY`.
+
+Live acceptance checklist for all of the above: [`docs/MANUAL-QA.md`](docs/MANUAL-QA.md), section "EnotDesk Hub (живая приёмка)".
 
 ## Security notes
 
@@ -92,7 +114,7 @@ Releases are not code-signed yet (no certificate budget); enabling signing later
 ## Development
 
 ```bash
-npm test          # 198 node:test tests: server HTTP/WS + client lib shims + renderer contract
+npm test          # 481 node:test tests: server + hub HTTP/WS + client lib shims + renderer contract
 npm run lint      # ESLint
 npm run smoke:local
 ```

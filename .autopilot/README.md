@@ -23,3 +23,4 @@
 |---|---|---|---|
 | 2026-09-17 | `2026-09-17-enotdesk-oss` | сдан | AGPL OSS-публикация: i18n ru/en, браузерный оператор, TURN/TLS и docker из коробки, unattended-агент (PIN/причина/аудит), релизы+updater — 200 тестов |
 | 2026-09-17 | `2026-09-17-enotdesk-upgrade-v2` | сдан | Клиентский апгрейд v2: срез koffi, адаптивный битрейт, first-run конфиг, webhooks, терминал SYSTEM, инвентарь, UI машин, toast, TOTP-2FA — 297 тестов |
+| 2026-09-18 | `2026-09-18-enotdesk-hub` | сдан | EnotDesk Hub: тикет-система+чат-виджет+one-click помощь+email-канал; SSO через EnotDesk; 481 тест; ADR 0023-0025 |

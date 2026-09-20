@@ -39,7 +39,7 @@ mkdir -p /tmp/enotdesk
 if [ -n "${HUB:-}" ]; then
   cat > /tmp/enotdesk/Caddyfile <<EOF
 $addr {
-	@hub path /hub /hub/* /widget.js /w /join /api/hub/*
+	@hub path /hub /hub/* /widget.js /w /join /api/hub/* /ws/widget /ws/console
 	handle @hub {
 		reverse_proxy hub:8090
 	}

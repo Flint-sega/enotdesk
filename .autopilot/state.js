@@ -1,70 +1,76 @@
 window.STATE =
 {
-  "slug": "enotdesk-upgrade-v2",
-  "dir": "2026-09-17-enotdesk-upgrade-v2",
-  "title": "EnotDesk — клиентский апгрейд v2: размер, first-run, видео, unattended, 2FA",
+  "slug": "enotdesk-hub",
+  "dir": "2026-09-18-enotdesk-hub",
+  "title": "EnotDesk Hub — тикет-система + чат-виджет с интеграцией EnotDesk",
   "mode": "semi",
   "depth": "deep",
   "polish": null,
   "execution": "parallel",
   "tier": "T3",
-  "briefFile": "2026-09-17-brief.md",
+  "briefFile": "2026-09-18-brief.md",
   "memoryFile": "AGENTS.md",
   "conventionsFile": "AGENTS.md",
   "skillDir": "/Users/admin/.zcode/skills/foreman",
-  "startedAt": "2026-09-17T23:37:45+03:00",
-  "updatedAt": "2026-09-18T04:11:09+03:00",
-  "finishedAt": null,
+  "startedAt": "2026-09-18T22:10:57+03:00",
+  "updatedAt": "2026-09-21T01:34:53+03:00",
+  "finishedAt": "2026-09-21T01:34:53+03:00",
   "stages": [
     {
       "id": "preflight",
       "status": "done",
-      "startedAt": "2026-09-17T23:37:45+03:00",
-      "finishedAt": "2026-09-17T23:37:45+03:00"
+      "startedAt": "2026-09-18T22:10:57+03:00",
+      "finishedAt": "2026-09-18T22:10:57+03:00"
     },
     {
       "id": "manifest",
       "status": "done",
-      "startedAt": "2026-09-17T23:37:45+03:00",
-      "finishedAt": "2026-09-17T23:47:20+03:00"
+      "startedAt": "2026-09-18T22:10:57+03:00",
+      "finishedAt": "2026-09-20T22:14:46+03:00"
     },
     {
       "id": "briefing",
       "status": "skipped",
-      "note": "развилки закрыты на этапе планирования (D1+D2, SYSTEM, один прогон)"
+      "note": "развилки закрыты до плана: one-click, email сейчас, SSO, имя Hub"
     },
     {
       "id": "spec",
       "status": "done",
-      "finishedAt": "2026-09-17T23:47:20+03:00"
+      "startedAt": "2026-09-20T22:14:46+03:00",
+      "finishedAt": "2026-09-20T22:14:46+03:00",
+      "note": "G2: 2 пробела закрыты (роли R09, GDPR-политика)"
     },
     {
       "id": "plan",
       "status": "done",
-      "startedAt": "2026-09-17T23:47:20+03:00",
-      "finishedAt": "2026-09-17T23:47:20+03:00",
-      "note": "8 тасков, ярус T3, 5 волн"
+      "startedAt": "2026-09-20T22:14:46+03:00",
+      "finishedAt": "2026-09-20T22:14:46+03:00",
+      "note": "7 тасков, ярус T3, 4 волны"
     },
     {
       "id": "build",
       "status": "active",
-      "startedAt": "2026-09-17T23:47:20+03:00",
-      "note": "волна 4 на ревью (06 инвентарь, 10 доукрепление терминала)"
+      "startedAt": "2026-09-20T22:14:46+03:00",
+      "note": "6 из 7 готовы; T07 приёмка (R05/R11/R12/R13i)"
     },
     {
       "id": "review",
-      "status": "pending"
+      "status": "done",
+      "startedAt": "2026-09-21T01:18:28+03:00",
+      "finishedAt": "2026-09-21T01:18:28+03:00",
+      "note": "все таски отревьюены, ремонты закрыты (0 незакрытых)"
     },
     {
       "id": "final",
       "status": "done",
-      "startedAt": "2026-09-18T02:30:00+03:00",
-      "finishedAt": "2026-09-18T04:00:19+03:00"
+      "startedAt": "2026-09-19T01:15:00+03:00",
+      "finishedAt": "2026-09-21T01:34:53+03:00",
+      "note": "G4: 1 drift (MANUAL-QA) закрыт; 7/7 тасков"
     }
   ],
   "requirements": {
-    "total": 12,
-    "done": 12,
+    "total": 13,
+    "done": 13,
     "inTicket": 0,
     "inSpec": 0,
     "placeholder": 0,
@@ -74,267 +80,245 @@ window.STATE =
   "tickets": [
     {
       "id": "01",
-      "title": "A1: срез мёртвого груза koffi",
+      "title": "Hub-каркас: сервер, SSO, деплой",
       "requirements": [
-        "R01"
+        "R01",
+        "R01.1"
       ],
       "blockedBy": [],
       "wave": 1,
       "zone": [
-        "build/electron-builder.yml"
-      ],
-      "status": "done",
-      "retries": 0,
-      "repairs": 0,
-      "handoffs": 0,
-      "startedAt": "2026-09-17T23:47:20+03:00",
-      "finishedAt": "2026-09-18T00:29:43+03:00",
-      "commit": "13cf331 (T01-часть)",
-      "tests": {
-        "passed": 207,
-        "failed": 0
-      }
-    },
-    {
-      "id": "02",
-      "title": "A3: адаптивный битрейт видео",
-      "requirements": [
-        "R02"
-      ],
-      "blockedBy": [],
-      "wave": 1,
-      "zone": [
-        "client/lib/adaptive-bitrate.mjs",
-        "client/renderer/session-media.js"
-      ],
-      "status": "done",
-      "retries": 0,
-      "repairs": 0,
-      "handoffs": 0,
-      "startedAt": "2026-09-17T23:47:20+03:00",
-      "finishedAt": "2026-09-18T00:29:43+03:00",
-      "commit": "13cf331",
-      "tests": {
-        "passed": 220,
-        "failed": 0
-      }
-    },
-    {
-      "id": "03",
-      "title": "Первый запуск: baked URL, файл-конфиг, экран соединения",
-      "requirements": [
-        "R03",
-        "R04",
-        "R05"
-      ],
-      "blockedBy": [],
-      "wave": 1,
-      "zone": [
-        "client/lib/first-run.mjs",
-        "client/main.mjs",
-        "client/renderer/",
-        "client/locales/",
-        "docs/BUILD.md"
+        "hub/",
+        "compose.yaml",
+        "scripts/"
       ],
       "status": "done",
       "retries": 0,
       "repairs": 1,
       "handoffs": 0,
-      "startedAt": "2026-09-17T23:47:20+03:00",
+      "startedAt": "2026-09-20T22:14:46+03:00",
       "repairFindings": [
-        "BLOCKING: baked-адрес только runtime-env — нужно вшивание через extraMetadata ${env.ENOT_BAKED_SERVER_URL} + чтение из pkg"
+        "волна-1 ревью: см. concerns/state"
       ],
-      "finishedAt": "2026-09-18T00:55:20+03:00",
-      "commit": "41c816c",
+      "finishedAt": "2026-09-20T23:17:31+03:00",
+      "commit": "520f0b0",
       "tests": {
-        "passed": 239,
+        "passed": 412,
+        "failed": 0
+      }
+    },
+    {
+      "id": "02",
+      "title": "Тикеты: модель+REST+консоль",
+      "requirements": [
+        "R02",
+        "R02.1",
+        "R09",
+        "R10",
+        "R11",
+        "R06"
+      ],
+      "blockedBy": [
+        "01"
+      ],
+      "wave": 2,
+      "zone": [
+        "hub/threads.mjs",
+        "hub/web/"
+      ],
+      "status": "done",
+      "retries": 0,
+      "repairs": 0,
+      "handoffs": 0,
+      "startedAt": "2026-09-20T22:38:25+03:00",
+      "finishedAt": "2026-09-20T23:17:31+03:00",
+      "commit": "520f0b0",
+      "tests": {
+        "passed": 412,
+        "failed": 0
+      }
+    },
+    {
+      "id": "03",
+      "title": "Чат-виджет для сайтов",
+      "requirements": [
+        "R03",
+        "R03.1",
+        "R03.2",
+        "R11"
+      ],
+      "blockedBy": [
+        "02"
+      ],
+      "wave": 2,
+      "zone": [
+        "hub/widget/"
+      ],
+      "status": "done",
+      "retries": 0,
+      "repairs": 0,
+      "handoffs": 0,
+      "startedAt": "2026-09-20T23:17:31+03:00",
+      "finishedAt": "2026-09-21T00:38:41+03:00",
+      "commit": "9bdfd00",
+      "tests": {
+        "passed": 443,
         "failed": 0
       }
     },
     {
       "id": "04",
-      "title": "D1: webhooks (HMAC, ретраи)",
+      "title": "One-click: протокол enotdesk:// + /join",
       "requirements": [
-        "R10"
+        "R04",
+        "R04.1"
       ],
       "blockedBy": [],
-      "wave": 2,
+      "wave": 1,
       "zone": [
-        "server/webhooks.mjs",
-        "server/app.mjs",
-        "server/db.mjs"
+        "client/lib/join.mjs",
+        "client/main.mjs",
+        "build/"
       ],
       "status": "done",
       "retries": 0,
-      "repairs": 0,
+      "repairs": 1,
       "handoffs": 0,
-      "startedAt": "2026-09-18T00:05:40+03:00",
-      "finishedAt": "2026-09-18T00:31:57+03:00",
-      "commit": "b8b669a + шифрование секрета 9b8c72b",
+      "startedAt": "2026-09-20T22:14:46+03:00",
+      "repairFindings": [
+        "волна-1 ревью: см. concerns/state"
+      ],
+      "finishedAt": "2026-09-20T23:17:31+03:00",
+      "commit": "a4164bc",
       "tests": {
-        "passed": 230,
+        "passed": 403,
         "failed": 0
       }
     },
     {
       "id": "05",
-      "title": "C1: удалённый терминал (SYSTEM v1)",
+      "title": "Карточка Подключиться + webhooks",
       "requirements": [
-        "R09",
-        "R09.1"
+        "R07",
+        "R07.1"
       ],
-      "blockedBy": [],
+      "blockedBy": [
+        "02",
+        "04"
+      ],
       "wave": 3,
       "zone": [
-        "client/lib/term.mjs",
-        "client/main.mjs",
-        "web/",
-        "server/app.mjs"
+        "hub/join.mjs",
+        "hub/"
       ],
       "status": "done",
       "retries": 0,
-      "repairs": 2,
+      "repairs": 0,
       "handoffs": 0,
-      "repairFindings": [
-        "BLOCKING: терминал мёртв end-to-end — createTermHost не инстанцирован, агент без RTCPeerConnection; + ринг-буфер не держит кусок > лимита",
-        "дозапрос 2 (потолок): скрытый renderer-мост RTC — чтобы терминал работал в собранном агенте, а не только на швах"
-      ],
-      "startedAt": "2026-09-18T01:15:30+03:00",
-      "finishedAt": "2026-09-18T02:06:41+03:00",
-      "commit": "857b57a",
+      "startedAt": "2026-09-21T00:02:13+03:00",
+      "finishedAt": "2026-09-21T00:38:41+03:00",
+      "commit": "9bdfd00",
       "tests": {
-        "passed": 250,
+        "passed": 443,
         "failed": 0
       }
     },
     {
       "id": "06",
-      "title": "C5: инвентарь машин",
+      "title": "Email: IMAP→тикет, SMTP→ответы",
       "requirements": [
-        "R06"
+        "R08",
+        "R08.1"
       ],
-      "blockedBy": [],
-      "wave": 4,
+      "blockedBy": [
+        "02"
+      ],
+      "wave": 3,
       "zone": [
-        "server/machines.mjs",
-        "server/db.mjs",
-        "client/lib/agent.mjs"
+        "hub/email.mjs",
+        "package.json"
       ],
-      "status": "review",
+      "status": "done",
       "retries": 0,
       "repairs": 0,
       "handoffs": 0,
-      "startedAt": "2026-09-18T02:06:41+03:00"
+      "startedAt": "2026-09-21T00:38:41+03:00",
+      "finishedAt": "2026-09-21T01:18:28+03:00",
+      "commit": "59c890e",
+      "tests": {
+        "passed": 481,
+        "failed": 0
+      }
     },
     {
       "id": "07",
-      "title": "C2: админ-UI машин",
+      "title": "Приёмка: ADR/MANUAL-QA/доки",
       "requirements": [
-        "R07"
+        "R05",
+        "R11",
+        "R12",
+        "R13i"
       ],
       "blockedBy": [
+        "01",
+        "02",
+        "03",
+        "04",
+        "05",
         "06"
       ],
-      "wave": 5,
-      "zone": [
-        "web/",
-        "client/locales/"
-      ],
-      "status": "pending",
-      "retries": 0,
-      "repairs": 0,
-      "handoffs": 0
-    },
-    {
-      "id": "08",
-      "title": "C4: сообщение на экран машины",
-      "requirements": [
-        "R08"
-      ],
-      "blockedBy": [
-        "07"
-      ],
-      "wave": 6,
-      "zone": [
-        "client/lib/notify.mjs",
-        "web/"
-      ],
-      "status": "pending",
-      "retries": 0,
-      "repairs": 0,
-      "handoffs": 0
-    },
-    {
-      "id": "09",
-      "title": "D2: TOTP-2FA операторов",
-      "requirements": [
-        "R11",
-        "R11.1"
-      ],
-      "blockedBy": [],
-      "wave": 5,
-      "zone": [
-        "server/totp.mjs",
-        "server/app.mjs",
-        "server/db.mjs"
-      ],
-      "status": "pending",
-      "retries": 0,
-      "repairs": 0,
-      "handoffs": 0
-    },
-    {
-      "id": "10",
-      "title": "Доукрепление терминала: iceServers из /rtc-config, тесты капа/гонки, паритет каналов",
-      "requirements": [
-        "R09"
-      ],
-      "blockedBy": [],
       "wave": 4,
       "zone": [
-        "client/agent-bridge/",
-        "client/lib/term.mjs",
-        "client/test/"
+        "docs/"
       ],
-      "status": "review",
-      "startedAt": "2026-09-18T02:06:41+03:00",
+      "status": "done",
       "retries": 0,
       "repairs": 0,
-      "handoffs": 0
+      "handoffs": 0,
+      "startedAt": "2026-09-21T01:18:28+03:00",
+      "finishedAt": "2026-09-21T01:34:53+03:00",
+      "commit": "final",
+      "tests": {
+        "passed": 481,
+        "failed": 0
+      }
     }
   ],
   "singlePass": null,
   "tests": {
-    "passed": 297,
+    "passed": 481,
     "failed": 0
   },
   "debt": {
     "placeholders": [],
     "assumptions": [],
-    "emptyEnv": [
-      "ENOT_SECRET_KEY"
-    ]
+    "emptyEnv": []
   },
   "additions": [],
-  "coverage": null,
+  "coverage": {
+    "found": 3,
+    "fixed": 3,
+    "deferred": 0,
+    "note": "G2: T-план и волны — уровень Phase 4 (не спеки); R09 обе роли + GDPR-политика вписаны; «у кого есть доступ» покрыто operator+admin"
+  },
   "concerns": [
-    "[Report] T01: npm audit шаг advisory (намеренно не блокирует CI)",
-    "[Report] T02: серверные страницы — язык только по Accept-Language, переключателя нет",
-    "[Report] T04: claim отозванной машины не шлёт machine.claim.denied (webhook) — следующим проходом",
-    "[Report] T04: ретраи [1,10,60]с не зафиксированы тестом дефолта — допустимо",
-    "[Report] T04/T09: часть текстов маршрутов hardcoded ru вместо словарей — унифицировать",
-    "[Report] T06: дубль match-блоков /machines/:id в app.mjs (косметика)",
-    "[Report] T07: PIN через window.prompt (не поле в панели)",
-    "[Report] T09: QR-канваса нет — otpauth-URI текстом (приёмка вручную)",
-    "[Drop] T05: keep-alive поверхность Range-теста — документирована как известная",
-    "[Drop] T08: второй тост заменяет незабранный первый — задокументировано в MANUAL-QA"
+    "T01: релизный тарболл не содержит hub/ — дозапрос агенту 01 (deploy-server.sh + release.yml + check_tarball)",
+    "T01 craft: readJson-копия, lastLocaleHeader-гонка, traversal-тест не доказывает — в дозапросе",
+    "T04 craft: wiring-grep-тесты — замечание принято (мелочь)",
+    "T01/04 manifest мелочи: комментарий loopback vs 0.0.0.0; insecure-http из ссылки (в дозапросе)",
+    "инцидент: диск 99% (npm-кэш 4.5Г) — вычищен, 4.9Г свободно; dist/ регенерируемый удалён",
+    "T03: Caddy-матчер без /ws/widget,/ws/console — дозапрос T01-агенту (docker-зона)",
+    "T05 manifest мелочи: bearerForAgent дублирует шов auth.mjs; system-строки ru (решение задокументировано)",
+    "T05: http:-joinPage из dev не рендерится кнопкой (только https) — осознанно",
+    "T03: старые uuid-куки гостей инвалидируются (посетителей в проде нет)"
   ],
   "reviewers": {
     "manifestSpec": null,
     "craft": null
   },
   "blind": {
-    "verdict": "все пункты брифа реализованы и запускаются: 297 тестов, lint, smoke, сервер+health, compose config (TURN_SECRET-гейт), RBAC 401-маршруты; A1 (срез с проверкой собранного бинарника), A3, B1/B2/B3, C1 (SYSTEM, швы), C2 (UI), C4, C5, D1, D2 — реализованы; A2 — осознанно не делается; непроверяемое без машин (живые службы, TURN-релей, TLS, сквозной терминал, тосты) честно в docs/MANUAL-QA.md",
-    "drift": 0
-  }
+    "verdict": "все требования брифа реализованы; live-проверено: 481 тест, SSO-логин+2FA-наследование, тикеты (ручной/чат-API/offline-email), join-карточка enotdesk://+/join, CORS-гейт 403, HMAC 403; непроверяемое без GUI/IMAP (виджет в браузере, протокол на 3 ОС, живой IMAP/SMTP) — чек-лист docs/MANUAL-QA.md (H-*)",
+    "drift": 1
+  },
+  "drift_note": "G4 нашёл 1 расхождение: MANUAL-QA не упоминал Hub — закрыто в T07 (чек-лист H-*)"
 }
