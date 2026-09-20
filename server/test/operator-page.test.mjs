@@ -45,8 +45,12 @@ test('/operator: без аутентификации — 401 и форма вх�
   const aud = await html(base, '/operator', { token: audLogin.json.token });
   assert.equal(aud.status, 403);
 
-  // вход по cookie (как это делает браузер): валидный токен → 200, мусор → 401
-  assert.equal((await html(base, '/operator', { cookie: `enot_op=${encodeURIComponent(token)}` })).status, 200);
+  // cookie (как её ставит страница) несёт только роль для выбора варианта HTML
+  // (SEC-008): admin/operator → 200, аудитор → 403, мусор → 401. Токен в cookie
+  // не живёт — каждый /api и WS всё равно за Bearer-RBAC.
+  assert.equal((await html(base, '/operator', { cookie: 'enot_op=admin' })).status, 200);
+  assert.equal((await html(base, '/operator', { cookie: 'enot_op=operator' })).status, 200);
+  assert.equal((await html(base, '/operator', { cookie: 'enot_op=auditor' })).status, 403);
   assert.equal((await html(base, '/operator', { cookie: 'enot_op=garbage' })).status, 401);
 });
 
@@ -59,8 +63,8 @@ test('статика страницы оператора: модули и сло
   assert.equal((await fetch(`${base}/web/input-source.mjs`)).status, 200);
   assert.equal((await fetch(`${base}/client/lib/i18n.mjs`)).status, 200);
   assert.equal((await fetch(`${base}/client/renderer/dom.js`)).status, 200);
-  assert.equal((await fetch(`${base}/client/locales/ru.json`)).status, 200);
-  assert.equal((await fetch(`${base}/client/locales/de.json`)).status, 404, 'словари только ru/en');
+  assert.equal((await fetch(`${base}/client/locales/ru.mjs`)).status, 200);
+  assert.equal((await fetch(`${base}/client/locales/de.mjs`)).status, 404, 'словари только ru/en');
   assert.equal((await fetch(`${base}/client/lib/../main.mjs`)).status, 404, 'вне allowlist ничего не отдаётся');
   assert.equal((await fetch(`${base}/web/nope.mjs`)).status, 404);
 });

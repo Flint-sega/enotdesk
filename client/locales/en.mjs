@@ -1,4 +1,7 @@
-{
+// Словарь en (i18n): ES-модуль вместо JSON — статический import не проходит через
+// fetch, поэтому CSP рендерера обходится без connect-src file: (SEC-005).
+// Ключи 1:1 с прежним en.json; паритет с ru проверяет контракт-тест.
+export default {
   "app.tabHelp": "Get help",
   "app.tabOperator": "Operator",
   "app.aria.workMode": "Working mode",
@@ -10,7 +13,6 @@
   "app.alt.mascotHero": "EnotDesk raccoon specialist",
   "app.subtitle": "Remote support",
   "app.care": "With care for your tasks",
-
   "common.loading": "Loading…",
   "common.send": "Send",
   "common.cancel": "Cancel",
@@ -26,7 +28,6 @@
   "common.untitled": "(untitled)",
   "common.httpError": "Error {status}",
   "error.badLocale": "Invalid locale",
-
   "client.start": "Get help",
   "client.startBusy": "Connecting…",
   "client.explain": "Press the button — the app will show a temporary ID and password. Share them with your support specialist in the chat.",
@@ -78,7 +79,6 @@
   "client.sourceUnavailable": "Source is unavailable",
   "client.permMac": "Allow screen recording: System Settings → Privacy & Security → Screen Recording, then restart EnotDesk.",
   "client.permOther": "Screen capture is blocked by the system. Grant the permission and try again.",
-
   "op.loginTitle": "Operator sign in",
   "op.login": "Login",
   "op.password": "Password",
@@ -115,18 +115,16 @@
   "op.waitingConfirm": "Waiting for the client to approve…",
   "op.waitingScreen": "Waiting for the client's screen…",
   "op.controlNote": "Mouse and keyboard control is active until the client ends the session.",
-  "op.clipLabel": "Clipboard",
+  "op.clipLabel": "Send my clipboard to the other side",
   "op.fitFill": "Fill",
   "op.fitFit": "Fit",
   "op.fullscreen": "Fullscreen",
   "op.end": "End",
-
   "status.connecting": "Connecting…",
   "status.connected": "Connected",
   "op.clientReconnecting": "Client is reconnecting…",
   "op.operatorReconnecting": "Operator is reconnecting…",
   "op.genericReconnecting": "Reconnecting…",
-
   "password.title": "Change password",
   "password.oldLabel": "Current password",
   "password.newLabel": "New password (8+ characters)",
@@ -134,7 +132,6 @@
   "password.busy": "Changing…",
   "password.changed": "Password changed. Active sessions with your participation have been ended.",
   "password.fail": "Could not change the password",
-
   "settings.title": "Settings",
   "settings.serverLabel": "Server address",
   "settings.allowHttp": "Allow unencrypted HTTP (test servers only)",
@@ -155,7 +152,6 @@
   "settings.updateBanner": "Version {version} is available — update the client from the downloads page of your EnotDesk server.",
   "update.autoBanner": "Version {version} is available — the update downloads and applies when EnotDesk restarts.",
   "update.manualBanner": "Version {version} is available — download the new build from the project releases page.",
-
   "server.checking": "Checking the server…",
   "server.statusOk": "Server reachable (v{version})",
   "server.statusDown": "Server unreachable",
@@ -163,7 +159,6 @@
   "firstRun.lead": "The server address is already configured — let's check that it is reachable.",
   "firstRun.check": "Check",
   "firstRun.openSettings": "Configure the address manually",
-
   "contacts.title": "Address book",
   "contacts.searchLabel": "Search by name",
   "contacts.searchPlaceholder": "e.g. Ivanova",
@@ -182,7 +177,6 @@
   "contacts.saveFail": "Could not save",
   "contacts.deleteFail": "Could not delete",
   "contacts.deleteConfirm": "Delete contact “{name}”?",
-
   "team.title": "Team",
   "team.empty": "The team is empty. Create an invitation below and send it to a colleague.",
   "team.active": "active",
@@ -206,7 +200,6 @@
   "team.inviteFor": "Invitation for role: {role}",
   "team.revoke": "Revoke",
   "team.revokeFail": "Could not revoke",
-
   "history.title": "Session history",
   "history.empty": "History is empty. Completed support sessions will appear here.",
   "history.item": "Session {id} — {state}",
@@ -215,7 +208,6 @@
   "audit.title": "Audit log",
   "audit.empty": "The log is empty. Team actions will be recorded here automatically.",
   "audit.sub": "{date}{detail}",
-
   "end.ended": "Session ended.",
   "end.denied": "You denied the operator's request.",
   "end.host-lost": "The help app was closed — session ended.",
@@ -225,7 +217,6 @@
   "end.signal-lost": "Connection to the server was lost — session ended.",
   "end.rtc": "The screen connection was interrupted.",
   "end.generic": "Session ended ({reason}).",
-
   "files.fromOperator": "The operator sends file “{name}” ({size} MB). Accept?",
   "files.accept": "Accept",
   "files.reject": "Decline",
@@ -237,16 +228,13 @@
   "files.clientSending": "The client is sending “{name}”…",
   "files.sending": "Sending “{name}”…",
   "files.noChannel": "Transfer channel is unavailable",
-
   "chat.you": "You",
   "chat.operator": "Operator",
   "chat.client": "Client",
   "chat.system": "System",
-
   "role.admin": "administrator",
   "role.operator": "operator",
   "role.auditor": "observer",
-
   "server.titleDownloads": "EnotDesk — download",
   "server.titleInvite": "EnotDesk — invitation",
   "server.nav.ariaMain": "Main navigation",
@@ -323,7 +311,7 @@
   "web.chat.title": "Chat",
   "web.chat.send": "Send",
   "web.clip.title": "Clipboard",
-  "web.clip.hint": "Copied text is sent to the other side. The browser will ask for clipboard permission.",
+  "web.clip.hint": "Text you copy is sent to the other side. Text from the session is inserted via the button — the clipboard is never changed automatically.",
   "web.files.title": "Files",
   "web.files.pick": "Choose file",
   "web.files.drop": "Drop a file onto the session screen",
@@ -350,7 +338,6 @@
   "web.aria.chatLog": "Chat history",
   "web.aria.lang": "Interface language",
   "server.insecureBanner": "Connection is not secure — set up HTTPS before using it over the internet (see docs/SERVER.md)",
-
   "machines.nameLength": "Machine name: 1 to 120 characters",
   "machines.groupLength": "Group: up to 60 characters",
   "machines.claimLimited": "Too many connection attempts",
@@ -371,7 +358,6 @@
   "machines.badCode": "The code is invalid or has already been used",
   "machines.tokenRequired": "Machine token required",
   "machines.noSession": "The machine has no active session",
-
   "web.machines.open": "Machines",
   "web.machines.title": "Machines",
   "web.machines.backConnect": "Back to connect",
@@ -414,7 +400,6 @@
   "web.machines.toastNoConfirm": "Request reached the agent, no confirmation (dialog may be waiting for a click)",
   "web.machines.toastFailed": "Machine could not show the message ({reason})",
   "web.machines.claimCancel": "Cancel",
-
   "op.twofa": "2FA",
   "op.totpCode": "Verification code",
   "op.totpPlaceholder": "6 digits or a backup code",
@@ -446,5 +431,10 @@
   "totp.badCode": "Wrong code — check it in your authenticator app",
   "totp.keyMissing": "ENOT_SECRET_KEY is not set on the server — 2FA cannot be enabled. Set the environment variable and restart the server.",
   "totp.already": "2FA is already enabled — disable it first",
-  "totp.notEnabled": "2FA is not enabled"
-}
+  "totp.notEnabled": "2FA is not enabled",
+  "update.installAsk": "Version {version} is available — install when EnotDesk quits?",
+  "update.installConfirm": "Install on quit",
+  "update.installLater": "Not now",
+  "web.clip.paste": "Paste from session",
+  "op.clipPaste": "Paste from session",
+};

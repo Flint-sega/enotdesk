@@ -3,10 +3,11 @@
 <head>
   <meta charset="UTF-8">
   <meta http-equiv="Content-Security-Policy"
-        content="default-src 'none'; script-src 'self'; style-src 'self'; img-src 'self' file: data:; media-src blob:; font-src 'self'; connect-src 'self' file:; form-action 'none'; frame-ancestors 'none'">
-  <!-- connect-src 'self' file: — только для import … with {type:'json'} словарей i18n (client/locales/*.json):
-       без него весь граф модулей рендерера падает под default-src 'none' и JS клиента мёртв.
-       Удалённые fetch/WebSocket по-прежнему запрещены (file:/self не совпадают с http/ws). -->
+        content="default-src 'none'; script-src 'self'; style-src 'self'; img-src 'self' file: data:; media-src blob:; font-src 'self'; connect-src 'self'; form-action 'none'; frame-ancestors 'none'">
+  <!-- Словари i18n — ES-модули (client/locales/*.mjs), грузятся через script-src 'self'
+       (SEC-005): connect-src file: больше не нужен, любые fetch/WebSocket запрещены
+       (весь API ходит через IPC-мост main-процесса). img-src file: остаётся — маскоты
+       и иконка грузятся с file:// относительно страницы. -->
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <meta name="color-scheme" content="dark">
   <title>EnotDesk</title>
@@ -281,7 +282,8 @@
               </div>
               <video id="remote-video" autoplay playsinline data-i18n-aria-label="app.aria.remoteVideo" aria-label="Экран клиента"></video>
               <div class="row gap wrap-btns">
-                <label class="check-line" for="clip-op-toggle"><input type="checkbox" id="clip-op-toggle" checked> <span data-i18n="op.clipLabel">Буфер обмена</span></label>
+                <label class="check-line" for="clip-op-toggle"><input type="checkbox" id="clip-op-toggle"> <span data-i18n="op.clipLabel">Отправлять мой буфер другой стороне</span></label>
+                <button id="btn-op-clip-paste" class="btn hidden" data-i18n="op.clipPaste">Вставить из сеанса</button>
                 <span id="file-op-status" class="note"></span>
               </div>
               <div id="op-file-list" class="list"></div>

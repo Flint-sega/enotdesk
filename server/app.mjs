@@ -9,11 +9,11 @@ import { createWebhooks } from './webhooks.mjs';
 import { page, downloadsHtml, inviteHtml, operatorPage, isInsecurePage } from './pages.mjs';
 import { t, pickLocale } from '../client/lib/i18n.mjs';
 import {
-  hashPassword, verifyPassword, newToken, sha256,
+  hashPassword, verifyPassword, verifyPasswordAsync, newToken, sha256,
   sessionPassword, newSessionId, newClaimId,
 } from './crypto.mjs';
 import {
-  generateSecret, verifyCode, backupCodes, normalizeBackupCode,
+  generateSecret, verifyCode, matchCounter, backupCodes, normalizeBackupCode,
   secretKeyBytes, encryptSecret, decryptSecret,
 } from './totp.mjs';
 
@@ -27,23 +27,34 @@ function err(res, status, code, message) {
 }
 
 function ok(res, status, body) {
-  res.writeHead(status, { 'Content-Type': 'application/json; charset=utf-8' });
+  // no-store: API-ответы (токены, состояние сеансов) не должны оседать в кешах
+  res.writeHead(status, { 'Content-Type': 'application/json; charset=utf-8', 'Cache-Control': 'no-store' });
   res.end(JSON.stringify(body));
 }
 
-function readJson(req, maxBytes) {
+function readJson(req, res, maxBytes) {
   return new Promise((resolve) => {
     let size = 0; const chunks = [];
+    let done = false;
+    const finish = (v) => { if (!done) { done = true; resolve(v); } };
     req.on('data', (c) => {
       size += c.length;
-      if (size > maxBytes) { resolve(null); return; }
+      if (size > maxBytes) {
+        // тело больше лимита: перестаём читать (не докачиваем), отдаём 413 и
+        // рвём соединение, как только ответ ушёл
+        req.pause();
+        req.removeAllListeners('data');
+        res.on('finish', () => req.destroy());
+        finish(null);
+        return;
+      }
       chunks.push(c);
     });
     req.on('end', () => {
-      try { resolve(JSON.parse(Buffer.concat(chunks).toString('utf8'))); }
-      catch { resolve(undefined); }
+      try { finish(JSON.parse(Buffer.concat(chunks).toString('utf8'))); }
+      catch { finish(undefined); }
     });
-    req.on('error', () => resolve(null));
+    req.on('error', () => finish(null));
   });
 }
 
@@ -62,6 +73,13 @@ export class RateLimiter {
     // публичный интернет: чужие IP не должны расти в памяти бесконечно
     if (this.#hits.size >= this.#maxKeys) {
       for (const [k, h] of this.#hits) if (now > h.reset) this.#hits.delete(k);
+    }
+    // после чистки всё ещё полно живых ключей (флуд в одном окне): вытесняем
+    // старейший по reset, иначе карта растёт без предела
+    if (this.#hits.size >= this.#maxKeys) {
+      let oldest = null;
+      for (const [k, h] of this.#hits) if (!oldest || h.reset < oldest.h.reset) oldest = { k, h };
+      if (oldest) this.#hits.delete(oldest.k);
     }
     let h = this.#hits.get(key);
     if (!h || now > h.reset) { h = { count: 0, reset: now + this.windowMs }; this.#hits.set(key, h); }
@@ -110,7 +128,7 @@ const OPERATOR_ASSETS = {
   },
   'client/locales': {
     dir: '../client/locales/',
-    files: { 'ru.json': 'application/json', 'en.json': 'application/json' },
+    files: { 'ru.mjs': 'text/javascript', 'en.mjs': 'text/javascript' },
   },
 };
 
@@ -139,6 +157,42 @@ function streamOut(stream, res) {
   stream.on('error', () => res.destroy());
   res.on('close', () => stream.destroy());
   stream.pipe(res);
+}
+
+// ---- Доверенные прокси (ENOT_TRUSTED_PROXY): IP или IPv4-CIDR через запятую ----
+// Пусто — никому не доверяем, ip() всегда адрес сокета (заголовок X-Forwarded-For
+// подделываем любым клиентом). IPv6 поддержан точными адресами; IPv6-CIDR честно
+// не поддержан — за типичным nginx/caddy на той же машине стоят ::1 и 127.0.0.1.
+
+function parseTrustedProxyList(value) {
+  return String(value ?? '').split(',').map((s) => s.trim().toLowerCase()).filter(Boolean);
+}
+
+// '::ffff:1.2.3.4' (двойной стек) → '1.2.3.4'
+function ipv4Of(addr) {
+  const m = /^::ffff:(\d{1,3}(?:\.\d{1,3}){3})$/.exec(addr);
+  return m ? m[1] : null;
+}
+
+function v4ToInt(ip) {
+  const parts = ip.split('.').map(Number);
+  if (parts.length !== 4 || parts.some((n) => !Number.isInteger(n) || n < 0 || n > 255)) return null;
+  return ((parts[0] << 24) | (parts[1] << 16) | (parts[2] << 8) | parts[3]) >>> 0;
+}
+
+function addrTrusted(addr, entry) {
+  const slash = entry.indexOf('/');
+  if (slash === -1) return (ipv4Of(addr) ?? addr).toLowerCase() === (ipv4Of(entry) ?? entry);
+  const base = ipv4Of(entry.slice(0, slash));
+  if (!base) return false; // IPv6-CIDR не поддержан (см. выше)
+  const addrV4 = ipv4Of(addr);
+  const len = parseInt(entry.slice(slash + 1), 10);
+  const ai = addrV4 ? v4ToInt(addrV4) : null;
+  const bi = v4ToInt(base);
+  if (ai == null || bi == null || !Number.isInteger(len) || len < 0 || len > 32) return false;
+  if (len === 0) return true;
+  const mask = (0xFFFFFFFF << (32 - len)) >>> 0;
+  return (ai & mask) === (bi & mask);
 }
 
 function validSignalData(data) {
@@ -195,6 +249,10 @@ export function createServer(opts = {}) {
     turnUrls: opts.turnUrls ?? '',
     turnUsername: opts.turnUsername ?? '',
     turnPassword: opts.turnPassword ?? '',
+    // секрет TURN (coturn use-auth-secret): задан — /rtc-config раздаёт
+    // эфемерные HMAC-креды вместо статического пароля
+    turnSecret: opts.turnSecret ?? process.env.ENOT_TURN_SECRET ?? '',
+    trustedProxy: opts.trustedProxy ?? process.env.ENOT_TRUSTED_PROXY ?? '',
     // ключ шифрования секретов (2FA и др.): значение никогда не попадает в ответы и журнал
     secretKey: opts.secretKey ?? process.env.ENOT_SECRET_KEY ?? '',
     leaseMs: opts.leaseMs ?? 20000,
@@ -226,6 +284,8 @@ export function createServer(opts = {}) {
       agentRegister: opts.limits?.agentRegister ?? new RateLimiter(10, 60_000),
       // toast на экран машины: нечастая операция, лимит на всякий случай
       machineToast: opts.limits?.machineToast ?? new RateLimiter(10, 60_000),
+      // WS-upgrade до всякой аутентификации: аноним не держит сокеты и TLS-рукопожатия
+      wsUpgrade: opts.limits?.wsUpgrade ?? new RateLimiter(30, 10_000),
     },
   };
   const db = openDb(cfg.dbPath);
@@ -234,6 +294,9 @@ export function createServer(opts = {}) {
   const webhooks = createWebhooks(db, { secretKey: cfg.secretKey });
   // байты ключа шифрования секретов; null — ключ не задан (включение 2FA честно отказывает)
   const secretKey = secretKeyBytes(cfg.secretKey);
+  // Фиктивный хеш anti-enumeration (P2-5): ленивая генерация при первом
+  // входе с несуществующим логином — стоимость равна обычной проверке пароля.
+  let dummyHash = null;
 
   // Коды ошибок настройки webhooks → честные тексты маршрута
   const WEBHOOK_ERR_TEXT = {
@@ -356,8 +419,20 @@ export function createServer(opts = {}) {
     ).get(sha256(token)) || null;
   }
 
+  // Доверенные прокси парсятся один раз на сервер; пустой список — не доверять никому
+  const trustedProxies = parseTrustedProxyList(cfg.trustedProxy);
+  const isTrustedProxy = (addr) => trustedProxies.some((entry) => addrTrusted(String(addr), entry));
+
   function ip(req) {
-    return req.socket.remoteAddress || 'unknown';
+    const remote = req.socket.remoteAddress || 'unknown';
+    if (!trustedProxies.length || !isTrustedProxy(remote)) return remote;
+    // сокет держит доверенный прокси: берём из X-Forwarded-For последний
+    // незнакомый hop справа налево (доверенные прокси пропускаем)
+    const hops = String(req.headers['x-forwarded-for'] ?? '').split(',').map((s) => s.trim()).filter(Boolean);
+    for (let i = hops.length - 1; i >= 0; i--) {
+      if (!isTrustedProxy(hops[i])) return hops[i];
+    }
+    return remote;
   }
 
   function listParams(url) {
@@ -389,7 +464,7 @@ export function createServer(opts = {}) {
       } catch { return err(res, 403, 'forbidden', 'Недопустимый источник запроса'); }
     }
     if (req.method !== 'GET') {
-      var body = await readJson(req, cfg.bodyLimit);
+      var body = await readJson(req, res, cfg.bodyLimit);
       if (body === null) return err(res, 413, 'too_large', 'Слишком большой запрос');
     }
 
@@ -419,39 +494,75 @@ export function createServer(opts = {}) {
       const user = db.prepare('SELECT * FROM users WHERE login = ?').get(login.trim().toLowerCase());
       const locale = pickLocale(req.headers['accept-language']);
       const twoFactor = !!(user && user.active && user.totp_enabled);
-      // 2FA (R11): без кода — честный totp_required ДО проверки пароля: ответ один
-      // и тот же при любом пароле и не раскрывает, верен ли он.
-      if (twoFactor && (typeof body?.totp !== 'string' || !body.totp.trim())) {
-        return err(res, 401, 'totp_required', t('totp.loginRequired', {}, locale));
-      }
-      if (!user || !user.active || !verifyPassword(password, user.password)) {
+      const fail = () => {
         cfg.limits.loginId.take(loginKey);
         auditLog(db, null, 'login.failure', null, { login: String(login).slice(0, 120) });
         return err(res, 401, 'invalid_credentials',
           twoFactor ? t('totp.invalidCredentials', {}, locale) : 'Неверный логин или пароль');
+      };
+      // Anti-enumeration (P2-5): пароль проверяется ПЕРВЫМ, до totp_required.
+      // Неизвестный логин/выключенный аккаунт — dummy-scrypt той же стоимости,
+      // чтобы время ответа не отличалось. Контракт totp_required сохранён, но
+      // теперь он приходит только после верного пароля (честно: пароль ок,
+      // нужен второй фактор). Порядок изменён относительно прежней версии —
+      // раньше totp_required отдавался до проверки пароля.
+      let pwOk = false;
+      if (user && user.active) {
+        pwOk = await verifyPasswordAsync(password, user.password);
+      } else {
+        // фиктивная проверка: одноразово сгенерированный хеш, стоимость та же
+        dummyHash ??= hashPassword(`enotdesk-dummy-${crypto.randomUUID()}`);
+        await verifyPasswordAsync(password, dummyHash);
+      }
+      if (!pwOk) return fail();
+      // 2FA (R11): без кода — totp_required, но только после верного пароля
+      if (twoFactor && (typeof body?.totp !== 'string' || !body.totp.trim())) {
+        return err(res, 401, 'totp_required', t('totp.loginRequired', {}, locale));
       }
       if (twoFactor) {
-        // код из аутентификатора, иначе — одноразовый резервный код: потребляется
-        // только при верном пароле, чтобы чужак не сжёг коды неверным паролем
+        // код из аутентификатора с replay-защитой (P2-7): шаг 30 с принимается
+        // один раз, повтор (counter <= totp_last_counter) — отказ
         const given = body.totp.trim();
         const secret = user.totp_secret_enc ? decryptSecret(secretKey, user.totp_secret_enc) : null;
-        let codeOk = secret ? verifyCode(secret, given) : false;
-        if (!codeOk) {
-          const normalized = normalizeBackupCode(given);
-          const hit = normalized && db.prepare(
-            'SELECT rowid FROM totp_backup_codes WHERE user_id = ? AND code_hash = ?'
-          ).get(user.id, sha256(normalized));
-          if (hit) {
-            db.prepare('DELETE FROM totp_backup_codes WHERE user_id = ? AND code_hash = ?')
-              .run(user.id, sha256(normalized));
+        let codeOk = false;
+        if (secret) {
+          const counter = matchCounter(secret, given);
+          if (counter != null) {
+            if (user.totp_last_counter != null && counter <= user.totp_last_counter) return fail();
+            db.prepare('UPDATE users SET totp_last_counter = ? WHERE id = ?').run(counter, user.id);
             codeOk = true;
           }
         }
         if (!codeOk) {
-          cfg.limits.loginId.take(loginKey);
-          auditLog(db, null, 'login.failure', null, { login: String(login).slice(0, 120) });
-          return err(res, 401, 'invalid_credentials', t('totp.invalidCredentials', {}, locale));
+          // иначе — одноразовый резервный код: потребляется только при верном
+          // пароле; хеши — scrypt (P2-6), проверка перебором кодов пользователя
+          const normalized = normalizeBackupCode(given);
+          if (normalized) {
+            const rows = db.prepare(
+              'SELECT code_hash FROM totp_backup_codes WHERE user_id = ?'
+            ).all(user.id);
+            let matchedHash = null;
+            let legacy = false;
+            for (const { code_hash: h } of rows) {
+              if (h.startsWith('s1$')) {
+                if (await verifyPasswordAsync(normalized, h)) { matchedHash = h; break; }
+              } else if (h === sha256(normalized)) {
+                legacy = true; // хеш старого (до scrypt) формата
+              }
+            }
+            if (matchedHash) {
+              db.prepare('DELETE FROM totp_backup_codes WHERE user_id = ? AND code_hash = ?')
+                .run(user.id, matchedHash);
+              codeOk = true;
+            } else if (legacy) {
+              // честный отказ: старые несолёные коды обесценены; вход по TOTP-коду
+              // и перевыпуск (disable → enable) восстанавливают резервные коды
+              return err(res, 401, 'backup_codes_legacy_reset',
+                'Резервные коды устаревшего формата отклонены: войдите с кодом из приложения и перевыпустите резервные коды (отключите и заново включите 2FA)');
+            }
+          }
         }
+        if (!codeOk) return fail();
       }
       const token = newToken();
       const expiresAt = new Date(Date.now() + 8 * 3600 * 1000).toISOString();
@@ -485,7 +596,7 @@ export function createServer(opts = {}) {
         return err(res, 400, 'bad_request', 'Проверьте данные: новый пароль — от 8 символов');
       }
       const row = db.prepare('SELECT password FROM users WHERE id = ?').get(user.id);
-      if (!row || !verifyPassword(oldPassword, row.password)) {
+      if (!row || !(await verifyPasswordAsync(oldPassword, row.password))) {
         return err(res, 403, 'wrong_password', 'Текущий пароль указан неверно');
       }
       db.prepare('UPDATE users SET password = ? WHERE id = ?').run(hashPassword(newPassword), user.id);
@@ -528,14 +639,15 @@ export function createServer(opts = {}) {
         return err(res, 400, 'secret_key_missing', t('totp.keyMissing', {}, locale));
       }
       const secret = generateSecret();
-      db.prepare('UPDATE users SET totp_secret_enc = ? WHERE id = ?').run(encryptSecret(secretKey, secret), user.id);
+      db.prepare('UPDATE users SET totp_secret_enc = ?, totp_last_counter = NULL WHERE id = ?').run(encryptSecret(secretKey, secret), user.id);
       const codes = backupCodes();
       db.prepare('DELETE FROM totp_backup_codes WHERE user_id = ?').run(user.id);
       const nowIso = new Date().toISOString();
       for (const c of codes) {
-        // хеш нормализованного кода: при вводе регистр и разделители не важны
+        // хеш нормализованного кода как пароль (scrypt, P2-6): при вводе регистр
+        // и разделители не важны; несолёный sha256 больше не используется
         db.prepare('INSERT INTO totp_backup_codes (user_id, code_hash, created_at) VALUES (?,?,?)')
-          .run(user.id, sha256(normalizeBackupCode(c)), nowIso);
+          .run(user.id, hashPassword(normalizeBackupCode(c)), nowIso);
       }
       auditLog(db, user.id, 'totp.setup', user.id, {});
       const otpauth = `otpauth://totp/EnotDesk%3A${encodeURIComponent(user.login)}?secret=${secret}&issuer=EnotDesk&algorithm=SHA1&digits=6&period=30`;
@@ -553,7 +665,7 @@ export function createServer(opts = {}) {
         return err(res, 403, 'wrong_password', 'Текущий пароль указан неверно');
       }
       if (!row.totp_enabled) return err(res, 409, 'totp_not_enabled', t('totp.notEnabled', {}, locale));
-      db.prepare('UPDATE users SET totp_secret_enc = NULL, totp_enabled = 0 WHERE id = ?').run(user.id);
+      db.prepare('UPDATE users SET totp_secret_enc = NULL, totp_enabled = 0, totp_last_counter = NULL WHERE id = ?').run(user.id);
       db.prepare('DELETE FROM totp_backup_codes WHERE user_id = ?').run(user.id);
       // второй фактор снят: прочие токены умирают (как при смене пароля), текущий остаётся
       const current = sha256(bearer(req) ?? '');
@@ -703,6 +815,8 @@ export function createServer(opts = {}) {
     }
     if (p === '/contacts' && req.method === 'GET') {
       if (!user) return err(res, 401, 'unauthorized', 'Требуется авторизация');
+      // контакты — рабочие данные поддержки: auditor (только журналы) их не читает
+      if (!['admin', 'operator'].includes(user.role)) return err(res, 403, 'forbidden', 'Недостаточно прав');
       const { limit, offset } = listParams(url);
       const q = (url.searchParams.get('q') || '').trim();
       const where = q ? "WHERE ulower(name) LIKE ? OR ulower(notes) LIKE ?" : '';
@@ -808,14 +922,16 @@ export function createServer(opts = {}) {
     }
     m = p.match(/^\/sessions\/([^/]+)\/claim$/);
     if (m && req.method === 'POST') {
+      // лимиты ПОСЛЕ auth (P1-1): аноним без токена не выжигает ни IP-лимит
+      // операторов, ни порог известного sessionId
+      if (!user) return err(res, 401, 'unauthorized', 'Требуется авторизация');
+      if (!['admin', 'operator'].includes(user.role)) return err(res, 403, 'forbidden', 'Недостаточно прав');
       if (!cfg.limits.claim.take(`ip:${ip(req)}`) || !cfg.limits.claimId.take(`id:${m[1]}`)) {
         return err(res, 429, 'rate_limited', 'Слишком много попыток подключения');
       }
-      if (!user) return err(res, 401, 'unauthorized', 'Требуется авторизация');
-      if (!['admin', 'operator'].includes(user.role)) return err(res, 403, 'forbidden', 'Недостаточно прав');
       const generic = () => err(res, 400, 'bad_request', 'Не удалось подключиться: проверьте идентификатор и пароль');
       const s = db.prepare("SELECT * FROM sessions WHERE id = ?").get(m[1]);
-      if (!s || s.state !== 'waiting' || !verifyPassword(String(body?.password ?? ''), s.password_hash)) return generic();
+      if (!s || s.state !== 'waiting' || !(await verifyPasswordAsync(String(body?.password ?? ''), s.password_hash))) return generic();
       const claimId = newClaimId();
       const now = new Date().toISOString();
       const lease = new Date(Date.now() + cfg.leaseMs).toISOString();
@@ -875,15 +991,27 @@ export function createServer(opts = {}) {
     }
     if (p === '/rtc-config' && req.method === 'GET') {
       const s = hostTokenSession(req);
-      const authorized = s || authUser(req);
-      if (!authorized) return err(res, 401, 'unauthorized', 'Требуется авторизация');
+      const u = s ? null : authUser(req);
+      if (!s && !u) return err(res, 401, 'unauthorized', 'Требуется авторизация');
+      // Аудитор — наблюдатель журналов, в WebRTC-сеансах не участвует; отказ 403
+      // консистентен с прочими «поддерживающими» маршрутами (claim, machines),
+      // куда auditor тоже не допущен, и не раздаёт ему TURN-креденшелы.
+      if (u && u.role === 'auditor') return err(res, 403, 'forbidden', 'Недостаточно прав');
       const iceServers = [];
       if (cfg.turnUrls) {
-        iceServers.push({
-          urls: cfg.turnUrls.split(',').map((u) => u.trim()).filter(Boolean),
-          username: cfg.turnUsername,
-          credential: cfg.turnPassword,
-        });
+        const urls = cfg.turnUrls.split(',').map((x) => x.trim()).filter(Boolean);
+        if (cfg.turnSecret) {
+          // Эфемерный кред coturn REST API (use-auth-secret): username — метка
+          // истечения (unix-секунды), credential — base64(HMAC-SHA1(секрет,
+          // username)); живой coturn ждёт именно SHA1, SHA256 отвергает.
+          // Статический пароль из конфига клиентам больше не раздаётся (P1-2).
+          const username = String(Math.floor(Date.now() / 1000) + 3600);
+          const credential = crypto.createHmac('sha1', cfg.turnSecret).update(username).digest('base64');
+          iceServers.push({ urls, username, credential });
+        } else {
+          // без ENOT_TURN_SECRET — прежнее статическое поведение
+          iceServers.push({ urls, username: cfg.turnUsername, credential: cfg.turnPassword });
+        }
       }
       return ok(res, 200, { iceServers });
     }
@@ -938,11 +1066,13 @@ export function createServer(opts = {}) {
     m = p.match(/^\/machines\/([^/]+)\/claim$/);
     if (m && req.method === 'POST') {
       const locale = pickLocale(req.headers['accept-language']);
+      // лимиты ПОСЛЕ auth (P1-1): аноним не выжигает IP-лимит операторов и не
+      // подбирает PIN известной машины через неавторизованный флуд
+      if (!user) return err(res, 401, 'unauthorized', 'Требуется авторизация');
+      if (!['admin', 'operator'].includes(user.role)) return err(res, 403, 'forbidden', 'Недостаточно прав');
       if (!cfg.limits.machineClaim.take(`ip:${ip(req)}`) || cfg.limits.machineClaimId.exceeded(`id:${m[1]}`)) {
         return err(res, 429, 'rate_limited', t('machines.claimLimited', {}, locale));
       }
-      if (!user) return err(res, 401, 'unauthorized', 'Требуется авторизация');
-      if (!['admin', 'operator'].includes(user.role)) return err(res, 403, 'forbidden', 'Недостаточно прав');
       const machine = machinesStore.get(m[1]);
       if (!machine) return err(res, 404, 'not_found', t('machines.notFound', {}, locale));
       // отказ политики фиксируется в аудите; значение PIN в тексты и журнал не подставляется
@@ -962,7 +1092,7 @@ export function createServer(opts = {}) {
       if (machine.pin_hash) {
         const pin = body?.pin;
         if (typeof pin !== 'string' || !pin) return deny('pin_required', 'machines.pinRequired', 400);
-        if (!machinesStore.verifyPin(machine, pin)) {
+        if (!(await machinesStore.verifyPinAsync(machine, pin))) {
           // порог бьют только неудачные попытки: верный PIN не остаётся запертым
           cfg.limits.machineClaimId.take(`id:${machine.id}`);
           return deny('bad_pin', 'machines.badPin', 403);
@@ -1171,7 +1301,11 @@ export function createServer(opts = {}) {
       let data;
       try { data = fs.readFileSync(new URL(`../assets/${name}`, import.meta.url)); }
       catch { return err(res, 404, 'not_found', 'Файл не найден'); }
-      res.writeHead(200, { 'Content-Type': BRAND_FILES[name], 'Cache-Control': 'public, max-age=3600' });
+      res.writeHead(200, {
+        'Content-Type': BRAND_FILES[name],
+        'Cache-Control': 'public, max-age=3600',
+        'X-Content-Type-Options': 'nosniff',
+      });
       res.end(data);
       return;
     }
@@ -1191,6 +1325,7 @@ export function createServer(opts = {}) {
         'Accept-Ranges': 'bytes',
         'Last-Modified': new Date(file.mtimeMs).toUTCString(),
         'ETag': etag,
+        'X-Content-Type-Options': 'nosniff',
       };
       // качалка уже скачала эту версию — не перекачиваем гигабайты
       if (req.headers['if-none-match'] === etag) {
@@ -1232,19 +1367,20 @@ export function createServer(opts = {}) {
       let data;
       try { data = fs.readFileSync(new URL(group.dir + name, import.meta.url)); }
       catch { return err(res, 404, 'not_found', 'Файл не найден'); }
-      res.writeHead(200, { 'Content-Type': type, 'Cache-Control': 'no-cache' });
+      res.writeHead(200, { 'Content-Type': type, 'Cache-Control': 'no-cache', 'X-Content-Type-Options': 'nosniff' });
       return res.end(data);
     }
     if (p === '/operator' && req.method === 'GET' && !req.url.startsWith('/api')) {
       const locale = pickLocale(req.headers['accept-language']);
-      // Навигация браузера не шлёт Authorization: роль берём из cookie, которую
-      // ставит сама страница после login; каждый /api и WS всё равно за RBAC.
+      // Навигация браузера не шлёт Authorization: cookie выбирает только вариант
+      // страницы и хранит РОЛЬ, не токен (SEC-008) — bearer живёт в памяти страницы,
+      // а каждый /api и WS всё равно за RBAC.
       const cookie = /(?:^|;\s*)enot_op=([^;]+)/.exec(req.headers.cookie ?? '');
-      const opUser = user ?? (cookie
-        ? authUser({ headers: { authorization: `Bearer ${decodeURIComponent(cookie[1])}` }, socket: { remoteAddress: '' } })
-        : null);
-      const status = opUser && ['admin', 'operator'].includes(opUser.role) ? 200
-        : opUser?.role === 'auditor' ? 403 : 401;
+      let cookieRole = null;
+      if (cookie) { try { cookieRole = decodeURIComponent(cookie[1]); } catch { cookieRole = cookie[1]; } }
+      const opRole = user?.role ?? (['admin', 'operator', 'auditor'].includes(cookieRole) ? cookieRole : null);
+      const status = opRole === 'admin' || opRole === 'operator' ? 200
+        : opRole === 'auditor' ? 403 : 401;
       return operatorPage(res, status, locale, t('web.title', {}, locale), cfg.version);
     }
 
@@ -1281,6 +1417,13 @@ export function createServer(opts = {}) {
   server.on('upgrade', (req, socket, head) => {
     const url = new URL(req.url, `http://${req.headers.host || 'localhost'}`);
     if (url.pathname !== '/signal') { socket.destroy(); return; }
+    // лимит до всякой аутентификации: анонимный стук в /signal не держит
+    // сокеты и рукопожатия (P2-3)
+    if (!cfg.limits.wsUpgrade.take(ip(req))) {
+      socket.write('HTTP/1.1 429 Too Many Requests\r\nConnection: close\r\n\r\n');
+      socket.destroy();
+      return;
+    }
     const origin = req.headers.origin;
     if (origin) {
       let same;
@@ -1302,6 +1445,7 @@ export function createServer(opts = {}) {
     // превышение maxPayload и сетевые сбои приходят ошибкой; ws сам закрывает 1009
     ws.on('error', () => {});
     const authTimer = setTimeout(() => { if (!authed) ws.close(4001, 'auth-timeout'); }, cfg.authTimeoutMs);
+    authTimer.unref(); // не держим процесс ради таймера аутентификации
 
     ws.on('close', () => {
       clearTimeout(authTimer);

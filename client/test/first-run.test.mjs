@@ -86,3 +86,51 @@ test('пустые saved и baked не отваливают дефолт', () =>
     { url: 'http://127.0.0.1:8080', source: 'default' },
   );
 });
+
+// ---- SEC-006: provisioned (file/baked) не-loopback http отклоняется; ----
+// allowInsecureHttp на эти источники не распространяется, loopback http допустим.
+
+test('SEC-006: http не-loopback в файле рядом с exe — источник отклонён (подброшенный txt)', () => {
+  const t = makeExeDir({ withFile: 'http://evil.example.com\n' });
+  try {
+    assert.deepEqual(
+      resolveServerUrl({ saved: null, execPath: t.execPath, baked: null }),
+      { url: 'http://127.0.0.1:8080', source: 'default' },
+    );
+  } finally { t.cleanup(); }
+});
+
+test('SEC-006: http не-loopback в baked отклонён; loopback http и https из файла работают', () => {
+  assert.deepEqual(
+    resolveServerUrl({ saved: null, execPath: null, baked: 'http://evil.example.com' }),
+    { url: 'http://127.0.0.1:8080', source: 'default' },
+  );
+  const t = makeExeDir({ withFile: 'http://127.0.0.1:9999' });
+  try {
+    assert.deepEqual(
+      resolveServerUrl({ saved: null, execPath: t.execPath, baked: null }),
+      { url: 'http://127.0.0.1:9999', source: 'file' },
+    );
+  } finally { t.cleanup(); }
+});
+
+// ---- SEC-007: saved (settings.json) проходит normalizeServerUrl при старте; ----
+// невалидный адрес — источник пропущен, победил дефолт.
+
+test('SEC-007: мусор в saved игнорируется — дефолт', () => {
+  assert.deepEqual(
+    resolveServerUrl({ saved: 'не адрес', execPath: null, baked: null }),
+    { url: 'http://127.0.0.1:8080', source: 'default' },
+  );
+});
+
+test('SEC-007: не-loopback http в saved без галочки отклонён, с явной галочкой — принят', () => {
+  assert.deepEqual(
+    resolveServerUrl({ saved: 'http://192.168.1.10:8080', savedAllowInsecureHttp: false, execPath: null, baked: null }),
+    { url: 'http://127.0.0.1:8080', source: 'default' },
+  );
+  assert.deepEqual(
+    resolveServerUrl({ saved: 'http://192.168.1.10:8080', savedAllowInsecureHttp: true, execPath: null, baked: null }),
+    { url: 'http://192.168.1.10:8080', source: 'saved' },
+  );
+});

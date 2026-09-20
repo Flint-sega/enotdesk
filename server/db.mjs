@@ -1,7 +1,7 @@
 import { DatabaseSync } from 'node:sqlite';
 
 // Последняя версия схемы; растёт с каждым версионированным шагом (A01 и далее).
-export const SCHEMA_VERSION = 5;
+export const SCHEMA_VERSION = 6;
 
 // Версионированные шаги схемы (A01): каждая база — старая или новая — проходит
 // недостающие шаги по порядку, версия хранится в таблице schema_version.
@@ -129,7 +129,7 @@ const MIGRATIONS = [
   {
     // D2 (R11): TOTP-2FA операторов. Секрет хранится шифротекстом AES-256-GCM
     // от ENOT_SECRET_KEY (server/totp.mjs), включается после подтверждения первым
-    // успешным кодом. Резервные коды — только sha256-хеши, одноразовые.
+    // успешным кодом. Резервные коды — только хеши паролей (scrypt), одноразовые.
     version: 5,
     up: (db) => {
       try { db.exec('ALTER TABLE users ADD COLUMN totp_secret_enc TEXT'); } catch { /* колонка уже есть */ }
@@ -141,6 +141,15 @@ const MIGRATIONS = [
           created_at TEXT NOT NULL
         );
       `);
+    },
+  },
+  {
+    // Replay-защита TOTP: последний принятый счётчик шага (30 с). Код шага
+    // N принят только при counter > totp_last_counter, иначе это повтор.
+    // NULL — 2FA ещё не подтверждена логином; резервные коды счётчик не двигают.
+    version: 6,
+    up: (db) => {
+      try { db.exec('ALTER TABLE users ADD COLUMN totp_last_counter INTEGER'); } catch { /* колонка уже есть */ }
     },
   },
 ];

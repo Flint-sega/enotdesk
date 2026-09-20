@@ -24,12 +24,13 @@ export async function startServer(t, extra = {}) {
   return { inst, port, base: `http://127.0.0.1:${port}` };
 }
 
-export async function api(base, method, p, { token, body } = {}) {
+export async function api(base, method, p, { token, body, headers = {} } = {}) {
   const res = await fetch(base + '/api/v1' + p, {
     method,
     headers: {
       'Content-Type': 'application/json',
       ...(token ? { Authorization: `Bearer ${token}` } : {}),
+      ...headers,
     },
     body: body !== undefined ? JSON.stringify(body) : undefined,
   });

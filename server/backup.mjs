@@ -21,6 +21,8 @@ export function backupDb(dbPath, backupDir, { keep = 10, stamp = new Date(), lis
   } finally {
     src.close();
   }
+  // дамп содержит хеши/секреты всей базы — читать его должен только владелец
+  try { fs.chmodSync(target, 0o600); } catch { /* экзотические ФС — оставляем как есть */ }
   // ретенция: свежие keep дампов, включая только что созданный
   const dumps = listDir(backupDir).filter((f) => STAMP_RE.test(f)).sort().reverse();
   const removed = [];

@@ -15,10 +15,11 @@ export const DEFAULT_SERVER_URL = 'http://127.0.0.1:8080';
 const FILE_LIMIT_BYTES = 4096;
 
 // Адрес из файла или baked задан намеренно (сборщик/self-hostер), а не напечатан
-// вслепую, поэтому валидируем как осознанный выбор: внешний http допустим
-// (типичный self-host LAN без TLS). Мусор и не-http(s) всё равно отклоняются.
+// вслепую — но allowInsecureHttp на эти источники всё равно не распространяется
+// (SEC-006): не-loopback http из подброшенного файла/сборки отклоняется. Loopback
+// http допустим (дефолт 127.0.0.1:8080 — он и есть http), https — всегда.
 function validateProvisioned(raw) {
-  return normalizeServerUrl(raw, { allowInsecureHttp: true });
+  return normalizeServerUrl(raw);
 }
 
 // null — файла нет или он не читается: источник честно пропускается.
@@ -45,11 +46,15 @@ function firstNonEmptyLine(text) {
 }
 
 // saved.json пишется экраном настроек, который уже прогнал normalizeServerUrl;
-// рука пользователя в settings.json — как и раньше, доверяем как есть.
-function savedCandidate(saved) {
+// рука в settings.json и протухший/сломанный адрес не доверяются вслепую (SEC-007):
+// та же валидация при каждом старте, невалидный — источник пропущен (дефолт).
+// savedAllowInsecureHttp — явная галочка «Разрешить HTTP» из тех же настроек.
+function savedCandidate(saved, savedAllowInsecureHttp) {
   if (typeof saved !== 'string') return null;
   const trimmed = saved.trim();
-  return trimmed ? { url: trimmed, source: 'saved' } : null;
+  if (!trimmed) return null;
+  const norm = normalizeServerUrl(trimmed, { allowInsecureHttp: savedAllowInsecureHttp === true });
+  return norm.ok ? { url: norm.url, source: 'saved' } : null;
 }
 
 function provisionedCandidate(raw, source) {
@@ -58,8 +63,8 @@ function provisionedCandidate(raw, source) {
   return norm.ok ? { url: norm.url, source } : null;
 }
 
-export function resolveServerUrl({ saved = null, execPath = null, baked = null, defaultUrl = DEFAULT_SERVER_URL } = {}) {
-  const candidates = [savedCandidate(saved)];
+export function resolveServerUrl({ saved = null, savedAllowInsecureHttp = false, execPath = null, baked = null, defaultUrl = DEFAULT_SERVER_URL } = {}) {
+  const candidates = [savedCandidate(saved, savedAllowInsecureHttp)];
 
   if (typeof execPath === 'string' && execPath) {
     const text = readServerFile(path.dirname(execPath));

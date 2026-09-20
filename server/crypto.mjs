@@ -1,4 +1,5 @@
 import crypto from 'node:crypto';
+import { promisify } from 'node:util';
 
 const SCRYPT = { N: 16384, r: 8, p: 1, maxmem: 64 * 1024 * 1024 };
 
@@ -13,6 +14,22 @@ export function verifyPassword(password, stored) {
   if (tag !== 's1' || !saltHex || !hashHex) return false;
   const hash = crypto.scryptSync(password, Buffer.from(saltHex, 'hex'), 64, SCRYPT);
   return crypto.timingSafeEqual(hash, Buffer.from(hashHex, 'hex'));
+}
+
+// Асинхронный scrypt для путьей запросов (логин, claim, смена пароля): не
+// блокирует event loop на ~50 мс на каждый вызов, поведение идентично sync-версии.
+// hashPassword остаётся синхронным — он нужен на не-запросных путях (bootstrap).
+const scryptAsync = promisify(crypto.scrypt);
+
+export async function verifyPasswordAsync(password, stored) {
+  const [tag, saltHex, hashHex] = String(stored).split('$');
+  if (tag !== 's1' || !saltHex || !hashHex) return false;
+  try {
+    const hash = await scryptAsync(password, Buffer.from(saltHex, 'hex'), 64, SCRYPT);
+    return crypto.timingSafeEqual(hash, Buffer.from(hashHex, 'hex'));
+  } catch {
+    return false;
+  }
 }
 
 export function newToken() {

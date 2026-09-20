@@ -1,8 +1,8 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import crypto from 'node:crypto';
-import { generateSecret, verifyCode, backupCodes, normalizeBackupCode, secretKeyBytes, encryptSecret, decryptSecret } from '../totp.mjs';
-import { sha256 } from '../crypto.mjs';
+import { generateSecret, verifyCode, matchCounter, backupCodes, normalizeBackupCode, secretKeyBytes, encryptSecret, decryptSecret } from '../totp.mjs';
+import { sha256, verifyPassword } from '../crypto.mjs';
 import { startServer, api, adminLogin, tmpDb, ADMIN } from './util.mjs';
 
 // Независимая реализация (HMAC-SHA1 + динамическая обрезка, RFC 4227/6238) —
@@ -171,12 +171,15 @@ test('полный путь: включение → подтверждение �
   assert.equal(again.status, 409);
   assert.equal(again.json.error.code, 'totp_already');
 
-  // логин без кода → totp_required; с неверным паролем — ТОТ ЖЕ ответ: не раскрываем
+  // логин без кода → totp_required (только после ВЕРНОГО пароля);
+  // неверный пароль без кода — generic invalid_credentials: аноним не узнаёт,
+  // что у аккаунта 2FA, пока не знает пароль
   const noCode = await api(base, 'POST', '/auth/login', { body: { login: ADMIN.login, password: ADMIN.password } });
   assert.equal(noCode.status, 401);
   assert.equal(noCode.json.error.code, 'totp_required');
   const wrongPw = await api(base, 'POST', '/auth/login', { body: { login: ADMIN.login, password: 'точно-не-пароль' } });
-  assert.deepEqual(wrongPw.json.error, noCode.json.error, 'totp_required не раскрывает верность пароля');
+  assert.equal(wrongPw.status, 401);
+  assert.equal(wrongPw.json.error.code, 'invalid_credentials', 'неверный пароль — generic отказ, не totp_required');
 
   // верный пароль + неверный код → тот же invalid_credentials, что и при неверном пароле (нет оракула)
   const stale = refCode(RFC_SECRET, 60); // давний код (счётчик 2) точно мимо нынешнего окна
@@ -203,10 +206,14 @@ test('полный путь: включение → подтверждение �
   });
   assert.equal(bkAgain.status, 401);
 
-  // в БД только хеши, использованный удалён
+  // в БД только scrypt-хеши (P2-6), использованный удалён
   const hashes = db.prepare('SELECT code_hash FROM totp_backup_codes WHERE user_id = ?').all(admin.user.id);
   assert.equal(hashes.length, 9);
-  assert.ok(hashes.some((h) => h.code_hash === sha256(normalizeBackupCode(codes[1]))), 'хранится sha256 нормализованного кода');
+  assert.ok(hashes.every((h) => h.code_hash.startsWith('s1$')), 'хранятся scrypt-хеши, не sha256');
+  assert.ok(
+    hashes.some((h) => verifyPassword(normalizeBackupCode(codes[1]), h.code_hash)),
+    'хранится scrypt-хеш нормализованного кода',
+  );
   assert.ok(!hashes.some((h) => h.code_hash === codes[1]), 'открытых кодов в БД нет');
 
   // отключение: неверный пароль → 403, верный → 200, вход снова без кода
@@ -253,4 +260,76 @@ test('включение требует авторизацию и текущий
   const dis = await api(base, 'POST', '/auth/totp/disable', { token: admin.token, body: { password: admin.password } });
   assert.equal(dis.status, 409);
   assert.equal(dis.json.error.code, 'totp_not_enabled');
+});
+
+test('matchCounter: знает, какой шаг совпал (для replay-защиты)', () => {
+  assert.equal(matchCounter(RFC_SECRET, '287082', { now: 59_000 }), 1, 'T=59 → счётчик 1');
+  assert.equal(matchCounter(RFC_SECRET, refCode(RFC_SECRET, 29), { now: 59_000 }), 0, 'шаг −1');
+  assert.equal(matchCounter(RFC_SECRET, '287081', { now: 59_000 }), null, 'мимо окна');
+  assert.equal(matchCounter(RFC_SECRET, 'мусор', { now: 59_000 }), null);
+});
+
+test('replay: тот же TOTP-код второй раз — отказ, соседний свежий код работает', async (t) => {
+  const { base, admin, db } = await setup(t, { secretKey: 'a'.repeat(64) });
+  const en = await api(base, 'POST', '/auth/totp/enable', { token: admin.token, body: { password: admin.password } });
+  const secret = en.json.secret;
+  await api(base, 'POST', '/auth/totp/enable', { token: admin.token, body: { password: admin.password, code: refCode(secret, Date.now() / 1000) } });
+
+  const first = await api(base, 'POST', '/auth/login', {
+    body: { login: ADMIN.login, password: ADMIN.password, totp: refCode(secret, Date.now() / 1000) },
+  });
+  assert.equal(first.status, 200);
+  // повтор того же кода (тот же 30-с шаг) — отказ
+  const replay = await api(base, 'POST', '/auth/login', {
+    body: { login: ADMIN.login, password: ADMIN.password, totp: refCode(secret, Date.now() / 1000) },
+  });
+  assert.equal(replay.status, 401);
+  assert.equal(replay.json.error.code, 'invalid_credentials', 'повтор кода — generic отказ');
+  // код следующего шага (в окне ±1) принят и счётчик сдвинут
+  const next = await api(base, 'POST', '/auth/login', {
+    body: { login: ADMIN.login, password: ADMIN.password, totp: refCode(secret, Date.now() / 1000 + 30) },
+  });
+  assert.equal(next.status, 200);
+  const row = db.prepare('SELECT totp_last_counter FROM users WHERE id = ?').get(admin.user.id);
+  const expected = Math.floor(Date.now() / 1000 / 30) + 1;
+  assert.ok(Math.abs(row.totp_last_counter - expected) <= 1, 'счётчик последнего шага записан');
+});
+
+test('резервные коды старого sha256-формата — честный отказ backup_codes_legacy_reset', async (t) => {
+  const { base, admin, db } = await setup(t, { secretKey: 'a'.repeat(64) });
+  const en = await api(base, 'POST', '/auth/totp/enable', { token: admin.token, body: { password: admin.password } });
+  const secret = en.json.secret;
+  await api(base, 'POST', '/auth/totp/enable', { token: admin.token, body: { password: admin.password, code: refCode(secret, Date.now() / 1000) } });
+
+  // подменяем коды на хеши старого формата (несолёный sha256, как до P2-6)
+  const legacyCode = 'TEST-CODE-42';
+  db.prepare('DELETE FROM totp_backup_codes WHERE user_id = ?').run(admin.user.id);
+  db.prepare('INSERT INTO totp_backup_codes (user_id, code_hash, created_at) VALUES (?,?,?)')
+    .run(admin.user.id, sha256(normalizeBackupCode(legacyCode)), new Date().toISOString());
+
+  // вход резервным кодом старого формата — отказ с честным кодом ошибки
+  const legacy = await api(base, 'POST', '/auth/login', {
+    body: { login: ADMIN.login, password: ADMIN.password, totp: legacyCode },
+  });
+  assert.equal(legacy.status, 401);
+  assert.equal(legacy.json.error.code, 'backup_codes_legacy_reset');
+
+  // случайный неверный код — обычный invalid_credentials, а не legacy_reset
+  const wrong = await api(base, 'POST', '/auth/login', {
+    body: { login: ADMIN.login, password: ADMIN.password, totp: 'ZZZZ-ZZZZ' },
+  });
+  assert.equal(wrong.status, 401);
+  assert.equal(wrong.json.error.code, 'invalid_credentials');
+
+  // аккаунт не заблокирован: TOTP-код работает; перевыпуск (disable → enable) возвращает scrypt-коды
+  const viaTotp = await api(base, 'POST', '/auth/login', {
+    body: { login: ADMIN.login, password: ADMIN.password, totp: refCode(secret, Date.now() / 1000 + 30) },
+  });
+  assert.equal(viaTotp.status, 200);
+  await api(base, 'POST', '/auth/totp/disable', { token: viaTotp.json.token, body: { password: admin.password } });
+  const re = await api(base, 'POST', '/auth/totp/enable', { token: viaTotp.json.token, body: { password: admin.password } });
+  assert.equal(re.status, 200);
+  const hashes = db.prepare('SELECT code_hash FROM totp_backup_codes WHERE user_id = ?').all(admin.user.id);
+  assert.equal(hashes.length, 10);
+  assert.ok(hashes.every((h) => h.code_hash.startsWith('s1$')), 'перевыпущенные коды — scrypt');
 });

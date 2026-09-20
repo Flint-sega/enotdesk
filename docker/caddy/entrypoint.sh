@@ -3,7 +3,27 @@
 # без DOMAIN — честный HTTP на :80 с предупреждением в логах (spec, история 2).
 set -eu
 
+# Хостнейм-валидация DOMAIN (P2-15) перед интерполяцией в Caddyfile:
+# ^[A-Za-z0-9.-]+(:[0-9]+)?$ — только буквы/цифры/точки/дефисы, порт опционален.
+valid_hostport() {
+  case "$1" in
+    *:*)
+      h="${1%:*}"; p="${1##*:}"
+      case "$p" in ''|*[!0-9]*) return 1 ;; esac
+      case "$h" in ''|*[!A-Za-z0-9.-]*) return 1 ;; esac
+      ;;
+    *)
+      case "$1" in ''|*[!A-Za-z0-9.-]*) return 1 ;; esac
+      ;;
+  esac
+  return 0
+}
+
 if [ -n "${DOMAIN:-}" ]; then
+  if ! valid_hostport "$DOMAIN"; then
+    echo "ENOTDESK: DOMAIN не похож на имя хоста (допустимы буквы, цифры, точка, дефис; опционально :порт) — Caddyfile не записан, отказ." >&2
+    exit 1
+  fi
   addr="$DOMAIN"
 else
   addr=":80"

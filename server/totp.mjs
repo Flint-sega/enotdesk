@@ -1,7 +1,7 @@
 import crypto from 'node:crypto';
 
 // TOTP-2FA (D2, R11): RFC 6238 поверх base32-секрета, окно ±1 шаг (30 с),
-// константное сравнение. Резервные коды — одноразовые, в БД только их sha256.
+// константное сравнение. Резервные коды — одноразовые, в БД хеши паролей (scrypt).
 // Секрет пользователя хранится шифротекстом AES-256-GCM от ключа ENOT_SECRET_KEY
 // (тот же механизм пригоден и для прочих секретов, например webhook'ов):
 // шифрование/расшифровка здесь, детали формата наружу не выходят.
@@ -68,15 +68,21 @@ function sameCode(expected, given) {
 
 // verifyCode(secret, code, {now}) — код текущего шага или соседних ±1.
 export function verifyCode(secret, code, { now = Date.now() } = {}) {
+  return matchCounter(secret, code, { now }) !== null;
+}
+
+// Счётчик совпавшего шага (для replay-защиты: код шага N принимается один раз)
+// или null, если код мимо окна/невалиден.
+export function matchCounter(secret, code, { now = Date.now() } = {}) {
   const keyBytes = base32Decode(secret);
-  if (!keyBytes) return false;
+  if (!keyBytes) return null;
   const given = String(code ?? '').replace(/[\s-]/g, '');
-  if (!/^\d{6}$/.test(given)) return false;
+  if (!/^\d{6}$/.test(given)) return null;
   const counter = Math.floor(now / 1000 / STEP_SEC);
   for (let shift = -WINDOW; shift <= WINDOW; shift++) {
-    if (sameCode(hotp(keyBytes, counter + shift), given)) return true;
+    if (sameCode(hotp(keyBytes, counter + shift), given)) return counter + shift;
   }
-  return false;
+  return null;
 }
 
 // 10 резервных кодов, формат XXXX-XXXX (40 бит случайности на код).

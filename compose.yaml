@@ -3,6 +3,20 @@
 
 name: enotdesk
 
+# Общий хардненинг контейнеров (см. комментарии у сервисов):
+# - read_only: корневая ФС только для чтения, запись — только в томах и tmpfs;
+# - cap_drop: ALL + только нужные capability (caddy: NET_BIND_SERVICE для 80/443;
+#   enotdesk и coturn слушают порты >1024 — capability не нужны);
+# - no-new-privileges: процессы не поднимают привилегии через suid/файлы.
+# Секреты (TURN_SECRET) нигде не попадают в argv: coturn читает их из
+# конфиг-файла, который его entrypoint генерирует в tmpfs (docker/coturn/entrypoint.sh).
+
+x-hardening: &hardening
+  read_only: true
+  cap_drop: ["ALL"]
+  security_opt:
+    - no-new-privileges:true
+
 services:
   enotdesk:
     build: .
@@ -10,6 +24,9 @@ services:
     restart: unless-stopped
     # Замечание: coturn работает в network_mode: host (см. ниже), поэтому прямых
     # зависимостей по сети нет; caddy ждёт старта enotdesk.
+    <<: *hardening
+    tmpfs:
+      - /tmp
     environment:
       ENOT_HOST: 0.0.0.0
       ENOT_PORT: 8080
@@ -20,6 +37,8 @@ services:
       ENOT_TURN_URLS: ${ENOT_TURN_URLS:-}
       ENOT_TURN_USERNAME: ${TURN_USERNAME:-}
       ENOT_TURN_PASSWORD: ${TURN_PASSWORD:-}
+      # Секрет уходит и серверу (эфемерные TURN-креды из ENOT_TURN_SECRET, server/),
+      # и контейнеру coturn — оба через окружение контейнера, не через argv.
       ENOT_TURN_SECRET: ${TURN_SECRET:?Задай TURN_SECRET в .env — секрет TURN-сервера, см. .env.example}
     volumes:
       - enotdesk-data:/data
@@ -37,27 +56,31 @@ services:
 
   coturn:
     # TURN из коробки (история 4): static-auth-secret из env, realm из DOMAIN.
+    # Секрет НЕ передаётся через argv (виден в docker inspect/ps): entrypoint
+    # генерирует /run/turnserver.conf (tmpfs, 0600), turnserver читает его флагом -c.
     image: coturn/coturn:4.6-alpine
     restart: unless-stopped
     # host-сеть: релейные кандидаты обязаны видеть внешний адрес машины,
     # проброс портов контейнера для TURN не работает без --external-ip.
     # Требование: Linux-хост (VPS). На Docker Desktop может не релеить — честно см. docker/README.md.
     network_mode: host
-    command:
-      - -c
-      - /dev/null
-      - --use-auth-secret
-      - --static-auth-secret=${TURN_SECRET:?Задай TURN_SECRET в .env — секрет TURN-сервера, см. .env.example}
-      - --realm=${DOMAIN:-localhost}
-      - --listening-port=3478
-      - --no-tls
-      - --no-dtls
-      # Релейные порты (открыть на хосте: 3478/tcp+udp и 49160-49200/udp)
-      - --min-port=49160
-      - --max-port=49200
-      - --fingerprint
-      - --no-multicast-peers
-      - --no-cli
+    <<: *hardening
+    # Файл-capability cap_net_bind_service=ep, зашитая в бинарник turnserver
+    # официальным образом (для дефолтного порта 443), требует её же в bounding-set
+    # контейнера — иначе exec EPERM. Наши порты (3478, 49160+) >1024 — для
+    # привязки capability не используется, но без неё процесс не стартует.
+    cap_add:
+      - "NET_BIND_SERVICE"
+    tmpfs:
+      # Конфиг с секретом и pid-файл живут только в памяти (alpine: /var/run → /run).
+      # uid/gid — nobody контейнера coturn (образ по умолчанию работает как nobody).
+      - /run:mode=0700,uid=65534,gid=65533
+    environment:
+      TURN_SECRET: ${TURN_SECRET:?Задай TURN_SECRET в .env — секрет TURN-сервера, см. .env.example}
+      DOMAIN: ${DOMAIN:-}
+    volumes:
+      - ./docker/coturn/entrypoint.sh:/entrypoint.sh:ro
+    entrypoint: ["sh", "/entrypoint.sh"]
 
   caddy:
     # Авто-TLS (Let's Encrypt) при заданном DOMAIN; без домена — HTTP :80 с честным
@@ -66,6 +89,12 @@ services:
     restart: unless-stopped
     depends_on:
       - enotdesk
+    <<: *hardening
+    # 80/443 — привилегированные порты, иначе cap_drop: ALL и не нужно ничего.
+    cap_add:
+      - "NET_BIND_SERVICE"
+    tmpfs:
+      - /tmp
     ports:
       - "80:80"
       - "443:443"

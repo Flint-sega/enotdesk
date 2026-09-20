@@ -1,5 +1,5 @@
 import crypto from 'node:crypto';
-import { hashPassword, verifyPassword, newToken, sha256 } from './crypto.mjs';
+import { hashPassword, verifyPassword, verifyPasswordAsync, newToken, sha256 } from './crypto.mjs';
 
 // Машины (unattended): onboarding-коды, группы строкой, PIN.
 // Наружу отдаются только sanitized-объекты (out): PIN, токен агента и
@@ -136,6 +136,13 @@ export function createMachinesStore(db, { nowMs = Date.now, onlineWindowMs = ONL
       const row = typeof machineOrId === 'string' ? get(machineOrId) : machineOrId;
       if (!row || row.pin_hash == null) return false;
       try { return verifyPassword(String(pin), row.pin_hash); } catch { return false; }
+    },
+
+    // Асинхронный вариант для пути запроса claim: scrypt не блокирует event loop.
+    async verifyPinAsync(machineOrId, pin) {
+      const row = typeof machineOrId === 'string' ? get(machineOrId) : machineOrId;
+      if (!row || row.pin_hash == null) return false;
+      return verifyPasswordAsync(String(pin), row.pin_hash);
     },
 
     machineByToken(token) {

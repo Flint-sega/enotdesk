@@ -1,8 +1,8 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { t, setLocale, getLocale, initLocale, pickLocale } from '../lib/i18n.mjs';
-import ru from '../locales/ru.json' with { type: 'json' };
-import en from '../locales/en.json' with { type: 'json' };
+import ru from '../locales/ru.mjs';
+import en from '../locales/en.mjs';
 
 // Шов i18n (interfaces.md): t/setLocale/initLocale, словари, фолбэк en.
 // Ожидаемые значения — из словарей как из данных, не из кода под тестом.

@@ -42,11 +42,14 @@ test('contacts: CRUD, конфликт revision 409, поиск, пагинац�
   assert.equal(sid.json.total, 1);
   assert.equal(sid.json.items[0].name, 'Мария Сидорова');
 
+  // auditor контакты не читает (P2-8): только журналы и история
+  assert.equal((await api(base, 'GET', '/contacts', { token: aud.token })).status, 403);
+
   // пагинация
-  const page1 = await api(base, 'GET', '/contacts?limit=2&offset=0', { token: aud.token });
+  const page1 = await api(base, 'GET', '/contacts?limit=2&offset=0', { token: op.token });
   assert.equal(page1.json.items.length, 2);
   assert.equal(page1.json.total, 3);
-  const page2 = await api(base, 'GET', '/contacts?limit=2&offset=2', { token: aud.token });
+  const page2 = await api(base, 'GET', '/contacts?limit=2&offset=2', { token: op.token });
   assert.equal(page2.json.items.length, 1);
 
   // lost-update: оба обновляют с revision=1, второй получает 409
