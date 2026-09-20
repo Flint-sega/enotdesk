@@ -13,7 +13,7 @@ window.STATE =
   "conventionsFile": "AGENTS.md",
   "skillDir": "/Users/admin/.zcode/skills/foreman",
   "startedAt": "2026-09-17T23:37:45+03:00",
-  "updatedAt": "2026-09-18T04:00:19+03:00",
+  "updatedAt": "2026-09-18T04:11:09+03:00",
   "finishedAt": null,
   "stages": [
     {
@@ -170,7 +170,7 @@ window.STATE =
       "handoffs": 0,
       "startedAt": "2026-09-18T00:05:40+03:00",
       "finishedAt": "2026-09-18T00:31:57+03:00",
-      "commit": "b8b669a",
+      "commit": "b8b669a + шифрование секрета 9b8c72b",
       "tests": {
         "passed": 230,
         "failed": 0
@@ -322,7 +322,6 @@ window.STATE =
     "[Report] T02: серверные страницы — язык только по Accept-Language, переключателя нет",
     "[Report] T04: claim отозванной машины не шлёт machine.claim.denied (webhook) — следующим проходом",
     "[Report] T04: ретраи [1,10,60]с не зафиксированы тестом дефолта — допустимо",
-    "[Report] T04/T09: webhook secret лежит открыто; шифрование AES-GCM — хелперы готовы в totp.mjs, подключить следующим проходом",
     "[Report] T04/T09: часть текстов маршрутов hardcoded ru вместо словарей — унифицировать",
     "[Report] T06: дубль match-блоков /machines/:id в app.mjs (косметика)",
     "[Report] T07: PIN через window.prompt (не поле в панели)",

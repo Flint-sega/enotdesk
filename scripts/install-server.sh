@@ -95,6 +95,44 @@ EOF
 
 die() { echo "ОШИБКА: $*" >&2; exit 1; }
 info() { echo "==> $*"; }
+
+# P2-15: хостнейм ^[A-Za-z0-9.-]+$ — только буквы/цифры/точки/дефисы; всё, что
+# в него не помещается (пробелы, ;, `, $, переводы строк), честно отклоняется
+# до интерполяции в Caddyfile/turnserver.conf/env-файл.
+valid_host() {
+  case "$1" in
+    ''|*[!A-Za-z0-9.-]*) return 1 ;;
+  esac
+  return 0
+}
+
+# ENOT_PUBLIC_URL: [https?://]host[:port][/]. Схема опциональна, хост — valid_host.
+valid_public_url() {
+  local u="$1" hostpart h p
+  case "$u" in
+    http://*|https://*) hostpart="${u#*://}" ;;
+    *) hostpart="$u" ;;
+  esac
+  hostpart="${hostpart%/}"  # один хвостовой слэш разрешён
+  case "$hostpart" in
+    *:*)
+      h="${hostpart%:*}"; p="${hostpart##*:}"
+      case "$p" in ''|*[!0-9]*) return 1 ;; esac
+      valid_host "$h"
+      ;;
+    *) valid_host "$hostpart" ;;
+  esac
+}
+
+# Значение env-файла в одинарных кавычках с экранированием (тот же паттерн, что
+# в scripts/deploy-server.sh): systemd EnvironmentFile раскрывает кавычки, а
+# содержимое значения не может вырваться за пределы своей переменной.
+env_kv() {
+  local key="$1" val="$2" esc
+  esc="$(printf '%s' "$val" | sed "s/'/'\\\\''/g")"
+  printf "%s='%s'\n" "$key" "$esc"
+}
+
 NODE_TMP=""
 node_tmp_cleanup() { [ -n "$NODE_TMP" ] && rm -rf "$NODE_TMP"; return 0; }
 trap node_tmp_cleanup EXIT
@@ -152,6 +190,35 @@ check_tarball() {
   list="$(tar -tzf "$TARBALL" 2>/dev/null)" || die "tarball повреждён или это не tar.gz: $TARBALL"
   printf '%s\n' "$list" | grep -qE '(^|\./)server/main\.mjs$' || die "в tarball нет server/main.mjs — это не сборка EnotDesk"
   printf '%s\n' "$list" | grep -qE '(^|\./)client/lib/i18n\.mjs$' || die "в tarball нет client/lib/i18n.mjs (нужен для страниц /downloads и /invite) — соберите tarball свежим scripts/deploy-server.sh"
+  # P2-14: распаковке подлежат только пути из allowlist deploy-server.sh
+  # (server/, assets/, client/lib/i18n.mjs, client/locales/, package.json,
+  # package-lock.json, scripts/install-server.sh). Абсолютные пути, «..»
+  # в компонентах пути и ссылки (symlink/hardlink) запрещены — отказ до распаковки.
+  # Ссылки ищутся в ПОДРОБНОМ листинге (строка «l…» и « -> цель»): GNU tar и bsdtar
+  # печатают цель ссылки только с -v, а symlink на разрешённом пути — реальный вектор.
+  local reason
+  reason="$(tar -tvzf "$TARBALL" 2>/dev/null | grep -E ' -> | link to ' | head -n 1 || true)"
+  if [ -n "$reason" ]; then
+    die "tarball отклонён, распаковка отменена: ссылка в tarball: $reason — внутри сборки не должно быть symlink/hardlink"
+  fi
+  reason="$(printf '%s\n' "$list" | awk '
+    / -> / || / link to / { print "ссылка в tarball: " $0; exit 1 }
+    /^\//                 { print "абсолютный путь: " $0; exit 1 }
+    {
+      p = $0; sub(/^\.\//, "", p)
+      n = split(p, parts, "/")
+      for (i = 1; i <= n; i++)
+        if (parts[i] == "..") { print "переход выше корня (..): " $0; exit 1 }
+      ok = (index(p, "server/") == 1 || index(p, "assets/") == 1 \
+         || index(p, "client/locales/") == 1 \
+         || p == "client/lib/i18n.mjs" || p == "scripts/install-server.sh" \
+         || p == "package.json" || p == "package-lock.json")
+      if (!ok) { print "путь вне allowlist: " $0; exit 1 }
+    }
+  ' 2>/dev/null)" || true
+  if [ -n "$reason" ]; then
+    die "tarball отклонён, распаковка отменена: $reason (ожидается сборка scripts/deploy-server.sh: server/, assets/, client/lib/i18n.mjs, client/locales/, package.json, package-lock.json, scripts/install-server.sh)"
+  fi
 }
 
 # SHA256 (12 символов); shasum — запасной путь, чтобы --dry-run показывал план на любой машине.
@@ -245,7 +312,12 @@ resolve_public_url() {
 }
 
 # Хост из ENOT_PUBLIC_URL без схемы/порта; домен для TLS и realm для coturn.
+# P2-15: URL и порт валидируются до любой интерполяции в конфиги.
 derive_edge() {
+  valid_public_url "$PUBLIC_URL" || die "ENOT_PUBLIC_URL не похож на [https?://]host[:port][/]: '$PUBLIC_URL' — допустимы только буквы, цифры, точка, дефис, опционально порт и хвостовой / (инъекция в конфиги отклонена)"
+  case "$PORT" in
+    ''|*[!0-9]*) die "ENOT_PORT не число: '$PORT' — укажите числовой порт" ;;
+  esac
   local host="$PUBLIC_URL"
   host="${host#*://}"
   host="${host%%/*}"
@@ -394,9 +466,18 @@ find_or_name_release() {
 }
 
 read_env_value() {
-  local key="$1"
+  local key="$1" v=""
   [ -f "$ENV_FILE" ] || { echo ""; return 0; }
-  sed -n "s/^${key}=//p" "$ENV_FILE" 2>/dev/null | tail -n 1 || true
+  v="$(sed -n "s/^${key}=//p" "$ENV_FILE" 2>/dev/null | tail -n 1 || true)"
+  case "$v" in
+    # значения пишутся в одинарных кавычках, ' экранируется как '\'' (см. env_kv);
+    # читаются и старые незакавыченные env-файлы — обратная совместимость
+    \'*\')
+      v="${v#\'}"; v="${v%\'}"
+      v="$(printf '%s' "$v" | sed "s/'\\\\''/'/g")"
+      ;;
+  esac
+  printf '%s' "$v"
 }
 
 # merge: переменные, не заданные в текущем прогоне, сохраняют прежние значения
@@ -502,6 +583,8 @@ if [ "$MODE" = "backup" ]; then
   BACKUP_DIR="$DATA_DIR/backups"
   info "бэкап БД $DB_PATH → $BACKUP_DIR (ретенция ${BACKUP_KEEP:-10})"
   mkdir -p "$BACKUP_DIR"
+  # P2-19: дампы содержат пользовательские данные — каталог только для владельца.
+  chmod 0700 "$BACKUP_DIR"
   chown "$ENOT_USER:$ENOT_USER" "$BACKUP_DIR"
   if id "$ENOT_USER" >/dev/null 2>&1; then
     runuser -u "$ENOT_USER" -- "$NODE_BIN" "$CURRENT_LINK/server/backup.mjs" "$DB_PATH" "$BACKUP_DIR" "${BACKUP_KEEP:-10}" || die "бэкап не удался"
@@ -616,18 +699,18 @@ fi
 info "пишу env-файл $ENV_FILE (0600)"
 install -m 0600 /dev/null "$ENV_FILE"
 {
-  echo "ENOT_HOST=$BIND"
-  echo "ENOT_PORT=$PORT"
-  echo "ENOT_DB=$DB_PATH"
-  echo "ENOT_DIST_DIR=$DIST_DIR"
-  echo "ENOT_PUBLIC_URL=$PUBLIC_URL"
-  if [ -n "$TURN_SECRET" ]; then echo "ENOT_TURN_SECRET=$TURN_SECRET"; fi
-  if [ -n "$TURN_URLS" ]; then echo "ENOT_TURN_URLS=$TURN_URLS"; fi
-  if [ -n "$TURN_USERNAME" ]; then echo "ENOT_TURN_USERNAME=$TURN_USERNAME"; fi
-  if [ -n "$TURN_PASSWORD" ]; then echo "ENOT_TURN_PASSWORD=$TURN_PASSWORD"; fi
-  if [ -n "$GRACE_MS" ]; then echo "ENOT_GRACE_MS=$GRACE_MS"; fi
-  if [ -n "$RETENTION_DAYS" ]; then echo "ENOT_RETENTION_DAYS=$RETENTION_DAYS"; fi
-  if [ -n "$MAX_SESSIONS" ]; then echo "ENOT_MAX_SESSIONS=$MAX_SESSIONS"; fi
+  env_kv ENOT_HOST "$BIND"
+  env_kv ENOT_PORT "$PORT"
+  env_kv ENOT_DB "$DB_PATH"
+  env_kv ENOT_DIST_DIR "$DIST_DIR"
+  env_kv ENOT_PUBLIC_URL "$PUBLIC_URL"
+  if [ -n "$TURN_SECRET" ]; then env_kv ENOT_TURN_SECRET "$TURN_SECRET"; fi
+  if [ -n "$TURN_URLS" ]; then env_kv ENOT_TURN_URLS "$TURN_URLS"; fi
+  if [ -n "$TURN_USERNAME" ]; then env_kv ENOT_TURN_USERNAME "$TURN_USERNAME"; fi
+  if [ -n "$TURN_PASSWORD" ]; then env_kv ENOT_TURN_PASSWORD "$TURN_PASSWORD"; fi
+  if [ -n "$GRACE_MS" ]; then env_kv ENOT_GRACE_MS "$GRACE_MS"; fi
+  if [ -n "$RETENTION_DAYS" ]; then env_kv ENOT_RETENTION_DAYS "$RETENTION_DAYS"; fi
+  if [ -n "$MAX_SESSIONS" ]; then env_kv ENOT_MAX_SESSIONS "$MAX_SESSIONS"; fi
 } | tee "$ENV_FILE" >/dev/null
 chmod 0600 "$ENV_FILE"
 

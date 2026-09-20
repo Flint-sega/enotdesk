@@ -2,7 +2,7 @@
 // ворота нативного ввода по реальному WS-состоянию, выбор источника захвата.
 // Рендереру доступен только context-isolated мост window.enot (preload.cjs).
 
-import { app, BrowserWindow, ipcMain, session, desktopCapturer, screen, shell, clipboard, systemPreferences, Menu } from 'electron';
+import { app, BrowserWindow, ipcMain, session, desktopCapturer, screen, shell, clipboard, systemPreferences, Menu, dialog } from 'electron';
 import path from 'node:path';
 import os from 'node:os';
 import fs from 'node:fs';
@@ -19,7 +19,8 @@ import { createAgent, createAgentApi, createIceServersFetcher } from './lib/agen
 import { createBridgeRelay, BRIDGE_IPC } from './agent-bridge/relay.mjs';
 import { createTermHost } from './lib/term.mjs';
 import { showToast } from './lib/notify.mjs';
-import { UPDATE_REPO, updateFeedUrl, platformFeedName, updateDecision } from './lib/updater.mjs';
+import { resolveConsoleUser } from './lib/console-user.mjs';
+import { UPDATE_REPO, updateFeedUrl, platformFeedName, updateDecision, updateInstallDecision } from './lib/updater.mjs';
 import { isNewerVersion } from './lib/version-check.mjs';
 import { t, setLocale } from './lib/i18n.mjs';
 
@@ -103,9 +104,13 @@ function loadSettings() {
     // первый запуск — файл настроек ещё не существует
   }
   // Порядок резолва (spec §первый запуск): сохранённый → enotdesk-server.txt
-  // рядом с exe → вшитый при сборке → дефолт.
+  // рядом с exe → вшитый при сборке → дефолт. saved и provisioned-источники
+  // проходят normalizeServerUrl при каждом старте (SEC-006/SEC-007): невалидный
+  // адрес честно отбрасывается до дефолта; галочка allowInsecureHttp из настроек
+  // распространяется только на saved.
   settings.serverUrl = resolveServerUrl({
     saved: savedUrl,
+    savedAllowInsecureHttp: settings.allowInsecureHttp,
     execPath: process.execPath,
     baked: BAKED_SERVER_URL,
   }).url;
@@ -155,8 +160,12 @@ function startUpdater() {
     setInterval(check, UPDATE_CHECK_MS);
     return;
   }
-  autoUpdater.autoDownload = process.platform !== 'win32';
-  autoUpdater.autoInstallOnAppQuit = true; // не рвём активный сеанс: установка при закрытии
+  // SEC-010: Windows portable не умеет автоустановку (только уведомление);
+  // mac/linux качают заранее, но «применить при выходе» — только после явного
+  // подтверждения человеком (диалог на update-downloaded ниже). Дефолт — не ставить.
+  const installPolicy = updateInstallDecision({ platform: process.platform });
+  autoUpdater.autoDownload = installPolicy.autoDownload;
+  autoUpdater.autoInstallOnAppQuit = false;
   try {
     autoUpdater.setFeedURL({ provider: 'generic', url: feedUrl });
   } catch (e) {
@@ -167,9 +176,29 @@ function startUpdater() {
     const version = String(info?.version ?? '');
     if (isNewerVersion(app.getVersion(), version)) notify({ version, auto: autoUpdater.autoDownload });
   });
-  autoUpdater.on('update-downloaded', (info) => {
-    console.log(`[enotdesk] обновление ${info?.version ?? ''} скачано — применится при закрытии приложения`);
-    notify({ version: String(info?.version ?? ''), auto: true });
+  autoUpdater.on('update-downloaded', async (info) => {
+    const version = String(info?.version ?? '');
+    console.log(`[enotdesk] обновление ${version} скачано`);
+    // Подтверждение перед автоустановкой (SEC-010): dialog-баннер с кнопкой
+    // «Установить при выходе»; отказ/нет окна — только уведомление, ничего не ставим.
+    let confirmed = false;
+    if (installPolicy.askConfirm) {
+      try {
+        const r = await dialog.showMessageBox({
+          type: 'info',
+          message: t('update.installAsk', { version }),
+          buttons: [t('update.installConfirm'), t('update.installLater')],
+          defaultId: 0,
+          cancelId: 1,
+          noLink: true,
+        });
+        confirmed = r.response === 0;
+      } catch { /* диалог недоступен — остаёмся на уведомлении */ }
+    }
+    const decision = updateInstallDecision({ platform: process.platform, confirmed });
+    autoUpdater.autoInstallOnAppQuit = decision.autoInstallOnAppQuit;
+    console.log(`[enotdesk] установка при выходе: ${decision.autoInstallOnAppQuit ? 'подтверждена' : 'не подтверждена'}`);
+    notify({ version, auto: decision.autoInstallOnAppQuit });
   });
   autoUpdater.on('error', (e) => console.log(`[enotdesk] проверка обновлений не удалась: ${e?.message ?? e}`));
   autoUpdater.checkForUpdates().catch((e) => console.log(`[enotdesk] проверка обновлений не удалась: ${e?.message ?? e}`));
@@ -383,6 +412,13 @@ function createWindow() {
   });
   win.webContents.on('will-navigate', (e) => e.preventDefault());
 
+  // Запросы разрешений (SEC-004, одна default-session на все окна, включая мост):
+  // разрешены только запись санитизированного буфера и полноэкранный режим
+  // (кнопка «Во весь экран»); всё остальное — честный отказ.
+  session.defaultSession.setPermissionRequestHandler((_wc, permission, callback) => {
+    callback(permission === 'clipboard-sanitized-write' || permission === 'fullscreen');
+  });
+
   // Контекстное меню текстовых полей: копировать/вставить/выделить — без IPC
   win.webContents.on('context-menu', (_e, params) => {
     if (!params.isEditable) return;
@@ -445,6 +481,10 @@ function createAgentRtc({ fetchIceServers } = {}) {
       return null;
     }
     win.on('closed', () => { win = null; });
+    // Тот же контур, что у главного окна (SEC-003): мост не открывает окна
+    // и не навигируется — страница фиксированная (client/agent-bridge/page.html).
+    win.webContents.setWindowOpenHandler(() => ({ action: 'deny' }));
+    win.webContents.on('will-navigate', (e) => e.preventDefault());
     relay = createBridgeRelay({
       send: (channel, payload) => { if (win && !win.isDestroyed()) win.webContents.send(channel, payload); },
       onClosed: cleanup,
@@ -515,9 +555,17 @@ function startAgentMode() {
     api: agentApi,
     signal: () => createSignalClient({ url: new URL('/signal', settings.serverUrl).toString().replace(/^http/, 'ws') }),
     native: nativeInput,
-    // Терминал (R09): оболочка поднимается от контекста службы; консольный
-    // пользователь неизвестен v1 — spawnShellFor честно пометит 'service'.
-    termHost: createTermHost({ platform: process.platform }),
+    // Терминал (R09 + SEC-001): оболочка поднимается от консольного пользователя,
+    // а не от службы — иначе на Linux агент-служба (root) открывала бы root-shell.
+    // Консольного пользователя нет (экран входа/чистый сервис) — spawnShellFor
+    // честно пометит контекст 'service'.
+    termHost: (() => {
+      const consoleUser = resolveConsoleUser({ platform: process.platform });
+      return createTermHost({
+        platform: process.platform,
+        ...(consoleUser ? { consoleUser: consoleUser.user, uid: consoleUser.uid } : {}),
+      });
+    })(),
     // pc терминала живёт в скрытом renderer-мосте: в main-процессе Electron
     // нет RTCPeerConnection. Не собрали мост — createAgent честно предупредит.
     rtc: createAgentRtc({

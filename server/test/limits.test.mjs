@@ -223,3 +223,124 @@ test('downloads-files: отдаёт только allowlist-файлы из dist/
   assert.equal((await fetch(`${base}/api/v1/downloads-files/${encodeURIComponent('../package.json')}`)).status, 400);
   assert.equal((await fetch(`${base}/api/v1/downloads-files/EnotDesk-9.9.9.exe`)).status, 404);
 });
+
+test('XFF: без ENOT_TRUSTED_PROXY заголовок не доверяется (лимит по адресу сокета)', async (t) => {
+  const { base } = await startServer(t, { limits: { sessions: new RateLimiter(2, 60_000) } });
+  // оба запроса несут разные XFF, но адрес сокета один — лимит общий
+  assert.equal((await api(base, 'POST', '/sessions', { headers: { 'x-forwarded-for': '9.9.9.9' } })).status, 201);
+  assert.equal((await api(base, 'POST', '/sessions', { headers: { 'x-forwarded-for': '8.8.8.8' } })).status, 201);
+  const third = await api(base, 'POST', '/sessions', { headers: { 'x-forwarded-for': '7.7.7.7' } });
+  assert.equal(third.status, 429, 'XFF проигнорирован: третий запрос того же сокета отклонён');
+});
+
+test('XFF: с ENOT_TRUSTED_PROXY берётся последний недоверенный hop', async (t) => {
+  const dbPath = tmpDb(t);
+  const { base } = await startServer(t, {
+    dbPath,
+    trustedProxy: '127.0.0.1, ::1, 10.0.0.0/8',
+    limits: { sessions: new RateLimiter(2, 60_000) },
+  });
+  const hdr = (ip) => ({ 'x-forwarded-for': ip });
+  assert.equal((await api(base, 'POST', '/sessions', { headers: hdr('203.0.113.5') })).status, 201);
+  assert.equal((await api(base, 'POST', '/sessions', { headers: hdr('203.0.113.5') })).status, 201);
+  assert.equal((await api(base, 'POST', '/sessions', { headers: hdr('203.0.113.5') })).status, 429, 'лимит бьёт по клиенту из XFF');
+  // цепочка из двух прокси: доверенный 10.9.9.9 пропускается, клиент 198.51.100.7 — отдельное ведро
+  assert.equal((await api(base, 'POST', '/sessions', { headers: hdr('10.9.9.9, 198.51.100.7') })).status, 201);
+  // запрос вообще без XFF — адрес сокета, тоже отдельное ведро
+  assert.equal((await api(base, 'POST', '/sessions')).status, 201);
+});
+
+test('claim: анонимный флуд не выжигает лимит sessionId авторизованного', async (t) => {
+  const dbPath = tmpDb(t);
+  const { base } = await startServer(t, {
+    dbPath,
+    limits: {
+      sessions: new RateLimiter(100, 60_000),
+      login: new RateLimiter(100, 60_000),
+      claim: new RateLimiter(100, 60_000),
+      claimId: new RateLimiter(2, 60_000),
+    },
+  });
+  const admin = await adminLogin(dbPath, base);
+  const reg = await api(base, 'POST', '/sessions');
+  // аноним бьёт в известный sessionId — каждый раз 401, лимиты не тратятся
+  for (let i = 0; i < 6; i++) {
+    const anon = await api(base, 'POST', `/sessions/${reg.json.sessionId}/claim`, { body: { password: 'угадал?' } });
+    assert.equal(anon.status, 401);
+  }
+  // авторизованный с верным паролем проходит: порог не выжжен анонимом
+  const real = await api(base, 'POST', `/sessions/${reg.json.sessionId}/claim`, { token: admin.token, body: { password: reg.json.password } });
+  assert.equal(real.status, 201);
+});
+
+test('WS upgrade: лимит до аутентификации (429 на рукопожатие)', async (t) => {
+  const { port } = await startServer(t, { limits: { wsUpgrade: new RateLimiter(2, 60_000) } });
+  const { request } = await import('node:http');
+  const upgradeOnce = () => new Promise((resolve, reject) => {
+    const r = request({
+      host: '127.0.0.1', port, path: '/signal',
+      headers: {
+        Connection: 'Upgrade', Upgrade: 'websocket', 'Sec-WebSocket-Version': 13,
+        'Sec-WebSocket-Key': crypto.randomBytes(16).toString('base64'),
+      },
+    });
+    r.on('upgrade', () => { resolve(101); });
+    r.on('response', (resp) => { resp.resume(); resolve(resp.statusCode); });
+    r.on('error', reject);
+    r.end();
+  });
+  assert.equal(await upgradeOnce(), 101);
+  assert.equal(await upgradeOnce(), 101);
+  assert.equal(await upgradeOnce(), 429, 'третье рукопожатие с того же IP отклонено');
+});
+
+test('rtc-config: с turnSecret отдаёт эфемерный кред (HMAC-SHA1, TTL ~1ч); auditor — 403', async (t) => {
+  const dbPath = tmpDb(t);
+  const { inst, base } = await startServer(t, {
+    dbPath,
+    turnUrls: 'turn:turn.example:3478',
+    turnUsername: 'static',
+    turnPassword: 'static-secret',
+    turnSecret: 'turn-secret-369',
+  });
+  const admin = await adminLogin(dbPath, base);
+  const cfgRes = await api(base, 'GET', '/rtc-config', { token: admin.token });
+  assert.equal(cfgRes.status, 200);
+  const [srv] = cfgRes.json.iceServers;
+  const username = srv.username;
+  // формула coturn REST API (use-auth-secret): credential = base64(HMAC-SHA1(secret, username))
+  const expected = crypto.createHmac('sha1', 'turn-secret-369').update(username).digest('base64');
+  assert.equal(srv.credential, expected, 'кредениал = HMAC-SHA1(секрет, username), как ждёт живой coturn');
+  assert.notEqual(srv.credential, 'static-secret', 'статический пароль не раздаётся');
+  const nowSec = Math.floor(Date.now() / 1000);
+  const ttl = Number(username) - nowSec;
+  assert.ok(ttl > 3590 && ttl <= 3600, `TTL ~3600 (фактически ${ttl})`);
+
+  // host-токенattended/attended-хоста получает тот же эфемерный формат
+  const reg = await api(base, 'POST', '/sessions');
+  const hostCfg = await api(base, 'GET', '/rtc-config', { token: reg.json.hostToken });
+  assert.equal(hostCfg.status, 200);
+  assert.equal(hostCfg.json.iceServers[0].credential,
+    crypto.createHmac('sha1', 'turn-secret-369').update(hostCfg.json.iceServers[0].username).digest('base64'));
+
+  // auditor — наблюдатель, в сеансах не участвует: конфиг не выдаётся
+  const inv = await api(base, 'POST', '/invites', { token: admin.token, body: { role: 'auditor' } });
+  await api(base, 'POST', '/invites/accept', { body: { token: inv.json.token, login: 'ауд2', name: 'А', password: 'пароль-аудитора' } });
+  const aud = await api(base, 'POST', '/auth/login', { body: { login: 'ауд2', password: 'пароль-аудитора' } });
+  assert.equal((await api(base, 'GET', '/rtc-config', { token: aud.json.token })).status, 403);
+  await inst.close();
+});
+
+test('RateLimiter: карта не растёт без предела — вытесняется старейший по reset', () => {
+  let now = 0;
+  const rl = new RateLimiter(2, 60_000, { now: () => now, maxKeys: 3 });
+  for (let i = 0; i < 2; i++) rl.take('a'); // 'a' исчерпан, минимальный reset
+  now += 1000;
+  rl.take('b');
+  now += 1000;
+  rl.take('c'); // карта полна живыми ключами, ничего не протухло
+  now += 1000;
+  assert.equal(rl.take('d'), true, 'место нашлось: старейший вытеснен');
+  assert.equal(rl.exceeded('a'), false, "'a' вытеснен — порога больше нет");
+  assert.equal(rl.take('a'), true, "'a' снова допущен: ключ пересоздан с нуля");
+});

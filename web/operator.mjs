@@ -17,24 +17,31 @@ import {
 import { summarizeStats, formatQuality } from '../client/lib/rtc-stats.mjs';
 import { wireBrowserInput } from './input-source.mjs';
 
-const TOKEN_KEY = 'enot-op-token';
 const COOKIE = 'enot_op';
 const ALLOWED_ROLES = ['admin', 'operator'];
 
-// ---- транспорт: fetch с Bearer вместо enot.request ----
+// SEC-008: bearer-токен живёт только в памяти страницы — ни в cookie, ни в
+// sessionStorage. Cookie enot_op несёт только роль (для выбора варианта HTML
+// сервером); каждый /api и WS всё равно проверяется RBAC-ом с Bearer, поэтому
+// подделанная роль даёт только вид страницы, не доступ. Перезагрузка страницы
+// честно требует повторного входа.
+let token = null;
 
-const getToken = () => sessionStorage.getItem(TOKEN_KEY) ?? cookieToken();
-function cookieToken() {
+function readRoleCookie() {
   const m = new RegExp(`(?:^|;\\s*)${COOKIE}=([^;]+)`).exec(document.cookie ?? '');
-  return m ? decodeURIComponent(m[1]) : null;
+  if (!m) return null;
+  let role = m[1];
+  try { role = decodeURIComponent(role); } catch { /* мусор — не роль */ }
+  return ALLOWED_ROLES.includes(role) ? role : null;
 }
-function saveToken(token) {
-  sessionStorage.setItem(TOKEN_KEY, token);
+
+function saveRoleCookie(role) {
   const secure = location.protocol === 'https:' ? '; Secure' : '';
-  document.cookie = `${COOKIE}=${encodeURIComponent(token)}; path=/operator; SameSite=Strict${secure}`;
+  document.cookie = `${COOKIE}=${encodeURIComponent(role)}; path=/operator; SameSite=Strict${secure}`;
 }
-function clearToken() {
-  sessionStorage.removeItem(TOKEN_KEY);
+
+function forgetSession() {
+  token = null;
   document.cookie = `${COOKIE}=; path=/operator; Max-Age=0; SameSite=Strict`;
 }
 
@@ -43,7 +50,7 @@ async function api(method, path, body) {
     method,
     headers: {
       'Content-Type': 'application/json',
-      ...(getToken() ? { Authorization: `Bearer ${getToken()}` } : {}),
+      ...(token ? { Authorization: `Bearer ${token}` } : {}),
     },
     body: body !== undefined ? JSON.stringify(body) : undefined,
   });
@@ -69,7 +76,7 @@ function openSignal() {
   sock.onopen = () => {
     sock.send(JSON.stringify({
       type: 'auth', role: 'operator',
-      sessionId: state.connect.sessionId, claimId: state.connect.claimId, token: getToken(),
+      sessionId: state.connect.sessionId, claimId: state.connect.claimId, token,
     }));
   };
   sock.onmessage = (e) => {
@@ -111,6 +118,8 @@ function showOnly(...ids) {
 function showConnectForm() {
   stopMedia();
   state.connect = null;
+  pendingClip = null;
+  hide($('btn-op-clip-paste')); // текст сеанса не переживает сеанс
   showOnly('view-connect');
   hide($('op-term')); // панель терминала живёт только внутри сеанса
   hide($('btn-term-retry'));
@@ -373,8 +382,15 @@ document.addEventListener('copy', () => {
   try { dc.send(wire); } catch { /* канал закрывается */ }
 });
 
+// SEC-002: входящий текст НЕ пишется в буфер оператора автоматически — это был
+// hijack буфера: любая скопированная клиентом строка затирала буфер машины
+// оператора. Текст держится в памяти и попадает в буфер только по явному клику
+// «Вставить из сеанса».
+let pendingClip = null;
+
 function incomingClip(value) {
-  navigator.clipboard?.writeText(value).catch(() => { /* нет разрешения — текст не теряется, показан в чате не нужен */ });
+  pendingClip = value;
+  show($('btn-op-clip-paste'));
 }
 
 function saveReceivedBlob(blob, name) {
@@ -751,12 +767,20 @@ function wire() {
         return;
       }
       if (!ALLOWED_ROLES.includes(res.body.user.role)) {
-        clearToken();
+        forgetSession();
         show($('login-auditor'));
         return;
       }
-      saveToken(res.body.token);
-      location.replace('/operator');
+      // SEC-008: токен — только в памяти этой страницы, потому после входа
+      // страницу НЕ перезагружаем: UI переключаем на месте.
+      token = res.body.token;
+      saveRoleCookie(res.body.user.role);
+      text($('op-user-name'), res.body.user.name);
+      text($('op-user-role'), roleName(res.body.user.role));
+      if (res.body.user.role === 'admin') show($('btn-nav-machines'));
+      text($('login-error'), '');
+      showOnly('view-connect');
+      showStatus(t('web.status.idle'));
     } finally {
       setBusy(btn, false);
     }
@@ -809,6 +833,17 @@ function wire() {
   $('btn-chat-send')?.addEventListener('click', () => sendChat());
   $('op-chat-input')?.addEventListener('keydown', (e) => {
     if (e.key === 'Enter') { e.preventDefault(); sendChat(); }
+  });
+
+  $('btn-op-clip-paste')?.addEventListener('click', async () => {
+    const value = pendingClip;
+    if (!value) return;
+    try {
+      // единственное место записи буфера оператора — явное действие человека
+      await navigator.clipboard.writeText(value);
+      pendingClip = null;
+      hide($('btn-op-clip-paste'));
+    } catch { /* нет разрешения — текст остаётся доступен кнопке */ }
   });
 
   $('btn-op-file')?.addEventListener('click', () => $('op-file-input').click());
@@ -907,7 +942,7 @@ function wire() {
 
   $('btn-logout')?.addEventListener('click', async () => {
     await api('POST', '/auth/logout').catch(() => {});
-    clearToken();
+    forgetSession();
     location.replace('/operator');
   });
 
@@ -930,15 +965,15 @@ function wire() {
   if (lang) lang.value = getLocale();
   wire();
 
-  // Страница отдаётся сервером по ролям; но токен в браузере мог устареть —
-  // сверяемся с /auth/me и показываем честное состояние.
+  // Страница отдаётся сервером по роли из cookie; bearer в памяти мог не
+  // дожить до перезагрузки — сверяемся с /auth/me и показываем честное состояние.
   const me = await api('GET', '/auth/me');
   if (me.status === 200) {
     const user = me.body.user;
     text($('op-user-name'), user.name);
     text($('op-user-role'), roleName(user.role));
     if (!ALLOWED_ROLES.includes(user.role)) {
-      clearToken();
+      forgetSession();
       showOnly('view-denied');
       return;
     }
@@ -948,7 +983,14 @@ function wire() {
     showStatus(t('web.status.idle'));
     return;
   }
-  clearToken();
-  if ($('login-form')) showOnly('view-login');
-  else location.replace('/operator'); // cookie истёк — сервер отдаст форму входа
+  // Токена в памяти нет (перезагрузка страницы) или он истёк. Вариант страницы
+  // выбран сервером по роли из cookie: есть роль — показываем операторский UI,
+  // но каждый запрос честно ответит 401 (RBAC держит); вход заново — кнопкой
+  // «Выйти» (снимет cookie и покажет форму входа). Без cookie — форма входа.
+  if (readRoleCookie()) {
+    showOnly('view-connect');
+    showStatus(t('web.status.idle'));
+  } else {
+    showOnly('view-login');
+  }
 })();

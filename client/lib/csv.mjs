@@ -4,8 +4,9 @@
 export function csvCell(value) {
   if (value === null || value === undefined) return '';
   let s = String(value);
-  // нейтрализация формул Excel: = + - @ в начале ячейки — префикс-апостроф
-  if (/^[=+\-@]/.test(s)) s = `'${s}`;
+  // нейтрализация формул Excel: = + - @ и ведущие таб/CR в начале ячейки —
+  // префикс-апостроф (SEC-009: \t и \r тоже исполняются как префиксы формул)
+  if (/^[=+\-@\t\r]/.test(s)) s = `'${s}`;
   return /[;"\r\n]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s;
 }
 

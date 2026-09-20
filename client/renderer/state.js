@@ -12,7 +12,7 @@ export const state = {
   connect: null, // {sessionId, claimId}
   pc: null, dc: null, localStream: null,
   dcs: null, // {input, chat, clip, file} — каналы сессии (ADR 0014)
-  clip: { client: false, operator: true }, // синхронизация буфера: у клиента выключена по умолчанию
+  clip: { client: false, operator: false }, // синхронизация выключена по умолчанию (SEC-002): тумблер включает только ОТПРАВКУ своего буфера; входящий текст оператора — только по явной кнопке «Вставить из сеанса»
   fileRx: null, // приём файла {rx, dc, prog}
   iceQueue: [],
   busy: false,

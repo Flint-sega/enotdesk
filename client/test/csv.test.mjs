@@ -12,6 +12,9 @@ test('ячейка CSV: спецсимволы экранируются по RFC
   assert.equal(csvCell('+7'), "'+7");
   assert.equal(csvCell('-1'), "'-1");
   assert.equal(csvCell('@risk'), "'@risk");
+  assert.equal(csvCell('\t=cmd'), "'\t=cmd", 'таб в начале тоже префикс формулы (SEC-009)');
+  // CR после апострофа попадает под RFC-кавычки — ячейка целиком в кавычках
+  assert.equal(csvCell('\r=cmd'), '"\'\r=cmd"', 'CR в начале тоже префикс формулы (SEC-009)');
   assert.equal(csvCell('a-b'), 'a-b', 'дефис не в начале не трогается');
   assert.equal(csvCell(''), '');
   assert.equal(csvCell(null), '');

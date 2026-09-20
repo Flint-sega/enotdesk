@@ -1,7 +1,7 @@
 // Сессионные сервисы поверх DataChannel (ADR 0014): чат, буфер обмена,
 // передача файлов. Вся сетевая логика — через window.enot и state.
 
-import { $, enot, text } from './dom.js';
+import { $, enot, text, show, hide } from './dom.js';
 import { state } from './state.js';
 import { t } from '../lib/i18n.mjs';
 import { parseChatMessage, chatMessage } from '../lib/chat.mjs';
@@ -192,9 +192,31 @@ export function operatorFileMessage(ch, data) {
 export function operatorChatMessage(value) {
   appendChat('op-chat-log', 'client', value);
 }
+
+// SEC-002 (desktop, зеркально web-оператору): входящий текст НЕ пишется в буфер
+// оператора автоматически — вредоносный клиент мог бы молча подменять буфер.
+// Текст держится в памяти и попадает в буфер только по явному клику
+// «Вставить из сеанса»; новый текст заменяет ожидающий.
+let pendingClip = null;
+
 export function operatorClipMessage(value) {
-  if (state.clip.operator) enot.copy(value).catch(() => { /* буфер недоступен */ });
+  pendingClip = value;
+  show($('btn-op-clip-paste'));
 }
+
+export function resetOperatorClip() {
+  pendingClip = null;
+  hide($('btn-op-clip-paste')); // текст сеанса не переживает сеанс
+}
+
+$('btn-op-clip-paste').addEventListener('click', () => {
+  const value = pendingClip;
+  if (!value) return;
+  pendingClip = null;
+  hide($('btn-op-clip-paste'));
+  // единственное место записи буфера оператора — явное действие человека
+  enot.copy(value).catch(() => { /* буфер недоступен */ });
+});
 
 // Отправка файла (обе стороны): meta + чанки через один file-канал.
 // Файл приходит и из input, и из drag&drop — общий путь один.

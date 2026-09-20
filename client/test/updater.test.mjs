@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { updateFeedUrl, platformFeedName, updateDecision } from '../lib/updater.mjs';
+import { updateFeedUrl, platformFeedName, updateDecision, updateInstallDecision } from '../lib/updater.mjs';
 
 // Фид — то, что release.yml прикладывает к релизу рядом с артефактами:
 // минимальный формат latest*.yml от electron-builder. Ожидания разобраны вручную
@@ -56,4 +56,44 @@ test('фид с несколькими платформенными файлам
   const multi = FEED.replace('  - url: EnotDesk-1.2.3-mac-arm64.zip\n', '  - url: EnotDesk-1.2.3-mac-arm64.zip\n  - url: EnotDesk-1.2.3-win-x64.exe\n');
   const d = updateDecision({ current: '1.0.0', feedText: multi });
   assert.deepEqual(d.files, ['EnotDesk-1.2.3-mac-arm64.zip', 'EnotDesk-1.2.3-win-x64.exe']);
+});
+
+// SEC-010: автоустановка — только после явного подтверждения; Windows portable —
+// всегда только уведомление; дефолт (без подтверждения) — только уведомление.
+
+test('SEC-010: mac/linux без подтверждения — скачать можно, ставить при выходе нельзя', () => {
+  for (const platform of ['darwin', 'linux']) {
+    assert.deepEqual(
+      updateInstallDecision({ platform }),
+      { autoDownload: true, autoInstallOnAppQuit: false, askConfirm: true },
+      platform,
+    );
+  }
+});
+
+test('SEC-010: mac/linux после явного подтверждения — автоустановка при выходе включена', () => {
+  for (const platform of ['darwin', 'linux']) {
+    assert.deepEqual(
+      updateInstallDecision({ platform, confirmed: true }),
+      { autoDownload: true, autoInstallOnAppQuit: true, askConfirm: false },
+      platform,
+    );
+  }
+});
+
+test('SEC-010: win32 portable — никогда не качает и не ставит, только уведомление', () => {
+  assert.deepEqual(
+    updateInstallDecision({ platform: 'win32', confirmed: true }),
+    { autoDownload: false, autoInstallOnAppQuit: false, askConfirm: false },
+  );
+  assert.deepEqual(
+    updateInstallDecision({ platform: 'win32' }),
+    { autoDownload: false, autoInstallOnAppQuit: false, askConfirm: false },
+  );
+});
+
+test('SEC-010: подтверждение принимается только явным true', () => {
+  assert.equal(updateInstallDecision({ platform: 'darwin', confirmed: 'yes' }).autoInstallOnAppQuit, false);
+  assert.equal(updateInstallDecision({ platform: 'darwin', confirmed: 1 }).autoInstallOnAppQuit, false);
+  assert.equal(updateInstallDecision({ platform: 'darwin', confirmed: null }).askConfirm, true);
 });

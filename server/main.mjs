@@ -21,6 +21,10 @@ const inst = createServer({
   turnUrls: process.env.ENOT_TURN_URLS || '',
   turnUsername: process.env.ENOT_TURN_USERNAME || '',
   turnPassword: process.env.ENOT_TURN_PASSWORD || '',
+  // секрет coturn: задан — /rtc-config раздаёт эфемерные HMAC-креды вместо статического пароля
+  turnSecret: process.env.ENOT_TURN_SECRET || '',
+  // доверенные обратные прокси (IP или IPv4-CIDR через запятую); пусто — X-Forwarded-For не доверяется
+  trustedProxy: process.env.ENOT_TRUSTED_PROXY || '',
   graceMs: process.env.ENOT_GRACE_MS ? parseInt(process.env.ENOT_GRACE_MS, 10) : undefined,
   retentionDays: process.env.ENOT_RETENTION_DAYS ? parseInt(process.env.ENOT_RETENTION_DAYS, 10) : undefined,
   maxSessions: process.env.ENOT_MAX_SESSIONS ? parseInt(process.env.ENOT_MAX_SESSIONS, 10) : undefined,

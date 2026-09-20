@@ -14,23 +14,23 @@ const operatorJs = readFileSync(path.join(webDir, 'operator.mjs'), 'utf8');
 const inputJs = readFileSync(path.join(webDir, 'input-source.mjs'), 'utf8');
 const allJs = `${operatorJs}\n${inputJs}`;
 
-import ru from '../locales/ru.json' with { type: 'json' };
-import en from '../locales/en.json' with { type: 'json' };
+import ru from '../locales/ru.mjs';
+import en from '../locales/en.mjs';
 
 test('web/operator.html: каждый data-i18n* ключ есть в словарях ru и en', () => {
   const keys = [...html.matchAll(/data-i18n(?:-[a-z-]+)?="([^"]+)"/g)].map((m) => m[1]);
   assert.ok(keys.length > 20, 'статические строки страницы должны быть помечены data-i18n');
   for (const key of new Set(keys)) {
-    assert.ok(key in ru, `ключ «${key}» отсутствует в ru.json`);
-    assert.ok(key in en, `ключ «${key}» отсутствует в en.json`);
+    assert.ok(key in ru, `ключ «${key}» отсутствует в словаре ru`);
+    assert.ok(key in en, `ключ «${key}» отсутствует в словаре en`);
   }
 });
 
 test('web/*.mjs: ключи t(\'…\') существуют в обоих словарях', () => {
   for (const m of allJs.matchAll(/\bt\('([^']+)'/g)) {
     const key = m[1];
-    assert.ok(key in ru, `t('${key}') в web: ключа нет в ru.json`);
-    assert.ok(key in en, `t('${key}') в web: ключа нет в en.json`);
+    assert.ok(key in ru, `t('${key}') в web: ключа нет в словаре ru`);
+    assert.ok(key in en, `t('${key}') в web: ключа нет в словаре en`);
   }
 });
 
@@ -117,4 +117,33 @@ test('web/*.mjs: действия строк машин подключены ч�
   for (const action of declared) {
     assert.ok(allJs.includes(`action === '${action}'`), `действие «${action}» не обрабатывается в делегировании machines-list`);
   }
+});
+
+// ---- SEC-002: входящий буфер не пишется автоматически — только явный клик ----
+
+test('SEC-002: incomingClip не пишет в буфер; writeText на странице ровно один — в клике кнопки', () => {
+  const incoming = /function incomingClip\([\s\S]*?\n\}/.exec(operatorJs)?.[0] ?? '';
+  assert.ok(incoming, 'incomingClip определён');
+  assert.ok(!/writeText|copyText|clipboard/.test(incoming), 'incomingClip не должен трогать буфер оператора');
+  assert.match(incoming, /btn-op-clip-paste/, 'incomingClip показывает кнопку «Вставить из сеанса»');
+  const handler = /\$\('btn-op-clip-paste'\)\?\.addEventListener\('click'[\s\S]*?\n\s{2}\}\);/.exec(operatorJs)?.[0] ?? '';
+  assert.ok(handler, 'кнопка «Вставить из сеанса» подключена кликом');
+  assert.match(handler, /navigator\.clipboard\.writeText/, 'запись буфера — только по явному клику');
+  const writes = [...operatorJs.matchAll(/navigator\.clipboard\s*\.\s*writeText/g)].length;
+  assert.equal(writes, 1, 'writeText встречается ровно один раз на странице');
+  assert.match(operatorJs, /pendingClip = null;\n\s{2}hide\(\$\('btn-op-clip-paste'\)\)/, 'текст сеанса не переживает сеанс');
+  assert.ok('web.clip.paste' in ru && 'web.clip.paste' in en, 'ключ кнопки в обоих словарях');
+});
+
+// ---- SEC-008: bearer только в памяти страницы, cookie — только роль ----
+
+test('SEC-008: токен не хранится в cookie/sessionStorage — только переменная модуля', () => {
+  const code = operatorJs.replace(/\/\/[^\n]*/g, ''); // проверяем код, не комментарии
+  assert.ok(!code.includes('sessionStorage'), 'sessionStorage не используется');
+  assert.ok(!code.includes('enot-op-token'), 'старый ключ хранения токена убран');
+  assert.match(code, /let token = null/, 'токен живёт в памяти модуля');
+  assert.ok(!/encodeURIComponent\(token\)/.test(code), 'токен не сериализуется в cookie');
+  assert.match(code, /encodeURIComponent\(role\)/, 'в cookie пишется роль');
+  assert.match(code, /ALLOWED_ROLES\.includes\(role\) \? role : null/, 'cookie читается только как роль из allowlist');
+  assert.match(code, /if \(readRoleCookie\(\)\)/, 'вариант UI при отсутствии токена выбирается по роли из cookie');
 });
