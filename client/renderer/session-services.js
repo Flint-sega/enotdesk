@@ -5,7 +5,9 @@ import { $, enot, text, show, hide } from './dom.js';
 import { state } from './state.js';
 import { t } from '../lib/i18n.mjs';
 import { parseChatMessage, chatMessage } from '../lib/chat.mjs';
-import { rejectTermChannel } from '../lib/term.mjs';
+// Чистый модуль без node-импортов: lib/term.mjs тянет node:child_process,
+// который в sandbox-рендерере блокируется CSP и роняет весь модульный граф.
+import { rejectTermChannel } from '../lib/term-protocol.mjs';
 import { parseClipMessage, clipMessage } from '../lib/clipboard-sync.mjs';
 import {
   parseFileControl, createFileReceiver, createFileSender,
