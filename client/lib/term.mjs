@@ -15,6 +15,11 @@
 // сеанса, а pc живёт только после approved — решение остаётся на host-стороне.
 
 import { spawn as nodeSpawn } from 'node:child_process';
+// Отказ каналу 'term' живёт в чистом модуле без node-импортов: его импортирует
+// sandbox-рендерер (client/renderer/session-services.js), где любой node:-скрипт
+// в графе убивается CSP (script-src 'self') и роняет весь модульный граф.
+import { rejectTermChannel } from './term-protocol.mjs';
+export { rejectTermChannel };
 
 export const TERM_BUFFER_LIMIT = 512 * 1024; // байт вывода в кольце
 export const TERM_IDLE_TIMEOUT_MS = 5 * 60 * 1000; // простой до закрытия
@@ -281,12 +286,5 @@ export function createTermHost({
   };
 }
 
-// Честный отказ каналу 'term' от host'а без терминала (attended-человек):
-// оболочку поднимает только machine-агент (spec R09).
-export function rejectTermChannel(ch, code = 'term-unavailable') {
-  try { ch.send(JSON.stringify({ type: 'error', code })); } catch { /* канал умирает */ }
-  const bye = () => { try { ch.close(); } catch { /* уже закрыт */ } };
-  // даём ошибке уйти до закрытия: кадры DataChannel уходят асинхронно
-  if (typeof setTimeout === 'function') setTimeout(bye, 100);
-  else bye();
-}
+// rejectTermChannel — см. ./term-protocol.mjs (реэкспортирован выше:
+// интерфейс term.mjs заморожен, рендерер импортирует чистый модуль напрямую).
