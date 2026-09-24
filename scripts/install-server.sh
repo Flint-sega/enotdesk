@@ -459,7 +459,7 @@ ensure_caddy() {
     echo "# EnotDesk managed (ENOTDESK_MANAGED) — перезаписывается install-server.sh"
     echo "$DOMAIN {"
     if [ "$ENABLE_HUB" = "1" ]; then
-      echo "    @hub path /hub /hub/* /widget.js /w /join /api/hub/* /ws/widget /ws/console"
+      echo "    @hub path /hub /hub/* /widget.js /w /join /api/hub/* /ws/widget /ws/console /hooks/enotdesk"
       echo "    handle @hub {"
       echo "        reverse_proxy 127.0.0.1:$HUB_PORT"
       echo "    }"
