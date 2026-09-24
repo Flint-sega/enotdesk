@@ -144,26 +144,26 @@ function resetFilters() {
 
 // ---- детали треда ----
 
-function setThreadStatusLine(t) {
+function setThreadStatusLine(th) {
   const chipEl = $('hub-thread-status');
-  chipEl.textContent = t(`hub.status.${t.status}`);
-  chipEl.className = `chip ${t.status}`;
-  $('hub-thread-channel').textContent = t(`hub.channel.${t.channel}`);
-  $('hub-thread-assignee').textContent = t.assigneeId
-    ? t('hub.thread.assignedTo', { name: t.assigneeId === me?.id ? t('hub.thread.you') : t.assigneeId })
+  chipEl.textContent = t(`hub.status.${th.status}`);
+  chipEl.className = `chip ${th.status}`;
+  $('hub-thread-channel').textContent = t(`hub.channel.${th.channel}`);
+  $('hub-thread-assignee').textContent = th.assigneeId
+    ? t('hub.thread.assignedTo', { name: th.assigneeId === me?.id ? t('hub.thread.you') : th.assigneeId })
     : t('hub.inbox.unassigned');
-  $('hub-thread-rating').textContent = t.rating
-    ? t('hub.thread.rating', { value: t.rating })
+  $('hub-thread-rating').textContent = th.rating
+    ? t('hub.thread.rating', { value: th.rating })
     : t('hub.thread.noRating');
-  $('hub-thread-take').textContent = t.assigneeId && t.assigneeId === me?.id
+  $('hub-thread-take').textContent = th.assigneeId && th.assigneeId === me?.id
     ? t('hub.thread.release')
     : t('hub.thread.takeIt');
 }
 
-function renderTags(t) {
+function renderTags(th) {
   const box = $('hub-thread-taglist');
   box.textContent = '';
-  for (const tag of t.tags ?? []) {
+  for (const tag of th.tags ?? []) {
     const chipEl = document.createElement('span');
     chipEl.className = 'tag';
     chipEl.appendChild(document.createTextNode(tag));
