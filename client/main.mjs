@@ -280,6 +280,7 @@ function stopSignal() {
   gate.close();
   if (gate.needInputReset()) nativeInput.end();
   signalRole = null;
+  selectedSource = null; // разрешение 'media' привязано к источнику: сеанс кончился — гейт закрыт
 }
 
 function startSignal(params) {
@@ -322,7 +323,7 @@ async function listSources() {
 }
 
 async function selectSource(id) {
-  const sources = await desktopCapturer.getSources({ types: ['screen', 'window'] });
+  const sources = await desktopCapturer.getSources({ types: ['screen', 'window'], thumbnailSize: { width: 0, height: 0 } });
   const src = sources.find((s) => s.id === id);
   if (!src) return { ok: false, error: 'Выбранный источник больше не доступен, выберите заново' };
   const displays = screen.getAllDisplays();
@@ -340,7 +341,7 @@ async function selectPrimaryScreen() {
   const displays = screen.getAllDisplays();
   if (!displays.length) return { ok: false, error: 'Дисплеи не найдены — координаты ввода определить невозможно' };
   const primary = screen.getPrimaryDisplay();
-  const sources = await desktopCapturer.getSources({ types: ['screen'] });
+  const sources = await desktopCapturer.getSources({ types: ['screen'], thumbnailSize: { width: 0, height: 0 } });
   const src = sources.find((s) => String(s.display_id) === String(primary.id))
     ?? sources.find((s) => String(s.display_id) === String(displays[0].id))
     ?? sources[0];
@@ -472,6 +473,10 @@ function registerIpc() {
     return reportJoin(server, token, creds ?? {}, fetch);
   });
 
+  // Версия клиента в рендерер: живая диагностика (текст ошибки захвата несёт её,
+  // чтобы со скриншота было видно, какая сборка установлена).
+  ipcMain.handle('enot:appVersion', (e) => { guard(e); return app.getVersion(); });
+
   // Внешние ссылки — только одобренные https-адреса, через системный браузер
   ipcMain.handle('enot:openExternal', (e, url) => {
     guard(e);
@@ -510,13 +515,25 @@ function createWindow() {
 
   // Запросы разрешений (SEC-004, одна default-session на все окна, включая мост):
   // разрешены запись санитизированного буфера, полноэкранный режим и захват
-  // экрана — но последний только когда источник уже выбран в рамках сеанса
-  // (selectedSource ставит selectPrimaryScreen/selectSource). Без этого пункт
-  // хендлер молча отклонял 'display-capture' → getDisplayMedia давал
-  // NotAllowedError: Permission denied на любой ОС.
+  // экрана — но только когда источник уже выбран в рамках сеанса
+  // (selectedSource ставит selectPrimaryScreen/selectSource).
+  // ВАЖНО (ревью GLM-5.3, подтверждено прогонами и исходниками Electron 44):
+  // getDisplayMedia приходит сюда со строкой 'media' (общий медиа-путь
+  // RequestMediaAccessPermission), а не 'display-capture' — та строка живёт
+  // только в Permissions API (navigator.permissions.query). Без ветки 'media'
+  // хендлер отклонял захват: NotAllowedError на любой ОС, всегда.
   session.defaultSession.setPermissionRequestHandler((_wc, permission, callback) => {
-    if (permission === 'display-capture') return callback(Boolean(selectedSource));
+    if (permission === 'media' || permission === 'display-capture') {
+      return callback(Boolean(selectedSource));
+    }
     callback(permission === 'clipboard-sanitized-write' || permission === 'fullscreen');
+  });
+  // Синхронные проверки (navigator.permissions.query и подобные пути) — та же политика
+  session.defaultSession.setPermissionCheckHandler((_wc, permission, _origin) => {
+    if (permission === 'media' || permission === 'display-capture') {
+      return Boolean(selectedSource);
+    }
+    return permission === 'clipboard-sanitized-write' || permission === 'fullscreen';
   });
 
   // Контекстное меню текстовых полей: копировать/вставить/выделить — без IPC
@@ -538,7 +555,7 @@ function createWindow() {
       callback({}); // рендерер получит отказ и покажет честную ошибку
       return;
     }
-    desktopCapturer.getSources({ types: ['screen', 'window'] }).then((sources) => {
+    desktopCapturer.getSources({ types: ['screen', 'window'], thumbnailSize: { width: 0, height: 0 } }).then((sources) => {
       const byId = sources.find((s) => s.id === selectedSource.id);
       const byDisplay = selectedSource.displayId
         ? sources.find((s) => String(s.display_id ?? '') === selectedSource.displayId)

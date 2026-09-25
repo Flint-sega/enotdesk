@@ -147,6 +147,38 @@ export function drainIce(pc) {
   state.iceQueue = [];
 }
 
+// Версия клиента: лениво, для диагностики в текстах ошибок.
+let cachedVersion = null;
+async function clientVersion() {
+  if (!cachedVersion) {
+    try { cachedVersion = await enot.appVersion(); } catch { cachedVersion = '?'; }
+  }
+  return cachedVersion;
+}
+
+// Диагностика отказа захвата: версия в тексте (со скриншота видно сборку) и
+// fallback-кнопка с реальным кликом — если у ОС/Chromium свой отказ, повторная
+// попытка из жеста пользователя даёт второй шанс без перезапуска сеанса.
+async function captureFailureUi() {
+  const perms = await enot.permissions();
+  const v = await clientVersion();
+  text($('client-error-text'),
+    (perms.platform === 'darwin' ? t('client.permMac') : t('client.permOther')) +
+    ` (${t('client.captureVersionTag', { v })})`);
+  const card = document.createElement('div');
+  card.className = 'card';
+  const btn = document.createElement('button');
+  btn.className = 'btn wide';
+  btn.textContent = t('client.retryCapture');
+  btn.addEventListener('click', async () => {
+    btn.disabled = true;
+    try { await startHostRtc(); } finally { card.remove(); }
+  });
+  card.appendChild(btn);
+  ($('view-client')).appendChild(card);
+  clientShow('error');
+}
+
 // Захват основного экрана без вопросов: согласие клиента уже дано — трансляция
 // стартует сразу. Детали сбоя (если ОС всё же отказала) показываем как есть.
 async function acquirePrimaryStream() {
@@ -160,8 +192,9 @@ async function acquirePrimaryStream() {
     return await navigator.mediaDevices.getDisplayMedia({ video: true, audio: false });
   } catch (err) {
     const perms = await enot.permissions();
-    const detail = err && err.message ? ` (${err.name}: ${err.message})` : '';
-    text($('client-error-text'), (perms.platform === 'darwin' ? t('client.permMac') : t('client.permOther')) + detail);
+    const v = await clientVersion();
+    const detail = err && err.name ? ` (${err.name}: ${err.message ?? ''})` : '';
+    text($('client-error-text'), (perms.platform === 'darwin' ? t('client.permMac') : t('client.permOther')) + ` [${t('client.captureVersionTag', { v })}]` + detail);
     clientShow('error');
     return null;
   }
@@ -169,7 +202,10 @@ async function acquirePrimaryStream() {
 
 export async function startHostRtc() {
   const stream = await acquirePrimaryStream();
-  if (!stream) return;
+  if (!stream) {
+    await captureFailureUi();
+    return;
+  }
   state.localStream = stream;
   const cfg = await enot.request('rtc.config', { asHost: true });
   const pc = makePc(cfg.body?.iceServers ?? []);

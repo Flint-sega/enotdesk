@@ -14,6 +14,7 @@ contextBridge.exposeInMainWorld('enot', {
   sources: () => ipcRenderer.invoke('enot:sources'),
   selectSource: (id) => ipcRenderer.invoke('enot:selectSource', id),
   selectPrimaryScreen: () => ipcRenderer.invoke('enot:selectPrimaryScreen'),
+  appVersion: () => ipcRenderer.invoke('enot:appVersion'),
   permissions: () => ipcRenderer.invoke('enot:permissions'),
   input: (event) => ipcRenderer.invoke('enot:input', event),
   copy: (text) => ipcRenderer.invoke('enot:copy', text),
