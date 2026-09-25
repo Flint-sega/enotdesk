@@ -210,6 +210,15 @@ export async function startHostRtc() {
   const cfg = await enot.request('rtc.config', { asHost: true });
   const pc = makePc(cfg.body?.iceServers ?? []);
   state.pc = pc;
+  // Каналы данных создаёт офферер (ADR 0014): answer оператора не может
+  // добавить m=application, которого нет в offer — иначе ввод/чат/файлы
+  // никогда не согласуются (найдено живым сеансом 25.09).
+  state.dc = pc.createDataChannel('input');
+  const chatCh = pc.createDataChannel('chat');
+  const clipCh = pc.createDataChannel('clip');
+  const fileCh = pc.createDataChannel('file');
+  fileCh.binaryType = 'arraybuffer';
+  for (const ch of [state.dc, chatCh, clipCh, fileCh]) wireHostChannel(ch);
   for (const track of stream.getTracks()) pc.addTrack(track, stream);
   applyVideoCap(pc);
   startAdaptive(pc);
@@ -284,23 +293,30 @@ export async function operatorAnswer(offerSdp) {
   const cfg = await enot.request('rtc.config', {});
   const pc = makePc(cfg.body?.iceServers ?? []);
   state.pc = pc;
-  state.dc = pc.createDataChannel('input');
-  wireOperatorInput(state.dc);
-  // Каналы сессии (ADR 0014): чат, буфер, файлы — отдельные DC с allowlist-именами.
-  const chatCh = pc.createDataChannel('chat');
-  chatCh.onmessage = (m) => {
-    const msg = parseChatMessage(m.data);
-    if (msg) operatorChatMessage(msg.text);
+  // Каналы приходят от клиента-офферера (ADR 0014): answer не может добавлять
+  // новые m=секции, поэтому createDataChannel здесь не согласуется никогда.
+  pc.ondatachannel = (e) => {
+    const ch = e.channel;
+    state.dcs ??= {};
+    state.dcs[ch.label] = ch;
+    if (ch.label === 'input') {
+      state.dc = ch;
+      wireOperatorInput(ch);
+    } else if (ch.label === 'chat') {
+      ch.onmessage = (m) => {
+        const msg = parseChatMessage(m.data);
+        if (msg) operatorChatMessage(msg.text);
+      };
+    } else if (ch.label === 'clip') {
+      ch.onmessage = (m) => {
+        const msg = parseClipMessage(m.data);
+        if (msg) operatorClipMessage(msg.text);
+      };
+    } else if (ch.label === 'file') {
+      ch.binaryType = 'arraybuffer';
+      ch.onmessage = (m) => operatorFileMessage(ch, m.data);
+    }
   };
-  const clipCh = pc.createDataChannel('clip');
-  clipCh.onmessage = (m) => {
-    const msg = parseClipMessage(m.data);
-    if (msg) operatorClipMessage(msg.text);
-  };
-  const fileCh = pc.createDataChannel('file');
-  fileCh.binaryType = 'arraybuffer';
-  fileCh.onmessage = (m) => operatorFileMessage(fileCh, m.data);
-  state.dcs = { input: state.dc, chat: chatCh, clip: clipCh, file: fileCh };
   pc.ontrack = (e) => { $('remote-video').srcObject = e.streams[0]; };
   startSessionTimer();
   startQualityPolling(pc);
