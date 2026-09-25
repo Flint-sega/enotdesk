@@ -10,3 +10,4 @@ graphify-out/
 .autopilot/serve.*
 .autopilot/
 .zcode/
+AGENTS.md
