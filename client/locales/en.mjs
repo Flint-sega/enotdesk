@@ -81,6 +81,8 @@ export default {
   "client.permOther": "Screen capture was not allowed. Press the button below to try again.",
   "client.retryCapture": "Start screen sharing",
   "client.captureVersionTag": "client v{v}",
+  "client.inputStatus": "Keyboard and mouse control: {backend}",
+  "client.inputUnavailable": "Keyboard and mouse control unavailable ({reason}) — operator can only view",
   "op.loginTitle": "Operator sign in",
   "op.login": "Login",
   "op.password": "Password",

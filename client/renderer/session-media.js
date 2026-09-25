@@ -207,6 +207,15 @@ export async function startHostRtc() {
     return;
   }
   state.localStream = stream;
+  // Честный статус нативного ввода (конвенция продукта): клиент и оператор видят,
+  // работает ли инъекция — без этого «не двигается мышь» не diagnóstico'ируется.
+  try {
+    const perms = await enot.permissions();
+    const ni = perms.nativeInput ?? {};
+    text($('client-input-status'), ni.available
+      ? t('client.inputStatus', { backend: ni.platform })
+      : t('client.inputUnavailable', { reason: ni.reason ?? 'native-unavailable' }));
+  } catch { /* статус не критичен для трансляции */ }
   const cfg = await enot.request('rtc.config', { asHost: true });
   const pc = makePc(cfg.body?.iceServers ?? []);
   state.pc = pc;
