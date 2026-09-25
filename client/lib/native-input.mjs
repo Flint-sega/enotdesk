@@ -126,10 +126,12 @@ function winAdapter(koffi) {
     return VK[k];
   };
   const keyInput = (vk, down) => {
-    const buf = Buffer.alloc(40); // INPUT {type, MOUSEINPUT-or-KEYBDINPUT...}
+    // x64-раскладка INPUT+KEYBDINPUT: type@0, wVk@8, wScan@10, dwFlags@12, time@16, extra@20.
+    const buf = Buffer.alloc(40);
     buf.writeUInt32LE(1, 0); // INPUT_KEYBOARD
     buf.writeUInt16LE(vk, 8); // wVk
-    buf.writeUInt32LE(down ? 0 : 2, 16); // KEYEVENTF_KEYUP
+    buf.writeUInt16LE(0, 10); // wScan
+    buf.writeUInt32LE(down ? 0 : 2, 12); // KEYEVENTF_KEYUP
     return buf;
   };
   const mouseFlag = (btn, down) => {
@@ -137,9 +139,15 @@ function winAdapter(koffi) {
     return map[btn][down ? 0 : 1];
   };
   const mouseInput = (flag) => {
+    // x64-раскладка INPUT+MOUSEINPUT: type@0, dx@8, dy@12, mouseData@16, dwFlags@20, time@24, extra@28.
+    // Ранее dwFlags писался на 8 (в поле dx) — клики уходили с нулевыми флагами
+    // и не нажимались вовсе (живой сеанс 26.09, машина владельца).
     const buf = Buffer.alloc(40);
     buf.writeUInt32LE(0, 0); // INPUT_MOUSE
-    buf.writeUInt32LE(flag, 8); // dwFlags
+    buf.writeUInt32LE(0, 8); // dx
+    buf.writeUInt32LE(0, 12); // dy
+    buf.writeUInt32LE(0, 16); // mouseData
+    buf.writeUInt32LE(flag, 20); // dwFlags
     return buf;
   };
   return {

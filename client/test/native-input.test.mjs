@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { createNativeInput, inertAdapter, waylandAdapterProbe, linesToWinDelta, linesToClicks } from '../lib/native-input.mjs';
+import { createNativeInput, inertAdapter, waylandAdapterProbe, linesToWinDelta, linesToClicks, loadPlatformAdapter } from '../lib/native-input.mjs';
 
 // Шов из interfaces.md: «Desktop input validation and native adapters separate module
 // test with inert adapter only». Реальный OS-ввод здесь не тестируется и не подделывается.
@@ -125,4 +125,50 @@ test('скролл доходит до адаптера в строках без
   const ni = createNativeInput({ adapter });
   assert.deepEqual(ni.dispatch({ type: 'scroll', dx: 0, dy: -6 }, { width: 1, height: 1 }), { ok: true });
   assert.deepEqual(got, [0, -6], 'адаптер получает строки как есть — перевод в единицы ОС внутри адаптера');
+});
+
+test('winAdapter: SendInput-буферы с правильными x64-смещениями (dwFlags@20, KEYEVENTF_KEYUP@12)', () => {
+  // мок koffi: load() → { func() }, SendInput перехватывает буферы
+  const sent = [];
+  const fakeKoffi = {
+    load() {
+      return {
+        func(_sig, _opts) {
+          return (count, buf, size) => { sent.push(Buffer.from(buf)); return count; };
+        },
+      };
+    },
+  };
+  // winAdapter не экспортируется — достаём через loadPlatformAdapter на win32-платформе
+  const realPlatform = process.platform;
+  Object.defineProperty(process, 'platform', { value: 'win32' });
+  let ad;
+  try {
+    ad = loadPlatformAdapter(fakeKoffi);
+  } finally {
+    Object.defineProperty(process, 'platform', { value: realPlatform });
+  }
+  assert.equal(ad.platform, 'windows-sendinput', 'win-адаптер собрался на моке');
+
+  // мышь: dwFlags на 20, dx/dy/mouseData нули
+  sent.length = 0;
+  ad.button('left', true);
+  assert.equal(sent.length, 1);
+  assert.equal(sent[0].readUInt32LE(0), 0, 'INPUT_MOUSE');
+  assert.equal(sent[0].readUInt32LE(8), 0, 'dx=0');
+  assert.equal(sent[0].readUInt32LE(12), 0, 'dy=0');
+  assert.equal(sent[0].readUInt32LE(16), 0, 'mouseData=0');
+  assert.equal(sent[0].readUInt32LE(20), 2, 'MOUSEEVENTF_LEFTDOWN@20');
+  ad.button('left', false);
+  assert.equal(sent[1].readUInt32LE(20), 4, 'MOUSEEVENTF_LEFTUP@20');
+
+  // клавиатура: wVk@8, KEYEVENTF_KEYUP@12 (не 16!)
+  sent.length = 0;
+  ad.key('a', true);
+  assert.equal(sent[0].readUInt32LE(0), 1, 'INPUT_KEYBOARD');
+  assert.equal(sent[0].readUInt16LE(8), 0x41, 'VK_A@8');
+  assert.equal(sent[0].readUInt32LE(12), 0, 'keydown: dwFlags=0@12');
+  ad.key('a', false);
+  assert.equal(sent[1].readUInt16LE(8), 0x41);
+  assert.equal(sent[1].readUInt32LE(12), 2, 'KEYEVENTF_KEYUP@12');
 });
