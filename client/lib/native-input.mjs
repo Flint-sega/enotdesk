@@ -277,5 +277,10 @@ export function createNativeInput({ adapter, koffi = null, getAdapter = null, ma
       held.clear();
       heldKeys.clear();
     },
+    // Сброс кэша адаптера (между сеансами): если в прошлый раз koffi не поднялся —
+    // например, «Фильтр безопасности Windows» блокировал неподписанный koffi.node,
+    // а потом пользователь нажал «Разрешить доступ» — следующий сеанс пробует снова,
+    // вместо навсегда закэшированного инертного режима.
+    resetAdapter() { ad = null; },
   };
 }

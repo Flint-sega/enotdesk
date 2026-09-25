@@ -281,6 +281,7 @@ function stopSignal() {
   if (gate.needInputReset()) nativeInput.end();
   signalRole = null;
   selectedSource = null; // разрешение 'media' привязано к источнику: сеанс кончился — гейт закрыт
+  nativeInput.resetAdapter(); // koffi мог быть заблокирован SAC в прошлом сеансе — пробуем снова
 }
 
 function startSignal(params) {
