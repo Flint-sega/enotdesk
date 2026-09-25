@@ -134,7 +134,7 @@ test('winAdapter: SendInput-буферы с правильными x64-смещ�
     load() {
       return {
         func(_sig, _opts) {
-          return (count, buf, size) => { sent.push(Buffer.from(buf)); return count; };
+          return (count, buf) => { sent.push(Buffer.from(buf)); return count; };
         },
       };
     },
