@@ -793,8 +793,16 @@ function wire() {
     try {
       const id = $('conn-id').value.trim();
       const password = $('conn-password').value;
-      const res = await api('POST', `/sessions/${encodeURIComponent(id)}/claim`, { password });
-      if (res.status !== 201) {
+      // Пустой пароль — вход в сеанс, уже закреплённый за этим оператором
+      // (one-click: авто-claim от хаба); свой claimId отдаёт /connect.
+      // Чужой/несуществующий ID — честный отказ сервера.
+      let res;
+      if (password) {
+        res = await api('POST', `/sessions/${encodeURIComponent(id)}/claim`, { password });
+      } else {
+        res = await api('GET', `/sessions/${encodeURIComponent(id)}/connect`);
+      }
+      if (res.status !== 201 && res.status !== 200) {
         // 403 аудитора, 401 без прав, неверный ID/пароль — тексты сервера, как в desktop
         text($('conn-error'), res.body?.error?.message ?? t('common.serverError'));
         return;

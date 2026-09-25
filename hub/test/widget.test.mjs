@@ -274,6 +274,11 @@ test('WS-цикл: pre-chat → сообщение гостя → агент п�
     assert.equal(notify.message.body, 'Здравствуйте, помогите с установкой');
     const sentAck = await guest.wait((m) => m.type === 'sent');
     assert.equal(sentAck.threadId, notify.thread.id);
+    // эхо: гость видит своё сообщение сразу, а не только по реплею истории
+    const echo = guest.log.find((m) => m?.type === 'msg' && m.message?.author === 'contact');
+    assert.ok(echo, 'гость получил эхо своего сообщения');
+    assert.equal(echo.message.body, 'Здравствуйте, помогите с установкой');
+    assert.equal(echo.threadId, notify.thread.id);
 
     const row = h.db.prepare(`
       SELECT t.channel, t.subject, c.name, c.email FROM threads t JOIN contacts c ON c.id = t.contact_id
@@ -286,7 +291,7 @@ test('WS-цикл: pre-chat → сообщение гостя → агент п�
     await consoleWs.wait((m) => m.type === 'typing' && m.threadId === notify.thread.id);
 
     consoleWs.send(JSON.stringify({ type: 'reply', threadId: notify.thread.id, text: 'Конечно, опишите шаги' }));
-    const back = await guest.wait((m) => m.type === 'msg');
+    const back = await guest.wait((m) => m.type === 'msg' && m.message?.author === 'agent');
     assert.equal(back.message.body, 'Конечно, опишите шаги');
     assert.equal(back.message.author, 'agent');
     await consoleWs.wait((m) => m.type === 'agent-message' && m.threadId === notify.thread.id);

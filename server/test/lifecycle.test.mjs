@@ -233,3 +233,44 @@ test('потолок живых сеансов: новые отклоняютс�
   const ready = await wsAuth(retry, { type: 'auth', role: 'host', sessionId: reg2.json.sessionId, token: reg2.json.hostToken });
   assert.equal(ready.type, 'ready');
 });
+
+test('connect-маршрут: свой claimId оператору без пароля (one-click), чужой/аноним/до-claim — отказ', async (t) => {
+  const { base, admin } = await setup(t);
+  const reg = await api(base, 'POST', '/sessions');
+  const { sessionId, password, hostToken } = reg.json;
+
+  // аноним — 401 (панель оператора требует вход; гостю вход не нужен)
+  const anon = await api(base, 'GET', `/sessions/${sessionId}/connect`);
+  assert.equal(anon.status, 401);
+
+  // до claim сеанс никому не закреплён — даже админу 404
+  const before = await api(base, 'GET', `/sessions/${sessionId}/connect`, { token: admin.token });
+  assert.equal(before.status, 404);
+
+  // авто-claim хаба (как в one-click) → connect отдаёт тот же claimId без пароля
+  const claim = await api(base, 'POST', `/sessions/${sessionId}/claim`, { token: admin.token, body: { password } });
+  assert.equal(claim.status, 201);
+  const info = await api(base, 'GET', `/sessions/${sessionId}/connect`, { token: admin.token });
+  assert.equal(info.status, 200);
+  assert.equal(info.json.sessionId, sessionId);
+  assert.equal(info.json.claimId, claim.json.claimId);
+  assert.equal(info.json.state, 'pending-consent');
+
+  // чужой оператор — 404 (сеанс закреплён не за ним)
+  const inv = await api(base, 'POST', '/invites', { token: admin.token, body: { role: 'operator' } });
+  assert.equal(inv.status, 201);
+  const acc = await api(base, 'POST', '/invites/accept', { body: { token: inv.json.token, login: 'op2', name: 'Op2', password: 'operator-pass-1' } });
+  assert.equal(acc.status, 200);
+  const opLogin = await api(base, 'POST', '/auth/login', { body: { login: 'op2', password: 'operator-pass-1' } });
+  const alien = await api(base, 'GET', `/sessions/${sessionId}/connect`, { token: opLogin.json.token });
+  assert.equal(alien.status, 404);
+
+  // после завершения — 404
+  await api(base, 'POST', `/sessions/${sessionId}/end`, { token: hostToken, body: {} });
+  const after = await api(base, 'GET', `/sessions/${sessionId}/connect`, { token: admin.token });
+  assert.equal(after.status, 404);
+
+  // несуществующий ID — 404
+  const missing = await api(base, 'GET', '/sessions/000000000/connect', { token: admin.token });
+  assert.equal(missing.status, 404);
+});

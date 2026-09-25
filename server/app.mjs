@@ -968,6 +968,19 @@ export function createServer(opts = {}) {
         state: 'pending-consent',
       });
     }
+    // One-click (ADR 0024): сеанс уже авто-claim'нут хабом от имени оператора —
+    // свой claimId оператор получает без пароля (вход в /operator по ID сеанса).
+    // claimId бесполезен чужому: WS /signal проверяет и claimId, и operator_id.
+    m = p.match(/^\/sessions\/([^/]+)\/connect$/);
+    if (m && req.method === 'GET') {
+      if (!user) return err(res, 401, 'unauthorized', 'Требуется авторизация');
+      if (!['admin', 'operator'].includes(user.role)) return err(res, 403, 'forbidden', 'Недостаточно прав');
+      const s = db.prepare('SELECT * FROM sessions WHERE id = ?').get(m[1]);
+      if (!s || s.state === 'ended' || !s.claim_id || s.operator_id !== user.id) {
+        return err(res, 404, 'not_found', 'Сеанс не найден или не закреплён за вами');
+      }
+      return ok(res, 200, { sessionId: s.id, claimId: s.claim_id, state: s.state });
+    }
     m = p.match(/^\/sessions\/([^/]+)\/decision$/);
     if (m && req.method === 'POST') {
       const s = hostTokenSession(req);

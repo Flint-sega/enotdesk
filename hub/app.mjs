@@ -626,6 +626,9 @@ export function createHub(opts = {}) {
       message = threads.listMessages(thread.id).at(-1);
     }
     broadcastConsole({ type: 'new-message', thread, message });
+    // эхо гостю (и его другим вкладкам): без него своё сообщение видно только
+    // после перезагрузки страницы — по реплею истории
+    pushToThreadGuests(thread.id, { type: 'msg', threadId: thread.id, message });
     return { thread, message };
   }
 

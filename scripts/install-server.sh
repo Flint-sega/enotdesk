@@ -203,8 +203,8 @@ check_tarball() {
   printf '%s\n' "$list" | grep -qE '(^|\./)server/main\.mjs$' || die "в tarball нет server/main.mjs — это не сборка EnotDesk"
   printf '%s\n' "$list" | grep -qE '(^|\./)client/lib/i18n\.mjs$' || die "в tarball нет client/lib/i18n.mjs (нужен для страниц /downloads и /invite) — соберите tarball свежим scripts/deploy-server.sh"
   # P2-14: распаковке подлежат только пути из allowlist deploy-server.sh
-  # (server/, hub/, assets/, client/lib/i18n.mjs, client/locales/, package.json,
-  # package-lock.json, scripts/install-server.sh). Абсолютные пути, «..»
+  # (server/, hub/, assets/, web/, client/lib/, client/renderer/, client/locales/,
+  # package.json, package-lock.json, scripts/install-server.sh). Абсолютные пути, «..»
   # в компонентах пути и ссылки (symlink/hardlink) запрещены — отказ до распаковки.
   # Ссылки ищутся в ПОДРОБНОМ листинге (строка «l…» и « -> цель»): GNU tar и bsdtar
   # печатают цель ссылки только с -v, а symlink на разрешённом пути — реальный вектор.
@@ -222,14 +222,16 @@ check_tarball() {
       for (i = 1; i <= n; i++)
         if (parts[i] == "..") { print "переход выше корня (..): " $0; exit 1 }
       ok = (index(p, "server/") == 1 || index(p, "hub/") == 1 || index(p, "assets/") == 1 \
+         || index(p, "web/") == 1 \
+         || index(p, "client/lib/") == 1 || index(p, "client/renderer/") == 1 \
          || index(p, "client/locales/") == 1 \
-         || p == "client/lib/i18n.mjs" || p == "scripts/install-server.sh" \
+         || p == "scripts/install-server.sh" \
          || p == "package.json" || p == "package-lock.json")
       if (!ok) { print "путь вне allowlist: " $0; exit 1 }
     }
   ' 2>/dev/null)" || true
   if [ -n "$reason" ]; then
-    die "tarball отклонён, распаковка отменена: $reason (ожидается сборка scripts/deploy-server.sh: server/, hub/, assets/, client/lib/i18n.mjs, client/locales/, package.json, package-lock.json, scripts/install-server.sh)"
+    die "tarball отклонён, распаковка отменена: $reason (ожидается сборка scripts/deploy-server.sh: server/, hub/, assets/, web/, client/lib/, client/renderer/, client/locales/, package.json, package-lock.json, scripts/install-server.sh)"
   fi
 }
 

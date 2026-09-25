@@ -469,7 +469,7 @@ export default {
   "hub.join.btn": "Connect",
   "hub.join.cardOpen": "Launch helper",
   "hub.join.cardPage": "Client page",
-  "hub.join.systemClaimed": "Session {id} created, agent connected.",
+  "hub.join.systemClaimed": "Session {id} created, agent connected. To watch: operator panel, ID {id}, no password.",
   "hub.join.systemFailed": "The client started session {id}, auto-connect failed: {reason}.",
   "hub.join.systemStarted": "Session {id}: connection established.",
   "hub.join.systemEnded": "Session {id} ended.",
