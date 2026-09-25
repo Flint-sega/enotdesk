@@ -13,6 +13,7 @@ contextBridge.exposeInMainWorld('enot', {
   closeSignal: () => ipcRenderer.invoke('enot:closeSignal'),
   sources: () => ipcRenderer.invoke('enot:sources'),
   selectSource: (id) => ipcRenderer.invoke('enot:selectSource', id),
+  selectPrimaryScreen: () => ipcRenderer.invoke('enot:selectPrimaryScreen'),
   permissions: () => ipcRenderer.invoke('enot:permissions'),
   input: (event) => ipcRenderer.invoke('enot:input', event),
   copy: (text) => ipcRenderer.invoke('enot:copy', text),

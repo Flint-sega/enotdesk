@@ -322,7 +322,7 @@ async function listSources() {
 }
 
 async function selectSource(id) {
-  const sources = await desktopCapturer.getSources({ types: ['screen', 'window'], thumbnailSize: { width: 0, height: 0 } });
+  const sources = await desktopCapturer.getSources({ types: ['screen', 'window'] });
   const src = sources.find((s) => s.id === id);
   if (!src) return { ok: false, error: 'Выбранный источник больше не доступен, выберите заново' };
   const displays = screen.getAllDisplays();
@@ -331,7 +331,23 @@ async function selectSource(id) {
   const bounds = display
     ? { width: Math.round(display.size.width * display.scaleFactor), height: Math.round(display.size.height * display.scaleFactor) }
     : { width: 0, height: 0 };
-  selectedSource = { id: src.id, name: src.name, bounds };
+  selectedSource = { id: src.id, displayId: String(src.display_id ?? ''), name: src.name, bounds };
+  return { ok: true, name: src.name };
+}
+
+// One-click UX: согласие клиента = сразу весь основной экран, без выбора источника.
+async function selectPrimaryScreen() {
+  const displays = screen.getAllDisplays();
+  if (!displays.length) return { ok: false, error: 'Дисплеи не найдены — координаты ввода определить невозможно' };
+  const primary = screen.getPrimaryDisplay();
+  const sources = await desktopCapturer.getSources({ types: ['screen'] });
+  const src = sources.find((s) => String(s.display_id) === String(primary.id()))
+    ?? sources.find((s) => String(s.display_id) === String(displays[0].id))
+    ?? sources[0];
+  if (!src) return { ok: false, error: 'Экраны для захвата не найдены' };
+  const display = displays.find((d) => String(d.id) === String(src.display_id)) ?? primary;
+  const bounds = { width: Math.round(display.size.width * display.scaleFactor), height: Math.round(display.size.height * display.scaleFactor) };
+  selectedSource = { id: src.id, displayId: String(src.display_id ?? ''), name: src.name, bounds };
   return { ok: true, name: src.name };
 }
 
@@ -426,6 +442,8 @@ function registerIpc() {
     return selectSource(id);
   });
 
+  ipcMain.handle('enot:selectPrimaryScreen', async (e) => { guard(e); return selectPrimaryScreen(); });
+
   ipcMain.handle('enot:permissions', (e) => { guard(e); return permissionsReport(); });
 
   ipcMain.handle('enot:input', (e, ev) => {
@@ -508,14 +526,20 @@ function createWindow() {
     ]).popup({ window: win });
   });
 
-  // Захват через задокументированный путь: setDisplayMediaRequestHandler
+  // Захват через задокументированный путь: setDisplayMediaRequestHandler.
+  // Сопоставление источника устойчиво к нестабильности id на Windows:
+  // id → display_id → (для экрана) первый доступный экран.
   session.defaultSession.setDisplayMediaRequestHandler((_opts, callback) => {
     if (!selectedSource) {
       callback({}); // рендерер получит отказ и покажет честную ошибку
       return;
     }
     desktopCapturer.getSources({ types: ['screen', 'window'] }).then((sources) => {
-      const src = sources.find((s) => s.id === selectedSource.id);
+      const byId = sources.find((s) => s.id === selectedSource.id);
+      const byDisplay = selectedSource.displayId
+        ? sources.find((s) => String(s.display_id ?? '') === selectedSource.displayId)
+        : null;
+      const src = byId ?? byDisplay ?? sources[0];
       if (src) callback({ video: src });
       else { selectedSource = null; callback({}); }
     });
