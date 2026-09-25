@@ -81,6 +81,8 @@ export default {
   "client.permOther": "Захват экрана не разрешён. Нажмите «Начать показ экрана», чтобы повторить попытку.",
   "client.retryCapture": "Начать показ экрана",
   "client.captureVersionTag": "клиент v{v}",
+  "client.inputStatus": "Ввод с клавиатуры и мыши: {backend}",
+  "client.inputUnavailable": "Ввод с клавиатуры и мыши недоступен ({reason}) — оператор только смотрит",
   "op.loginTitle": "Вход оператора",
   "op.login": "Логин",
   "op.password": "Пароль",
