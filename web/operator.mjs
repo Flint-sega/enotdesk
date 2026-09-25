@@ -46,6 +46,7 @@ function forgetSession() {
 }
 
 async function api(method, path, body) {
+  const hadToken = Boolean(token);
   const res = await fetch(`/api/v1${path}`, {
     method,
     headers: {
@@ -54,6 +55,14 @@ async function api(method, path, body) {
     },
     body: body !== undefined ? JSON.stringify(body) : undefined,
   });
+  // bearer живёт в памяти страницы: после перезагрузки его нет, а истёкший
+  // токен (рестарт с ротацией, смена пароля) — то же самое. Честно возвращаем
+  // на форму входа вместо непонятного «Требуется авторизация» в форме.
+  if (res.status === 401 && hadToken) {
+    forgetSession();
+    showOnly('view-login');
+    text($('login-error'), t('web.session.expired'));
+  }
   return { status: res.status, body: await res.json().catch(() => null) };
 }
 
@@ -991,14 +1000,11 @@ function wire() {
     showStatus(t('web.status.idle'));
     return;
   }
-  // Токена в памяти нет (перезагрузка страницы) или он истёк. Вариант страницы
-  // выбран сервером по роли из cookie: есть роль — показываем операторский UI,
-  // но каждый запрос честно ответит 401 (RBAC держит); вход заново — кнопкой
-  // «Выйти» (снимет cookie и покажет форму входа). Без cookie — форма входа.
-  if (readRoleCookie()) {
-    showOnly('view-connect');
-    showStatus(t('web.status.idle'));
-  } else {
-    showOnly('view-login');
-  }
+  // Токена в памяти нет (перезагрузка страницы) или он истёк. Cookie хранит
+  // только роль — действовать без токена всё равно нельзя (RBAC держит),
+  // поэтому честно показываем вход: с сообщением, если роль в cookie была.
+  const hadRole = Boolean(readRoleCookie());
+  forgetSession();
+  showOnly('view-login');
+  if (hadRole) text($('login-error'), t('web.session.expired'));
 })();
