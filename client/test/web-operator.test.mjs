@@ -148,5 +148,6 @@ test('SEC-008: токен не хранится в cookie/sessionStorage — т�
   assert.ok(!/encodeURIComponent\(token\)/.test(code), 'токен не сериализуется в cookie');
   assert.match(code, /encodeURIComponent\(role\)/, 'в cookie пишется роль');
   assert.match(code, /ALLOWED_ROLES\.includes\(role\) \? role : null/, 'cookie читается только как роль из allowlist');
-  assert.match(code, /if \(readRoleCookie\(\)\)/, 'вариант UI при отсутствии токена выбирается по роли из cookie');
+  assert.match(code, /const hadRole = Boolean\(readRoleCookie\(\)\)/, 'роль из cookie — только признак старой сессии: без токена в памяти честный вход заново');
+  assert.match(code, /res\.status === 401 && hadToken/, '401 при живом bearer возвращает на форму входа, а не оставляет мёртвую сессию');
 });

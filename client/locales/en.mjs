@@ -290,6 +290,7 @@ export default {
   "web.login.password": "Password",
   "web.login.submit": "Sign in",
   "web.login.busy": "Signing in…",
+  "web.session.expired": "Panel session expired — sign in again.",
   "web.login.auditor": "Auditors have read-only access — the web operator is unavailable for this role.",
   "web.denied.title": "Not enough permissions",
   "web.denied.lead": "The web operator is available to the operator and admin roles. Auditors should use the desktop app.",
