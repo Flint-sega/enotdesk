@@ -49,10 +49,12 @@ jobs:
         if: runner.os == 'macOS'
         shell: bash
         run: npx electron-builder --config build/electron-builder.yml -c.publish.provider=generic -c.publish.url="$ENOT_FEED_URL" --mac --publish never
-      - name: Pack (Windows, portable exe)
+      - name: Pack (Windows: portable + установщик NSIS)
         if: runner.os == 'Windows'
         shell: bash
-        run: npx electron-builder --config build/electron-builder.yml -c.publish.provider=generic -c.publish.url="$ENOT_FEED_URL" --win --publish never
+        run: |
+          npx electron-builder --config build/electron-builder.yml -c.publish.provider=generic -c.publish.url="$ENOT_FEED_URL" --win portable --publish never
+          npx electron-builder --config build/electron-builder.yml -c.publish.provider=generic -c.publish.url="$ENOT_FEED_URL" --win nsis --publish never
       - name: Pack (Linux, AppImage)
         if: runner.os == 'Linux'
         shell: bash
