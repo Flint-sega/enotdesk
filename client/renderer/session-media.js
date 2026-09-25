@@ -147,23 +147,40 @@ export function drainIce(pc) {
   state.iceQueue = [];
 }
 
+// Захват основного экрана без вопросов: согласие клиента уже дано — трансляция
+// стартует сразу. Детали сбоя (если ОС всё же отказала) показываем как есть.
+async function acquirePrimaryStream() {
+  const sel = await enot.selectPrimaryScreen();
+  if (!sel.ok) {
+    text($('client-error-text'), sel.error ?? t('client.sourceUnavailable'));
+    clientShow('error');
+    return null;
+  }
+  try {
+    return await navigator.mediaDevices.getDisplayMedia({ video: true, audio: false });
+  } catch (err) {
+    const perms = await enot.permissions();
+    const detail = err && err.message ? ` (${err.name}: ${err.message})` : '';
+    text($('client-error-text'), (perms.platform === 'darwin' ? t('client.permMac') : t('client.permOther')) + detail);
+    clientShow('error');
+    return null;
+  }
+}
+
 export async function startHostRtc() {
-  await showSourcePicker(async (id, pickEl) => {
-    const stream = await acquireStream(id, pickEl);
-    if (!stream) return;
-    pickEl.remove();
-    state.localStream = stream;
-    const cfg = await enot.request('rtc.config', { asHost: true });
-    const pc = makePc(cfg.body?.iceServers ?? []);
-    state.pc = pc;
-    for (const track of stream.getTracks()) pc.addTrack(track, stream);
-    applyVideoCap(pc);
-    startAdaptive(pc);
-    const offer = await pc.createOffer();
-    await pc.setLocalDescription(offer);
-    await enot.sendSignal({ type: 'signal', data: { description: { type: 'offer', sdp: pc.localDescription.sdp } } });
-    clientShow('connected');
-  });
+  const stream = await acquirePrimaryStream();
+  if (!stream) return;
+  state.localStream = stream;
+  const cfg = await enot.request('rtc.config', { asHost: true });
+  const pc = makePc(cfg.body?.iceServers ?? []);
+  state.pc = pc;
+  for (const track of stream.getTracks()) pc.addTrack(track, stream);
+  applyVideoCap(pc);
+  startAdaptive(pc);
+  const offer = await pc.createOffer();
+  await pc.setLocalDescription(offer);
+  await enot.sendSignal({ type: 'signal', data: { description: { type: 'offer', sdp: pc.localDescription.sdp } } });
+  clientShow('connected');
 }
 
 // Выбор источника: экраны отдельно, окна — по одному; onChoose решает, стартовать

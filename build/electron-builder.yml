@@ -57,7 +57,13 @@ mac:
 win:
   target:
     - portable
+    - nsis
   icon: assets/icon.ico
+nsis:
+  # установщик: ярлык на рабочем столе + в «Пуск», деинсталляция в системе
+  oneClick: true
+  createDesktopShortcut: true
+  createStartMenuShortcut: true
 linux:
   target:
     - AppImage
