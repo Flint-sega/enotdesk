@@ -56,8 +56,12 @@ mac:
   identity: null
 win:
   target:
-    - portable
-    - nsis
+    # отдельные artifactName: общий «EnotDesk-win-x64.exe» перезаписывал бы
+    # portable установщиком (два таргета, одно имя)
+    - target: portable
+      artifactName: EnotDesk-win-x64-portable.${ext}
+    - target: nsis
+      artifactName: EnotDesk-win-x64-setup.${ext}
   icon: assets/icon.ico
 nsis:
   # установщик: ярлык на рабочем столе + в «Пуск», деинсталляция в системе
