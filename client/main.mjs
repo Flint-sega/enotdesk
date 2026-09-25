@@ -341,7 +341,7 @@ async function selectPrimaryScreen() {
   if (!displays.length) return { ok: false, error: 'Дисплеи не найдены — координаты ввода определить невозможно' };
   const primary = screen.getPrimaryDisplay();
   const sources = await desktopCapturer.getSources({ types: ['screen'] });
-  const src = sources.find((s) => String(s.display_id) === String(primary.id()))
+  const src = sources.find((s) => String(s.display_id) === String(primary.id))
     ?? sources.find((s) => String(s.display_id) === String(displays[0].id))
     ?? sources[0];
   if (!src) return { ok: false, error: 'Экраны для захвата не найдены' };
