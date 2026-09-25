@@ -84,7 +84,7 @@ jobs:
           sed -i "s/\"version\": \"[^\"]*\"/\"version\": \"${GITHUB_REF_NAME#v}\"/" package.json
       - name: Pack server tarball (состав = scripts/deploy-server.sh)
         shell: bash
-        run: tar -czf enotdesk-server.tar.gz server hub assets package.json package-lock.json scripts/install-server.sh client/lib/i18n.mjs client/locales
+        run: tar -czf enotdesk-server.tar.gz server hub assets web package.json package-lock.json scripts/install-server.sh client/lib client/renderer client/locales
       - uses: actions/upload-artifact@v4
         with:
           name: dist-server-tarball

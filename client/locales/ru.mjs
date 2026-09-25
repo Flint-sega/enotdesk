@@ -469,7 +469,7 @@ export default {
   "hub.join.btn": "Подключиться",
   "hub.join.cardOpen": "Открыть помощника",
   "hub.join.cardPage": "Страница для клиента",
-  "hub.join.systemClaimed": "Сеанс {id} создан, агент подключён.",
+  "hub.join.systemClaimed": "Сеанс {id} создан, агент подключён. Просмотр: панель оператора, ID {id} без пароля.",
   "hub.join.systemFailed": "Клиент запустил сеанс {id}, автоподключение не удалось: {reason}.",
   "hub.join.systemStarted": "Сеанс {id}: подключение установлено.",
   "hub.join.systemEnded": "Сеанс {id} завершён.",
