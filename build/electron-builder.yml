@@ -56,18 +56,16 @@ mac:
   identity: null
 win:
   target:
-    # отдельные artifactName: общий «EnotDesk-win-x64.exe» перезаписывал бы
-    # portable установщиком (два таргета, одно имя)
-    - target: portable
-      artifactName: EnotDesk-win-x64-portable.${ext}
-    - target: nsis
-      artifactName: EnotDesk-win-x64-setup.${ext}
+    - portable
   icon: assets/icon.ico
 nsis:
-  # установщик: ярлык на рабочем столе + в «Пуск», деинсталляция в системе
+  # установщик: ярлык на рабочем столе + в «Пуск», деинсталляция в системе;
+  # своё имя артефакта — иначе перезаписал бы portable (EnotDesk-win-x64.exe).
+  # Собирается отдельным вызовом electron-builder --win nsis (release.yml).
   oneClick: true
   createDesktopShortcut: true
   createStartMenuShortcut: true
+  artifactName: EnotDesk-win-x64-setup.${ext}
 linux:
   target:
     - AppImage
