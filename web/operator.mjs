@@ -204,33 +204,36 @@ async function operatorAnswer(offerSdp) {
   const pc = makePc(cfg.body?.iceServers ?? []);
   state.pc = pc;
   state.iceQueue = [];
-  state.dc = pc.createDataChannel('input');
-  state.dc.onopen = () => {
-    wireBrowserInput($('remote-video'), (obj) => {
-      try { state.dc.send(JSON.stringify(obj)); } catch { /* канал закрывается */ }
-    }, { keys: new Set(INPUT_KEYS), onUnsupported: showKeyError });
+  // Каналы данных приходят от клиента-офферера (ADR 0014): answer не может
+  // добавлять новые m=секции — созданные здесь каналы не согласуются никогда
+  // (найдено живым сеансом 25.09: видео работало, ввод/чат/файлы молчали).
+  pc.ondatachannel = (e) => {
+    const ch = e.channel;
+    state.dcs ??= {};
+    state.dcs[ch.label] = ch;
+    if (ch.label === 'input') {
+      state.dc = ch;
+      state.dc.onopen = () => {
+        wireBrowserInput($('remote-video'), (obj) => {
+          try { state.dc.send(JSON.stringify(obj)); } catch { /* канал закрывается */ }
+        }, { keys: new Set(INPUT_KEYS), onUnsupported: showKeyError });
+      };
+      if (state.dc.readyState === 'open') state.dc.onopen();
+    } else if (ch.label === 'chat') {
+      ch.onmessage = (m) => {
+        const msg = parseChatMessage(m.data);
+        if (msg) appendChat('client', msg.text);
+      };
+    } else if (ch.label === 'clip') {
+      ch.onmessage = (m) => {
+        const msg = parseClipMessage(m.data);
+        if (msg) incomingClip(msg.text);
+      };
+    } else if (ch.label === 'file') {
+      ch.binaryType = 'arraybuffer';
+      ch.onmessage = (m) => fileMessage(ch, m.data);
+    }
   };
-  // Каналы сессии (ADR 0014): chat / clip / file — те же имена и протоколы.
-  const chatCh = pc.createDataChannel('chat');
-  chatCh.onmessage = (m) => {
-    const msg = parseChatMessage(m.data);
-    if (msg) appendChat('client', msg.text);
-  };
-  const clipCh = pc.createDataChannel('clip');
-  clipCh.onmessage = (m) => {
-    const msg = parseClipMessage(m.data);
-    if (msg) incomingClip(msg.text);
-  };
-  const fileCh = pc.createDataChannel('file');
-  fileCh.binaryType = 'arraybuffer';
-  fileCh.onmessage = (m) => fileMessage(fileCh, m.data);
-  // Терминал (R09): канал создаём только для сеанса с машиной (unattended).
-  let termCh = null;
-  if (state.connect?.machineId) {
-    termCh = pc.createDataChannel('term');
-    wireTermChannel(termCh);
-  }
-  state.dcs = { input: state.dc, chat: chatCh, clip: clipCh, file: fileCh, ...(termCh ? { term: termCh } : {}) };
   pc.ontrack = (e) => { $('remote-video').srcObject = e.streams[0]; };
   startTimers(pc);
   await pc.setRemoteDescription({ type: 'offer', sdp: offerSdp });
