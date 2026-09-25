@@ -173,6 +173,9 @@ test('main: окно моста закрыто для окон/навигаци�
   assert.match(bridge, /will-navigate/, 'мост не навигируется');
   assert.match(mainJs, /setPermissionRequestHandler/, 'запросы разрешений обрабатываются явно');
   assert.match(mainJs, /permission === 'clipboard-sanitized-write' \|\| permission === 'fullscreen'/, 'allowlist: только clipboard-sanitized-write и fullscreen');
+  // захват экрана: 'display-capture' разрешается только при выбранном источнике
+  // сеанса (иначе handler SEC-004 молча отклонял getDisplayMedia → NotAllowedError)
+  assert.match(mainJs, /permission === 'display-capture'\) return callback\(Boolean\(selectedSource\)\)/, 'display-capture разрешён только с выбранным источником сеанса');
 });
 
 test('main: автоустановка при выходе только после подтверждения (SEC-010)', () => {

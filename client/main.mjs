@@ -509,9 +509,13 @@ function createWindow() {
   win.webContents.on('will-navigate', (e) => e.preventDefault());
 
   // Запросы разрешений (SEC-004, одна default-session на все окна, включая мост):
-  // разрешены только запись санитизированного буфера и полноэкранный режим
-  // (кнопка «Во весь экран»); всё остальное — честный отказ.
+  // разрешены запись санитизированного буфера, полноэкранный режим и захват
+  // экрана — но последний только когда источник уже выбран в рамках сеанса
+  // (selectedSource ставит selectPrimaryScreen/selectSource). Без этого пункт
+  // хендлер молча отклонял 'display-capture' → getDisplayMedia давал
+  // NotAllowedError: Permission denied на любой ОС.
   session.defaultSession.setPermissionRequestHandler((_wc, permission, callback) => {
+    if (permission === 'display-capture') return callback(Boolean(selectedSource));
     callback(permission === 'clipboard-sanitized-write' || permission === 'fullscreen');
   });
 
