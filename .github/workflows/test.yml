@@ -32,26 +32,29 @@ jobs:
         if: runner.os == 'Linux'
         run: |
           bash -n scripts/quick-setup.sh scripts/install-server.sh
-          PLAN="$(bash scripts/quick-setup.sh --dry-run --domain demo.example --admin-login boss --admin-name Boss --port 8080 --no-firewall --admin-password-stdin <<< 'Passw0rd-example')"
+          PLAN="$(bash scripts/quick-setup.sh --dry-run --domain demo.example --admin-login boss --admin-name Boss --port 8080 --no-hub --no-firewall --admin-password-stdin <<< 'Passw0rd-example')"
           printf '%s\n' "$PLAN"
           printf '%s\n' "$PLAN" | grep -q 'demo.example'
           printf '%s\n' "$PLAN" | grep -q 'boss'
           printf '%s\n' "$PLAN" | grep -q '8080'
+          # --hub: план честно отражает выбор хаба (вопрос в TTY недоступен в CI)
+          HUBPLAN="$(bash scripts/quick-setup.sh --dry-run --domain demo.example --admin-login boss --admin-name Boss --port 8080 --hub --no-firewall --admin-password-stdin <<< 'Passw0rd-example')"
+          printf '%s\n' "$HUBPLAN" | grep -q 'hub:             yes'
           # пароль администратора никогда не попадает в план/логи
           if printf '%s\n' "$PLAN" | grep -q 'Passw0rd'; then
             echo 'ПАРОЛЬ ПРОТЕК В ПЛАН quick-setup' >&2
             exit 1
           fi
           # красные прогоны: невалидные входы обязаны отказывать
-          if bash scripts/quick-setup.sh --dry-run --domain 'a b' --admin-login boss --admin-name B --port 8080 --no-firewall --admin-password-stdin <<< 'Passw0rd-example' >/dev/null 2>&1; then
+          if bash scripts/quick-setup.sh --dry-run --domain 'a b' --admin-login boss --admin-name B --port 8080 --no-hub --no-firewall --admin-password-stdin <<< 'Passw0rd-example' >/dev/null 2>&1; then
             echo 'домен с пробелом был принят' >&2
             exit 1
           fi
-          if bash scripts/quick-setup.sh --dry-run --domain demo.example --admin-login boss --admin-name B --port 99999 --no-firewall --admin-password-stdin <<< 'Passw0rd-example' >/dev/null 2>&1; then
+          if bash scripts/quick-setup.sh --dry-run --domain demo.example --admin-login boss --admin-name B --port 99999 --no-hub --no-firewall --admin-password-stdin <<< 'Passw0rd-example' >/dev/null 2>&1; then
             echo 'порт 99999 был принят' >&2
             exit 1
           fi
-          if bash scripts/quick-setup.sh --dry-run --domain demo.example --admin-login boss --admin-name B --port 8080 --no-firewall --admin-password-stdin <<< 'short' >/dev/null 2>&1; then
+          if bash scripts/quick-setup.sh --dry-run --domain demo.example --admin-login boss --admin-name B --port 8080 --no-hub --no-firewall --admin-password-stdin <<< 'short' >/dev/null 2>&1; then
             echo 'короткий пароль был принят' >&2
             exit 1
           fi
