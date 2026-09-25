@@ -13,6 +13,10 @@ import { stopMedia, drainIce, startHostRtc, operatorAnswer } from './session-med
 import { resetUnreadChat } from './session-services.js';
 import { checkForUpdate, openFirstRun, updateServerChip } from './settings.js';
 
+// старт захвата в полёте: сервер может реплеить 'approved' (грейс ADR 0013) —
+// без флага реплей успевает запустить второй startHostRtc до создания state.pc
+let hostRtcStarting = false;
+
 function switchView(role) {
   state.role = role;
   for (const [id, active] of [['tab-client', role === 'client'], ['tab-operator', role === 'operator']]) {
@@ -39,13 +43,15 @@ enot.onSignal(async (msg) => {
       break;
     case 'approved':
       if (state.role === 'client' && state.session) {
-        if (state.pc) break; // replay после переподключения — RTC уже поднят, не собираем второй
+        // replay после переподключения — RTC уже поднят/поднимается, второй раз не собираем
+        if (state.pc || hostRtcStarting) break;
+        hostRtcStarting = true;
         clientShow('connected');
         text($('connected-operator'), document.getElementById('consent-operator').textContent);
         try { await startHostRtc(); } catch (e) {
           text($('client-error-text'), e.message);
           clientShow('error');
-        }
+        } finally { hostRtcStarting = false; }
       } else if (state.role === 'operator') {
         if (state.pc) break; // уже отвечаем на оффер
         show($('op-waiting'));
