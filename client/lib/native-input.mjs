@@ -117,8 +117,13 @@ function macAdapter(koffi) {
 // Windows SendInput через koffi.
 function winAdapter(koffi) {
   const user32 = koffi.load('user32.dll');
-  const SendInput = user32.func('unsigned int SendInput(int, void *, int)', { stdcall: true });
-  const SetCursorPos = user32.func('bool SetCursorPos(int, int)', { stdcall: true });
+  // ВАЖНО (ревью GLM-5.3 #2 + живой сеанс 26.09): у koffi 3 lib.func с ДВУМЯ
+  // аргументами (прототип, {stdcall:true}) уходит в классический парсер
+  // (имя, тип, параметры) и падает «Unexpected character '-' in type specifier».
+  // Один аргумент — прототип-строка — парсится корректно (проверено koffi.proto);
+  // на x64 Windows отдельное соглашение stdcall не требуется (единое ABI).
+  const SendInput = user32.func('unsigned int SendInput(int, void *, int)');
+  const SetCursorPos = user32.func('bool SetCursorPos(int, int)');
   const VK = { shift: 0x10, control: 0x11, alt: 0x12, meta: 0x5b, enter: 0x0d, tab: 0x09, escape: 0x1b, backspace: 0x08, space: 0x20, delete: 0x2e, home: 0x24, end: 0x23, pageup: 0x21, pagedown: 0x22, arrowup: 0x26, arrowdown: 0x28, arrowleft: 0x25, arrowright: 0x27,
     // VK_OEM_* (US-раскладка): пунктуация протокола (ревью GLM-5.3 v0.3.0 — раньше
     // дефис/точка/запятая и др. молча терялись: пароли/URL/e-mail не набрать)
