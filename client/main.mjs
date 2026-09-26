@@ -148,13 +148,22 @@ let signal = null;
 let heartbeatTimer = null;
 const gate = createInputGate();
 let signalRole = null;
+// Последняя ошибка загрузки koffi — попадает в честный статус ввода клиента
+let lastKoffiError = null;
 // koffi грузится лениво: permissions()/status() его не трогают, только старт host-сеанса
 // или первый реальный ввод; нет пакета — честный инертный режим.
 const nativeInput = createNativeInput({
   getAdapter: () => {
     let koffi;
-    try { koffi = createRequire(import.meta.url)('koffi'); } catch { koffi = null; }
-    return loadPlatformAdapter(koffi);
+    try { koffi = createRequire(import.meta.url)('koffi'); } catch (e) {
+      // честная причина в статусе клиента: SAC/антивирус блокирует koffi.node,
+      // portable-распаковка, ABI-несовпадение — видно без доступа к машине
+      lastKoffiError = 'koffi-require-failed: ' + (e?.message ?? e);
+      return { available: false, platform: process.platform, reason: lastKoffiError };
+    }
+    const ad = loadPlatformAdapter(koffi);
+    if (!ad.available && lastKoffiError) return { ...ad, reason: lastKoffiError };
+    return ad;
   },
 });
 // Единая проводка ввода: те же ворота и диспетчер, что проверяет тест шва
