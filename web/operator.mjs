@@ -70,6 +70,11 @@ async function api(method, path, body) {
 
 let ws = null;
 let keyErrorReset = null;
+// слушатели ввода текущего сеанса: снимаются при конце сеанса — без этого
+// каждый второй сеанс на той же странице дублирует ввод (ревью GLM-5.3 v0.3.0)
+let inputDetach = null;
+// оффер/ответ в полёте: replay 'approved' при переподключении не должен собрать второй pc
+let offerStarting = false;
 
 function sendSignal(data) {
   const v = validateOutgoingSignal({ type: 'signal', data });
@@ -139,6 +144,8 @@ function showConnectForm() {
 }
 
 function stopMedia() {
+  inputDetach?.(); // снять слушатели ввода — иначе следующий сеанс дублирует ввод
+  inputDetach = null;
   try { state.dc?.close(); } catch { /* уже закрыт */ }
   for (const ch of Object.values(state.dcs ?? {})) { try { ch.close(); } catch { /* уже закрыт */ } }
   try { state.pc?.close(); } catch { /* уже закрыт */ }
@@ -214,7 +221,10 @@ async function operatorAnswer(offerSdp) {
     if (ch.label === 'input') {
       state.dc = ch;
       state.dc.onopen = () => {
-        wireBrowserInput($('remote-video'), (obj) => {
+        // #remote-video один на все сеансы страницы: прежние слушатели снимаем,
+        // иначе каждый второй сеанс дублирует ввод (ревью GLM-5.3 v0.3.0)
+        inputDetach?.();
+        inputDetach = wireBrowserInput($('remote-video'), (obj) => {
           try { state.dc.send(JSON.stringify(obj)); } catch { /* канал закрывается */ }
         }, { keys: new Set(INPUT_KEYS), onUnsupported: showKeyError });
       };
@@ -286,16 +296,21 @@ async function onSignal(msg) {
       hide($('op-reconnect'));
       break;
     case 'approved':
-      if (!state.pc) {
-        if (state.connect?.machineId) {
-          // machine-сеанс (R09): оператор офферит — агент без медиа отвечает answer'ом
-          showOnly('op-remote');
-          showStatus(t('op.waitingScreen'));
-          void machineOffer();
-        } else {
-          showOnly('op-waiting');
-          showStatus(t('op.waitingScreen'));
-        }
+      // replay 'approved' при переподключении приходит повторно: без флага
+      // machineOffer успевает запуститься дважды (ревью GLM-5.3 v0.3.0)
+      if (!state.pc && !offerStarting) {
+        offerStarting = true;
+        try {
+          if (state.connect?.machineId) {
+            // machine-сеанс (R09): оператор офферит — агент без медиа отвечает answer'ом
+            showOnly('op-remote');
+            showStatus(t('op.waitingScreen'));
+            await machineOffer();
+          } else {
+            showOnly('op-waiting');
+            showStatus(t('op.waitingScreen'));
+          }
+        } finally { offerStarting = false; }
       }
       break;
     case 'signal':

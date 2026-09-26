@@ -979,7 +979,8 @@ export function createServer(opts = {}) {
       if (!s || s.state === 'ended' || !s.claim_id || s.operator_id !== user.id) {
         return err(res, 404, 'not_found', 'Сеанс не найден или не закреплён за вами');
       }
-      return ok(res, 200, { sessionId: s.id, claimId: s.claim_id, state: s.state });
+      // machineId нужен веб-оператору: в machine-флоу офферит оператор (machineOffer)
+      return ok(res, 200, { sessionId: s.id, claimId: s.claim_id, state: s.state, machineId: s.machine_id ?? null });
     }
     m = p.match(/^\/sessions\/([^/]+)\/decision$/);
     if (m && req.method === 'POST') {

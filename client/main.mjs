@@ -314,6 +314,11 @@ function startSignal(params) {
       heartbeatTimer = setInterval(() => signal?.heartbeat(), 5000);
     }
     return ready;
+  }).catch((e) => {
+    // неудачное открытие WS не должно зажимать роль: иначе окно навсегда
+    // отвечает «уже идёт сеанс» при смене роли (ревью GLM-5.3 v0.3.0)
+    stopSignal();
+    throw e;
   });
 }
 
@@ -330,9 +335,14 @@ async function selectSource(id) {
   const displays = screen.getAllDisplays();
   if (!displays.length) return { ok: false, error: 'Дисплеи не найдены — координаты ввода определить невозможно' };
   const display = displays.find((d) => String(d.id) === String(src.display_id)) ?? displays[0];
-  const bounds = display
-    ? { width: Math.round(display.size.width * display.scaleFactor), height: Math.round(display.size.height * display.scaleFactor) }
-    : { width: 0, height: 0 };
+  // origin: смещение дисплея на виртуальном столе (не-основной монитор) — без него
+  // инъекция уезжает в основной монитор (ревью GLM-5.3 v0.3.0)
+  const bounds = {
+    width: Math.round(display.size.width * display.scaleFactor),
+    height: Math.round(display.size.height * display.scaleFactor),
+    originX: Math.round(display.bounds.x * display.scaleFactor),
+    originY: Math.round(display.bounds.y * display.scaleFactor),
+  };
   selectedSource = { id: src.id, displayId: String(src.display_id ?? ''), name: src.name, bounds };
   return { ok: true, name: src.name };
 }
@@ -348,7 +358,12 @@ async function selectPrimaryScreen() {
     ?? sources[0];
   if (!src) return { ok: false, error: 'Экраны для захвата не найдены' };
   const display = displays.find((d) => String(d.id) === String(src.display_id)) ?? primary;
-  const bounds = { width: Math.round(display.size.width * display.scaleFactor), height: Math.round(display.size.height * display.scaleFactor) };
+  const bounds = {
+    width: Math.round(display.size.width * display.scaleFactor),
+    height: Math.round(display.size.height * display.scaleFactor),
+    originX: Math.round(display.bounds.x * display.scaleFactor),
+    originY: Math.round(display.bounds.y * display.scaleFactor),
+  };
   selectedSource = { id: src.id, displayId: String(src.display_id ?? ''), name: src.name, bounds };
   return { ok: true, name: src.name };
 }
@@ -475,8 +490,9 @@ function registerIpc() {
   });
 
   // Версия клиента в рендерер: живая диагностика (текст ошибки захвата несёт её,
-  // чтобы со скриншота было видно, какая сборка установлена).
-  ipcMain.handle('enot:appVersion', (e) => { guard(e); return app.getVersion(); });
+  // чтобы со скриншота было видно, какая сборка установлена). В dev Electron
+  // отдаёт свою версию — показываем версию продукта, как в getSettings.
+  ipcMain.handle('enot:appVersion', (e) => { guard(e); return app.isPackaged ? app.getVersion() : pkg.version; });
 
   // Внешние ссылки — только одобренные https-адреса, через системный браузер
   ipcMain.handle('enot:openExternal', (e, url) => {

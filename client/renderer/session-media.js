@@ -81,6 +81,7 @@ function stopAdaptive() {
 
 export function cleanupSession() {
   stopMedia();
+  removeCaptureCard(); // карточка ретрая не переживает сеанс (ревью GLM-5.3 v0.3.0)
   enot.closeSignal().catch(() => {});
   streamPaused = false;
   text($('btn-pause-stream'), t('client.hideScreen'));
@@ -156,59 +157,70 @@ async function clientVersion() {
   return cachedVersion;
 }
 
-// Диагностика отказа захвата: версия в тексте (со скриншота видно сборку) и
-// fallback-кнопка с реальным кликом — если у ОС/Chromium свой отказ, повторная
-// попытка из жеста пользователя даёт второй шанс без перезапуска сеанса.
-async function captureFailureUi() {
-  const perms = await enot.permissions();
-  const v = await clientVersion();
-  text($('client-error-text'),
-    (perms.platform === 'darwin' ? t('client.permMac') : t('client.permOther')) +
-    ` (${t('client.captureVersionTag', { v })})`);
+// Диагностика отказа захвата: fallback-кнопка «Начать показ экрана» — повторная
+// попытка без перезапуска сеанса. Карточка живёт модульно: удаляется при успехе,
+// новом вызове и в cleanupSession — иначе переживает сеанс и запускает
+// «призрачный» захват (ревью GLM-5.3 v0.3.0).
+let captureCard = null;
+function removeCaptureCard() {
+  captureCard?.remove();
+  captureCard = null;
+}
+function captureFailureUi() {
+  removeCaptureCard();
   const card = document.createElement('div');
   card.className = 'card';
   const btn = document.createElement('button');
   btn.className = 'btn wide';
   btn.textContent = t('client.retryCapture');
   btn.addEventListener('click', async () => {
+    // сеанс мог закончиться, пока карточка висела — призрачный захват не запускаем
+    if (!state.session || state.pc) { removeCaptureCard(); return; }
     btn.disabled = true;
-    try { await startHostRtc(); } finally { card.remove(); }
+    try {
+      removeCaptureCard();
+      await startHostRtc();
+    } catch { /* ошибка уже показана в статусах сеанса */ }
   });
   card.appendChild(btn);
-  ($('view-client')).appendChild(card);
+  $('view-client').appendChild(card);
+  captureCard = card;
   clientShow('error');
 }
 
 // Захват основного экрана без вопросов: согласие клиента уже дано — трансляция
-// стартует сразу. Детали сбоя (если ОС всё же отказала) показываем как есть.
+// стартует сразу. reason: 'sel' — нет дисплеев/источника (честный текст уже
+// показан), 'os' — ОС/Chromium отказал в самом захвате (perm-текст + версия).
 async function acquirePrimaryStream() {
   const sel = await enot.selectPrimaryScreen();
   if (!sel.ok) {
     text($('client-error-text'), sel.error ?? t('client.sourceUnavailable'));
     clientShow('error');
-    return null;
+    return { stream: null, reason: 'sel' };
   }
   try {
-    return await navigator.mediaDevices.getDisplayMedia({ video: true, audio: false });
+    return { stream: await navigator.mediaDevices.getDisplayMedia({ video: true, audio: false }), reason: null };
   } catch (err) {
     const perms = await enot.permissions();
     const v = await clientVersion();
     const detail = err && err.name ? ` (${err.name}: ${err.message ?? ''})` : '';
     text($('client-error-text'), (perms.platform === 'darwin' ? t('client.permMac') : t('client.permOther')) + ` [${t('client.captureVersionTag', { v })}]` + detail);
     clientShow('error');
-    return null;
+    return { stream: null, reason: 'os' };
   }
 }
 
 export async function startHostRtc() {
-  const stream = await acquirePrimaryStream();
-  if (!stream) {
-    await captureFailureUi();
+  const got = await acquirePrimaryStream();
+  if (!got.stream) {
+    // perm-текст для 'os' уже показан в acquirePrimaryStream; для 'sel' — свой текст
+    captureFailureUi();
     return;
   }
+  const stream = got.stream;
   state.localStream = stream;
   // Честный статус нативного ввода (конвенция продукта): клиент и оператор видят,
-  // работает ли инъекция — без этого «не двигается мышь» не diagnóstico'ируется.
+  // работает ли инъекция — без этого «не двигается мышь» не диагностируется.
   try {
     const perms = await enot.permissions();
     const ni = perms.nativeInput ?? {};
@@ -216,24 +228,33 @@ export async function startHostRtc() {
       ? t('client.inputStatus', { backend: ni.platform })
       : t('client.inputUnavailable', { reason: ni.reason ?? 'native-unavailable' }));
   } catch { /* статус не критичен для трансляции */ }
-  const cfg = await enot.request('rtc.config', { asHost: true });
-  const pc = makePc(cfg.body?.iceServers ?? []);
-  state.pc = pc;
-  // Каналы данных создаёт офферер (ADR 0014): answer оператора не может
-  // добавить m=application, которого нет в offer — иначе ввод/чат/файлы
-  // никогда не согласуются (найдено живым сеансом 25.09).
-  state.dc = pc.createDataChannel('input');
-  const chatCh = pc.createDataChannel('chat');
-  const clipCh = pc.createDataChannel('clip');
-  const fileCh = pc.createDataChannel('file');
-  fileCh.binaryType = 'arraybuffer';
-  for (const ch of [state.dc, chatCh, clipCh, fileCh]) wireHostChannel(ch);
-  for (const track of stream.getTracks()) pc.addTrack(track, stream);
-  applyVideoCap(pc);
-  startAdaptive(pc);
-  const offer = await pc.createOffer();
-  await pc.setLocalDescription(offer);
-  await enot.sendSignal({ type: 'signal', data: { description: { type: 'offer', sdp: pc.localDescription.sdp } } });
+  try {
+    const cfg = await enot.request('rtc.config', { asHost: true });
+    const pc = makePc(cfg.body?.iceServers ?? []);
+    state.pc = pc;
+    // Каналы данных создаёт офферер (ADR 0014): answer оператора не может
+    // добавить m=application, которого нет в offer — иначе ввод/чат/файлы
+    // никогда не согласуются (найдено живым сеансом 25.09).
+    state.dc = pc.createDataChannel('input');
+    const chatCh = pc.createDataChannel('chat');
+    const clipCh = pc.createDataChannel('clip');
+    const fileCh = pc.createDataChannel('file');
+    fileCh.binaryType = 'arraybuffer';
+    for (const ch of [state.dc, chatCh, clipCh, fileCh]) wireHostChannel(ch);
+    for (const track of stream.getTracks()) pc.addTrack(track, stream);
+    applyVideoCap(pc);
+    startAdaptive(pc);
+    const offer = await pc.createOffer();
+    await pc.setLocalDescription(offer);
+    await enot.sendSignal({ type: 'signal', data: { description: { type: 'offer', sdp: pc.localDescription.sdp } } });
+  } catch (e) {
+    // сбой после успешного захвата: гасим поток — иначе экран «течёт» без сеанса
+    // и без кнопки (ревью GLM-5.3 v0.3.0)
+    stopMedia();
+    text($('client-error-text'), e?.message ?? t('common.serverError'));
+    clientShow('error');
+    return;
+  }
   clientShow('connected');
 }
 
@@ -265,19 +286,21 @@ async function showSourcePicker(onChoose) {
 }
 
 async function acquireStream(id, pickEl) {
+  // Вызов идёт в ЖИВОМ сеансе (смена источника): при отказе не роняем клиента
+  // в фатальный error-экран — сеанс и старый поток продолжаются (ревью GLM-5.3 v0.3.0)
   const sel = await enot.selectSource(id);
   if (!sel.ok) {
-    text($('client-error-text'), sel.error ?? t('client.sourceUnavailable'));
-    clientShow('error');
+    text($('client-live-note'), sel.error ?? t('client.sourceUnavailable'));
     pickEl.remove();
     return null;
   }
   try {
-    return await navigator.mediaDevices.getDisplayMedia({ video: true, audio: false });
+    const stream = await navigator.mediaDevices.getDisplayMedia({ video: true, audio: false });
+    pickEl.remove();
+    return stream;
   } catch {
     const perms = await enot.permissions();
-    text($('client-error-text'), perms.platform === 'darwin' ? t('client.permMac') : t('client.permOther'));
-    clientShow('error');
+    text($('client-live-note'), perms.platform === 'darwin' ? t('client.permMac') : t('client.permOther'));
     pickEl.remove();
     return null;
   }
@@ -354,7 +377,11 @@ $('btn-switch-source').addEventListener('click', () => {
   if (!state.pc) return;
   showSourcePicker(async (id, pickEl) => {
     const stream = await acquireStream(id, pickEl);
-    if (!stream) return;
+    if (!stream) {
+      // отказ смены источника не роняет живой сеанс: остаёмся в connected с note
+      clientShow('connected');
+      return;
+    }
     pickEl.remove();
     const old = state.localStream;
     state.localStream = stream;
@@ -364,5 +391,5 @@ $('btn-switch-source').addEventListener('click', () => {
     // Смена источника: держим текущую адаптивную ступень, не сбрасывая наверх.
     applyVideoCap(state.pc);
     old?.getTracks().forEach((track) => track.stop());
-  }).catch((e) => text($('client-error-text'), e.message));
+  }).catch((e) => text($('client-live-note'), e.message));
 });

@@ -172,3 +172,57 @@ test('winAdapter: SendInput-буферы с правильными x64-смещ�
   assert.equal(sent[1].readUInt16LE(8), 0x41);
   assert.equal(sent[1].readUInt32LE(12), 2, 'KEYEVENTF_KEYUP@12');
 });
+
+const vkExpect = { '-': 0xbd, '=': 0xbb, '.': 0xbe, ',': 0xbc, '/': 0xbf, ';': 0xba, "'": 0xde, '[': 0xdb, ']': 0xdd, '\\': 0xdc, '`': 0xc0 };
+test('winAdapter: пунктуация протокола инжектится через VK_OEM, honest false вне карты', () => {
+  const sent = [];
+  const fakeKoffi = {
+    load() {
+      return {
+        func(_sig) {
+          return (count, buf) => { sent.push(Buffer.from(buf)); return count; };
+        },
+      };
+    },
+  };
+  const realPlatform = process.platform;
+  Object.defineProperty(process, 'platform', { value: 'win32' });
+  let ad;
+  try { ad = loadPlatformAdapter(fakeKoffi); } finally { Object.defineProperty(process, 'platform', { value: realPlatform }); }
+  const vkCodes = [];
+  for (const k of ['-', '=', '.', ',', '/', ';', "'", '[', ']', '\\', '`']) {
+    sent.length = 0;
+    assert.equal(ad.key(k, true), true, 'пунктуация ' + JSON.stringify(k) + ' поддержана');
+    assert.equal(sent[0].readUInt16LE(8), vkExpect[k], 'VK-код ' + JSON.stringify(k) + '@8');
+    assert.equal(sent[0].readUInt32LE(12), 0, 'keydown: dwFlags=0@12');
+  }
+
+  // расширенные клавиши: KEYEVENTF_EXTENDEDKEY (0x0004) в down и up
+  sent.length = 0;
+  ad.key('arrowup', true);
+  ad.key('arrowup', false);
+  assert.equal(sent[0].readUInt32LE(12) & 4, 4, 'arrow down: EXTENDEDKEY');
+  assert.equal(sent[1].readUInt32LE(12), 2 | 4, 'arrow up: KEYUP|EXTENDEDKEY');
+  sent.length = 0;
+  ad.key('a', true);
+  assert.equal(sent[0].readUInt32LE(12) & 4, 0, 'буквы без EXTENDEDKEY');
+});
+
+test('dispatch: неподдерживаемая адаптером клавиша — честный key-unsupported, не ok:true', () => {
+  const calls = [];
+  // 'a' проходит allowlist протокола, но мок-адаптер её не поддерживает —
+  // dispatch обязан вернуть честный отказ, а не {ok:true}
+  const adapter = { available: true, platform: 'test', key() { calls.push('key'); return false; } };
+  const ni = createNativeInput({ adapter });
+  const res = ni.dispatch({ type: 'key', key: 'a', down: true }, { width: 100, height: 100 });
+  assert.deepEqual(res, { ok: false, reason: 'key-unsupported' });
+  assert.deepEqual(calls, ['key'], 'адаптер опрошен');
+});
+
+test('dispatch move: originX/originY не-основного дисплея прибавляются', () => {
+  const moved = [];
+  const adapter = { available: true, platform: 'test', move(x, y) { moved.push([x, y]); } };
+  const ni = createNativeInput({ adapter });
+  ni.dispatch({ type: 'move', x: 0.5, y: 0.5 }, { width: 1000, height: 800, originX: 1920, originY: -200 });
+  assert.deepEqual(moved, [[1920 + 500, -200 + 400]]);
+});
