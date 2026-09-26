@@ -189,7 +189,7 @@ test('winAdapter: пунктуация протокола инжектится �
   Object.defineProperty(process, 'platform', { value: 'win32' });
   let ad;
   try { ad = loadPlatformAdapter(fakeKoffi); } finally { Object.defineProperty(process, 'platform', { value: realPlatform }); }
-  const vkCodes = [];
+  const _vkCodes = [];
   for (const k of ['-', '=', '.', ',', '/', ';', "'", '[', ']', '\\', '`']) {
     sent.length = 0;
     assert.equal(ad.key(k, true), true, 'пунктуация ' + JSON.stringify(k) + ' поддержана');
