@@ -17,9 +17,9 @@ export function linesToClicks(lines) {
   return lines === 0 || !Number.isFinite(lines) ? 0 : Math.max(1, n);
 }
 
-// Инертный адаптер: ничего не делает, честно сообщает о недоступности.
-export function inertAdapter() {
-  return { available: false, platform: 'inert', reason: 'native-unavailable' };
+// Инертный адаптер: ничего не делает, честно сообщает о недоступности и причине.
+export function inertAdapter(reason = 'native-unavailable') {
+  return { available: false, platform: 'inert', reason };
 }
 
 export function waylandAdapterProbe(env = process.env) {
@@ -29,19 +29,21 @@ export function waylandAdapterProbe(env = process.env) {
   return null;
 }
 
-// Попытка загрузить koffi и собрать адаптер текущей ОС. Любая неудача — инертный режим.
+// Попытка загрузить koffi и собрать адаптер текущей ОС. Любая неудача — инертный
+// режим с ЧЕСТНОЙ причиной (SAC/антивирус, ABI, пути portable — видно в статусе).
 export function loadPlatformAdapter(koffi) {
-  if (!koffi) return inertAdapter();
+  if (!koffi) return inertAdapter('koffi-missing');
   const wayland = waylandAdapterProbe();
   if (wayland) return wayland;
   try {
     if (process.platform === 'darwin') return macAdapter(koffi);
     if (process.platform === 'win32') return winAdapter(koffi);
     if (process.platform === 'linux') return x11Adapter(koffi);
-  } catch {
+  } catch (e) {
     // библиотеки ОС могут отсутствовать — честный отказ вместо падения
+    return inertAdapter('adapter-error: ' + (e?.message ?? e));
   }
-  return inertAdapter();
+  return inertAdapter('unsupported-platform');
 }
 
 // macOS CoreGraphics: события мыши/клавиатуры в глобальных пикселях.
