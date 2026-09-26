@@ -117,7 +117,13 @@ function winAdapter(koffi) {
   const user32 = koffi.load('user32.dll');
   const SendInput = user32.func('unsigned int SendInput(int, void *, int)', { stdcall: true });
   const SetCursorPos = user32.func('bool SetCursorPos(int, int)', { stdcall: true });
-  const VK = { shift: 0x10, control: 0x11, alt: 0x12, meta: 0x5b, enter: 0x0d, tab: 0x09, escape: 0x1b, backspace: 0x08, space: 0x20, delete: 0x2e, home: 0x24, end: 0x23, pageup: 0x21, pagedown: 0x22, arrowup: 0x26, arrowdown: 0x28, arrowleft: 0x25, arrowright: 0x27 };
+  const VK = { shift: 0x10, control: 0x11, alt: 0x12, meta: 0x5b, enter: 0x0d, tab: 0x09, escape: 0x1b, backspace: 0x08, space: 0x20, delete: 0x2e, home: 0x24, end: 0x23, pageup: 0x21, pagedown: 0x22, arrowup: 0x26, arrowdown: 0x28, arrowleft: 0x25, arrowright: 0x27,
+    // VK_OEM_* (US-раскладка): пунктуация протокола (ревью GLM-5.3 v0.3.0 — раньше
+    // дефис/точка/запятая и др. молча терялись: пароли/URL/e-mail не набрать)
+    '-': 0xbd, '=': 0xbb, '.': 0xbe, ',': 0xbc, '/': 0xbf, ';': 0xba, "'": 0xde, '[': 0xdb, ']': 0xdd, '\\': 0xdc, '`': 0xc0 };
+  // Расширенные клавиши (KEYEVENTF_EXTENDEDKEY): стрелки/навигация без флага
+  // часть приложений трактует как numpad-двойники
+  const VK_EXTENDED = new Set(['delete', 'home', 'end', 'pageup', 'pagedown', 'arrowup', 'arrowdown', 'arrowleft', 'arrowright']);
   const VK_LETTERS = 0x41; // 'A'..'Z'
   const VK_NUMS = 0x30; // '0'..'9'
   const vkFor = (k) => {
@@ -125,13 +131,14 @@ function winAdapter(koffi) {
     if (k.length === 1 && k >= '0' && k <= '9') return VK_NUMS + Number(k);
     return VK[k];
   };
-  const keyInput = (vk, down) => {
+  let sendFails = 0; // нулевой возврат SendInput/SetCursorPos: инъекция заблокирована (UIPI и т.п.)
+  const keyInput = (vk, down, extended) => {
     // x64-раскладка INPUT+KEYBDINPUT: type@0, wVk@8, wScan@10, dwFlags@12, time@16, extra@20.
     const buf = Buffer.alloc(40);
     buf.writeUInt32LE(1, 0); // INPUT_KEYBOARD
     buf.writeUInt16LE(vk, 8); // wVk
     buf.writeUInt16LE(0, 10); // wScan
-    buf.writeUInt32LE(down ? 0 : 2, 12); // KEYEVENTF_KEYUP
+    buf.writeUInt32LE((down ? 0 : 2) | (extended ? 4 : 0), 12); // KEYEVENTF_KEYUP | KEYEVENTF_EXTENDEDKEY
     return buf;
   };
   const mouseFlag = (btn, down) => {
@@ -139,7 +146,7 @@ function winAdapter(koffi) {
     return map[btn][down ? 0 : 1];
   };
   const mouseInput = (flag) => {
-    // x64-раскладка INPUT+MOUSEINPUT: type@0, dx@8, dy@12, mouseData@16, dwFlags@20, time@24, extra@28.
+    // x64-раскладка INPUT+MOUSEINPUT: type@0, dx@8, dy@12, mouseData@16, dwFlags@20, time@24, dwExtraInfo@32.
     // Ранее dwFlags писался на 8 (в поле dx) — клики уходили с нулевыми флагами
     // и не нажимались вовсе (живой сеанс 26.09, машина владельца).
     const buf = Buffer.alloc(40);
@@ -150,20 +157,22 @@ function winAdapter(koffi) {
     buf.writeUInt32LE(flag, 20); // dwFlags
     return buf;
   };
+  const sendOne = (buf) => { if (!SendInput(1, buf, 40)) sendFails++; };
   return {
     available: true,
     platform: 'windows-sendinput',
-    move(pxX, pxY) { SetCursorPos(Math.round(pxX), Math.round(pxY)); },
-    button(btn, down) { SendInput(1, mouseInput(mouseFlag(btn, down)), 40); },
+    get failCount() { return sendFails; },
+    move(pxX, pxY) { if (!SetCursorPos(Math.round(pxX), Math.round(pxY))) sendFails++; },
+    button(btn, down) { sendOne(mouseInput(mouseFlag(btn, down))); },
     key(k, down) {
       const vk = vkFor(k);
       if (vk === undefined) return false;
-      SendInput(1, keyInput(vk, down), 40);
+      sendOne(keyInput(vk, down, VK_EXTENDED.has(k)));
       return true;
     },
     scroll(dx, dy) {
-      if (dy) { const buf = Buffer.alloc(40); buf.writeUInt32LE(0, 0); buf.writeInt32LE(-linesToWinDelta(dy), 16); buf.writeUInt32LE(0x0800, 20); SendInput(1, buf, 40); }
-      if (dx) { const buf = Buffer.alloc(40); buf.writeUInt32LE(0, 0); buf.writeInt32LE(linesToWinDelta(dx), 16); buf.writeUInt32LE(0x1000, 20); SendInput(1, buf, 40); }
+      if (dy) { const buf = Buffer.alloc(40); buf.writeUInt32LE(0, 0); buf.writeInt32LE(-linesToWinDelta(dy), 16); buf.writeUInt32LE(0x0800, 20); sendOne(buf); }
+      if (dx) { const buf = Buffer.alloc(40); buf.writeUInt32LE(0, 0); buf.writeInt32LE(linesToWinDelta(dx), 16); buf.writeUInt32LE(0x1000, 20); sendOne(buf); }
     },
   };
 }
@@ -238,9 +247,11 @@ export function createNativeInput({ adapter, koffi = null, getAdapter = null, ma
         reason: ad.reason ?? null,
         note: ad.accessibilityNote ?? null,
         checked: true,
+        failCount: ad.failCount ?? 0, // сколько инъекций ОС отклонила (UIPI и т.п.)
       };
     },
-    // bounds: {width,height} в физических пикселях выбранного дисплея; x/y нормализованы 0..1
+    // bounds: {width,height} в физических пикселях выбранного дисплея + originX/originY —
+    // смещение дисплея на виртуальном столе (не-основной монитор), x/y нормализованы 0..1
     dispatch(ev, bounds) {
       const v = validateInputEvent(ev);
       if (!v.ok) return { ok: false, reason: `invalid:${v.reason}` };
@@ -249,8 +260,8 @@ export function createNativeInput({ adapter, koffi = null, getAdapter = null, ma
       if (throttled()) return { ok: false, reason: 'throttled' };
       switch (ev.type) {
         case 'move': {
-          const px = Math.round(ev.x * (bounds?.width ?? 0));
-          const py = Math.round(ev.y * (bounds?.height ?? 0));
+          const px = Math.round(ev.x * (bounds?.width ?? 0) + (bounds?.originX ?? 0));
+          const py = Math.round(ev.y * (bounds?.height ?? 0) + (bounds?.originY ?? 0));
           ad.move(px, py);
           return { ok: true };
         }
@@ -260,7 +271,8 @@ export function createNativeInput({ adapter, koffi = null, getAdapter = null, ma
           return { ok: true };
         case 'key':
           if (ev.down) heldKeys.add(ev.key); else heldKeys.delete(ev.key);
-          ad.key(ev.key, ev.down);
+          // адаптер честно сообщает неподдерживаемую клавишу (win: пунктуация вне VK-карты)
+          if (ad.key(ev.key, ev.down) === false) return { ok: false, reason: 'key-unsupported' };
           return { ok: true };
         case 'scroll':
           ad.scroll(ev.dx, ev.dy);
