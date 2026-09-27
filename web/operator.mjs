@@ -317,6 +317,17 @@ async function onSignal(msg) {
         } finally { offerStarting = false; }
       }
       break;
+    case 'file-link':
+      // резервный релей (v0.4.0): файл ждёт скачивания по ссылке (TTL 3 суток)
+      if (msg.url && msg.name) {
+        const list = $('op-file-list');
+        const a = document.createElement('a');
+        a.href = msg.url;
+        a.download = msg.name;
+        a.textContent = t('files.relayLink', { name: msg.name });
+        list.appendChild(a);
+      }
+      break;
     case 'signal':
       try {
         if (msg.data?.description && msg.data.description.type === 'offer') {
@@ -467,17 +478,39 @@ function fileMessage(ch, data) {
   }
 }
 
-function sendFile(file) {
+async function sendFile(file) {
   if (!file) return;
   const dc = state.dcs?.file;
   if (!dc || dc.readyState !== 'open') {
-    text($('file-op-status'), t('files.noChannel'));
+    // фолбэк: резервный релей сервера (TTL 3 суток), ссылка уходит хосту file-link'ом
+    try {
+      const buf = new Uint8Array(await file.arrayBuffer());
+      const res = await fetch('/api/v1/relay', {
+        method: 'POST',
+        headers: {
+          authorization: `Bearer ${token}`,
+          'content-type': 'application/octet-stream',
+          'x-file-name': file.name,
+        },
+        body: buf,
+      });
+      const body = await res.json().catch(() => null);
+      if (res.status !== 201 || !body?.url) throw new Error('relay');
+      ws?.send(JSON.stringify({ type: 'file-link', name: body.name, size: body.size, url: body.url }));
+      text($('file-op-status'), t('files.relayLink', { name: body.name }));
+    } catch {
+      text($('file-op-status'), t('files.noChannel'));
+    }
     return;
   }
   const id = makeFileId();
   try {
     dc.send(fileMeta(id, file.name, file.size));
-    createFileSender({ file, dc, id }).start();
+    createFileSender({
+      file, dc, id,
+      onProgress: (sent) => text($('file-op-status'), t('files.sendingProgress', { name: file.name, pct: Math.round((sent / file.size) * 100) })),
+      onSent: () => text($('file-op-status'), t('files.sentWaiting', { name: file.name })),
+    }).start();
   } catch { return; }
   text($('file-op-status'), t('files.sending', { name: file.name }));
 }

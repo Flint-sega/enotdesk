@@ -4,6 +4,7 @@ import fs from 'node:fs';
 import crypto from 'node:crypto';
 import { WebSocketServer } from 'ws';
 import { openDb, endLiveSessions, auditLog, runRetention } from './db.mjs';
+import { sanitizeFileName } from '../client/lib/file-transfer.mjs';
 import { createMachinesStore, sanitizeInventory } from './machines.mjs';
 import { createWebhooks } from './webhooks.mjs';
 import { page, downloadsHtml, inviteHtml, operatorPage, isInsecurePage } from './pages.mjs';
@@ -284,6 +285,11 @@ export function createServer(opts = {}) {
     nowMs: opts.nowMs ?? Date.now,
     // сколько дней хранить завершённые сеансы; 0 — хранить вечно
     retentionDays: opts.retentionDays ?? 90,
+    // файловый релей (v0.4.0, резервный канал при мёртвом P2P): TTL дней (0 — без
+    // истечения) и каталог внутри каталога БД; сервер хранит только файлы релея
+    relayTtlDays: opts.relayTtlDays ?? Number(process.env.ENOT_RELAY_TTL_DAYS ?? 3),
+    relayDir: opts.relayDir ?? process.env.ENOT_RELAY_DIR ?? null, // null = <db dir>/relay
+    relayMax: opts.relayMax ?? 200 * 1024 * 1024,
     // потолок живых (WS) сеансов — защита памяти публичного сервера
     maxSessions: opts.maxSessions ?? 200,
     authTimeoutMs: opts.authTimeoutMs ?? 5000,
@@ -295,6 +301,9 @@ export function createServer(opts = {}) {
       sessions: opts.limits?.sessions ?? new RateLimiter(10, 60_000),
       claim: opts.limits?.claim ?? new RateLimiter(10, 60_000),
       claimId: opts.limits?.claimId ?? new RateLimiter(20, 60_000),
+      // файловый релей (v0.4.0): загрузки и скачивания по ссылкам
+      relayUpload: opts.limits?.relayUpload ?? new RateLimiter(10, 60_000),
+      relayDownload: opts.limits?.relayDownload ?? new RateLimiter(30, 60_000),
       accept: opts.limits?.accept ?? new RateLimiter(10, 60_000),
       // unattended-машины: попытки claim с одного IP и порог неудачных политик
       // на конкретную машину (подбор PIN/причины), регистрация агента по коду
@@ -326,7 +335,7 @@ export function createServer(opts = {}) {
     secret_too_long: 'Секрет слишком длинный (до 256 символов)',
   };
 
-  const live = new Map(); // sessionId -> {hostWs, opWs, operatorUserId, sigCount, sigReset, hostLostAt, opLostAt, termActive}
+  const live = new Map(); // sessionId -> {hostWs, opSockets:Map(ws->{userId,claimId}), operatorUserId, sigCount, sigReset, hostLostAt, opLostAt, termActive}
   let closed = false;
 
   // Toast на экран машины (R08): память процесса, не БД — состояние одноразовое.
@@ -367,8 +376,8 @@ export function createServer(opts = {}) {
         });
       }
       send(rt.hostWs, { type: 'ended', reason });
-      send(rt.opWs, { type: 'ended', reason });
-      for (const ws of [rt.hostWs, rt.opWs]) if (ws) ws.close(1000, 'ended');
+      for (const opWs of rt.opSockets.keys()) send(opWs, { type: 'ended', reason });
+      for (const ws of [rt.hostWs, ...rt.opSockets.keys()]) if (ws) ws.close(1000, 'ended');
       live.delete(sessionId);
     }
     return true;
@@ -376,7 +385,8 @@ export function createServer(opts = {}) {
 
   function endOperatorSessions(userId, reason) {
     for (const [sid, rt] of live) {
-      if (rt.operatorUserId === userId) endSession(sid, reason);
+      const joined = [...(rt.opSockets?.values() ?? [])].some((m) => m.userId === userId);
+      if (rt.operatorUserId === userId || joined) endSession(sid, reason);
     }
   }
 
@@ -391,7 +401,11 @@ export function createServer(opts = {}) {
     }
     if (who === 'host') rt.hostLostAt = Date.now();
     else rt.opLostAt = Date.now();
-    send(who === 'host' ? rt.opWs : rt.hostWs, { type: 'peer-reconnecting', role: who });
+    if (who === 'host') {
+      for (const opWs of rt.opSockets.keys()) send(opWs, { type: 'peer-reconnecting', role: who });
+    } else {
+      send(rt.hostWs, { type: 'peer-reconnecting', role: who });
+    }
   }
 
   const sweeper = setInterval(() => {
@@ -412,8 +426,12 @@ export function createServer(opts = {}) {
   }, 1000);
   sweeper.unref();
 
-  // Дом-уборщик: истёкшие токены, завершённые приглашения, старые сеансы (раз в час).
-  const housekeeper = setInterval(() => { runRetention(db, { retentionDays: cfg.retentionDays }); }, 3_600_000);
+  // Дом-уборщик: истёкшие токены, завершённые приглашения, старые сеансы (раз в час)
+  // + просроченные файлы релея (TTL 3 суток по умолчанию, 0 — без истечения).
+  const housekeeper = setInterval(() => {
+    runRetention(db, { retentionDays: cfg.retentionDays });
+    sweepRelayFiles();
+  }, 3_600_000);
   housekeeper.unref();
 
   function authUser(req) {
@@ -949,8 +967,21 @@ export function createServer(opts = {}) {
         return err(res, 429, 'rate_limited', 'Слишком много попыток подключения');
       }
       const generic = () => err(res, 400, 'bad_request', 'Не удалось подключиться: проверьте идентификатор и пароль');
-      const s = db.prepare("SELECT * FROM sessions WHERE id = ?").get(m[1]);
-      if (!s || s.state !== 'waiting' || !(await verifyPasswordAsync(String(body?.password ?? ''), s.password_hash))) return generic();
+      const s = db.prepare('SELECT * FROM sessions WHERE id = ?').get(m[1]);
+      if (!s || !(await verifyPasswordAsync(String(body?.password ?? ''), s.password_hash))) return generic();
+      const op = { id: user.id, login: user.login, name: user.name };
+      // multi-operator (v0.4.0): сеанс уже занят другим оператором → ПРИСОЕДИНЕНИЕ
+      // с тем же доступом (ID+пароль = авторизация); новый claimId на оператора
+      if (s.state !== 'waiting') {
+        if (s.state === 'ended') return generic();
+        const claimId = newClaimId();
+        db.prepare('INSERT OR REPLACE INTO session_operators (session_id, user_id, claim_id, joined_at) VALUES (?,?,?,?)')
+          .run(s.id, user.id, claimId, new Date().toISOString());
+        auditLog(db, user.id, 'session.join', s.id, {});
+        const rt = live.get(s.id);
+        if (rt?.hostWs) send(rt.hostWs, { type: 'operator-joined', operator: op });
+        return ok(res, 201, { sessionId: s.id, claimId, operator: op, state: s.state, joined: true });
+      }
       const claimId = newClaimId();
       const now = new Date().toISOString();
       const lease = new Date(Date.now() + cfg.leaseMs).toISOString();
@@ -961,10 +992,10 @@ export function createServer(opts = {}) {
       if (r.changes !== 1) return generic();
       auditLog(db, user.id, 'session.claim', s.id, {});
       const rt = live.get(s.id);
-      if (rt?.hostWs) send(rt.hostWs, { type: 'claim', claimId, operator: { id: user.id, name: user.name } });
+      if (rt?.hostWs) send(rt.hostWs, { type: 'claim', claimId, operator: { id: user.id, login: user.login, name: user.name } });
       return ok(res, 201, {
         sessionId: s.id, claimId,
-        operator: { id: user.id, name: user.name },
+        operator: { id: user.id, login: user.login, name: user.name },
         state: 'pending-consent',
       });
     }
@@ -976,12 +1007,103 @@ export function createServer(opts = {}) {
       if (!user) return err(res, 401, 'unauthorized', 'Требуется авторизация');
       if (!['admin', 'operator'].includes(user.role)) return err(res, 403, 'forbidden', 'Недостаточно прав');
       const s = db.prepare('SELECT * FROM sessions WHERE id = ?').get(m[1]);
-      if (!s || s.state === 'ended' || !s.claim_id || s.operator_id !== user.id) {
+      const joinedRow = user
+        ? db.prepare('SELECT claim_id FROM session_operators WHERE session_id = ? AND user_id = ?').get(s?.id ?? '', user.id)
+        : null;
+      const own = s && s.operator_id === user.id;
+      if (!s || s.state === 'ended' || (!own && !joinedRow)) {
         return err(res, 404, 'not_found', 'Сеанс не найден или не закреплён за вами');
       }
-      // machineId нужен веб-оператору: в machine-флоу офферит оператор (machineOffer)
-      return ok(res, 200, { sessionId: s.id, claimId: s.claim_id, state: s.state, machineId: s.machine_id ?? null });
+      // multi-operator: присоединённый получает свой claimId, основной — сеансовый
+      return ok(res, 200, {
+        sessionId: s.id,
+        claimId: own ? s.claim_id : joinedRow.claim_id,
+        state: s.state,
+        machineId: s.machine_id ?? null,
+      });
     }
+
+    // ---- файловый релей (v0.4.0): резервный канал, файлы хранятся TTL дней ----
+    const relayDir = cfg.relayDir ?? path.join(path.dirname(cfg.dbPath), 'relay');
+    fs.mkdirSync(relayDir, { recursive: true });
+
+    function sweepRelayFiles() {
+      if (cfg.relayTtlDays <= 0) return; // 0 — без истечения
+      const cutoff = new Date(cfg.nowMs() - cfg.relayTtlDays * 86_400_000).toISOString();
+      const rows = db.prepare('SELECT id, path FROM relay_files WHERE expires_at < ?').all(cutoff);
+      for (const row of rows) {
+        try { fs.unlinkSync(row.path); } catch { /* уже удалён */ }
+        db.prepare('DELETE FROM relay_files WHERE id = ?').run(row.id);
+      }
+    }
+    sweepRelayFiles();
+
+    // Загрузка в релей: оператор (Bearer) или хост утверждённого сеанса (hostToken).
+    // Тело — сырые байты, имя и TTL — заголовки; в ответе одноразовая ссылка.
+    m = p.match(/^\/relay$/);
+    if (m && req.method === 'POST') {
+      const token = bearer(req);
+      if (!token) return err(res, 401, 'unauthorized', 'Требуется авторизация');
+      let actor = null;
+      if (user && ['admin', 'operator'].includes(user.role)) actor = user.id;
+      if (!actor) {
+        // hostToken: файл релея от хоста утверждённого сеанса
+        const hs = db.prepare('SELECT id FROM sessions WHERE host_token_hash = ? AND state != ?')
+          .get(sha256(token), 'ended');
+        if (!hs) return err(res, 401, 'unauthorized', 'Требуется авторизация');
+        actor = `host:${hs.id}`;
+      }
+      if (!cfg.limits.relayUpload.take(`ip:${ip(req)}`)) return err(res, 429, 'rate_limited', 'Слишком много загрузок');
+      const name = sanitizeFileName(String(req.headers['x-file-name'] ?? 'file')) || 'file';
+      if (Number(req.headers['content-length'] ?? 0) > cfg.relayMax) {
+        return err(res, 413, 'too_large', `Файл больше ${Math.round(cfg.relayMax / 1048576)} МБ`);
+      }
+      const chunks = [];
+      let total = 0;
+      let tooBig = false;
+      await new Promise((resolve) => {
+        req.on('data', (chunk) => {
+          total += chunk.length;
+          if (total > cfg.relayMax) { tooBig = true; resolve(); return; }
+          chunks.push(chunk);
+        });
+        req.on('end', resolve);
+        req.on('error', resolve);
+      });
+      if (tooBig) return err(res, 413, 'too_large', `Файл больше ${Math.round(cfg.relayMax / 1048576)} МБ`);
+      const id = `r-${crypto.randomBytes(12).toString('base64url')}`;
+      const dlToken = crypto.randomBytes(24).toString('base64url');
+      const filePath = path.join(relayDir, `${id}.bin`);
+      fs.writeFileSync(filePath, Buffer.concat(chunks));
+      const expiresAt = new Date(cfg.nowMs() + cfg.relayTtlDays * 86_400_000).toISOString();
+      db.prepare(`INSERT INTO relay_files (id, name, size, path, token_hash, created_by, created_at, expires_at)
+                  VALUES (?,?,?,?,?,?,?,?)`)
+        .run(id, name, total, filePath, sha256(dlToken), actor, new Date(cfg.nowMs()).toISOString(), expiresAt);
+      return ok(res, 201, { id, name, size: total, token: dlToken, expiresAt, url: `/api/v1/relay/${id}?token=${dlToken}` });
+    }
+
+    m = p.match(/^\/relay\/([A-Za-z0-9_-]+)$/);
+    if (m && req.method === 'GET') {
+      if (!cfg.limits.relayDownload.take(`ip:${ip(req)}`)) return err(res, 429, 'rate_limited', 'Слишком много запросов');
+      const row = db.prepare('SELECT * FROM relay_files WHERE id = ?').get(m[1]);
+      const url = new URL(req.url, 'http://x');
+      const token = String(url.searchParams.get('token') ?? '');
+      if (!row) return err(res, 404, 'not_found', 'Файл не найден или срок хранения истёк');
+      const given = Buffer.from(sha256(token));
+      const expected = Buffer.from(row.token_hash);
+      if (given.length !== expected.length || !crypto.timingSafeEqual(given, expected)) {
+        return err(res, 403, 'bad_token', 'Неверная ссылка');
+      }
+      if (!fs.existsSync(row.path)) return err(res, 410, 'gone', 'Срок хранения файла истёк');
+      res.writeHead(200, {
+        'content-type': 'application/octet-stream',
+        'content-length': row.size,
+        'content-disposition': `attachment; filename="${row.name.replace(/[^\w.-]/g, '_')}"`,
+      });
+      fs.createReadStream(row.path).pipe(res);
+      return;
+    }
+
     m = p.match(/^\/sessions\/([^/]+)\/decision$/);
     if (m && req.method === 'POST') {
       const s = hostTokenSession(req);
@@ -1001,7 +1123,7 @@ export function createServer(opts = {}) {
           });
           const rt = live.get(s.id);
           send(rt?.hostWs, { type: 'approved', claimId });
-          send(rt?.opWs, { type: 'approved', claimId });
+          if (rt?.opSockets) for (const opWs of rt.opSockets.keys()) send(opWs, { type: 'approved', claimId });
         }
         return ok(res, 200, { ok: true });
       }
@@ -1018,8 +1140,10 @@ export function createServer(opts = {}) {
       const operator = authUser(req);
       const isOperator = operator && s.operator_id === operator.id;
       if (!isHost && !isOperator) return err(res, 403, 'forbidden', 'Недостаточно прав для этого сеанса');
-      const changed = endSession(s.id, 'ended');
-      if (changed) auditLog(db, isHost ? null : operator.id, 'session.end', s.id, isHost ? { host: true } : {});
+      // reason idle — только хосту (таймаут бездействия v0.4.0); остальным 'ended'
+      const reason = isHost && body?.reason === 'idle' ? 'idle' : 'ended';
+      const changed = endSession(s.id, reason);
+      if (changed) auditLog(db, isHost ? null : operator.id, 'session.end', s.id, isHost ? { host: true, reason } : {});
       return ok(res, 200, { ok: true });
     }
     if (p === '/rtc-config' && req.method === 'GET') {
@@ -1488,9 +1612,9 @@ export function createServer(opts = {}) {
       if (role === 'host' && rt.hostWs === ws) {
         rt.hostWs = null;
         participantLost(session.id, rt, 'host');
-      } else if (role === 'operator' && rt.opWs === ws) {
-        rt.opWs = null;
-        participantLost(session.id, rt, 'operator');
+      } else if (role === 'operator' && rt.opSockets?.has(ws)) {
+        rt.opSockets.delete(ws);
+        if (rt.opSockets.size === 0) participantLost(session.id, rt, 'operator');
       }
     });
 
@@ -1511,24 +1635,35 @@ export function createServer(opts = {}) {
       } else if (msg.role === 'operator') {
         const u = authUser({ headers: { authorization: `Bearer ${msg.token}` }, socket: { remoteAddress: '' } });
         if (!u || !['admin', 'operator'].includes(u.role)) return ws.close(4003, 'invalid-session');
-        if (msg.claimId !== s.claim_id || s.operator_id !== u.id) return ws.close(4003, 'invalid-session');
+        // multi-operator (v0.4.0): основной оператор ИЛИ присоединённый (session_operators)
+        const joinedOp = db.prepare(
+          'SELECT 1 FROM session_operators WHERE session_id = ? AND user_id = ? AND claim_id = ?'
+        ).get(s.id, u.id, String(msg.claimId ?? ''));
+        const isPrimaryOp = msg.claimId === s.claim_id && s.operator_id === u.id;
+        if (!isPrimaryOp && !joinedOp) return ws.close(4003, 'invalid-session');
         if (!['pending-consent', 'approved'].includes(s.state)) return ws.close(4003, 'invalid-session');
         role = 'operator';
         userId = u.id;
       } else {
         return ws.close(4002, 'auth-first');
       }
-      // один сокет на участника
+      // один сокет на хоста; операторов может быть несколько (v0.4.0) —
+      // повторный вход того же пользователя заменяет его старый сокет
       let rt = live.get(s.id);
-      if (rt && (msg.role === 'host' ? rt.hostWs : rt.opWs)) {
+      if (rt && msg.role === 'host' && rt.hostWs) {
         return ws.close(4004, 'duplicate-socket');
+      }
+      if (rt && msg.role === 'operator') {
+        for (const [oldWs, meta] of rt.opSockets) {
+          if (meta.userId === userId) { try { oldWs.close(4000, 'replaced'); } catch { /* уже закрыт */ } rt.opSockets.delete(oldWs); }
+        }
       }
       if (!rt && live.size >= cfg.maxSessions) {
         // переподключения своих не блокируем — только новые сеансы при перегрузке
         return ws.close(4005, 'server-busy');
       }
       if (!rt) {
-        rt = { hostWs: null, opWs: null, operatorUserId: null, sigCount: 0, sigReset: 0, hostLostAt: null, opLostAt: null, lastBeat: 0, termActive: false };
+        rt = { hostWs: null, opSockets: new Map(), operatorUserId: null, sigCount: 0, sigReset: 0, hostLostAt: null, opLostAt: null, lastBeat: 0, termActive: false };
         live.set(s.id, rt);
       }
       let resumed;
@@ -1541,8 +1676,7 @@ export function createServer(opts = {}) {
       } else {
         resumed = rt.opLostAt != null;
         rt.opLostAt = null;
-        rt.opWs = ws;
-        rt.operatorUserId = userId;
+        rt.opSockets.set(ws, { userId, claimId: msg.claimId });
       }
       session = s;
       authed = true;
@@ -1562,7 +1696,7 @@ export function createServer(opts = {}) {
       }
       if (resumed) {
         send(rt.hostWs, { type: 'resumed' });
-        send(rt.opWs, { type: 'resumed' });
+        for (const opWs of rt.opSockets.keys()) send(opWs, { type: 'resumed' });
       }
     });
 
@@ -1593,11 +1727,28 @@ export function createServer(opts = {}) {
           .run(new Date(nowMs + cfg.leaseMs).toISOString(), s.id);
         return send(ws, { type: 'heartbeat' });
       }
+      // file-link (v0.4.0): ссылка на файл в резервном релее — allowlist-поля,
+      // релей counterpart-стороне; URL только внутрь /api/v1/relay/
+      if (msg.type === 'file-link') {
+        if (role !== 'host' && role !== 'operator') return ws.close(4002, 'bad-message');
+        const rt = live.get(s.id);
+        if (!rt) return;
+        const isHost = role === 'host' && rt.hostWs === ws;
+        if (!isHost && !rt.opSockets?.has(ws)) return ws.close(4002, 'bad-message');
+        const name = typeof msg.name === 'string' ? msg.name.slice(0, 120) : '';
+        const size = Number.isInteger(msg.size) && msg.size > 0 && msg.size <= 200 * 1024 * 1024 ? msg.size : 0;
+        const url = typeof msg.url === 'string' && msg.url.startsWith('/api/v1/relay/') && msg.url.length <= 500 ? msg.url : '';
+        if (!name || !size || !url) return;
+        const out = { type: 'file-link', name, size, url };
+        if (isHost) { for (const opWs of rt.opSockets.keys()) send(opWs, out); }
+        else send(rt.hostWs, out);
+        return;
+      }
       if (msg.type === 'signal') {
         if (role !== 'host' && role !== 'operator') return send(ws, { type: 'error', code: 'forbidden', message: 'Недопустимое сообщение' });
         const rt = live.get(s.id);
         const isHost = role === 'host' && rt?.hostWs === ws;
-        const isOp = role === 'operator' && rt?.opWs === ws;
+        const isOp = role === 'operator' && rt?.opSockets?.has(ws);
         if (!isHost && !isOp) return send(ws, { type: 'error', code: 'forbidden', message: 'Недопустимое сообщение' });
         if (s.state !== 'approved') {
           return send(ws, { type: 'error', code: 'not_approved', message: 'Сигналы доступны только после подтверждения' });
@@ -1611,11 +1762,15 @@ export function createServer(opts = {}) {
         if (!validSignalData(msg.data)) {
           return send(ws, { type: 'error', code: 'bad_signal', message: 'Некорректный сигнал' });
         }
-        const target = isHost ? rt.opWs : rt.hostWs;
         const clean = msg.data.description
           ? { type: 'signal', data: { description: { type: msg.data.description.type, sdp: msg.data.description.sdp } } }
           : { type: 'signal', data: { candidate: msg.data.candidate } };
-        return send(target, clean);
+        if (isHost) {
+          // multi-operator (v0.4.0): сигналы хоста получает каждый операторский сокет
+          for (const opWs of rt.opSockets.keys()) send(opWs, clean);
+          return send(ws, clean);
+        }
+        return send(rt.hostWs, clean);
       }
       return send(ws, { type: 'error', code: 'bad_message', message: 'Некорректное сообщение' });
     }
@@ -1633,7 +1788,7 @@ export function createServer(opts = {}) {
       clearInterval(sweeper);
       clearInterval(housekeeper);
       for (const rt of live.values()) {
-        for (const ws of [rt.hostWs, rt.opWs]) if (ws) ws.terminate();
+        for (const ws of [rt.hostWs, ...rt.opSockets.keys()]) if (ws) ws.terminate();
       }
       live.clear();
       for (const client of wss.clients) client.terminate();

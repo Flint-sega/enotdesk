@@ -55,6 +55,10 @@ enot.onSignal(async (msg) => {
             clientShow('error');
           }
         } finally { hostRtcStarting = false; }
+        // креды для других операторов: ID + пароль прямо на экране
+        if (state.session) {
+          text($('client-access-note'), t('client.accessNote', { id: state.session.sessionId, password: state.session.password }));
+        }
       } else if (state.role === 'operator') {
         if (state.pc) break; // уже отвечаем на оффер
         show($('op-waiting'));
@@ -103,6 +107,32 @@ enot.onSignal(async (msg) => {
       }
       break;
     }
+    case 'operator-joined': {
+      const op = msg.operator ?? {};
+      text($('client-operators'), t('client.operatorJoined', { name: op.name ?? '', login: op.login ?? '' }));
+      break;
+    }
+    case 'idle-warning':
+      if (state.role === 'client') text($('client-live-note'), t('client.idleWarning', { sec: msg.remainingSec ?? 60 }));
+      break;
+    case 'idle-clear':
+      if (state.role === 'client') text($('client-live-note'), '');
+      break;
+    case 'file-link':
+      // резервный релей: ссылка на файл (TTL 3 суток) — показать получателю
+      if (msg.url && msg.name) {
+        const box = state.role === 'client' ? $('client-file-prompt') : null;
+        if (box) {
+          const a = document.createElement('a');
+          a.href = msg.url;
+          a.download = msg.name;
+          a.className = 'note';
+          a.textContent = t('files.relayLink', { name: msg.name });
+          box.textContent = '';
+          box.appendChild(a);
+        }
+      }
+      break;
     case 'error':
       if (state.role === 'client' && state.session) { text($('client-error-text'), msg.message ?? t('common.serverError')); clientShow('error'); }
       else if (state.role === 'operator') {

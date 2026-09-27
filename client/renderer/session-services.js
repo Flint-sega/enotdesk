@@ -222,19 +222,35 @@ $('btn-op-clip-paste').addEventListener('click', () => {
 
 // Отправка файла (обе стороны): meta + чанки через один file-канал.
 // Файл приходит и из input, и из drag&drop — общий путь один.
-export function sendFileFrom(side, file) {
+// Обе стороны видят передачу: отправителю — прогресс, получателю — «Принять»/прогресс/ссылку.
+export async function sendFileFrom(side, file) {
   if (!file) return;
   const dc = state.dcs?.file;
   if (!dc || dc.readyState !== 'open') {
-    if (side === 'op') text($('file-op-status'), t('files.noChannel'));
+    // Фолбэк: резервный релей сервера (TTL 3 суток) — файл уходит ссылкой получателю
+    try {
+      const buf = new Uint8Array(await file.arrayBuffer());
+      const up = await enot.relayUpload(file.name, buf);
+      await enot.sendFileLink({ name: up.name, size: up.size, url: up.url });
+      if (side === 'client') text($('client-live-note'), t('files.relayLink', { name: up.name }));
+      else text($('file-op-status'), t('files.relayLink', { name: up.name }));
+    } catch { /* релей недоступен — честно молчим, канал всё равно мёртв */ }
     return;
   }
   const id = makeFileId();
+  const noteEl = side === 'client' ? $('client-live-note') : null;
+  const statusEl = side === 'op' ? $('file-op-status') : null;
+  const show = (el, s) => { if (el) text(el, s); };
   try {
     dc.send(fileMeta(id, file.name, file.size));
-    createFileSender({ file, dc, id }).start();
+    createFileSender({
+      file, dc, id,
+      onProgress: (sent) => show(statusEl, t('files.sendingProgress', { name: file.name, pct: Math.round((sent / file.size) * 100) })),
+      onSent: () => show(statusEl, t('files.sentWaiting', { name: file.name })),
+    }).start();
   } catch { /* канал закрыт */ return; }
-  if (side === 'op') text($('file-op-status'), t('files.sending', { name: file.name }));
+  show(statusEl, t('files.sending', { name: file.name }));
+  show(noteEl, t('files.sending', { name: file.name }));
 }
 function sendFile(side) {
   const input = $(side === 'client' ? 'client-file-input' : 'op-file-input');

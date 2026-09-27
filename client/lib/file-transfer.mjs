@@ -69,8 +69,9 @@ export function createFileReceiver(meta) {
 }
 
 // Отправитель: читает файл чанками, держит буфер DC в границах (backpressure).
-// onDone вызывается после подтверждения file-done получателем.
-export function createFileSender({ file, dc, id, chunkSize = FILE_CHUNK, highWater = 1024 * 1024 }) {
+// onProgress(sentBytes) — для индикатора у отправителя; onSent() — после отправки
+// всех чанков (до подтверждения file-done получателем).
+export function createFileSender({ file, dc, id, chunkSize = FILE_CHUNK, highWater = 1024 * 1024, onProgress = null, onSent = null }) {
   let offset = 0;
   let reading = false;
   let doneSent = false;
@@ -84,9 +85,11 @@ export function createFileSender({ file, dc, id, chunkSize = FILE_CHUNK, highWat
     slice.arrayBuffer().then((buf) => {
       offset += buf.byteLength;
       try { dc.send(buf); } catch { /* канал закрыт — отправка прекращена */ }
+      onProgress?.(offset);
       reading = false;
       if (offset >= file.size) {
         if (!doneSent) { doneSent = true; try { dc.send(fileDone(id)); } catch { /* закрыт */ } }
+        onSent?.();
         return;
       }
       pump();

@@ -274,3 +274,67 @@ test('connect-маршрут: свой claimId оператору без пар�
   const missing = await api(base, 'GET', '/sessions/000000000/connect', { token: admin.token });
   assert.equal(missing.status, 404);
 });
+
+test('multi-operator: join по ID+паролю в approved, свой claimId, WS обоих, ended всем', async (t) => {
+  const { base, port, admin } = await setup(t);
+  const reg = await api(base, 'POST', '/sessions');
+  const { sessionId, password, hostToken } = reg.json;
+  const host = wsConnect(port);
+  await wsAuth(host, { type: 'auth', role: 'host', sessionId, token: hostToken });
+  const claim = await api(base, 'POST', `/sessions/${sessionId}/claim`, { token: admin.token, body: { password } });
+  assert.equal(claim.status, 201);
+  const op1 = wsConnect(port);
+  await wsAuth(op1, { type: 'auth', role: 'operator', sessionId, token: admin.token, claimId: claim.json.claimId });
+  await api(base, 'POST', `/sessions/${sessionId}/decision`, { token: hostToken, body: { claimId: claim.json.claimId, allow: true } });
+
+  // второй оператор: join по паролю в approved
+  const inv = await api(base, 'POST', '/invites', { token: admin.token, body: { role: 'operator' } });
+  await api(base, 'POST', '/invites/accept', { body: { token: inv.json.token, login: 'op2', name: 'Op2', password: 'operator-pass-2' } });
+  const op2Login = await api(base, 'POST', '/auth/login', { body: { login: 'op2', password: 'operator-pass-2' } });
+  const join = await api(base, 'POST', `/sessions/${sessionId}/claim`, { token: op2Login.json.token, body: { password } });
+  t.diagnostic('join: ' + join.status + ' ' + JSON.stringify(join.json).slice(0, 140));
+  assert.equal(join.status, 201, 'join в approved: 201');
+  assert.equal(join.json.joined, true, 'помечен как присоединённый');
+  assert.notEqual(join.json.claimId, claim.json.claimId, 'свой claimId');
+  assert.equal(join.json.operator.login, 'op2', 'логин в ответе');
+
+  // /connect: основному — сеансовый claimId, присоединённому — свой
+  const c1 = await api(base, 'GET', `/sessions/${sessionId}/connect`, { token: admin.token });
+  assert.equal(c1.json.claimId, claim.json.claimId);
+  const c2 = await api(base, 'GET', `/sessions/${sessionId}/connect`, { token: op2Login.json.token });
+  assert.equal(c2.json.claimId, join.json.claimId);
+
+  // WS: хост получает operator-joined, оба оператора живут параллельно
+  const op2ws = wsConnect(port);
+  await wsAuth(op2ws, { type: 'auth', role: 'operator', sessionId, token: op2Login.json.token, claimId: join.json.claimId });
+  const joined = await host.wait((m) => m.type === 'operator-joined', 3000);
+  t.diagnostic('joined ok: ' + joined.operator.login);
+  assert.equal(joined.operator.login, 'op2');
+
+  // fan-out: host сигнал получают оба оператора
+  host.send(JSON.stringify({ type: 'signal', data: { candidate: { candidate: 'c', sdpMid: '0' } } }));
+  const got1 = await op1.wait((m) => m.type === 'signal', 2000).catch(() => null);
+  const got2 = await op2ws.wait((m) => m.type === 'signal', 2000).catch(() => null);
+  assert.ok(got1, 'первый оператор получил сигнал');
+  assert.ok(got2, 'второй оператор получил сигнал');
+
+  // end основным оператором: обе стороны и оба оператора получили ended
+  await api(base, 'POST', `/sessions/${sessionId}/end`, { token: hostToken, body: {} });
+  const e1 = await op1.wait((m) => m.type === 'ended', 2000).catch(() => null);
+  const e2 = await op2ws.wait((m) => m.type === 'ended', 2000).catch(() => null);
+  assert.ok(e1 && e2, 'ended доставлен обоим операторам');
+  host.close(); op1.close(); op2ws.close();
+});
+
+test('idle: host завершает сеанс с причиной idle по POST end', async (t) => {
+  const { base, admin } = await setup(t);
+  const reg = await api(base, 'POST', '/sessions');
+  const { sessionId, password, hostToken } = reg.json;
+  const claim = await api(base, 'POST', `/sessions/${sessionId}/claim`, { token: admin.token, body: { password } });
+  assert.equal(claim.status, 201);
+  await api(base, 'POST', `/sessions/${sessionId}/decision`, { token: hostToken, body: { claimId: claim.json.claimId, allow: true } });
+  const end = await api(base, 'POST', `/sessions/${sessionId}/end`, { token: hostToken, body: { reason: 'idle' } });
+  assert.equal(end.status, 200);
+  const h = await api(base, 'GET', '/history?limit=1', { token: admin.token });
+  assert.equal(h.json.items[0].endReason ?? h.json.items[0].reason, 'idle');
+});

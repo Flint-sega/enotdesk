@@ -12,7 +12,10 @@ export const state = {
   connect: null, // {sessionId, claimId}
   pc: null, dc: null, localStream: null,
   dcs: null, // {input, chat, clip, file} — каналы сессии (ADR 0014)
-  clip: { client: false, operator: false }, // синхронизация выключена по умолчанию (SEC-002): тумблер включает только ОТПРАВКУ своего буфера; входящий текст оператора — только по явной кнопке «Вставить из сеанса»
+  // синхронизация буфера ВКЛЮЧЕНА по умолчанию (решение владельца 27.09), тогглом отключается:
+  // флаги включают только ОТПРАВКУ своего буфера; входящий текст оператора на десктопе
+  // пишется в буфер автоматически, у веб-оператора — по кнопке «Вставить из сеанса» (SEC-002)
+  clip: { client: true, operator: true },
   fileRx: null, // приём файла {rx, dc, prog}
   iceQueue: [],
   busy: false,
@@ -22,7 +25,7 @@ export const state = {
 };
 
 // Коды причин из протокола; человекочитаемый текст берётся из словаря по ключу end.<код>.
-export const END_REASONS = ['ended', 'denied', 'host-lost', 'operator-lost', 'lease-expired', 'server-restart', 'signal-lost', 'rtc'];
+export const END_REASONS = ['ended', 'denied', 'host-lost', 'operator-lost', 'lease-expired', 'server-restart', 'signal-lost', 'rtc', 'idle'];
 
 export function endReasonText(reason) {
   if (reason && END_REASONS.includes(reason)) return t(`end.${reason}`);

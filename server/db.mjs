@@ -1,7 +1,7 @@
 import { DatabaseSync } from 'node:sqlite';
 
 // Последняя версия схемы; растёт с каждым версионированным шагом (A01 и далее).
-export const SCHEMA_VERSION = 6;
+export const SCHEMA_VERSION = 7;
 
 // Версионированные шаги схемы (A01): каждая база — старая или новая — проходит
 // недостающие шаги по порядку, версия хранится в таблице schema_version.
@@ -150,6 +150,31 @@ const MIGRATIONS = [
     version: 6,
     up: (db) => {
       try { db.exec('ALTER TABLE users ADD COLUMN totp_last_counter INTEGER'); } catch { /* колонка уже есть */ }
+    },
+  },
+  {
+    // v0.4.0: присоединённые операторы (multi-operator) и резервный файловый релей
+    // с TTL (решение владельца: P2P основной путь + релей 3 суток как резерв).
+    version: 7,
+    up: (db) => {
+      db.exec(`CREATE TABLE IF NOT EXISTS session_operators (
+        session_id TEXT NOT NULL,
+        user_id TEXT NOT NULL,
+        claim_id TEXT NOT NULL,
+        joined_at TEXT NOT NULL,
+        PRIMARY KEY (session_id, user_id)
+      )`);
+      db.exec(`CREATE TABLE IF NOT EXISTS relay_files (
+        id TEXT PRIMARY KEY,
+        name TEXT NOT NULL,
+        size INTEGER NOT NULL,
+        path TEXT NOT NULL,
+        token_hash TEXT NOT NULL,
+        created_by TEXT NOT NULL,
+        created_at TEXT NOT NULL,
+        expires_at TEXT NOT NULL
+      )`);
+      db.exec('CREATE INDEX IF NOT EXISTS idx_relay_expires ON relay_files (expires_at)');
     },
   },
 ];

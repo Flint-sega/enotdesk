@@ -95,6 +95,16 @@ export function createSignalClient({ url, wsFactory = (u) => new WebSocket(u), a
       ws.send(JSON.stringify(message));
     },
 
+    // file-link (v0.4.0): ссылка на файл в резервном релее — сервер релеит её
+    // counterpart-стороне; allowlist полей, размер/имя ограничивает сервер.
+    sendFileLink({ name, size, url }) {
+      if (typeof name !== 'string' || !name || name.length > 120) throw new Error('Некорректное имя файла');
+      if (!Number.isInteger(size) || size < 1) throw new Error('Некорректный размер файла');
+      if (typeof url !== 'string' || !url.startsWith('/api/v1/relay/') || url.length > 500) throw new Error('Некорректная ссылка');
+      if (!ws || ws.readyState !== 1) throw new Error('Сигнальное соединение закрыто');
+      ws.send(JSON.stringify({ type: 'file-link', name, size, url }));
+    },
+
     // extra — allowlist-расширение heartbeat (R09): только termActive boolean,
     // прочие поля не уходят; без аргумента сообщение как раньше.
     heartbeat(extra) {
