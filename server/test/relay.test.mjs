@@ -74,10 +74,7 @@ test('relay: кириллическое имя (encoded) сохраняется 
 
 test('relay: auth-отказы — без токена 401, лишний размер 413', async (t) => {
   const dbPath = tmpDb(t);
-  const { inst, base, port } = await startServer(t, { dbPath });
-  const admin = await adminLogin(dbPath, base);
-  const reg = await api(base, 'POST', '/sessions');
-  const { hostToken } = reg.json;
+  const { base } = await startServer(t, { dbPath });
 
   const noAuth = await fetch(base + '/api/v1/relay', { method: 'POST', body: Buffer.from('x') });
   assert.equal(noAuth.status, 401);
