@@ -209,6 +209,8 @@ function drainIce(pc) {
 async function operatorAnswer(offerSdp) {
   const cfg = await api('GET', '/rtc-config');
   const pc = makePc(cfg.body?.iceServers ?? []);
+  // epoch-guard: сеанс мог завершиться во время await — не воскрешаем pc
+  if (!state.connect) { try { pc.close(); } catch { /* уже закрыт */ } return; }
   state.pc = pc;
   state.iceQueue = [];
   // Каналы данных приходят от клиента-офферера (ADR 0014): answer не может
@@ -259,6 +261,8 @@ async function machineOffer() {
   try {
     const cfg = await api('GET', '/rtc-config');
     const pc = makePc(cfg.body?.iceServers ?? []);
+    // epoch-guard: 'ended' во время await обнуляет connect — не воскрешаем pc
+    if (!state.connect) { try { pc.close(); } catch { /* уже закрыт */ } return; }
     state.pc = pc;
     state.iceQueue = [];
     const termCh = pc.createDataChannel('term');

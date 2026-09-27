@@ -9,7 +9,7 @@ import { showConnectForm } from './views/operator-view.js';
 import { renderContacts } from './views/contacts.js';
 import { renderTeam } from './views/team.js';
 import { renderHistory, renderAudit } from './views/history.js';
-import { stopMedia, drainIce, startHostRtc, operatorAnswer } from './session-media.js';
+import { stopMedia, cleanupSession, drainIce, startHostRtc, operatorAnswer } from './session-media.js';
 import { resetUnreadChat } from './session-services.js';
 import { checkForUpdate, openFirstRun, updateServerChip } from './settings.js';
 
@@ -49,8 +49,11 @@ enot.onSignal(async (msg) => {
         clientShow('connected');
         text($('connected-operator'), document.getElementById('consent-operator').textContent);
         try { await startHostRtc(); } catch (e) {
-          text($('client-error-text'), e.message);
-          clientShow('error');
+          // 'ended' мог прийти во время await: не затираем экран завершения
+          if (state.session) {
+            text($('client-error-text'), e.message);
+            clientShow('error');
+          }
         } finally { hostRtcStarting = false; }
       } else if (state.role === 'operator') {
         if (state.pc) break; // уже отвечаем на оффер
@@ -87,10 +90,10 @@ enot.onSignal(async (msg) => {
       else text($('remote-status'), t('status.connected'));
       break;
     case 'ended': {
-      stopMedia();
-      enot.closeSignal().catch(() => {});
+      // cleanupSession (не просто stopMedia): гасит карточку ретрая и streamPaused —
+      // они не должны переживать сеанс (ревью GLM-5.3 #3)
+      cleanupSession();
       const clientSide = state.role === 'client';
-      state.session = null; state.pendingClaim = null; state.connect = null;
       if (clientSide) {
         text($('ended-reason'), endReasonText(msg.reason));
         clientShow('ended');

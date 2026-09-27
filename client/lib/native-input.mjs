@@ -54,7 +54,7 @@ function macAdapter(koffi) {
   const CGEventSetFlags = cg.func('void CGEventSetFlags(void *, unsigned long)');
   const CGEventPost = cg.func('void CGEventPost(int, void *)');
   const CFRelease = cg.func('void CFRelease(void *)');
-  const CGEventCreateScrollWheelEvent = cg.func('void *CGEventCreateScrollWheelEvent(void *, int, int, int, int)');
+  const CGEventCreateScrollWheelEvent = cg.func('void *CGEventCreateScrollWheelEvent(void *, int, int, int)');
   const post = (ev) => { try { CGEventPost(0, ev); } finally { CFRelease(ev); } };
   const held = new Set();
   const lastPx = [0, 0]; // объявлен до использования, обновляется в move()
@@ -106,10 +106,12 @@ function macAdapter(koffi) {
       post(ev);
       return true;
     },
-    // строки колеса, unit=line; знак инвертирован: dy>0 (вниз) = прокрутка вниз
+    // строки колеса, units=line(1), wheelCount=1, wheel1=-строки; знак инвертирован:
+    // dy>0 (вниз) = прокрутка вниз. Раньше units=0 и значение попадало в 5-й аргумент —
+    // скролл всегда давал 1 пиксель (ревью GLM-5.3 #3, confirmed пробой CGEvent-полей).
+    // Горизонтальная ось (dx) через этот API на arm64 не выставляется — v1 не поддержана.
     scroll(dx, dy) {
-      if (dx) post(CGEventCreateScrollWheelEvent(null, 0, 1, 1, -Math.round(dx)));
-      if (dy) post(CGEventCreateScrollWheelEvent(null, 0, 1, 1, -Math.round(dy)));
+      if (dy) post(CGEventCreateScrollWheelEvent(null, 1, 1, -Math.round(dy)));
     },
   };
 }

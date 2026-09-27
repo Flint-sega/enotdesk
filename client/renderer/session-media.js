@@ -249,10 +249,12 @@ export async function startHostRtc() {
     await enot.sendSignal({ type: 'signal', data: { description: { type: 'offer', sdp: pc.localDescription.sdp } } });
   } catch (e) {
     // сбой после успешного захвата: гасим поток — иначе экран «течёт» без сеанса
-    // и без кнопки (ревью GLM-5.3 v0.3.0)
+    // и без кнопки (ревью GLM-5.3 v0.3.0); 'ended' не затираем (гонка await)
     stopMedia();
-    text($('client-error-text'), e?.message ?? t('common.serverError'));
-    clientShow('error');
+    if (state.session) {
+      text($('client-error-text'), e?.message ?? t('common.serverError'));
+      clientShow('error');
+    }
     return;
   }
   clientShow('connected');
