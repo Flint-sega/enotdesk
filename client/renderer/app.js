@@ -9,7 +9,7 @@ import { showConnectForm } from './views/operator-view.js';
 import { renderContacts } from './views/contacts.js';
 import { renderTeam } from './views/team.js';
 import { renderHistory, renderAudit } from './views/history.js';
-import { stopMedia, cleanupSession, drainIce, startHostRtc, operatorAnswer } from './session-media.js';
+import { cleanupSession, drainIce, startHostRtc, operatorAnswer } from './session-media.js';
 import { resetUnreadChat } from './session-services.js';
 import { checkForUpdate, openFirstRun, updateServerChip } from './settings.js';
 
