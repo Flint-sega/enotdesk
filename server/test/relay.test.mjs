@@ -1,8 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { startServer, api, adminLogin, tmpDb, wsConnect, wsAuth } from './util.mjs';
-import crypto from 'node:crypto';
-import fs from 'node:fs';
 
 test('relay: upload по hostToken → 201, скачивание по ссылке, битый токен → 403', async (t) => {
   const dbPath = tmpDb(t);

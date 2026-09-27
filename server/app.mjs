@@ -362,17 +362,6 @@ export function createServer(opts = {}) {
   const relayDir = cfg.relayDir ?? path.join(path.dirname(cfg.dbPath), 'relay');
   fs.mkdirSync(relayDir, { recursive: true });
 
-  function sweepRelayFiles() {
-    if (cfg.relayTtlDays <= 0) return; // 0 — без истечения
-    const cutoff = new Date(cfg.nowMs() - cfg.relayTtlDays * 86_400_000).toISOString();
-    const rows = db.prepare('SELECT id, path FROM relay_files WHERE expires_at < ?').all(cutoff);
-    for (const row of rows) {
-      try { fs.unlinkSync(row.path); } catch { /* уже удалён */ }
-      db.prepare('DELETE FROM relay_files WHERE id = ?').run(row.id);
-    }
-  }
-  sweepRelayFiles();
-
   function relayTotalBytes() {
     return db.prepare('SELECT COALESCE(SUM(size), 0) AS total FROM relay_files').get().total;
   }
@@ -397,7 +386,7 @@ export function createServer(opts = {}) {
     if (relayTotalBytes() + declared > cfg.relayMax * 10) {
       return err(res, 507, 'insufficient_storage', 'Хранилище релея переполнено — повторите позже');
     }
-    let name = 'file';
+    let name;
     try { name = sanitizeFileName(decodeURIComponent(String(req.headers['x-file-name'] ?? 'file'))) || 'file'; }
     catch { name = 'file'; }
     const id = `r-${crypto.randomBytes(12).toString('base64url')}`;
