@@ -152,6 +152,7 @@ let signalRole = null;
 // сеансе хоста → предупреждение и завершение. ENOT_IDLE_MINUTES, 0 — выкл.
 const IDLE_MINUTES = Math.max(0, Number(process.env.ENOT_IDLE_MINUTES ?? 30));
 let lastInputAt = 0;
+let idleWarned = false; // уже показывали предупреждение о скором завершении
 // Последняя ошибка загрузки koffi — попадает в честный статус ввода клиента
 let lastKoffiError = null;
 // koffi грузится лениво: permissions()/status() его не трогают, только старт host-сеанса

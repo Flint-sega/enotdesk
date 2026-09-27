@@ -426,6 +426,18 @@ export function createServer(opts = {}) {
   }, 1000);
   sweeper.unref();
 
+  // Релей: разовая зачистка просроченных файлов при старте (и далее в housekeeper).
+  function sweepRelayFiles() {
+    if (cfg.relayTtlDays <= 0) return; // 0 — без истечения
+    const cutoff = new Date(cfg.nowMs() - cfg.relayTtlDays * 86_400_000).toISOString();
+    const rows = db.prepare('SELECT id, path FROM relay_files WHERE expires_at < ?').all(cutoff);
+    for (const row of rows) {
+      try { fs.unlinkSync(row.path); } catch { /* уже удалён */ }
+      db.prepare('DELETE FROM relay_files WHERE id = ?').run(row.id);
+    }
+  }
+  sweepRelayFiles();
+
   // Дом-уборщик: истёкшие токены, завершённые приглашения, старые сеансы (раз в час)
   // + просроченные файлы релея (TTL 3 суток по умолчанию, 0 — без истечения).
   const housekeeper = setInterval(() => {
@@ -1026,17 +1038,6 @@ export function createServer(opts = {}) {
     // ---- файловый релей (v0.4.0): резервный канал, файлы хранятся TTL дней ----
     const relayDir = cfg.relayDir ?? path.join(path.dirname(cfg.dbPath), 'relay');
     fs.mkdirSync(relayDir, { recursive: true });
-
-    function sweepRelayFiles() {
-      if (cfg.relayTtlDays <= 0) return; // 0 — без истечения
-      const cutoff = new Date(cfg.nowMs() - cfg.relayTtlDays * 86_400_000).toISOString();
-      const rows = db.prepare('SELECT id, path FROM relay_files WHERE expires_at < ?').all(cutoff);
-      for (const row of rows) {
-        try { fs.unlinkSync(row.path); } catch { /* уже удалён */ }
-        db.prepare('DELETE FROM relay_files WHERE id = ?').run(row.id);
-      }
-    }
-    sweepRelayFiles();
 
     // Загрузка в релей: оператор (Bearer) или хост утверждённого сеанса (hostToken).
     // Тело — сырые байты, имя и TTL — заголовки; в ответе одноразовая ссылка.

@@ -17,7 +17,6 @@ contextBridge.exposeInMainWorld('enot', {
   appVersion: () => ipcRenderer.invoke('enot:appVersion'),
   relayUpload: (name, buffer) => ipcRenderer.invoke('enot:relayUpload', { name, buffer }),
   sendFileLink: (link) => ipcRenderer.invoke('enot:sendFileLink', link),
-  appVersion: () => ipcRenderer.invoke('enot:appVersion'),
   permissions: () => ipcRenderer.invoke('enot:permissions'),
   input: (event) => ipcRenderer.invoke('enot:input', event),
   copy: (text) => ipcRenderer.invoke('enot:copy', text),
