@@ -501,7 +501,7 @@ function registerIpc() {
   // Версия клиента в рендерер: живая диагностика (текст ошибки захвата несёт её,
   // чтобы со скриншота было видно, какая сборка установлена). В dev Electron
   // отдаёт свою версию — показываем версию продукта, как в getSettings.
-  ipcMain.handle('enot:appVersion', (e) => { guard(e); return app.isPackaged ? app.getVersion() : pkg.version; });
+  ipcMain.handle('enot:appVersion', (e) => { guard(e); return app.isPackaged ? app.getVersion() : (pkg.version ?? '?'); });
 
   // Внешние ссылки — только одобренные https-адреса, через системный браузер
   ipcMain.handle('enot:openExternal', (e, url) => {
@@ -548,8 +548,11 @@ function createWindow() {
   // RequestMediaAccessPermission), а не 'display-capture' — та строка живёт
   // только в Permissions API (navigator.permissions.query). Без ветки 'media'
   // хендлер отклонял захват: NotAllowedError на любой ОС, всегда.
-  session.defaultSession.setPermissionRequestHandler((_wc, permission, callback) => {
+  session.defaultSession.setPermissionRequestHandler((_wc, permission, callback, details) => {
     if (permission === 'media' || permission === 'display-capture') {
+      // 'media' без уточнения покрывает и getUserMedia: разрешаем только видео-захват
+      const mt = details?.mediaTypes;
+      if (Array.isArray(mt) && mt.some((t) => t !== 'video')) return callback(false);
       return callback(Boolean(selectedSource));
     }
     callback(permission === 'clipboard-sanitized-write' || permission === 'fullscreen');

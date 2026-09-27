@@ -28,6 +28,7 @@ export function wireBrowserInput(video, send, { keys, onUnsupported, throttleMs 
   };
 
   const onMove = (e) => {
+    overVideo = true; // движение над видео — самый надёжный сигнал присутствия
     const now = Date.now();
     if (now - lastMove < throttleMs) return;
     lastMove = now;
@@ -39,6 +40,9 @@ export function wireBrowserInput(video, send, { keys, onUnsupported, throttleMs 
     const btn = buttonName(e);
     if (!btn) return;
     prevented(e);
+    // Захват указателя: отпускание за краем видео всё равно придёт сюда —
+    // иначе кнопка на хосте залипает до конца сеанса (ревью GLM-5.3 #3, confirmed)
+    try { video.setPointerCapture?.(e.pointerId); } catch { /* не критично */ }
     const { x, y } = norm(e); // клик там, где курсор, даже если движение ещё не посылалось
     raw({ type: 'move', x, y });
     raw({ type: 'button', button: btn, down: true });
@@ -68,19 +72,32 @@ export function wireBrowserInput(video, send, { keys, onUnsupported, throttleMs 
   // Клавиатура: <video> не фокусируем, keydown на нём не бывает — слушаем
   // document и шлём только когда курсор оператора над экраном сеанса
   // (иначе печать в собственный чат оператора дублировалась бы в сеанс).
+  // Поля ввода оператора (чат/терминал) не перехватываем никогда —
+  // иначе текст (и пароли) печатались бы на удалённой машине (ревью #3, confirmed).
+  // Для зажатых клавиш up доливается даже при уходе курсора — ничего не залипает.
   let overVideo = false;
+  const sentKeys = new Set();
+  const isOperatorField = (e) => {
+    const t = e.target;
+    if (!t || !t.tagName) return false;
+    const tag = t.tagName.toUpperCase();
+    return tag === 'INPUT' || tag === 'TEXTAREA' || t.isContentEditable === true;
+  };
   const onKeyDown = (e) => {
-    if (!overVideo) return;
+    if (!overVideo || isOperatorField(e)) return;
     const key = keyOf(e);
     if (!key) return;
     prevented(e);
+    sentKeys.add(key);
     raw({ type: 'key', key, down: true });
   };
   const onKeyUp = (e) => {
-    if (!overVideo) return;
     const key = keyOf(e);
     if (!key) return;
-    prevented(e);
+    // долив up для зажатой клавиши важен даже вне видео — иначе залипает
+    if (!overVideo && !sentKeys.has(key)) return;
+    if (overVideo) prevented(e);
+    sentKeys.delete(key);
     raw({ type: 'key', key, down: false });
   };
   const onEnter = () => { overVideo = true; };
