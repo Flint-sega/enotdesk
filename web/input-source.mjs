@@ -65,23 +65,38 @@ export function wireBrowserInput(video, send, { keys, onUnsupported, throttleMs 
     }
     return key;
   };
+  // Клавиатура: <video> не фокусируем, keydown на нём не бывает — слушаем
+  // document и шлём только когда курсор оператора над экраном сеанса
+  // (иначе печать в собственный чат оператора дублировалась бы в сеанс).
+  let overVideo = false;
   const onKeyDown = (e) => {
+    if (!overVideo) return;
     const key = keyOf(e);
     if (!key) return;
     prevented(e);
     raw({ type: 'key', key, down: true });
   };
   const onKeyUp = (e) => {
+    if (!overVideo) return;
     const key = keyOf(e);
     if (!key) return;
     prevented(e);
     raw({ type: 'key', key, down: false });
   };
+  const onEnter = () => { overVideo = true; };
+  const onLeave = () => { overVideo = false; };
 
   const bindings = [
     ['pointermove', onMove], ['pointerdown', onDown], ['pointerup', onUp],
-    ['contextmenu', onContext], ['wheel', onWheel], ['keydown', onKeyDown], ['keyup', onKeyUp],
+    ['contextmenu', onContext], ['wheel', onWheel], ['pointerenter', onEnter], ['pointerleave', onLeave],
   ];
   for (const [type, fn] of bindings) video.addEventListener(type, fn);
-  return { detach: () => { for (const [type, fn] of bindings) video.removeEventListener(type, fn); } };
+  const docBindings = [['keydown', onKeyDown], ['keyup', onKeyUp]];
+  for (const [type, fn] of docBindings) document.addEventListener(type, fn);
+  return {
+    detach: () => {
+      for (const [type, fn] of bindings) video.removeEventListener(type, fn);
+      for (const [type, fn] of docBindings) document.removeEventListener(type, fn);
+    },
+  };
 }
