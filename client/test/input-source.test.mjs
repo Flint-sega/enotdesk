@@ -9,8 +9,18 @@ import { wireBrowserInput } from '../../web/input-source.mjs';
 import { INPUT_KEYS } from '../../client/lib/protocol.mjs';
 
 // Фейковый элемент-видео: принимает обработчики, отдаёт честный rect.
-function fakeVideo() {
+// document-шима: клавиатура слушается на document (ревью GLM-5.3 #2) —
+// над/вне видео управляется флагом через pointerenter/pointerleave.
+function fakeVideo({ withDocument = true } = {}) {
   const listeners = new Map();
+  if (withDocument) {
+    globalThis.document = {
+      listeners: new Map(),
+      addEventListener(type, fn) { this.listeners.set(type, fn); },
+      removeEventListener(type) { this.listeners.delete(type); },
+      dispatch(ev) { this.listeners.get(ev.type)?.(ev); },
+    };
+  }
   return {
     listeners,
     rect: { left: 0, top: 0, width: 100, height: 100 },
@@ -91,13 +101,14 @@ test('клавиатура по физическому коду: KeyA → key a 
   const video = fakeVideo();
   const sent = [];
   wireBrowserInput(video, (m) => sent.push(m), { keys: INPUT_KEYS, throttleMs: 0 });
-  video.dispatch(ev('keydown', { code: 'KeyA', key: 'ф' }));
-  video.dispatch(ev('keyup', { code: 'KeyA', key: 'ф' }));
+  video.dispatch(ev('pointerenter'));
+  document.dispatch(ev('keydown', { code: 'KeyA', key: 'ф' }));
+  document.dispatch(ev('keyup', { code: 'KeyA', key: 'ф' }));
   assert.deepEqual(sent, [
     { type: 'key', key: 'a', down: true },
     { type: 'key', key: 'a', down: false },
   ]);
-  video.dispatch(ev('keydown', { code: 'Space', key: ' ' }));
+  document.dispatch(ev('keydown', { code: 'Space', key: ' ' }));
   assert.deepEqual(sent.slice(2), [{ type: 'key', key: 'space', down: true }]);
 });
 
@@ -108,8 +119,9 @@ test('клавиша вне allowlist-кода не отправляется, с
   wireBrowserInput(video, (m) => sent.push(m), {
     keys: INPUT_KEYS, throttleMs: 0, onUnsupported: (k) => unsupported.push(k),
   });
-  video.dispatch(ev('keydown', { code: 'F5', key: 'F5' }));
-  video.dispatch(ev('keyup', { code: 'F5', key: 'F5' }));
+  video.dispatch(ev('pointerenter'));
+  document.dispatch(ev('keydown', { code: 'F5', key: 'F5' }));
+  document.dispatch(ev('keyup', { code: 'F5', key: 'F5' }));
   assert.deepEqual(sent, []);
   assert.deepEqual(unsupported, ['F5', 'F5']);
 });
@@ -121,8 +133,9 @@ test('клавиша, запрещённая переданным набором
   wireBrowserInput(video, (m) => sent.push(m), {
     keys: new Set(['a', 'enter']), throttleMs: 0, onUnsupported: (k) => unsupported.push(k),
   });
-  video.dispatch(ev('keydown', { code: 'KeyB', key: 'b' }));
-  video.dispatch(ev('keydown', { code: 'Enter', key: 'Enter' }));
+  video.dispatch(ev('pointerenter'));
+  document.dispatch(ev('keydown', { code: 'KeyB', key: 'b' }));
+  document.dispatch(ev('keydown', { code: 'Enter', key: 'Enter' }));
   assert.deepEqual(sent, [{ type: 'key', key: 'enter', down: true }]);
   assert.deepEqual(unsupported, ['b']);
 });
@@ -146,9 +159,15 @@ test('обработанные события preventDefault-ятся: стра�
   const ctx = ev('contextmenu');
   video.dispatch(ctx);
   assert.equal(ctx.prevented, true);
+  video.dispatch(ev('pointerenter'));
   const key = ev('keydown', { code: 'Enter', key: 'Enter' });
-  video.dispatch(key);
+  document.dispatch(key);
   assert.equal(key.prevented, true);
+  // вне видео клавиши не перехватываются: страница работает как обычно
+  video.dispatch(ev('pointerleave'));
+  const off = ev('keydown', { code: 'Enter', key: 'Enter' });
+  document.dispatch(off);
+  assert.equal(off.prevented, undefined);
 });
 
 test('detach снимает обработчики: после него ничего не отправляется', () => {
@@ -157,6 +176,6 @@ test('detach снимает обработчики: после него ниче
   const w = wireBrowserInput(video, (m) => sent.push(m), { keys: INPUT_KEYS, throttleMs: 0 });
   w.detach();
   video.dispatch(ev('pointermove', { clientX: 50, clientY: 50 }));
-  video.dispatch(ev('keydown', { code: 'KeyA', key: 'a' }));
+  document.dispatch(ev('keydown', { code: 'KeyA', key: 'a' }));
   assert.deepEqual(sent, []);
 });
