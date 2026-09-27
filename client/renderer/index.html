@@ -146,13 +146,15 @@
         <p data-i18n-html="client.connectedIntroHtml">Сейчас оператор видит ваш экран: <strong id="connected-operator">—</strong>.</p>
         <p id="client-live-note" class="note" role="status"></p>
         <p id="client-input-status" class="note" role="status"></p>
+        <p id="client-operators" class="note" role="status"></p>
+        <p id="client-access-note" class="note" role="status"></p>
         <div class="row gap wrap-btns">
           <button id="btn-switch-source" class="btn" data-i18n="client.switchScreen">Сменить экран</button>
           <button id="btn-pause-stream" class="btn" data-i18n="client.hideScreen">Скрыть экран</button>
           <button id="btn-client-file" class="btn" data-i18n="client.sendFile">Отправить файл</button>
           <input id="client-file-input" type="file" class="hidden">
         </div>
-        <label class="check-line" for="clip-client-toggle"><input type="checkbox" id="clip-client-toggle"> <span data-i18n="client.syncClip">Синхронизировать буфер обмена</span></label>
+        <label class="check-line" for="clip-client-toggle"><input type="checkbox" id="clip-client-toggle" checked> <span data-i18n="client.syncClip">Синхронизировать буфер обмена</span></label>
         <div id="client-file-prompt" class="note"></div>
         <div class="chat">
           <div id="client-chat-log" class="chat-log" aria-live="polite"></div>
@@ -284,7 +286,7 @@
               </div>
               <video id="remote-video" autoplay playsinline data-i18n-aria-label="app.aria.remoteVideo" aria-label="Экран клиента"></video>
               <div class="row gap wrap-btns">
-                <label class="check-line" for="clip-op-toggle"><input type="checkbox" id="clip-op-toggle"> <span data-i18n="op.clipLabel">Отправлять мой буфер другой стороне</span></label>
+                <label class="check-line" for="clip-op-toggle"><input type="checkbox" id="clip-op-toggle" checked> <span data-i18n="op.clipLabel">Отправлять мой буфер другой стороне</span></label>
                 <button id="btn-op-clip-paste" class="btn hidden" data-i18n="op.clipPaste">Вставить из сеанса</button>
                 <span id="file-op-status" class="note"></span>
               </div>

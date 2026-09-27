@@ -148,6 +148,10 @@ let signal = null;
 let heartbeatTimer = null;
 const gate = createInputGate();
 let signalRole = null;
+// Таймаут бездействия (v0.4.0): нет инъекции ввода N минут в утверждённом
+// сеансе хоста → предупреждение и завершение. ENOT_IDLE_MINUTES, 0 — выкл.
+const IDLE_MINUTES = Math.max(0, Number(process.env.ENOT_IDLE_MINUTES ?? 30));
+let lastInputAt = 0;
 // Последняя ошибка загрузки koffi — попадает в честный статус ввода клиента
 let lastKoffiError = null;
 // koffi грузится лениво: permissions()/status() его не трогают, только старт host-сеанса
@@ -300,6 +304,7 @@ function startSignal(params) {
   }
   stopSignal();
   signalRole = role;
+  lastInputAt = Date.now();
   if (role === 'host') nativeInput.load(); // подготовка нативного ввода к реальному сеансу
   signal = createSignalClient({ url: new URL('/signal', settings.serverUrl).toString().replace(/^http/, 'ws') });
   signal.onMessage((msg) => {
@@ -458,6 +463,38 @@ function registerIpc() {
     return { ok: true };
   });
 
+  // file-link (v0.4.0): ссылка на файл в резервном релее counterpart-стороне
+  ipcMain.handle('enot:sendFileLink', (e, link) => {
+    guard(e);
+    if (!signal) throw new Error('Сигнальное соединение закрыто');
+    signal.sendFileLink(link ?? {});
+    return { ok: true };
+  });
+
+  // Загрузка файла в резервный релей сервера: авторизация hostToken (не утекает
+  // в рендерер); ответ {url, name, size} рендерер отправляет как file-link.
+  ipcMain.handle('enot:relayUpload', async (e, { name, buffer }) => {
+    guard(e);
+    if (!api || !api.hostToken) throw new Error('Нет активного сеанса');
+    const bytes = Buffer.isBuffer(buffer) ? buffer : Buffer.from(buffer);
+    if (!bytes.length || bytes.length > 200 * 1024 * 1024) {
+      throw new Error('Некорректный файл');
+    }
+    const base = new URL('/api/v1/relay', settings.serverUrl);
+    const res = await fetch(base, {
+      method: 'POST',
+      headers: {
+        authorization: `Bearer ${api.hostToken}`,
+        'content-type': 'application/octet-stream',
+        'x-file-name': String(name ?? 'file').slice(0, 200),
+      },
+      body: bytes,
+    });
+    const body = await res.json().catch(() => null);
+    if (res.status !== 201 || !body?.url) throw new Error(body?.error?.message ?? 'Релей недоступен');
+    return { url: body.url, name: body.name ?? name, size: body.size ?? bytes.length };
+  });
+
   ipcMain.handle('enot:closeSignal', (e) => { guard(e); stopSignal(); return { ok: true }; });
 
   ipcMain.handle('enot:sources', async (e) => { guard(e); return { items: await listSources() }; });
@@ -474,6 +511,7 @@ function registerIpc() {
 
   ipcMain.handle('enot:input', (e, ev) => {
     guard(e);
+    lastInputAt = Date.now(); // любая активность оператора сбрасывает таймер простоя
     // Ворота и диспетчер — main, по реальному WS-состоянию (см. input-pipeline.mjs)
     if (!selectedSource) return { ok: false, reason: 'no-source' };
     return inputPipeline.handle(ev, selectedSource.bounds);
@@ -594,6 +632,22 @@ function createWindow() {
       else { selectedSource = null; callback({}); }
     });
   }, { useSystemPicker: false });
+
+  // Принятые файлы: системный диалог «Сохранить как» (решение владельца, v0.4.0) —
+  // получатель сам выбирает место; отмена диалога отменяет загрузку.
+  session.defaultSession.on('will-download', (_event, item, _webContents) => {
+    if (win) {
+      dialog.showSaveDialog(win, {
+        title: item.getFilename(),
+        defaultPath: item.getFilename(),
+      }).then(({ canceled, filePath }) => {
+        if (!canceled && filePath) item.setSavePath(filePath);
+        else item.cancel();
+      });
+    } else {
+      item.cancel();
+    }
+  });
 
   win.on('closed', () => { win = null; winLoaded = false; });
   // Join-ссылка, пришедшая до загрузки страницы, уходит рендереру, когда
@@ -837,3 +891,33 @@ app.whenReady().then(() => {
     }, 2500);
   }
 });
+
+
+// ---- Таймаут бездействия (v0.4.0) --------------------------------------
+// Проверка раз в 15 с: в утверждённом сеансе хоста без инъекции ввода дольше
+// IDLE_MINUTES — предупреждение за 60 с, затем локальное завершение (reason idle).
+if (IDLE_MINUTES > 0) {
+  const idleMs = IDLE_MINUTES * 60_000;
+  setInterval(() => {
+    if (!signal || signalRole !== 'host' || !gate.isOpen()) return;
+    const idleFor = Date.now() - (lastInputAt || 0);
+    if (idleFor < idleMs - 60_000) {
+      if (idleWarned) { idleWarned = false; sendToRenderer('enot:signal', { type: 'idle-clear' }); }
+      return;
+    }
+    const remainingSec = Math.max(1, Math.ceil((idleMs - idleFor) / 1000));
+    if (idleFor >= idleMs) {
+      idleWarned = false;
+      // локальное завершение: hostToken (reason idle виден обеим сторонам)
+      if (api.hostSessionId && api.hostToken) {
+        api.request('session.end', { sessionId: api.hostSessionId, asHost: true, reason: 'idle' }).catch(() => {});
+      }
+      stopSignal();
+      return;
+    }
+    if (!idleWarned) {
+      idleWarned = true;
+      sendToRenderer('enot:signal', { type: 'idle-warning', remainingSec });
+    }
+  }, 15_000).unref();
+}
