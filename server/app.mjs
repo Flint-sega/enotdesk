@@ -358,6 +358,82 @@ export function createServer(opts = {}) {
     return { hostWait, opWait, any: hostWait || opWait };
   }
 
+  // ---- файловый релей (v0.4.x): резервный канал, файлы хранятся TTL дней ----
+  const relayDir = cfg.relayDir ?? path.join(path.dirname(cfg.dbPath), 'relay');
+  fs.mkdirSync(relayDir, { recursive: true });
+
+  function sweepRelayFiles() {
+    if (cfg.relayTtlDays <= 0) return; // 0 — без истечения
+    const cutoff = new Date(cfg.nowMs() - cfg.relayTtlDays * 86_400_000).toISOString();
+    const rows = db.prepare('SELECT id, path FROM relay_files WHERE expires_at < ?').all(cutoff);
+    for (const row of rows) {
+      try { fs.unlinkSync(row.path); } catch { /* уже удалён */ }
+      db.prepare('DELETE FROM relay_files WHERE id = ?').run(row.id);
+    }
+  }
+  sweepRelayFiles();
+
+  function relayTotalBytes() {
+    return db.prepare('SELECT COALESCE(SUM(size), 0) AS total FROM relay_files').get().total;
+  }
+
+  // Загрузка в релей: оператор (Bearer) или хост сеанса (hostToken). Тело — сырые
+  // байты стримом в файл (лимит relayMax); в ответе одноразовая ссылка с токеном.
+  async function handleRelayUpload(req, res) {
+    const token = bearer(req);
+    if (!token) return err(res, 401, 'unauthorized', 'Требуется авторизация');
+    let actor = null;
+    const u = authUser(req);
+    if (u && ['admin', 'operator'].includes(u.role)) actor = u.id;
+    if (!actor) {
+      const hs = db.prepare('SELECT id FROM sessions WHERE host_token_hash = ? AND state != ?')
+        .get(sha256(token), 'ended');
+      if (!hs) return err(res, 401, 'unauthorized', 'Требуется авторизация');
+      actor = `host:${hs.id}`;
+    }
+    if (!cfg.limits.relayUpload.take(`ip:${ip(req)}`)) return err(res, 429, 'rate_limited', 'Слишком много загрузок');
+    const declared = Number(req.headers['content-length'] ?? 0);
+    if (declared > cfg.relayMax) return err(res, 413, 'too_large', `Файл больше ${Math.round(cfg.relayMax / 1048576)} МБ`);
+    if (relayTotalBytes() + declared > cfg.relayMax * 10) {
+      return err(res, 507, 'insufficient_storage', 'Хранилище релея переполнено — повторите позже');
+    }
+    let name = 'file';
+    try { name = sanitizeFileName(decodeURIComponent(String(req.headers['x-file-name'] ?? 'file'))) || 'file'; }
+    catch { name = 'file'; }
+    const id = `r-${crypto.randomBytes(12).toString('base64url')}`;
+    const dlToken = crypto.randomBytes(24).toString('base64url');
+    const filePath = path.join(relayDir, `${id}.bin`);
+    const out = fs.createWriteStream(filePath);
+    let total = 0;
+    let aborted = false;
+    await new Promise((resolve) => {
+      req.on('data', (chunk) => {
+        total += chunk.length;
+        if (total > cfg.relayMax) {
+          aborted = true;
+          out.destroy();
+          req.removeAllListeners('data');
+          try { fs.unlinkSync(filePath); } catch { /* ещё не создан */ }
+          resolve();
+          return;
+        }
+        out.write(chunk);
+      });
+      req.on('end', () => { out.end(); resolve(); });
+      req.on('error', () => { out.destroy(); resolve(); });
+      out.on('close', () => resolve());
+    });
+    if (aborted || total === 0) {
+      try { fs.unlinkSync(filePath); } catch { /* уже удалён */ }
+      return err(res, aborted ? 413 : 400, aborted ? 'too_large' : 'bad_request', aborted ? `Файл больше ${Math.round(cfg.relayMax / 1048576)} МБ` : 'Пустой файл');
+    }
+    const expiresAt = new Date(cfg.nowMs() + cfg.relayTtlDays * 86_400_000).toISOString();
+    db.prepare(`INSERT INTO relay_files (id, name, size, path, token_hash, created_by, created_at, expires_at)
+                VALUES (?,?,?,?,?,?,?,?)`)
+      .run(id, name, total, filePath, sha256(dlToken), actor, new Date(cfg.nowMs()).toISOString(), expiresAt);
+    return ok(res, 201, { id, name, size: total, token: dlToken, expiresAt, url: `/api/v1/relay/${id}?token=${dlToken}` });
+  }
+
   function endSession(sessionId, reason) {
     const now = new Date().toISOString();
     const r = db.prepare(
@@ -495,13 +571,15 @@ export function createServer(opts = {}) {
   }
 
   const server = http.createServer((req, res) => {
-    handle(req, res).catch(() => {
+    handle(req, res).catch((e) => {
+      console.error('[enot] handle error:', req.method, req.url, e);
       if (!res.headersSent) err(res, 500, 'internal', 'Внутренняя ошибка сервера');
       else res.end();
     });
   });
 
   async function handle(req, res) {
+    let m; // общий скан-маршрутизатор: объявлен до relay-вставок (TDZ)
     const url = new URL(req.url, `http://${req.headers.host || 'localhost'}`);
     const p = url.pathname.replace(/^\/api\/v1/, '');
     // CORS deny unknown origins: заголовки не выставляются вообще
@@ -512,9 +590,36 @@ export function createServer(opts = {}) {
         if (o.host !== req.headers.host) return err(res, 403, 'forbidden', 'Недопустимый источник запроса');
       } catch { return err(res, 403, 'forbidden', 'Недопустимый источник запроса'); }
     }
+    // Файловый релей (v0.4.x): raw-тело обрабатывается ДО общего readJson —
+    // тела >64КБ (лимит JSON) иначе никогда не дошли бы до маршрута.
+    if (req.method === 'POST' && p === '/relay') {
+      return handleRelayUpload(req, res);
+    }
     if (req.method !== 'GET') {
       var body = await readJson(req, res, cfg.bodyLimit);
       if (body === null) return err(res, 413, 'too_large', 'Слишком большой запрос');
+    }
+    m = p.match(/^\/relay\/([A-Za-z0-9_-]+)$/);
+    if (m && req.method === 'GET') {
+      if (!cfg.limits.relayDownload.take(`ip:${ip(req)}`)) return err(res, 429, 'rate_limited', 'Слишком много запросов');
+      const row = db.prepare('SELECT * FROM relay_files WHERE id = ?').get(m[1]);
+      const dlToken = String(url.searchParams.get('token') ?? '');
+      if (!row) return err(res, 404, 'not_found', 'Файл не найден или срок хранения истёк');
+      const given = Buffer.from(sha256(dlToken));
+      const expected = Buffer.from(row.token_hash);
+      if (given.length !== expected.length || !crypto.timingSafeEqual(given, expected)) {
+        return err(res, 403, 'bad_token', 'Неверная ссылка');
+      }
+      if (!fs.existsSync(row.path)) return err(res, 410, 'gone', 'Срок хранения файла истёк');
+      res.writeHead(200, {
+        'content-type': 'application/octet-stream',
+        'content-length': row.size,
+        'content-disposition': `attachment; filename="${row.name.replace(/[^\w.-]/g, '_')}"`,
+      });
+      const stream = fs.createReadStream(row.path);
+      res.on('close', () => stream.destroy());
+      stream.pipe(res);
+      return;
     }
 
     // ---- health ----
@@ -735,7 +840,7 @@ export function createServer(opts = {}) {
       const total = db.prepare('SELECT count(*) c FROM users').get().c;
       return ok(res, 200, { items, total });
     }
-    let m = p.match(/^\/members\/([^/]+)$/);
+    m = p.match(/^\/members\/([^/]+)$/);
     if (m && req.method === 'PATCH') {
       if (!user) return err(res, 401, 'unauthorized', 'Требуется авторизация');
       if (user.role !== 'admin') return err(res, 403, 'forbidden', 'Недостаточно прав');
@@ -1734,6 +1839,10 @@ export function createServer(opts = {}) {
         if (role !== 'host' && role !== 'operator') return ws.close(4002, 'bad-message');
         const rt = live.get(s.id);
         if (!rt) return;
+        const nowFl = Date.now();
+        if (nowFl > rt.sigReset) { rt.sigReset = nowFl + SIGNAL_WINDOW_MS; rt.sigCount = 0; }
+        rt.sigCount += 1;
+        if (rt.sigCount > SIGNAL_MAX) return ws.close(1008, 'slow-consumer');
         const isHost = role === 'host' && rt.hostWs === ws;
         if (!isHost && !rt.opSockets?.has(ws)) return ws.close(4002, 'bad-message');
         const name = typeof msg.name === 'string' ? msg.name.slice(0, 120) : '';
