@@ -26,32 +26,46 @@ export function sanitizeToastText(text) {
 }
 
 // Windows (главный путь): сначала kernel32!WTSGetActiveConsoleSessionId —
-// активная консольная сессия пользователя (0 — активной нет, экран входа:
-// честный отказ 'no-active-session', посылать некому). Затем wtsapi32!
+// активная консольная сессия пользователя (нет — 0xFFFFFFFF по документации
+// WinAPI: экран входа/сервисный режим → честный отказ 'no-active-session',
+// посылать некому). Затем wtsapi32!
 // WTSSendMessageW(WTS_CURRENT_SERVER_HANDLE=null, ЭТОТ sessionId, заголовок,
 // сообщение, MB_OK=0, timeout=0 — ждать ответа, bWait). Прототип объявлен
 // async: диалог может ждать нажатия минуты — цикл агента (heartbeat, сеансы)
 // не должен замерзать. Заголовок/сообщение передаются готовыми буферами
 // UTF-16LE + терминатор: длины в WinAPI считаются в байтах.
 function winToast(message, title, koffi) {
+  // koffi 3: объявления ТОЛЬКО прототипом-строкой. Форма `func(sig, {stdcall:true})`
+  // уходит в классический парсер (имя, тип, параметры) и падает — тост в
+  // агент-режиме честно отказывал native-unavailable (дефект №11, живой сеанс
+  // 28.09; тот же корень чинили в native-input v0.3.2). x64 stdcall не нужен.
   const krn32 = koffi.load('kernel32.dll');
-  const getActiveSession = krn32.func('uint32 WTSGetActiveConsoleSessionId()', { stdcall: true });
+  const getActiveSession = krn32.func('uint32 WTSGetActiveConsoleSessionId()');
   const sessionId = getActiveSession();
-  if (!sessionId) return Promise.resolve({ ok: false, reason: 'no-active-session' });
+  // Нет активной консольной сессии: документированный возврат 0xFFFFFFFF
+  // (0 трактуем наравне — страховка от «0 = нет» в старых комментариях WinAPI).
+  if (!sessionId || sessionId === 0xFFFFFFFF) return Promise.resolve({ ok: false, reason: 'no-active-session' });
   const wts = koffi.load('wtsapi32.dll');
   const send = wts.func(
     'bool WTSSendMessageW(void *hServer, uint32 SessionId, const void *pTitle, uint32 TitleLength, '
     + 'const void *pMessage, uint32 MessageLength, uint32 Style, uint32 Timeout, void *pResponse, bool bWait)',
-    { stdcall: true, async: true },
   );
   const utf16 = (s) => Buffer.concat([Buffer.from(s, 'utf16le'), Buffer.from([0, 0])]);
   const titleBuf = utf16(title);
   const msgBuf = utf16(message);
   const MB_OK = 0;
   const response = Buffer.alloc(4); // DWORD *pResponse
-  return Promise.resolve(
-    send(null, sessionId, titleBuf, titleBuf.length, msgBuf, msgBuf.length, MB_OK, 0, response, true),
-  ).then((sent) => (sent ? { ok: true } : { ok: false, reason: 'native-unavailable' }));
+  // Асинхронный вызов (диалог может ждать нажатия минуты — цикл агента с
+  // heartbeat'ами не должен замерзать): koffi 3 — через .async(...) с
+  // (err, res)-колбэком вместо koffi-2 опции {async:true}.
+  return new Promise((resolve) => {
+    try {
+      send.async(null, sessionId, titleBuf, titleBuf.length, msgBuf, msgBuf.length, MB_OK, 0, response, true,
+        (err, sent) => resolve(err || !sent ? { ok: false, reason: 'native-unavailable' } : { ok: true }));
+    } catch {
+      resolve({ ok: false, reason: 'native-unavailable' });
+    }
+  });
 }
 
 // macOS: osascript display notification. Аргументы не идут через shell —

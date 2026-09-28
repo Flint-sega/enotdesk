@@ -21,27 +21,38 @@ test('sanitizeToastText: лимит 500 символов, управляющие
 // ---- Windows: активная консольная сессия (WTSGetActiveConsoleSessionId) + WTSSendMessageW ----
 
 function mockKoffi({ sent = true, fail = null, sessionId = 7 } = {}) {
-  const calls = { loads: [], funcs: [], sendArgs: null };
+  const calls = { loads: [], funcs: [], sendArgs: null, asyncUsed: false };
   const koffi = {
     load(name) {
       calls.loads.push(name);
       if (fail === 'load') throw new Error('нет системной библиотеки');
       if (name === 'kernel32.dll') {
         return {
+          // koffi 3: объявления только прототипом-строкой; второй аргумент
+          // (koffi-2 опции) — регресс дефекта №11, ломаем тест намеренно.
           func(sig, opts) {
-            calls.funcs.push({ sig, opts });
+            if (opts !== undefined) throw new Error('koffi-3: второй аргумент func() не поддерживается');
+            calls.funcs.push({ sig });
             return () => sessionId;
           },
         };
       }
       return {
         func(sig, opts) {
-          calls.funcs.push({ sig, opts });
+          if (opts !== undefined) throw new Error('koffi-3: второй аргумент func() не поддерживается');
+          calls.funcs.push({ sig });
           if (fail === 'func') throw new Error('не удалось объявить функцию');
-          return (...args) => {
+          const fn = (...args) => {
             calls.sendArgs = args;
             return sent ? Promise.resolve(true) : Promise.resolve(false);
           };
+          fn.async = (...args) => {
+            calls.asyncUsed = true;
+            const cb = args[args.length - 1];
+            calls.sendArgs = args.slice(0, -1);
+            cb(null, sent ? true : false);
+          };
+          return fn;
         },
       };
     },
@@ -58,9 +69,9 @@ test('showToast win32: sessionId берётся из WTSGetActiveConsoleSessionI
   assert.ok(active, 'объявлена WTSGetActiveConsoleSessionId');
   const sendDecl = calls.funcs.find((f) => /WTSSendMessageW/.test(f.sig));
   assert.ok(sendDecl, 'объявлена именно WTSSendMessageW');
-  assert.equal(sendDecl.opts?.stdcall, true, 'stdcall-конвенция WinAPI');
-  // Несущая деталь: async-прототип — иначе bWait/timeout=0 заморозит heartbeat-цикл агента до нажатия OK
-  assert.equal(sendDecl.opts?.async, true, 'WTSSendMessageW объявлена async — цикл агента не блокируется');
+  // koffi 3: объявления без опций ({stdcall}/{async} ломают парсер — дефект №11);
+  // асинхронность — через .async(...), иначе bWait/timeout=0 заморозит heartbeat-цикл
+  assert.equal(calls.asyncUsed, true, 'WTSSendMessageW вызывается через .async — цикл агента не блокируется');
   const a = calls.sendArgs;
   assert.equal(a[0], null, 'WTS_CURRENT_SERVER_HANDLE — локальный сервер');
   assert.equal(a[1], 7, 'активная консольная сессия из kernel32, не выдуманная константа');
@@ -74,10 +85,30 @@ test('showToast win32: sessionId берётся из WTSGetActiveConsoleSessionI
 });
 
 test('showToast win32: нет активной консольной сессии (экран входа) — честный отказ без отправки', async () => {
-  const { calls, koffi } = mockKoffi({ sessionId: 0 });
-  const r = await showToast('win32', 'текст', { koffi });
-  assert.deepEqual(r, { ok: false, reason: 'no-active-session' });
-  assert.equal(calls.sendArgs, null, 'WTSSendMessageW не вызывалась — посылать некому');
+  // 0xFFFFFFFF — документированный возврат WTSGetActiveConsoleSessionId без
+  // активной консоли (0 в реальном WinAPI в этом сценарии не возвращается,
+  // трактуем наравне — ревью 28.09); WTSSendMessageW не вызывается.
+  for (const absent of [0, 0xFFFFFFFF]) {
+    const { calls, koffi } = mockKoffi({ sessionId: absent });
+    const r = await showToast('win32', 'текст', { koffi });
+    assert.deepEqual(r, { ok: false, reason: 'no-active-session' });
+    assert.equal(calls.sendArgs, null, `WTSSendMessageW не вызывалась (sessionId=${absent})`);
+  }
+});
+
+test('showToast win32: async-колбэк с err — честный отказ, а не фейковый успех', async () => {
+  // ветка err || !sent: регрессия к !sent дала бы ok:true при сбое koffi
+  const errKoffi = {
+    load: (name) => name === 'kernel32.dll'
+      ? { func: () => () => 7 }
+      : { func: () => {
+        const fn = () => {};
+        fn.async = (...args) => args[args.length - 1](new Error('koffi async failed'), null);
+        return fn;
+      } },
+  };
+  const r = await showToast('win32', 'текст', { koffi: errKoffi });
+  assert.deepEqual(r, { ok: false, reason: 'native-unavailable' });
 });
 
 test('showToast win32: sanitize применяется до вызова WinAPI (лимит и чистка)', async () => {

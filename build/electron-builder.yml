@@ -63,6 +63,10 @@ nsis:
   # своё имя артефакта — иначе перезаписал бы portable (EnotDesk-win-x64.exe).
   # Собирается отдельным вызовом electron-builder --win nsis (release.yml).
   oneClick: true
+  # per-machine установка в Program Files с elevation, а не per-user в
+  # %LOCALAPPDATA%\Programs (живой сеанс 28.09: владелец ожидал системную
+  # установку; служба агента также ожидает стабильный системный путь).
+  perMachine: true
   createDesktopShortcut: true
   createStartMenuShortcut: true
   artifactName: EnotDesk-win-x64-setup.${ext}

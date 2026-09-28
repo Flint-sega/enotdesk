@@ -81,6 +81,7 @@ export function validateOutgoingSignal(msg) {
 export function createInputGate() {
   let role = null;
   let approved = false;
+  let approvedOnce = false; // «сеанс дошёл до approved» — переживает end/close до нового ready
   let open = false;
   let resetNeeded = false;
 
@@ -96,9 +97,11 @@ export function createInputGate() {
         case 'ready':
           role = msg.role || null;
           approved = false;
+          approvedOnce = false; // новый сеанс — право на грейс считается заново
           apply(false);
           break;
         case 'approved':
+          approvedOnce = true; // сеанс дошёл до согласия — грейс-переподключение обеим ролям
           if (role === 'host') approved = true;
           apply(role === 'host');
           break;
@@ -115,6 +118,9 @@ export function createInputGate() {
       }
     },
     isOpen: () => open && approved && role === 'host',
+    // Сеанс когда-либо дошёл до approved в этом подключении (обе роли): критерий
+    // права на грейс-переподключение — до согласия сервер рвёт мгновенно.
+    approvedOnce: () => approvedOnce,
     needInputReset: () => {
       const v = resetNeeded;
       resetNeeded = false;

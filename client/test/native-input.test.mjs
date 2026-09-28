@@ -127,27 +127,51 @@ test('скролл доходит до адаптера в строках без
   assert.deepEqual(got, [0, -6], 'адаптер получает строки как есть — перевод в единицы ОС внутри адаптера');
 });
 
-test('winAdapter: SendInput-буферы с правильными x64-смещениями (dwFlags@20, KEYEVENTF_KEYUP@12)', () => {
-  // мок koffi: load() → { func() }, SendInput перехватывает буферы
-  const sent = [];
-  const fakeKoffi = {
+// Честный мок user32 для win-адаптера: GetSystemMetrics по индексам Win32
+// (76..79 = SM_X/Y/CX/CYVIRTUALSCREEN), SetCursorPos отдельно от SendInput,
+// GetWindowRect отдаёт данными из out-структуры. Без этого мок моделировал
+// вырожденный стол 0×0 и ронял Buffer.from на числах (ревью 28.09).
+function winUser32Mock({ sent = [], virtualScreen = { x: 0, y: 0, w: 1920, h: 1080 }, windowRect = null, setCursor = [] } = {}) {
+  return {
+    struct() {},
     load() {
       return {
-        func(_sig, _opts) {
+        func(sig) {
+          if (/GetSystemMetrics/.test(sig)) {
+            return (idx) => ({ 76: virtualScreen.x, 77: virtualScreen.y, 78: virtualScreen.w, 79: virtualScreen.h }[idx] ?? 0);
+          }
+          if (/SetCursorPos/.test(sig)) {
+            return (x, y) => { setCursor.push([x, y]); return true; };
+          }
+          if (/GetWindowRect/.test(sig)) {
+            return (_hwnd, rect) => {
+              if (!windowRect) return 0;
+              rect.left = windowRect.x; rect.top = windowRect.y;
+              rect.right = windowRect.x + windowRect.w; rect.bottom = windowRect.y + windowRect.h;
+              return 1;
+            };
+          }
           return (count, buf) => { sent.push(Buffer.from(buf)); return count; };
         },
       };
     },
   };
-  // winAdapter не экспортируется — достаём через loadPlatformAdapter на win32-платформе
+}
+
+function buildWinAdapter(fakeKoffi) {
   const realPlatform = process.platform;
   Object.defineProperty(process, 'platform', { value: 'win32' });
-  let ad;
   try {
-    ad = loadPlatformAdapter(fakeKoffi);
+    return loadPlatformAdapter(fakeKoffi);
   } finally {
     Object.defineProperty(process, 'platform', { value: realPlatform });
   }
+}
+
+test('winAdapter: SendInput-буферы с правильными x64-смещениями (dwFlags@20, KEYEVENTF_KEYUP@12)', () => {
+  const sent = [];
+  const fakeKoffi = winUser32Mock({ sent });
+  const ad = buildWinAdapter(fakeKoffi);
   assert.equal(ad.platform, 'windows-sendinput', 'win-адаптер собрался на моке');
 
   // мышь: dwFlags на 20, dx/dy/mouseData нули
@@ -173,22 +197,61 @@ test('winAdapter: SendInput-буферы с правильными x64-смещ�
   assert.equal(sent[1].readUInt32LE(12), 2, 'KEYEVENTF_KEYUP@12');
 });
 
+test('winAdapter: кнопка после move — пакет [абсолютный move][кнопка] (NC-кнопки заголовка)', () => {
+  // дефект №10: NC-кнопки («свернуть»/«закрыть») взводятся WM_MOUSEMOVE —
+  // «голый» down/up после SetCursorPos окном игнорируется; фикс шлёт оба события
+  // одним SendInput-пакетом (ревью 28.09: класс смещений INPUT уже ловили живьём).
+  const sent = [];
+  const setCursor = [];
+  const fakeKoffi = winUser32Mock({ sent, setCursor, virtualScreen: { x: 0, y: 0, w: 1920, h: 1080 } });
+  const ad = buildWinAdapter(fakeKoffi);
+  ad.move(960, 540);
+  assert.deepEqual(setCursor[0], [960, 540], 'move идёт SetCursorPos');
+  ad.button('left', true);
+  assert.equal(sent.length, 1);
+  assert.equal(sent[0].length, 80, 'пакет из двух INPUT');
+  // первый INPUT — абсолютный move
+  assert.equal(sent[0].readUInt32LE(0), 0, 'INPUT_MOUSE');
+  assert.equal(sent[0].readUInt32LE(20), 0xc001, 'MOVE|ABSOLUTE|VIRTUALDESK@20');
+  assert.equal(sent[0].readUInt32LE(8), Math.round((960 * 65535) / 1919), 'dx нормирован на виртуальный стол');
+  assert.equal(sent[0].readUInt32LE(12), Math.round((540 * 65535) / 1079), 'dy нормирован');
+  // второй INPUT (база 40) — кнопка
+  assert.equal(sent[0].readUInt32LE(40), 0, 'второй INPUT_MOUSE');
+  assert.equal(sent[0].readUInt32LE(60), 2, 'dwFlags кнопки @40+20=60');
+  ad.button('left', false);
+  assert.equal(sent[1].readUInt32LE(60), 4, 'LEFTUP@60');
+});
+
+test('winAdapter: кнопка с отрицательным виртуальным столом нормируется от его origin', () => {
+  const sent = [];
+  const fakeKoffi = winUser32Mock({ sent, virtualScreen: { x: -1920, y: 0, w: 3840, h: 1080 } });
+  const ad = buildWinAdapter(fakeKoffi);
+  ad.move(0, 540); // левый монитор с отрицательным origin
+  ad.button('left', true);
+  assert.equal(sent[0].readUInt32LE(8), Math.round(((0 - (-1920)) * 65535) / 3839), 'dx = (x - vsX) * 65535 / (vsW-1)');
+  assert.equal(sent[0].readUInt32LE(12), Math.round((540 * 65535) / 1079), 'dy');
+});
+
+test('winAdapter: windowRect по HWND — данные, фильтры вырожденных и минимизированных окон', () => {
+  const fakeKoffi = winUser32Mock({ windowRect: { x: 100, y: 50, w: 800, h: 600 } });
+  const ad = buildWinAdapter(fakeKoffi);
+  assert.deepEqual(ad.windowRect(774), { x: 100, y: 50, w: 800, h: 600 }, 'прямоугольник из GetWindowRect');
+
+  const minimized = buildWinAdapter(winUser32Mock({ windowRect: { x: -32000, y: -32000, w: 160, h: 28 } }));
+  assert.equal(minimized.windowRect(1), null, 'минимизированное окно Win32 (-32000) отфильтровано');
+
+  const zero = buildWinAdapter(winUser32Mock({ windowRect: { x: 10, y: 10, w: 0, h: 0 } }));
+  assert.equal(zero.windowRect(1), null, 'нулевые размеры отфильтрованы');
+
+  const failed = buildWinAdapter(winUser32Mock({ windowRect: null }));
+  assert.equal(failed.windowRect(1), null, 'неуспешный GetWindowRect → null (откат на дисплей)');
+});
+
 const vkExpect = { '-': 0xbd, '=': 0xbb, '.': 0xbe, ',': 0xbc, '/': 0xbf, ';': 0xba, "'": 0xde, '[': 0xdb, ']': 0xdd, '\\': 0xdc, '`': 0xc0 };
 test('winAdapter: пунктуация протокола инжектится через VK_OEM, honest false вне карты', () => {
   const sent = [];
-  const fakeKoffi = {
-    load() {
-      return {
-        func(_sig) {
-          return (count, buf) => { sent.push(Buffer.from(buf)); return count; };
-        },
-      };
-    },
-  };
-  const realPlatform = process.platform;
-  Object.defineProperty(process, 'platform', { value: 'win32' });
-  let ad;
-  try { ad = loadPlatformAdapter(fakeKoffi); } finally { Object.defineProperty(process, 'platform', { value: realPlatform }); }
+  const fakeKoffi = winUser32Mock({ sent });
+  const ad = buildWinAdapter(fakeKoffi);
   const _vkCodes = [];
   for (const k of ['-', '=', '.', ',', '/', ';', "'", '[', ']', '\\', '`']) {
     sent.length = 0;

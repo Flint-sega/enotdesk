@@ -316,9 +316,12 @@ test('агент: approved → RTCPeerConnection без медиа → offer о�
   // оператор офферит — агент отвечает answer'ом через сигнал
   handler({ type: 'signal', data: { description: { type: 'offer', sdp: 'v=0 op-offer' } } });
   await new Promise((r) => setTimeout(r, 5));
-  const answer = sent.find((d) => d.description?.type === 'answer');
-  assert.ok(answer, 'answer не отправлен');
-  assert.equal(answer.description.sdp, 'v=0 fake-answer');
+  // answer обязан уйти в конверте {type:'signal', data:…}: клиентский
+  // validateOutgoingSignal (signal.sendSignal) кидает на всём остальном — сигнал
+  // вообще не выходил на провод (регресс живого сеанса 28.09, дефект №12)
+  const answer = sent.find((d) => d.type === 'signal' && d.data?.description?.type === 'answer');
+  assert.ok(answer, 'answer не отправлен (или без конверта signal/data)');
+  assert.equal(answer.data.description.sdp, 'v=0 fake-answer');
 
   // агент принимает канал term → терминал открывается и отвечает выводом
   const ch = fakeChannel();

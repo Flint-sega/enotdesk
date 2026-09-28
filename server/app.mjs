@@ -335,7 +335,7 @@ export function createServer(opts = {}) {
     secret_too_long: 'Секрет слишком длинный (до 256 символов)',
   };
 
-  const live = new Map(); // sessionId -> {hostWs, opSockets:Map(ws->{userId,claimId}), operatorUserId, sigCount, sigReset, hostLostAt, opLostAt, termActive}
+  const live = new Map(); // sessionId -> {hostWs, opSockets:Map(ws->{userId,claimId}), operatorUserId, sigCount, sigReset, hostLostAt, opLostAt, lastBeat, termActive, hostPingAt, hostPingCount}
   let closed = false;
 
   // Toast на экран машины (R08): память процесса, не БД — состояние одноразовое.
@@ -483,9 +483,40 @@ export function createServer(opts = {}) {
     const rows = db.prepare(
       "SELECT id FROM sessions WHERE state!='ended' AND lease_expires_at < ?"
     ).all(cutoff);
+    // Сколько ждать pong'а после пробного пинга «тихо мёртвому» хосту. Не env:
+    // внутренние детали свипера, к настройке разворачивания отношения не имеют.
+    const HOST_PING_GRACE_MS = 5000;
+    const HOST_PING_MAX = 8;
     for (const row of rows) {
       const rt = live.get(row.id);
       if (rt && gracePending(rt, nowMs).any) continue; // ждём переподключения
+      // Пробный пинг «тихо мёртвому» хосту — только в approved (до согласия
+      // грейса нет: fail-closed, как в ADR 0013; тест lifecycle ждёт именно это).
+      const stateRow = db.prepare('SELECT state FROM sessions WHERE id = ?').get(row.id);
+      if (rt && stateRow?.state === 'approved' && rt.hostWs != null && rt.hostLostAt == null) {
+        // Лизинг истёк, а close-события нет: хост «тихо мёртв» (физический обрыв
+        // сети не даёт TCP-закрытия — живой сеанс 28.09, W-A9). Пингуем; нет
+        // pong'а — закрываем сокет сервером, close-обработчик запустит
+        // participantLost → честный грейс (ADR 0013) и peer-reconnecting
+        // оператору вместо мгновенного lease-expired.
+        // Лимит циклов: сокет, понгующий на уровне стека, но с мёртвой heartbeat-
+        // логикой клиента, не держит сеанс вечно — после HOST_PING_MAX честный
+        // lease-expired (ревью 28.09: иначе слот live/maxSessions занят бессрочно).
+        if (rt.hostPingAt == null) {
+          if ((rt.hostPingCount ?? 0) >= HOST_PING_MAX) {
+            endSession(row.id, 'lease-expired');
+            continue;
+          }
+          rt.hostPingAt = nowMs;
+          rt.hostPingCount = (rt.hostPingCount ?? 0) + 1;
+          try { rt.hostWs.ping(); } catch { try { rt.hostWs.terminate(); } catch { /* уже мёртв */ } }
+          continue;
+        }
+        if (nowMs - rt.hostPingAt <= HOST_PING_GRACE_MS) continue; // ждём pong
+        try { rt.hostWs.terminate(); } catch { /* уже мёртв */ }
+        rt.hostPingAt = null;
+        continue; // close-обработчик выставит hostLostAt и запустит грейс
+      }
       endSession(row.id, 'lease-expired');
     }
   }, 1000);
@@ -1129,75 +1160,11 @@ export function createServer(opts = {}) {
       });
     }
 
-    // ---- файловый релей (v0.4.0): резервный канал, файлы хранятся TTL дней ----
-    const relayDir = cfg.relayDir ?? path.join(path.dirname(cfg.dbPath), 'relay');
-    fs.mkdirSync(relayDir, { recursive: true });
-
-    // Загрузка в релей: оператор (Bearer) или хост утверждённого сеанса (hostToken).
-    // Тело — сырые байты, имя и TTL — заголовки; в ответе одноразовая ссылка.
-    m = p.match(/^\/relay$/);
-    if (m && req.method === 'POST') {
-      const token = bearer(req);
-      if (!token) return err(res, 401, 'unauthorized', 'Требуется авторизация');
-      let actor = null;
-      if (user && ['admin', 'operator'].includes(user.role)) actor = user.id;
-      if (!actor) {
-        // hostToken: файл релея от хоста утверждённого сеанса
-        const hs = db.prepare('SELECT id FROM sessions WHERE host_token_hash = ? AND state != ?')
-          .get(sha256(token), 'ended');
-        if (!hs) return err(res, 401, 'unauthorized', 'Требуется авторизация');
-        actor = `host:${hs.id}`;
-      }
-      if (!cfg.limits.relayUpload.take(`ip:${ip(req)}`)) return err(res, 429, 'rate_limited', 'Слишком много загрузок');
-      const name = sanitizeFileName(String(req.headers['x-file-name'] ?? 'file')) || 'file';
-      if (Number(req.headers['content-length'] ?? 0) > cfg.relayMax) {
-        return err(res, 413, 'too_large', `Файл больше ${Math.round(cfg.relayMax / 1048576)} МБ`);
-      }
-      const chunks = [];
-      let total = 0;
-      let tooBig = false;
-      await new Promise((resolve) => {
-        req.on('data', (chunk) => {
-          total += chunk.length;
-          if (total > cfg.relayMax) { tooBig = true; resolve(); return; }
-          chunks.push(chunk);
-        });
-        req.on('end', resolve);
-        req.on('error', resolve);
-      });
-      if (tooBig) return err(res, 413, 'too_large', `Файл больше ${Math.round(cfg.relayMax / 1048576)} МБ`);
-      const id = `r-${crypto.randomBytes(12).toString('base64url')}`;
-      const dlToken = crypto.randomBytes(24).toString('base64url');
-      const filePath = path.join(relayDir, `${id}.bin`);
-      fs.writeFileSync(filePath, Buffer.concat(chunks));
-      const expiresAt = new Date(cfg.nowMs() + cfg.relayTtlDays * 86_400_000).toISOString();
-      db.prepare(`INSERT INTO relay_files (id, name, size, path, token_hash, created_by, created_at, expires_at)
-                  VALUES (?,?,?,?,?,?,?,?)`)
-        .run(id, name, total, filePath, sha256(dlToken), actor, new Date(cfg.nowMs()).toISOString(), expiresAt);
-      return ok(res, 201, { id, name, size: total, token: dlToken, expiresAt, url: `/api/v1/relay/${id}?token=${dlToken}` });
-    }
-
-    m = p.match(/^\/relay\/([A-Za-z0-9_-]+)$/);
-    if (m && req.method === 'GET') {
-      if (!cfg.limits.relayDownload.take(`ip:${ip(req)}`)) return err(res, 429, 'rate_limited', 'Слишком много запросов');
-      const row = db.prepare('SELECT * FROM relay_files WHERE id = ?').get(m[1]);
-      const url = new URL(req.url, 'http://x');
-      const token = String(url.searchParams.get('token') ?? '');
-      if (!row) return err(res, 404, 'not_found', 'Файл не найден или срок хранения истёк');
-      const given = Buffer.from(sha256(token));
-      const expected = Buffer.from(row.token_hash);
-      if (given.length !== expected.length || !crypto.timingSafeEqual(given, expected)) {
-        return err(res, 403, 'bad_token', 'Неверная ссылка');
-      }
-      if (!fs.existsSync(row.path)) return err(res, 410, 'gone', 'Срок хранения файла истёк');
-      res.writeHead(200, {
-        'content-type': 'application/octet-stream',
-        'content-length': row.size,
-        'content-disposition': `attachment; filename="${row.name.replace(/[^\w.-]/g, '_')}"`,
-      });
-      fs.createReadStream(row.path).pipe(res);
-      return;
-    }
+    // ---- файловый релей (v0.4.0) ----
+    // Живые маршруты: POST /relay и GET /relay/:id обработаны ВЫШЕ (стриминговый
+    // handleRelayUpload и контролируемое скачивание). Дублирующий буферизующий
+    // блок здесь был мёртвым кодом (до него всё перехватывали ранние return) —
+    // и делал синхронный mkdirSync на каждый дошедший запрос (ревью 28.09).
 
     m = p.match(/^\/sessions\/([^/]+)\/decision$/);
     if (m && req.method === 'POST') {
@@ -1758,14 +1725,18 @@ export function createServer(opts = {}) {
         return ws.close(4005, 'server-busy');
       }
       if (!rt) {
-        rt = { hostWs: null, opSockets: new Map(), operatorUserId: null, sigCount: 0, sigReset: 0, hostLostAt: null, opLostAt: null, lastBeat: 0, termActive: false };
+        rt = { hostWs: null, opSockets: new Map(), operatorUserId: null, sigCount: 0, sigReset: 0, hostLostAt: null, opLostAt: null, lastBeat: 0, termActive: false, hostPingAt: null, hostPingCount: 0 };
         live.set(s.id, rt);
       }
       let resumed;
       if (msg.role === 'host') {
         resumed = rt.hostLostAt != null; // переподключение в грейсе
         rt.hostLostAt = null;
+        rt.hostPingAt = null;
         rt.hostWs = ws;
+        // живой хост отвечает на пинги автоматически (ws делает это сам):
+        // не ответил — сокет «тихо мёртв» (обрыв сети без close), свипер закроет
+        ws.on('pong', () => { rt.hostPingAt = null; });
         db.prepare('UPDATE sessions SET lease_expires_at = ? WHERE id = ?')
           .run(new Date(Date.now() + cfg.leaseMs).toISOString(), s.id);
       } else {
@@ -1777,7 +1748,9 @@ export function createServer(opts = {}) {
       authed = true;
       clearTimeout(authTimer);
       const fresh = db.prepare('SELECT state FROM sessions WHERE id = ?').get(s.id);
-      send(ws, { type: 'ready', sessionId: s.id, role, state: fresh.state });
+      // graceMs наружу: клиенты держат своё грейс-окно равным серверному
+      // (ENOT_GRACE_MS), вместо захардкоженных 30 с (ревью 28.09)
+      send(ws, { type: 'ready', sessionId: s.id, role, state: fresh.state, graceMs: cfg.graceMs });
       if (role === 'host' && fresh.state === 'pending-consent' && s.claim_id) {
         const op = db.prepare('SELECT id, name FROM users WHERE id = ?').get(s.operator_id);
         send(ws, { type: 'claim', claimId: s.claim_id, operator: op });
@@ -1804,6 +1777,7 @@ export function createServer(opts = {}) {
         if (role !== 'host') return send(ws, { type: 'error', code: 'forbidden', message: 'Недопустимое сообщение' });
         const rtBeat = live.get(s.id);
         const nowMs = Date.now();
+        if (rtBeat) rtBeat.hostPingCount = 0; // живой heartbeat — лимит ping-циклов свипера не копится
         // Аудит терминала (R09): переходы termActive пишутся как term.open/term.close
         // один раз на смену состояния, не на каждый heartbeat. Актёр — машина
         // (unattended) или null при человеке-хосте, как в machine.claim.
