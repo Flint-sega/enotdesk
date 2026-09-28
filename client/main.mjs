@@ -2,7 +2,7 @@
 // ворота нативного ввода по реальному WS-состоянию, выбор источника захвата.
 // Рендереру доступен только context-isolated мост window.enot (preload.cjs).
 
-import { app, BrowserWindow, ipcMain, session, desktopCapturer, screen, shell, clipboard, systemPreferences, Menu, dialog } from 'electron';
+import { app, BrowserWindow, ipcMain, session, desktopCapturer, screen, shell, clipboard, systemPreferences, Menu, dialog, powerSaveBlocker } from 'electron';
 import path from 'node:path';
 import os from 'node:os';
 import fs from 'node:fs';
@@ -24,6 +24,26 @@ import { resolveConsoleUser } from './lib/console-user.mjs';
 import { UPDATE_REPO, updateFeedUrl, platformFeedName, updateDecision, updateInstallDecision } from './lib/updater.mjs';
 import { isNewerVersion } from './lib/version-check.mjs';
 import { t, setLocale } from './lib/i18n.mjs';
+
+// Родительский режим Windows-службы (EDESK_AGENT_SVC=1, дефект №4): процесс
+// запущен SCM'ом как службу — Electron не инициализируем, работаем тонкой
+// SCM-обёрткой (win-service.mjs), которая держит живым дочерний агент (тот же
+// exe с EDESK_AGENT=1). Без StartServiceCtrlDispatcher SCM убивает процесс
+// по 1053 (живой сеанс 28.09, W-U2). Ветка стоит ДО любого обращения к app.
+if (process.env.EDESK_AGENT_SVC === '1' && process.platform === 'win32') {
+  try {
+    const { runAsScmParent } = await import('./lib/win-service.mjs');
+    await runAsScmParent({
+      childArgv: process.argv.slice(1),
+      childEnv: { EDESK_AGENT_SVC: '' }, // ребёнок — обычный агент, не родитель
+      log: console,
+    });
+  } catch (e) {
+    console.error(`[enotdesk-svc] родительский цикл упал: ${e.message}`);
+    process.exit(1);
+  }
+  process.exit(0); // диспетчер вернулся — служба остановлена
+}
 
 const SMOKE = process.env.EDESK_SMOKE === '1';
 // Режим агента-службы (EDESK_AGENT=1): без окна, логи честные в stdout.
@@ -146,6 +166,10 @@ let api = createApi({ baseUrl: settings.serverUrl });
 // Сигналинг и ворота ввода
 let signal = null;
 let heartbeatTimer = null;
+let reconnectTimer = null;      // грейс-переподключение сигналинга (scheduleSignalReconnect)
+let reconnectStartedAt = 0;     // начало текущего грейс-окна
+let reconnectGraceMs = null;    // graceMs от сервера (ready-сообщение); null = ещё не известно
+let powerBlockerId = null;      // предотвращение засыпания на время активного host-сеанса
 const gate = createInputGate();
 let signalRole = null;
 // Таймаут бездействия (v0.4.0): нет инъекции ввода N минут в утверждённом
@@ -173,13 +197,17 @@ const nativeInput = createNativeInput({
 });
 // Единая проводка ввода: те же ворота и диспетчер, что проверяет тест шва
 const inputPipeline = createInputPipeline({ gate, nativeInput });
-let selectedSource = null; // {id, name, bounds:{width,height}} физические пиксели
+let selectedSource = null; // {id, name, bounds:{width,height}, hwnd|null} физические пиксели
+let windowRectAt = 0;      // момент последнего обновления rect окна-источника
 
 function loadSettings() {
   let savedUrl = null;
   try {
     settingsPath = path.join(app.getPath('userData'), 'settings.json');
-    const raw = JSON.parse(fs.readFileSync(settingsPath, 'utf8'));
+    // Срезаем BOM, если файл писался Windows PowerShell 5.1 (Set-Content -Encoding
+    // UTF8 ставит BOM, JSON.parse на нём падает — ревью 28.09).
+    const text = fs.readFileSync(settingsPath, 'utf8').replace(/^\uFEFF/, '');
+    const raw = JSON.parse(text);
     if (typeof raw.serverUrl === 'string' && raw.serverUrl) savedUrl = raw.serverUrl;
     settings.allowInsecureHttp = raw.allowInsecureHttp === true;
     settings.locale = raw.locale === 'ru' || raw.locale === 'en' ? raw.locale : null; // null = по системе
@@ -289,13 +317,88 @@ function startUpdater() {
 }
 
 function stopSignal() {
+  if (reconnectTimer) { clearTimeout(reconnectTimer); reconnectTimer = null; }
+  reconnectStartedAt = 0;
+  reconnectGraceMs = null;
   if (heartbeatTimer) { clearInterval(heartbeatTimer); heartbeatTimer = null; }
+  if (powerBlockerId !== null) { try { powerSaveBlocker.stop(powerBlockerId); } catch { /* уже снят */ } powerBlockerId = null; }
   if (signal) { signal.close(); signal = null; }
   gate.close();
   if (gate.needInputReset()) nativeInput.end();
   signalRole = null;
   selectedSource = null; // разрешение 'media' привязано к источнику: сеанс кончился — гейт закрыт
   nativeInput.resetAdapter(); // koffi мог быть заблокирован SAC в прошлом сеансе — пробуем снова
+}
+
+// Грейс-переподключение сигналинга (ADR 0013, живой сеанс 28.09 / W-A9): физический
+// обрыв сети не даёт ни серверу close-события, ни клиенту — сокет «тихо мёртв».
+// Вместо мгновенного локального конца утверждённого сеанса участник рвётся теми же
+// токенами в течение грейс-окна; сервер отвечает replay'ем approved. Окно берётся
+// из graceMs в ready-сообщении сервера (ENOT_GRACE_MS, по умолчанию 30 с); 0 =
+// fail-closed на сервере — клиент не переподключается вовсе. При неудаче —
+// честный локальный конец.
+function scheduleSignalReconnect(auth, role) {
+  const windowMs = reconnectGraceMs ?? 30_000;
+  if (!windowMs || windowMs <= 0) {
+    // сервер настроен fail-closed (ENOT_GRACE_MS=0) — грейса нет и не будет
+    sendToRenderer('enot:signal', { type: 'ended', reason: 'signal-lost' });
+    stopSignal();
+    api.clearSessionTokens();
+    return;
+  }
+  if (!reconnectStartedAt) reconnectStartedAt = Date.now();
+  if (Date.now() - reconnectStartedAt > windowMs) {
+    reconnectStartedAt = 0;
+    sendToRenderer('enot:signal', { type: 'ended', reason: 'signal-lost' });
+    stopSignal();
+    api.clearSessionTokens();
+    return;
+  }
+  if (reconnectTimer) return;
+  const delay = Math.min(1000 * 2 ** Math.floor((Date.now() - reconnectStartedAt) / 2000), 5000);
+  reconnectTimer = setTimeout(async () => {
+    reconnectTimer = null;
+    if (!signalRole) return; // stopSignal отменил переподключение
+    try {
+      signal = createSignalClient({ url: new URL('/signal', settings.serverUrl).toString().replace(/^http/, 'ws') });
+      wireSignal(signal, auth, role);
+      const ready = await signal.open(auth);
+      gate.onSignal(ready);
+      reconnectGraceMs = typeof ready.graceMs === 'number' ? ready.graceMs : reconnectGraceMs;
+      reconnectStartedAt = 0;
+      if (role === 'host') {
+        heartbeatTimer = setInterval(() => signal?.heartbeat(), 5000);
+        if (powerBlockerId === null) powerBlockerId = powerSaveBlocker.start('prevent-app-suspension');
+      }
+    } catch {
+      scheduleSignalReconnect(auth, role);
+    }
+  }, delay);
+}
+
+function wireSignal(client, auth, role) {
+  client.onMessage((msg) => {
+    gate.onSignal(msg);
+    if (gate.needInputReset()) nativeInput.end();
+    if (msg.type === 'ended' || msg.type === 'socket-closed') {
+      if (heartbeatTimer) { clearInterval(heartbeatTimer); heartbeatTimer = null; }
+      // Сокетный обрыв при живом утверждённом сеансе — грейс-переподключение.
+      // Обе роли: у оператора гейт по построению закрыт (protocol.mjs открывает
+      // его только host'у), поэтому критерий — сама роль, а не gate.isOpen()
+      // (ревью 28.09: иначе оператор не переподключался никогда).
+      // 'ended' (решение сервера) и обрывы до согласия — как раньше, fail closed.
+      if (msg.type === 'socket-closed' && (role === 'host' ? gate.isOpen() : gate.approvedOnce())) {
+        scheduleSignalReconnect(auth, role);
+        return;
+      }
+      // Разрыв сигналинга завершает сеанс локально, fail closed (R15.2/R16)
+      sendToRenderer('enot:signal', { type: 'ended', reason: msg.type === 'ended' ? msg.reason : 'signal-lost' });
+      stopSignal();
+      api.clearSessionTokens();
+      return;
+    }
+    sendToRenderer('enot:signal', msg);
+  });
 }
 
 function startSignal(params) {
@@ -308,25 +411,19 @@ function startSignal(params) {
   lastInputAt = Date.now();
   if (role === 'host') nativeInput.load(); // подготовка нативного ввода к реальному сеансу
   signal = createSignalClient({ url: new URL('/signal', settings.serverUrl).toString().replace(/^http/, 'ws') });
-  signal.onMessage((msg) => {
-    gate.onSignal(msg);
-    if (gate.needInputReset()) nativeInput.end();
-    if (msg.type === 'ended' || msg.type === 'socket-closed') {
-      // Разрыв сигналинга завершает сеанс локально, fail closed (R15.2/R16)
-      sendToRenderer('enot:signal', { type: 'ended', reason: msg.type === 'ended' ? msg.reason : 'signal-lost' });
-      stopSignal();
-      api.clearSessionTokens();
-      return;
-    }
-    sendToRenderer('enot:signal', msg);
-  });
   const auth = role === 'host'
     ? { role, sessionId, hostToken: api.hostToken }
     : { role, sessionId, claimId, token: api.authToken };
+  wireSignal(signal, auth, role);
   return signal.open(auth).then((ready) => {
     gate.onSignal(ready);
+    reconnectGraceMs = typeof ready.graceMs === 'number' ? ready.graceMs : null;
     if (role === 'host') {
       heartbeatTimer = setInterval(() => signal?.heartbeat(), 5000);
+      // Активный сеанс помощи: не даём ОС/Электрону усыплять приложение и душить
+      // таймеры/рендер (класс зависаний из находки №9 — окно перестаёт отвечать
+      // и рисовать, heartbeat'ы встают).
+      if (powerBlockerId === null) powerBlockerId = powerSaveBlocker.start('prevent-app-suspension');
     }
     return ready;
   }).catch((e) => {
@@ -352,13 +449,25 @@ async function selectSource(id) {
   const display = displays.find((d) => String(d.id) === String(src.display_id)) ?? displays[0];
   // origin: смещение дисплея на виртуальном столе (не-основной монитор) — без него
   // инъекция уезжает в основной монитор (ревью GLM-5.3 v0.3.0)
-  const bounds = {
+  let bounds = {
     width: Math.round(display.size.width * display.scaleFactor),
     height: Math.round(display.size.height * display.scaleFactor),
     originX: Math.round(display.bounds.x * display.scaleFactor),
     originY: Math.round(display.bounds.y * display.scaleFactor),
   };
-  selectedSource = { id: src.id, displayId: String(src.display_id ?? ''), name: src.name, bounds };
+  // Окно-источник (дефект №5, живой сеанс 28.09): оператор видит окно, а координаты
+  // ввода маппились на весь дисплей — клики уезжали мимо. Берём прямоугольник окна
+  // по HWND из id ('window:HWND:…'); не удалось — честный откат на границы дисплея.
+  if (String(src.id).startsWith('window:')) {
+    const hwnd = Number(String(src.id).split(':')[1]);
+    if (Number.isFinite(hwnd) && hwnd > 0) {
+      const wr = nativeInput.windowRect(hwnd);
+      if (wr) bounds = { width: wr.w, height: wr.h, originX: wr.x, originY: wr.y };
+      selectedSource = { id: src.id, displayId: String(src.display_id ?? ''), name: src.name, bounds, hwnd };
+      return { ok: true, name: src.name };
+    }
+  }
+  selectedSource = { id: src.id, displayId: String(src.display_id ?? ''), name: src.name, bounds, hwnd: null };
   return { ok: true, name: src.name };
 }
 
@@ -515,6 +624,17 @@ function registerIpc() {
     lastInputAt = Date.now(); // любая активность оператора сбрасывает таймер простоя
     // Ворота и диспетчер — main, по реальному WS-состоянию (см. input-pipeline.mjs)
     if (!selectedSource) return { ok: false, reason: 'no-source' };
+    // Окно-источник живёт: его двигают/ресайзят/максимизируют во время сеанса —
+    // актуализируем прямоугольник (не чаще раза в 500 мс), иначе ввод уходит по
+    // устаревшему rect (ревью 28.09).
+    if (selectedSource.hwnd) {
+      const now = Date.now();
+      if (now - windowRectAt > 500) {
+        windowRectAt = now;
+        const wr = nativeInput.windowRect(selectedSource.hwnd);
+        if (wr) selectedSource.bounds = { width: wr.w, height: wr.h, originX: wr.x, originY: wr.y };
+      }
+    }
     return inputPipeline.handle(ev, selectedSource.bounds);
   });
 
@@ -822,7 +942,21 @@ function cleanupAndQuit() {
   api.clearAuth();
 }
 app.on('before-quit', cleanupAndQuit);
-app.on('window-all-closed', () => app.quit());
+app.on('window-all-closed', () => {
+  // Агент живёт без окон: скрытый мост терминала — единственное окно процесса, и
+  // его destroy в конце сеанса НЕ означает конец агента (ревью 28.09: без гварда
+  // агент умирал после первого же unattended-сеанса). Жизненным циклом агента
+  // управляет SCM-родитель (служба) или внешний процесс.
+  if (AGENT) return;
+  app.quit();
+  // Страховка от зависшего выхода (живой сеанс 28.09, находка №9: после закрытия
+  // окна процесс жил ≥26 с с открытым WS и без heartbeat'ов — сеанс умирал по
+  // lease-expired вместо честного host-lost). Через 5 с выходим принудительно:
+  // WS закрывается, сервер видит close и fail-closed срабатывает как задумано.
+  setTimeout(() => {
+    try { app.exit(0); } catch { /* уже мёртв */ }
+  }, 5000).unref();
+});
 
 app.whenReady().then(() => {
   if (!gotLock) return; // второй экземпляр уже уходит через app.quit()

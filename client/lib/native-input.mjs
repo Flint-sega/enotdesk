@@ -126,6 +126,18 @@ function winAdapter(koffi) {
   // на x64 Windows отдельное соглашение stdcall не требуется (единое ABI).
   const SendInput = user32.func('unsigned int SendInput(int, void *, int)');
   const SetCursorPos = user32.func('bool SetCursorPos(int, int)');
+  const GetSystemMetrics = user32.func('int GetSystemMetrics(int)');
+  // Прямоугольник окна по HWND (дефект №5): координаты ввода при окне-источнике
+  // должны маппиться на окно, а не на весь дисплей. Именованный тип живёт в
+  // общем реестре koffi на процесс: повторная регистрация бросает «Duplicate
+  // type name», а winAdapter пересобирается после каждого resetAdapter —
+  // глотаем только дубликат (ревью 28.09).
+  try {
+    koffi.struct('ENOT_WINDOW_RECT', { left: 'long', top: 'long', right: 'long', bottom: 'long' });
+  } catch (e) {
+    if (!/Duplicate type name/.test(e.message)) throw e;
+  }
+  const GetWindowRect = user32.func('int GetWindowRect(void *, _Out_ ENOT_WINDOW_RECT *)');
   const VK = { shift: 0x10, control: 0x11, alt: 0x12, meta: 0x5b, enter: 0x0d, tab: 0x09, escape: 0x1b, backspace: 0x08, space: 0x20, delete: 0x2e, home: 0x24, end: 0x23, pageup: 0x21, pagedown: 0x22, arrowup: 0x26, arrowdown: 0x28, arrowleft: 0x25, arrowright: 0x27,
     // VK_OEM_* (US-раскладка): пунктуация протокола (ревью GLM-5.3 v0.3.0 — раньше
     // дефис/точка/запятая и др. молча терялись: пароли/URL/e-mail не набрать)
@@ -167,12 +179,62 @@ function winAdapter(koffi) {
     return buf;
   };
   const sendOne = (buf) => { if (!SendInput(1, buf, 40)) sendFails++; };
+  // Последняя позиция курсора от move(): нужна кнопочным событиям — NC-области
+  // заголовка («свернуть»/«закрыть») взводятся по WM_MOUSEMOVE, и «голый»
+  // down/up сразу после SetCursorPos окном игнорируется (живой сеанс 28.09:
+  // клик по «–» срабатывал только после локального движения мыши на хосте).
+  let lastX = null;
+  let lastY = null;
+  // Абсолютные координаты SendInput нормированы на весь виртуальный стол
+  // (SM_X/Y/CX/CYVIRTUALSCREEN = 76..79): мониторы с отрицательными координатами.
+  const absButtonPacket = (flag) => {
+    const vsX = GetSystemMetrics(76);
+    const vsY = GetSystemMetrics(77);
+    const vsW = GetSystemMetrics(78);
+    const vsH = GetSystemMetrics(79);
+    const nx = vsW > 1 ? Math.round(((lastX - vsX) * 65535) / (vsW - 1)) : 0;
+    const ny = vsH > 1 ? Math.round(((lastY - vsY) * 65535) / (vsH - 1)) : 0;
+    const buf = Buffer.alloc(80); // два INPUT по 40: [абсолютный move][кнопка]
+    buf.writeUInt32LE(0, 0); // INPUT_MOUSE
+    buf.writeUInt32LE(nx >>> 0, 8); // dx
+    buf.writeUInt32LE(ny >>> 0, 12); // dy
+    buf.writeUInt32LE(0xc001, 20); // MOUSEEVENTF_MOVE|ABSOLUTE|VIRTUALDESK
+    buf.writeUInt32LE(0, 40); // второй INPUT_MOUSE
+    buf.writeUInt32LE(flag, 60); // dwFlags кнопки
+    return buf;
+  };
   return {
     available: true,
     platform: 'windows-sendinput',
     get failCount() { return sendFails; },
-    move(pxX, pxY) { if (!SetCursorPos(Math.round(pxX), Math.round(pxY))) sendFails++; },
-    button(btn, down) { sendOne(mouseInput(mouseFlag(btn, down))); },
+    move(pxX, pxY) {
+      lastX = Math.round(pxX);
+      lastY = Math.round(pxY);
+      if (!SetCursorPos(lastX, lastY)) sendFails++;
+    },
+    button(btn, down) {
+      const flag = mouseFlag(btn, down);
+      if (lastX != null && lastY != null) {
+        // SendInput возвращает число внедрённых событий: из 2 должен быть 2 —
+        // частичный сбой (move прошёл, кнопка заблокирована UIPI) тоже сбой.
+        if (SendInput(2, absButtonPacket(flag), 40) !== 2) sendFails++;
+      } else {
+        sendOne(mouseInput(flag));
+      }
+    },
+    windowRect(hwnd) {
+      try {
+        const rect = {};
+        if (!GetWindowRect(BigInt(hwnd), rect)) return null;
+        const w = rect.right - rect.left;
+        const h = rect.bottom - rect.top;
+        if (w <= 0 || h <= 0) return null;
+        // Минимизированное окно Win32 уезжает в (-32000,-32000) с w/h>0 —
+        // инъекция по такому прямоугольнику уходила бы за экран (ревью 28.09).
+        if (rect.left < -30000 || rect.top < -30000) return null;
+        return { x: rect.left, y: rect.top, w, h };
+      } catch { return null; }
+    },
     key(k, down) {
       const vk = vkFor(k);
       if (vk === undefined) return false;
@@ -303,5 +365,12 @@ export function createNativeInput({ adapter, koffi = null, getAdapter = null, ma
     // а потом пользователь нажал «Разрешить доступ» — следующий сеанс пробует снова,
     // вместо навсегда закэшированного инертного режима.
     resetAdapter() { ad = null; },
+    // Прямоугольник окна по HWND (win-only; null — не удалось/платформа другая).
+    // Для координат ввода при окне-источнике (дефект №5).
+    windowRect(hwnd) {
+      resolveAdapter();
+      if (!ad || typeof ad.windowRect !== 'function') return null;
+      try { return ad.windowRect(hwnd); } catch { return null; }
+    },
   };
 }

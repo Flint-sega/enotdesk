@@ -82,6 +82,41 @@ function sendSignal(data) {
   ws.send(JSON.stringify({ type: 'signal', data }));
 }
 
+// Грейс-окно сигналинга (ADR 0013): сервер держит утверждённый сеанс и принимает
+// переподключение теми же токенами. Длительность приходит от сервера в ready
+// (graceMs, ENOT_GRACE_MS; до первого ready — дефолт 30 с). Авто-reconnect
+// (живой сеанс 28.09, находка №6) — только для сеансов, дошедших до согласия:
+// обрыв ДО approved сервер гасит мгновенно (fail-closed), и стучаться в убитый
+// сеанс — бесполезные 4003 и ложный баннер (ревью 28.09).
+let SIGNAL_GRACE_MS = 30_000;
+let signalReconnectTimer = null;
+let signalLostAt = 0;
+// ready уже приходил с state:'approved' (первый вход в утверждённый сеанс или replay)
+let graceEligible = false;
+
+function stopSignalReconnect() {
+  if (signalReconnectTimer) { clearTimeout(signalReconnectTimer); signalReconnectTimer = null; }
+  signalLostAt = 0;
+}
+
+function scheduleSignalReconnect() {
+  if (!state.connect || !graceEligible) return; // нет сеанса или сеанс не дошёл до approved
+  if (!signalLostAt) signalLostAt = Date.now();
+  if (Date.now() - signalLostAt >= SIGNAL_GRACE_MS) {
+    // Окно истекло: честный конец вместо вечного баннера (дефект №1).
+    stopSignalReconnect();
+    showConnectForm();
+    text($('conn-error'), t('web.reconnect.expired'));
+    return;
+  }
+  if (signalReconnectTimer) return;
+  const delay = Math.min(1000 * 2 ** Math.floor((Date.now() - signalLostAt) / 2000), 5000);
+  signalReconnectTimer = setTimeout(() => {
+    signalReconnectTimer = null;
+    if (state.connect && !ws) openSignal();
+  }, delay);
+}
+
 function openSignal() {
   ws?.close(1000, 'reconnect');
   const url = `${location.protocol === 'https:' ? 'wss' : 'ws'}://${location.host}/signal`;
@@ -101,8 +136,19 @@ function openSignal() {
   sock.onclose = () => {
     if (ws !== sock) return; // сокет закрыт ради нового (переподключение) — не мешаем
     ws = null;
-    // сокет закрылся при живом сеансе: сервер держит грейс (ADR 0013) — даём вернуться
-    if (state.connect) { show($('op-reconnect')); text($('remote-status'), ''); }
+    if (!state.connect) return;
+    if (graceEligible) {
+      // утверждённый сеанс: сервер держит грейс (ADR 0013) — пробуем вернуться
+      // сами; ручная кнопка остаётся как запасной путь
+      show($('op-reconnect'));
+      text($('remote-status'), '');
+      scheduleSignalReconnect();
+    } else {
+      // обрыв до согласия: сервер гасит сеанс мгновенно (fail-closed, ADR 0013) —
+      // честное сообщение вместо 30 с ретраев в гарантированно убитый сеанс
+      showConnectForm();
+      text($('conn-error'), t('web.reconnect.noGrace'));
+    }
   };
 }
 
@@ -130,6 +176,8 @@ function showOnly(...ids) {
 }
 
 function showConnectForm() {
+  stopSignalReconnect(); // страница покидает сеанс — авто-переподключение не нужно
+  graceEligible = false; // новый сеанс: право на грейс считается заново
   stopMedia();
   state.connect = null;
   pendingClip = null;
@@ -297,11 +345,17 @@ async function machineOffer() {
 async function onSignal(msg) {
   switch (msg.type) {
     case 'ready':
+      // вернулись (первый вход или переподключение в грейсе); сервер сообщает
+      // свой graceMs — держим окно реконнекта равным серверному
+      if (typeof msg.graceMs === 'number' && msg.graceMs >= 0) SIGNAL_GRACE_MS = msg.graceMs;
+      if (msg.state === 'approved') graceEligible = true;
+      stopSignalReconnect();
       hide($('op-reconnect'));
       break;
     case 'approved':
       // replay 'approved' при переподключении приходит повторно: без флага
       // machineOffer успевает запуститься дважды (ревью GLM-5.3 v0.3.0)
+      graceEligible = true; // сеанс дошёл до согласия — обрыв WS означает грейс, не fail-closed
       if (!state.pc && !offerStarting) {
         offerStarting = true;
         try {
@@ -366,10 +420,12 @@ async function onSignal(msg) {
       showStatus(t('op.clientReconnecting'));
       break;
     case 'resumed':
+      stopSignalReconnect();
       showStatus(t('status.connected'));
       hide($('op-reconnect'));
       break;
     case 'ended': {
+      stopSignalReconnect(); // сеанс завершён сервером — стучаться больше нечего
       const reason = endReasonText(msg.reason);
       showConnectForm();
       text($('conn-error'), reason);
@@ -898,6 +954,8 @@ function wire() {
 
   $('btn-reconnect')?.addEventListener('click', () => {
     if (!state.connect) return;
+    // Отсчёт грейса НЕ сбрасываем (ревью 28.09): ручная попытка — не продление
+    // окна; на успехе его гасит 'ready'.
     hide($('op-reconnect'));
     openSignal(); // повторный auth теми же токенами — сервер разыграет replay
   });

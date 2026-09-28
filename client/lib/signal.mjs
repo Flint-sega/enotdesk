@@ -75,8 +75,10 @@ export function createSignalClient({ url, wsFactory = (u) => new WebSocket(u), a
         ws.on('close', (code, reason) => {
           clearTimeout(timer);
           if (!ready) {
-            // сокет закрылся до ready: это ошибка подключения (reject), а не конец сеанса
-            if (!closedByUs) fail(new Error(`closed ${code} ${reason?.toString?.() ?? ''}`.trim()));
+            // Закрытие до ready — всегда отказ открытия. Раньше ветка closedByUs
+            // (stopSignal во время connect) не резолвила промис вовсе — await
+            // висел вечно (ревью 28.09); теперь честный reject в обоих случаях.
+            fail(new Error(closedByUs ? 'соединение закрыто локально' : `closed ${code} ${reason?.toString?.() ?? ''}`.trim()));
             return;
           }
           emit({ type: 'socket-closed', code, reason: reason?.toString?.() ?? '' });

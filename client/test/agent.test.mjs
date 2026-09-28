@@ -4,6 +4,7 @@ import { readFileSync } from 'node:fs';
 import path from 'node:path';
 import { createAgent, createAgentApi, createIceServersFetcher } from '../lib/agent.mjs';
 import { createNativeInput, inertAdapter } from '../lib/native-input.mjs';
+import { validateOutgoingSignal } from '../lib/protocol.mjs';
 
 // Шов §2 (interfaces.md): agent-цикл над фейк-api, фейк-сигналингом и инертным
 // адаптером ввода. Никакого Electron и реальной сети: время — маленькие реальные
@@ -56,10 +57,19 @@ function fakeSignalFactory(script = {}) {
       listeners: new Set(),
       heartbeats: 0,
       closed: false,
+      sentSignals: [],
       onMessage(cb) { c.listeners.add(cb); return () => c.listeners.delete(cb); },
       heartbeat() { c.heartbeats += 1; },
       close() { c.closed = true; },
       emit(msg) { for (const cb of [...c.listeners]) cb(msg); },
+      // Исходящие сигналы прогоняются через НАСТОЯЩИЙ валидатор протокола:
+      // регресс на форму (agent.mjs слал без конверта {type:'signal', data:…}
+      // — живой сеанс 28.09, W-U6/W-U11) теперь ловит тест.
+      sendSignal(msg) {
+        const v = validateOutgoingSignal(msg);
+        if (!v.ok) throw new Error(`invalid outgoing signal (${v.reason})`);
+        c.sentSignals.push(msg);
+      },
       open(auth) {
         clients.push(c);
         openAuths.push(auth);
@@ -525,4 +535,83 @@ test('toast (R08): createAgentApi передаёт toastResult третьим а
     { inventory: { os: 'linux' } },
     { toastResult: { id: 't-1', ok: false, reason: 'native-unavailable' } },
   ]);
+});
+
+test('терминальный сигналинг: answer и ICE-candidate уходят в конверте {type:\'signal\', data:…}', async () => {
+  // Регресс живого сеанса 28.09: agent.mjs слал sendSignal({description}/{candidate})
+  // без конверта — validateOutgoingSignal отбрасывал всё, answer не доходил до
+  // оператора, и в unattended-сеансе были мертвы чат/файлы/терминал (W-U6/W-U11).
+  const { api } = fakeApi({
+    session: () => ({ status: 200, body: { sessionId: 88, state: 'pending-consent', claimId: 'cl-9', operator: { id: 'u1', name: 'Оператор' } } }),
+  });
+  const store = memoryStore();
+  store.save('tok-term');
+  const sig = fakeSignalFactory();
+  let lastPc = null;
+  const fakeRtcFactory = () => {
+    lastPc = {
+      onicecandidate: null,
+      ondatachannel: null,
+      async setRemoteDescription(d) { lastPc.remote = d; },
+      async createAnswer() { return { type: 'answer', sdp: 'v=0-fake-answer' }; },
+      async setLocalDescription(d) { lastPc.localDescription = d; },
+      async addIceCandidate(c) { lastPc.iceApplied = [...(lastPc.iceApplied ?? []), c]; },
+      close() {},
+    };
+    return lastPc;
+  };
+  const agent = createAgent({
+    api,
+    signal: sig.factory,
+    native: createNativeInput({ adapter: inertAdapter() }),
+    policy: { name: 'mk-term', os: 'test', version: '9.9', tokenStore: store, heartbeatMs: 5, backoffBaseMs: 10, backoffMaxMs: 40 },
+    termHost: { handleChannel() {}, isActive() { return false; } },
+    rtc: fakeRtcFactory,
+  });
+  try {
+    assert.equal(agent.start({}).ok, true, 'старт с токеном из store');
+    await sleep(30); // опрос сессии → 200 → сигналинг открывается
+    assert.equal(sig.clients.length, 1, 'host-WS открыт');
+    const client = sig.clients[0];
+
+    client.emit({ type: 'approved' }); // агент поднимает termPc
+    await sleep(10);
+    assert.ok(lastPc, 'pc терминала создан по approved');
+
+    // кандидаты оператора ДО оффера буферизуются и применяются при answer-фазе
+    client.emit({ type: 'signal', data: { candidate: { candidate: 'candidate:early', sdpMid: '0' } } });
+    await sleep(10);
+    assert.equal(lastPc.iceApplied?.length ?? 0, 0, 'до remote description прямой addIceCandidate не зовётся');
+    assert.ok(!client.sentSignals.some((m) => m.type === 'signal' && m.data?.candidate),
+      'буферизованный кандидат не эхом уходит обратно');
+
+    client.emit({ type: 'signal', data: { description: { type: 'offer', sdp: 'v=0-fake-offer' } } });
+    await sleep(20);
+    assert.equal(lastPc.remote?.sdp, 'v=0-fake-offer', 'оффер принят в setRemoteDescription');
+    assert.deepEqual(lastPc.iceApplied?.map((c) => c.candidate), ['candidate:early'],
+      'ранний кандидат применён из буфера в answer-фазе');
+    const answer = client.sentSignals.find((m) => m.type === 'signal' && m.data?.description?.type === 'answer');
+    assert.ok(answer, 'answer ушёл В КОНВЕРТЕ {type:\'signal\', data:…}');
+    assert.equal(answer.data.description.sdp, 'v=0-fake-answer');
+
+    // кандидат ПОСЛЕ handshake (тригкл): применяется сразу, а не вечно буферизуется
+    // (ревью 28.09: pcLike моста не экспонирует remoteDescription — старая проверка
+    // termPc.remoteDescription всегда была falsy и поздние кандидаты терялись)
+    client.emit({ type: 'signal', data: { candidate: { candidate: 'candidate:late', sdpMid: '1' } } });
+    await sleep(20);
+    assert.deepEqual(lastPc.iceApplied?.map((c) => c.candidate), ['candidate:early', 'candidate:late'],
+      'поздний кандидат применён сразу по флагу answered');
+
+    lastPc.onicecandidate({ candidate: { candidate: 'candidate:1 1 udp 2130706431 192.168.0.2 5000 typ host', sdpMid: '0' } });
+    const cand = client.sentSignals.find((m) => m.type === 'signal' && m.data?.candidate);
+    assert.ok(cand, 'ICE-candidate ушёл В КОНВЕРТЕ');
+    assert.equal(cand.data.candidate.sdpMid, '0');
+
+    // и контрольный выстрел: «голый» сигнал обязан падать в валидаторе шима
+    assert.throws(() => client.sendSignal({ description: { type: 'answer', sdp: 'x' } }),
+      /invalid outgoing signal/, 'без конверта шим теста больше не пропускает');
+  } finally {
+    agent.stop();
+    await sleep(10);
+  }
 });

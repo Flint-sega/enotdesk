@@ -27,8 +27,15 @@ if "%SERVER_URL%"=="" (
 
 REM --- Настройки агента пишутся в профиль LocalSystem, потому что
 REM --- службу запускает SCM от имени LocalSystem, а не текущего админа.
+REM --- WriteAllText (в отличие от Set-Content -Encoding UTF8 в PowerShell 5.1)
+REM --- пишет UTF-8 БЕЗ BOM: JSON.parse клиента падает на BOM-файле (ревью 28.09).
 set "AGENT_PROFILE=%SystemRoot%\System32\config\systemprofile\AppData\Roaming\EnotDesk\agent"
-powershell.exe -NoProfile -Command "$d='%AGENT_PROFILE%'; New-Item -ItemType Directory -Force -Path $d | Out-Null; @{serverUrl='%SERVER_URL%'} | ConvertTo-Json | Set-Content -Encoding UTF8 -Path (Join-Path $d 'settings.json'); icacls $d /inheritance:r /grant 'SYSTEM:(OI)(CI)F' /grant 'Administrators:(OI)(CI)F' | Out-Null"
+powershell.exe -NoProfile -Command "$d='%AGENT_PROFILE%'; New-Item -ItemType Directory -Force -Path $d | Out-Null; [System.IO.File]::WriteAllText((Join-Path $d 'settings.json'), (@{serverUrl='%SERVER_URL%'} | ConvertTo-Json) + [Environment]::NewLine); icacls $d /inheritance:r /grant '*S-1-5-18:(OI)(CI)F' /grant '*S-1-5-32-544:(OI)(CI)F' | Out-Null; exit $LASTEXITCODE"
+REM Права выдаются по well-known SID (SYSTEM=*S-1-5-18, Администраторы=*S-1-5-32-544):
+REM имена групп локализованы — на русской Windows 'Administrators' не резолвится
+REM (живой сеанс 28.09: «Сопоставление между именами и SID не было произведено»).
+REM exit $LASTEXITCODE в конце обязателен: без него код выхода powershell.exe
+REM определяется успешным Out-Null, а не провалившимся icacls (ревью 28.09).
 if errorlevel 1 (
   echo [ошибка] не удалось записать settings.json в %AGENT_PROFILE%.
   exit /b 1
@@ -40,9 +47,18 @@ if errorlevel 1 goto :fail
 sc.exe description "%SVC_NAME%" "EnotDesk: unattended agent. Auto-registers on the EnotDesk server, waits for operator claims. No window by design; managed via this service (see docs/AGENT.md)."
 if errorlevel 1 goto :fail
 
-REM --- Переменные окружения для процесса службы (EDESK_AGENT=1 включает headless-режим).
-REM --- AppEnvironment читается SCM при запуске процесса службы; разделитель строк - \0.
-reg add "HKLM\SYSTEM\CurrentControlSet\Services\%SVC_NAME%" /v AppEnvironment /t REG_MULTI_SZ /d "EDESK_AGENT=1\0EDESK_AGENT_NAME=%AGENT_NAME%" /f
+REM --- Переменные окружения для процесса службы. EDESK_AGENT_SVC=1 включает
+REM --- родительский SCM-режим (win-service.mjs): служебный процесс сам отвечает
+REM --- диспетчеру служб (StartServiceCtrlDispatcher) и держит живым дочерний
+REM --- агент; без него SCM убивает процесс по 1053 (дефект №4, сеанс 28.09).
+REM --- Пишем ОБА значения: Environment читает сам services.exe (нативный
+REM --- механизм SCM), AppEnvironment оставлен для совместимости с обёртками
+REM --- srvany/nssm и старой документацией (ревью 28.09: AppEnvironment SCM
+REM --- не читает — раньше из-за этого переменные до процесса не доходили).
+REM --- Разделитель строк в REG_MULTI_SZ - \0.
+reg add "HKLM\SYSTEM\CurrentControlSet\Services\%SVC_NAME%" /v Environment /t REG_MULTI_SZ /d "EDESK_AGENT=1\0EDESK_AGENT_NAME=%AGENT_NAME%\0EDESK_AGENT_SVC=1" /f
+if errorlevel 1 goto :fail
+reg add "HKLM\SYSTEM\CurrentControlSet\Services\%SVC_NAME%" /v AppEnvironment /t REG_MULTI_SZ /d "EDESK_AGENT=1\0EDESK_AGENT_NAME=%AGENT_NAME%\0EDESK_AGENT_SVC=1" /f
 if errorlevel 1 goto :fail
 
 REM --- Автоперезапуск при сбое: 5с, 10с, затем каждые 30с в течение суток ---
@@ -50,6 +66,10 @@ sc.exe failure "%SVC_NAME%" reset= 86400 actions= restart/5000/restart/10000/res
 if errorlevel 1 goto :fail
 
 sc.exe start "%SVC_NAME%"
+if errorlevel 1 (
+  echo [ошибка] служба создана, но не запустилась - см. Event Viewer ^(System^) и "sc query %SVC_NAME%".
+  exit /b 1
+)
 echo.
 echo Готово. Служба %SVC_NAME% создана и запущена (start= auto).
 echo Логи в v1 не пишутся на диск (см. docs/AGENT.md, раздел "Логи").

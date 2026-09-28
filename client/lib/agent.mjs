@@ -205,9 +205,11 @@ export function createAgent({ api, signal, native, policy, termHost, rtc, notify
     // Оператор офферит, агент отвечает answer'ом; канал 'term' уходит в termHost.
     let termPc = null;
     let termIce = [];
+    let termAnswered = false; // оффер принят и remote description выставлен (pcLike моста не экспонирует remoteDescription)
     const closeTermRtc = () => {
       if (termPc) { try { termPc.close(); } catch { /* уже закрыт */ } termPc = null; }
       termIce = [];
+      termAnswered = false;
     };
     const answerTermOffer = async (sdp) => {
       const pc = termPc;
@@ -217,7 +219,13 @@ export function createAgent({ api, signal, native, policy, termHost, rtc, notify
         for (const c of termIce.splice(0)) pc.addIceCandidate(c).catch(() => { /* устаревший */ });
         const answer = await pc.createAnswer();
         await pc.setLocalDescription(answer);
-        client.sendSignal({ description: { type: 'answer', sdp: pc.localDescription.sdp } });
+        // Исходящие сигналы обязаны идти в конверте {type:'signal', data:…} —
+        // validateOutgoingSignal отбрасывает всё остальное (живой сеанс 28.09:
+        // без обёртки answer терминала не доходил до оператора, W-U6/W-U11 были мертвы).
+        client.sendSignal({ type: 'signal', data: { description: { type: 'answer', sdp: pc.localDescription.sdp } } });
+        // Только после выставленного remote description прямые ICE-кандидаты
+        // оператора применяются сразу (тригкл после answer); раньше — в буфер.
+        termAnswered = true;
       } catch (e) {
         log.warn(`Агент: ответ терминала не удался (${e.message})`);
       }
@@ -233,7 +241,13 @@ export function createAgent({ api, signal, native, policy, termHost, rtc, notify
       termPc = pc;
       pc.onicecandidate = (e) => {
         if (!e?.candidate) return;
-        try { client.sendSignal({ candidate: e.candidate.toJSON ? e.candidate.toJSON() : e.candidate }); } catch { /* сигнал уже закрыт */ }
+        try {
+          client.sendSignal({ type: 'signal', data: { candidate: e.candidate.toJSON ? e.candidate.toJSON() : e.candidate } });
+        } catch (err) {
+          // Различаем причины: молчащий catch маскировал отказ валидации формы
+          // (дефект №12); предупреждение в лог делает регрессию видимой.
+          log.warn(`Агент: ICE-кандидат не отправлен (${err.message})`);
+        }
       };
       pc.ondatachannel = (e) => {
         const ch = e?.channel;
@@ -258,7 +272,10 @@ export function createAgent({ api, signal, native, policy, termHost, rtc, notify
         if (d?.description?.type === 'offer' && typeof d.description.sdp === 'string') {
           void answerTermOffer(d.description.sdp);
         } else if (d?.candidate) {
-          if (termPc.remoteDescription) termPc.addIceCandidate(d.candidate).catch(() => { /* устаревший */ });
+          // pcLike моста не экспонирует remoteDescription — полагаемся на флаг
+          // termAnswered (ставится после answer'а): поздние трикл-кандидаты
+          // оператора применяются сразу, ранние — из буфера (ревью 28.09).
+          if (termAnswered) termPc.addIceCandidate(d.candidate).catch(() => { /* устаревший */ });
           else termIce.push(d.candidate);
         }
       }

@@ -10,11 +10,12 @@
    (не `%APPDATA%` администратора, запускающего скрипт).
 2. `sc.exe create ... start= auto obj= LocalSystem DisplayName= "EnotDesk Agent"` — автостарт при загрузке.
 3. `sc.exe description ...` — описание службы.
-4. Переменные процесса службы через `reg add ...\Services\EnotDeskAgent /v AppEnvironment /t REG_MULTI_SZ`:
-   `EDESK_AGENT=1` (headless-режим) и `EDESK_AGENT_NAME` (имя машины в списке, по умолчанию `%COMPUTERNAME%`).
-   AppEnvironment — старый механизм SCM, работает на всех поддерживаемых Windows. На Windows 10 2004+ есть
-   также значение `Environment` (REG_MULTI_SZ) — можно использовать вместо AppEnvironment, но держать
-   оба одновременно не нужно.
+4. Переменные процесса службы через `reg add ...\Services\EnotDeskAgent` (REG_MULTI_SZ):
+   `EDESK_AGENT=1` (headless-режим), `EDESK_AGENT_SVC=1` (родительский SCM-режим — процесс сам
+   отвечает диспетчеру служб, ADR 0026) и `EDESK_AGENT_NAME` (имя машины в списке, по умолчанию
+   `%COMPUTERNAME%`). Значение пишется в **`Environment`** — его читает сам services.exe.
+   `AppEnvironment` под тем же ключом services.exe НЕ читает (это конвенция обёрток srvany/nssm);
+   install-скрипт пишет оба значения для совместимости (ревью 28.09).
 5. `sc.exe failure ...` — автоперезапуск при сбоях: через 5с, 10с, затем 30с (счётчик сбрасывается раз в сутки).
 6. Запуск службы.
 
