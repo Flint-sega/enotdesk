@@ -23,8 +23,10 @@ $('btn-pause-stream').addEventListener('click', () => {
 // Таймер длительности сеанса у оператора.
 let sessionTimer = null;
 function startSessionTimer() {
+  // re-offer (грейс-переподключение хоста) пересобирает pc, но НЕ сбрасывает
+  // счётчик длительности сеанса (ревью v0.4.3)
+  if (sessionTimer) return;
   const startedAt = Date.now();
-  clearInterval(sessionTimer);
   sessionTimer = setInterval(() => {
     const sec = Math.floor((Date.now() - startedAt) / 1000);
     text($('session-timer'), `${String(Math.floor(sec / 60)).padStart(2, '0')}:${String(sec % 60).padStart(2, '0')}`);
@@ -115,10 +117,18 @@ export function makePc(iceServers) {
   pc.ondatachannel = (e) => wireHostChannel(e.channel);
   // Краткое дрожание сети ('disconnected') часто самовосстанавливается — даём
   // 10с грейс; 'failed' рвёт сразу (R15.2: не висим в вечном connected).
+  // Гвард `state.pc !== pc`: pc заменён (reconnect в грейсе, новый оффер) — его
+  // события и осиротевший 10с-таймер не должны убивать НОВОЕ подключение
+  // (ревью v0.4.3, high: таймер стрелял в новый pc и ронял свежий сеанс).
   let rtcGrace = null;
   pc.onconnectionstatechange = () => {
+    if (state.pc !== pc) { if (rtcGrace) { clearTimeout(rtcGrace); rtcGrace = null; } return; }
     if (pc.connectionState === 'disconnected') {
-      rtcGrace ??= setTimeout(() => { rtcGrace = null; rtcLinkLost(); }, 10000);
+      rtcGrace ??= setTimeout(() => {
+        rtcGrace = null;
+        if (state.pc !== pc) return; // pc уже заменён — таймер чужой
+        rtcLinkLost();
+      }, 10000);
       return;
     }
     if (pc.connectionState === 'connected') {
@@ -162,7 +172,7 @@ async function clientVersion() {
 // новом вызове и в cleanupSession — иначе переживает сеанс и запускает
 // «призрачный» захват (ревью GLM-5.3 v0.3.0).
 let captureCard = null;
-function removeCaptureCard() {
+export function removeCaptureCard() {
   captureCard?.remove();
   captureCard = null;
 }
@@ -210,27 +220,55 @@ async function acquirePrimaryStream() {
   }
 }
 
+// Эпоха сборки host-RTC: invalidateHostRtc() (грейс-сброс из main) инвалидирует
+// висящий в await'ах старт — без этого rtc-reset открывает окно двойного старта
+// (два pc/два offer/утёкший захват; ревью v0.4.3, подтверждено репро).
+let hostRtcEpoch = 0;
+let hostRtcStarting = false;
+export function invalidateHostRtc() {
+  hostRtcEpoch += 1;
+  hostRtcStarting = false; // новый старт разрешён немедленно; старый выйдет по эпохе
+}
+
 export async function startHostRtc() {
-  const got = await acquirePrimaryStream();
-  if (!got.stream) {
-    // perm-текст для 'os' уже показан в acquirePrimaryStream; для 'sel' — свой текст
-    captureFailureUi();
-    return;
-  }
-  const stream = got.stream;
-  state.localStream = stream;
-  // Честный статус нативного ввода (конвенция продукта): клиент и оператор видят,
-  // работает ли инъекция — без этого «не двигается мышь» не диагностируется.
+  if (hostRtcStarting) return;
+  hostRtcStarting = true;
+  const epoch = hostRtcEpoch;
+  const stale = (stream, pc) => {
+    // менялась эпоха (rtc-reset при грейс-переподключении): гасим СВОИ частичные
+    // ресурсы, state не трогаем — там уже следующий старт
+    if (pc) { try { pc.close(); } catch { /* уже закрыт */ } }
+    if (stream) { try { stream.getTracks().forEach((track) => track.stop()); } catch { /* уже остановлены */ } }
+  };
   try {
-    const perms = await enot.permissions();
-    const ni = perms.nativeInput ?? {};
-    text($('client-input-status'), ni.available
-      ? t('client.inputStatus', { backend: ni.platform })
-      : t('client.inputUnavailable', { reason: ni.reason ?? 'native-unavailable' }));
-  } catch { /* статус не критичен для трансляции */ }
-  try {
+    const got = await acquirePrimaryStream();
+    if (epoch !== hostRtcEpoch) { got.stream?.getTracks().forEach((track) => track.stop()); return; }
+    if (!got.stream) {
+      // perm-текст для 'os' уже показан в acquirePrimaryStream; для 'sel' — свой текст
+      captureFailureUi();
+      return;
+    }
+    const stream = got.stream;
+    if (epoch !== hostRtcEpoch) { stream.getTracks().forEach((track) => track.stop()); return; }
+    state.localStream = stream;
+    // Пауза трансляции переживает грейс-переподключение: новый стрим обязан
+    // наследовать «Скрыть экран», иначе после reconnect'а оператор снова видит
+    // экран при UI «на паузе» (ревью v0.4.3, приватность).
+    setVideoEnabled(stream, !streamPaused);
+    // Честный статус нативного ввода (конвенция продукта): клиент и оператор видят,
+    // работает ли инъекция — без этого «не двигается мышь» не диагностируется.
+    try {
+      const perms = await enot.permissions();
+      if (epoch !== hostRtcEpoch) { stale(stream, null); return; }
+      const ni = perms.nativeInput ?? {};
+      text($('client-input-status'), ni.available
+        ? t('client.inputStatus', { backend: ni.platform })
+        : t('client.inputUnavailable', { reason: ni.reason ?? 'native-unavailable' }));
+    } catch { /* статус не критичен для трансляции */ }
     const cfg = await enot.request('rtc.config', { asHost: true });
+    if (epoch !== hostRtcEpoch) { stale(stream, null); return; }
     const pc = makePc(cfg.body?.iceServers ?? []);
+    if (epoch !== hostRtcEpoch) { stale(stream, pc); return; }
     state.pc = pc;
     // Каналы данных создаёт офферер (ADR 0014): answer оператора не может
     // добавить m=application, которого нет в offer — иначе ввод/чат/файлы
@@ -248,6 +286,9 @@ export async function startHostRtc() {
     await pc.setLocalDescription(offer);
     await enot.sendSignal({ type: 'signal', data: { description: { type: 'offer', sdp: pc.localDescription.sdp } } });
   } catch (e) {
+    // устаревший старт (эпоха сменилась): СВОИ ресурсы не трогаем через stopMedia —
+    // там уже состояние нового старта; частичное гасит stale-пути выше
+    if (epoch !== hostRtcEpoch) return;
     // сбой после успешного захвата: гасим поток — иначе экран «течёт» без сеанса
     // и без кнопки (ревью GLM-5.3 v0.3.0); 'ended' не затираем (гонка await)
     stopMedia();
@@ -256,6 +297,10 @@ export async function startHostRtc() {
       clientShow('error');
     }
     return;
+  } finally {
+    // флаг сбрасывает только АКТУАЛЬНЫЙ старт: устаревший (эпоха сменилась)
+    // не затирает флаг нового, иначе третий реплей запустит параллельный старт
+    if (epoch === hostRtcEpoch) hostRtcStarting = false;
   }
   clientShow('connected');
 }
@@ -323,8 +368,47 @@ function applyVideoCap(pc, maxBitrate = adaptive.target) {
   } catch { /* не критично */ }
 }
 
-export async function operatorAnswer(offerSdp) {
+// Полный сброс host-RTC при грейс-переподключении (main шлёт 'rtc-reset' только
+// host-роли): эпоха, pc, захват, каналы, файловый приём, очередь, adaptive-таймер,
+// карточка ретрая. Зеркало неполных чисток сведено в одно место (ревью v0.4.3).
+export function resetHostRtcState() {
+  invalidateHostRtc();
+  try { state.pc?.close(); } catch { /* уже закрыт */ }
+  try { state.localStream?.getTracks().forEach((track) => track.stop()); } catch { /* уже остановлены */ }
+  state.pc = null; state.localStream = null;
+  state.dc = null; state.dcs = {}; state.fileRx = null; state.iceQueue = [];
+  stopAdaptive();
+  removeCaptureCard();
+}
+
+// Ответы на офферы строго последовательно: два конкурентных вызова (гонка
+// офферов при быстрых reconnect'ах) оставляли зомби-pc, таймеры на мёртвом pc
+// и устаревший answer (ревью v0.4.3, medium — воспроизведено на web-твине).
+let answerChain = Promise.resolve();
+
+export function operatorAnswer(offerSdp) {
+  const run = answerChain.catch(() => {}).then(() => doOperatorAnswer(offerSdp));
+  answerChain = run.catch(() => {});
+  return run;
+}
+
+async function doOperatorAnswer(offerSdp) {
+  // Чистку старого pc/каналов делаем ДО await (ревью v0.4.3): в окне
+  // await rtc.config кандидаты нового оффера уходили в СТАРЫЙ pc и терялись
+  // безвозвратно. Очередь кандидатов НЕ чистим: чужая генерация отбрасывается
+  // новым pc по ufrag нативно, своя — доезжает через drainIce (wipe стирал
+  // кандидаты «своего» оффера в гонке — ревью v0.4.3 доводка).
+  try { state.pc?.close(); } catch { /* уже закрыт */ }
+  for (const ch of Object.values(state.dcs ?? {})) { try { ch.close(); } catch { /* уже закрыт */ } }
+  state.pc = null; state.dc = null; state.dcs = {}; state.fileRx = null;
+  const connect = state.connect; // эпоха оператора: 'ended' во время await обнуляет её
+  if (!connect) return; // сеанс уже мёртв на входе — pc и таймеры не создаём
   const cfg = await enot.request('rtc.config', {});
+  if (state.connect !== connect) {
+    // сеанс завершился, пока мы получали конфиг: не воскрешаем pc и таймеры.
+    // (Старый pc закрыт выше, закрывать здесь нечего — только не создаём новый.)
+    return;
+  }
   const pc = makePc(cfg.body?.iceServers ?? []);
   state.pc = pc;
   // Каналы приходят от клиента-офферера (ADR 0014): answer не может добавлять

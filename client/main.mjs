@@ -338,7 +338,15 @@ function stopSignal() {
 // fail-closed на сервере — клиент не переподключается вовсе. При неудаче —
 // честный локальный конец.
 function scheduleSignalReconnect(auth, role) {
-  const windowMs = reconnectGraceMs ?? 30_000;
+  // Окно ретраев длиннее серверного грейса (живой ретест 28.09, Wi-Fi-цикл):
+  // сервер обнаруживает «тихую смерть» хоста ~20-30 с (лизинг + ping) и держит
+  // грейс ещё graceMs — итого до ~graceMs*2. Клиент с окном ровно graceMs сдавался,
+  // пока сервер ещё принимал бы возврат. Настоящий конец — не по таймеру, а по
+  // факту: close 4003 от сервера означает «сеанса нет» → честный конец сразу.
+  // graceMs=0 (ENOT_GRACE_MS=0) — серверный fail-closed: не ретраимся вовсе.
+  const windowMs = reconnectGraceMs == null
+    ? 30_000
+    : (reconnectGraceMs > 0 ? reconnectGraceMs * 2 + 10_000 : 0);
   if (!windowMs || windowMs <= 0) {
     // сервер настроен fail-closed (ENOT_GRACE_MS=0) — грейса нет и не будет
     sendToRenderer('enot:signal', { type: 'ended', reason: 'signal-lost' });
@@ -370,7 +378,15 @@ function scheduleSignalReconnect(auth, role) {
         heartbeatTimer = setInterval(() => signal?.heartbeat(), 5000);
         if (powerBlockerId === null) powerBlockerId = powerSaveBlocker.start('prevent-app-suspension');
       }
-    } catch {
+    } catch (e) {
+      if (e?.closeCode === 4003) {
+        // сервер честно ответил «сеанса нет» — ретраиться бессмысленно
+        reconnectStartedAt = 0;
+        sendToRenderer('enot:signal', { type: 'ended', reason: 'signal-lost' });
+        stopSignal();
+        api.clearSessionTokens();
+        return;
+      }
       scheduleSignalReconnect(auth, role);
     }
   }, delay);
@@ -388,6 +404,14 @@ function wireSignal(client, auth, role) {
       // (ревью 28.09: иначе оператор не переподключался никогда).
       // 'ended' (решение сервера) и обрывы до согласия — как раньше, fail closed.
       if (msg.type === 'socket-closed' && (role === 'host' ? gate.isOpen() : gate.approvedOnce())) {
+        // Ввод глохнет вместе с транспортом — ворота закрыты до реплея approved.
+        gate.close();
+        if (gate.needInputReset()) nativeInput.end();
+        // rtc-reset — ТОЛЬКО host-роли: его pc пересобирается с новым offer'ом
+        // (реплей approved). У оператора pc независим от сигналинга (P2P/TURN) —
+        // закрыть его нечем восстановить: хост не пере-офферит из-за возврата
+        // оператора, сеанс умер бы целиком (ревью v0.4.3, high).
+        if (role === 'host') sendToRenderer('enot:signal', { type: 'rtc-reset' });
         scheduleSignalReconnect(auth, role);
         return;
       }

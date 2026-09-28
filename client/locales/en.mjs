@@ -322,6 +322,7 @@ export default {
   "web.reconnect.action": "Reconnect now",
   "web.reconnect.expired": "Session ended: the grace period has expired. Reconnect — attended via ID and password, machines via the Machines panel.",
   "web.reconnect.noGrace": "Connection lost before the client consented — the session has ended. Reconnect via ID and password or the Machines panel.",
+  "web.reconnect.noGraceServer": "The server runs without a grace period — the session ended right after the connection drop. Please reconnect.",
   "web.chat.title": "Chat",
   "web.chat.send": "Send",
   "web.clip.title": "Clipboard",

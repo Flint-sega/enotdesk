@@ -87,7 +87,10 @@ function sendSignal(data) {
 // (graceMs, ENOT_GRACE_MS; до первого ready — дефолт 30 с). Авто-reconnect
 // (живой сеанс 28.09, находка №6) — только для сеансов, дошедших до согласия:
 // обрыв ДО approved сервер гасит мгновенно (fail-closed), и стучаться в убитый
-// сеанс — бесполезные 4003 и ложный баннер (ревью 28.09).
+// сеанс — бесполезные 4003 и ложный баннер (ревью 28.09). Окно ретраев —
+// graceMs*2+10с (живой ретест 28.09: сервер обнаруживает смерть хоста ~20-30 с
+// и держит грейс ещё graceMs — окно ровно graceMs истекало раньше, чем сервер
+// переставал принимать возврат); настоящий конец — close 4003 от сервера.
 let SIGNAL_GRACE_MS = 30_000;
 let signalReconnectTimer = null;
 let signalLostAt = 0;
@@ -99,14 +102,31 @@ function stopSignalReconnect() {
   signalLostAt = 0;
 }
 
+function reconnectWindowMs() {
+  return SIGNAL_GRACE_MS > 0 ? SIGNAL_GRACE_MS * 2 + 10_000 : 0;
+}
+
+function signalExpired() {
+  stopSignalReconnect();
+  showConnectForm();
+  // Честный текст: «истёк грейс» — только если грейс существовал и сеанс дошёл
+  // до согласия; ENOT_GRACE_MS=0 — сеанс погашен сразу, без всякого грейса
+  // (ревью v0.4.3: единая семантика для таймерной и 4003-веток)
+  text($('conn-error'), reconnectEndMessage());
+}
+
+function reconnectEndMessage() {
+  if (!graceEligible) return t('web.reconnect.noGrace');
+  return SIGNAL_GRACE_MS > 0 ? t('web.reconnect.expired') : t('web.reconnect.noGraceServer');
+}
+
 function scheduleSignalReconnect() {
   if (!state.connect || !graceEligible) return; // нет сеанса или сеанс не дошёл до approved
   if (!signalLostAt) signalLostAt = Date.now();
-  if (Date.now() - signalLostAt >= SIGNAL_GRACE_MS) {
+  const windowMs = reconnectWindowMs();
+  if (!windowMs || Date.now() - signalLostAt >= windowMs) {
     // Окно истекло: честный конец вместо вечного баннера (дефект №1).
-    stopSignalReconnect();
-    showConnectForm();
-    text($('conn-error'), t('web.reconnect.expired'));
+    signalExpired();
     return;
   }
   if (signalReconnectTimer) return;
@@ -133,10 +153,17 @@ function openSignal() {
     try { msg = JSON.parse(e.data); } catch { return; }
     if (msg) onSignal(msg);
   };
-  sock.onclose = () => {
+  sock.onclose = (e) => {
     if (ws !== sock) return; // сокет закрыт ради нового (переподключение) — не мешаем
     ws = null;
     if (!state.connect) return;
+    // 4003 — сервер знает, что сеанса нет: ретраиться бессмысленно, честный конец
+    if (e?.code === 4003) {
+      stopSignalReconnect();
+      showConnectForm();
+      text($('conn-error'), reconnectEndMessage());
+      return;
+    }
     if (graceEligible) {
       // утверждённый сеанс: сервер держит грейс (ADR 0013) — пробуем вернуться
       // сами; ручная кнопка остаётся как запасной путь
@@ -192,7 +219,10 @@ function showConnectForm() {
 }
 
 function stopMedia() {
-  inputDetach?.(); // снять слушатели ввода — иначе следующий сеанс дублирует ввод
+  // wireBrowserInput возвращает ОБЪЕКТ {detach}, не функцию: вызов inputDetach?.()
+  // кидал TypeError и ломал всю stopMedia со второго сеанса на странице
+  // (ревью v0.4.3 — найдено конфирмером рантайм-прогоном)
+  inputDetach?.detach?.();
   inputDetach = null;
   try { state.dc?.close(); } catch { /* уже закрыт */ }
   for (const ch of Object.values(state.dcs ?? {})) { try { ch.close(); } catch { /* уже закрыт */ } }
@@ -207,12 +237,17 @@ function stopMedia() {
 let sessionTimer = null;
 let qualityTimer = null;
 function startTimers(pc) {
-  const startedAt = Date.now();
-  stopTimers();
-  sessionTimer = setInterval(() => {
-    const sec = Math.floor((Date.now() - startedAt) / 1000);
-    text($('session-timer'), `${String(Math.floor(sec / 60)).padStart(2, '0')}:${String(sec % 60).padStart(2, '0')}`);
-  }, 1000);
+  // session-timer считается от СТАРТА сеанса: re-offer (грейс-переподключение
+  // хоста) пересобирает pc, но не сбрасывает счётчик длительности (ревью v0.4.3)
+  if (!sessionTimer) {
+    const startedAt = Date.now();
+    sessionTimer = setInterval(() => {
+      const sec = Math.floor((Date.now() - startedAt) / 1000);
+      text($('session-timer'), `${String(Math.floor(sec / 60)).padStart(2, '0')}:${String(sec % 60).padStart(2, '0')}`);
+    }, 1000);
+  }
+  // quality-таймер всегда перезапускается — он следит за КОНКРЕТНЫМ pc
+  stopQualityTimer();
   qualityTimer = setInterval(async () => {
     try {
       const summary = summarizeStats(await pc.getStats());
@@ -224,17 +259,28 @@ function stopTimers() {
   clearInterval(sessionTimer); clearInterval(qualityTimer);
   sessionTimer = null; qualityTimer = null;
 }
+function stopQualityTimer() {
+  clearInterval(qualityTimer);
+  qualityTimer = null;
+}
 
 // ---- WebRTC: оператор отвечает на оффер клиента (host — offerer, как в desktop) ----
 
 function makePc(iceServers) {
   const pc = new RTCPeerConnection({ iceServers });
   pc.onicecandidate = (e) => { if (e.candidate) sendSignal({ candidate: e.candidate.toJSON() }); };
-  // краткое дрожание сети самовосстанавливается — 10с грейс, 'failed' рвёт сразу
+  // краткое дрожание сети самовосстанавливается — 10с грейс, 'failed' рвёт сразу.
+  // Гвард `state.pc !== pc`: pc заменён новым оффером — его события и осиротевший
+  // 10с-таймер не должны убивать НОВОЕ подключение (ревью v0.4.3, high)
   let rtcGrace = null;
   pc.onconnectionstatechange = () => {
+    if (state.pc !== pc) { if (rtcGrace) { clearTimeout(rtcGrace); rtcGrace = null; } return; }
     if (pc.connectionState === 'disconnected') {
-      rtcGrace ??= setTimeout(() => { rtcGrace = null; rtcLinkLost(); }, 10000);
+      rtcGrace ??= setTimeout(() => {
+        rtcGrace = null;
+        if (state.pc !== pc) return; // pc уже заменён — таймер чужой
+        rtcLinkLost();
+      }, 10000);
       return;
     }
     if (pc.connectionState === 'connected' && rtcGrace) { clearTimeout(rtcGrace); rtcGrace = null; }
@@ -254,13 +300,32 @@ function drainIce(pc) {
   state.iceQueue = [];
 }
 
-async function operatorAnswer(offerSdp) {
+// Ответы на офферы строго последовательно: два конкурентных вызова оставляли
+// зомби-pc и таймеры на мёртвом pc (ревью v0.4.3, medium).
+let answerChain = Promise.resolve();
+
+function operatorAnswer(offerSdp) {
+  const run = answerChain.catch(() => {}).then(() => doOperatorAnswer(offerSdp));
+  answerChain = run.catch(() => {});
+  return run;
+}
+
+async function doOperatorAnswer(offerSdp) {
+  // Чистку старого pc/каналов делаем ДО await (ревью v0.4.3): в окне
+  // await rtc-config кандидаты нового оффера уходили в СТАРЫЙ pc и терялись.
+  // Очередь кандидатов НЕ чистим: чужая генерация отбрасывается новым pc
+  // по ufrag нативно, своя — доезжает через drainIce (wipe стирал кандидаты
+  // «своего» оффера в гонке — ревью v0.4.3 доводка).
+  try { state.pc?.close(); } catch { /* уже закрыт */ }
+  state.pc = null;
+  state.dc = null;
+  state.dcs = {};
+  state.fileRx = null;
   const cfg = await api('GET', '/rtc-config');
   const pc = makePc(cfg.body?.iceServers ?? []);
   // epoch-guard: сеанс мог завершиться во время await — не воскрешаем pc
   if (!state.connect) { try { pc.close(); } catch { /* уже закрыт */ } return; }
   state.pc = pc;
-  state.iceQueue = [];
   // Каналы данных приходят от клиента-офферера (ADR 0014): answer не может
   // добавлять новые m=секции — созданные здесь каналы не согласуются никогда
   // (найдено живым сеансом 25.09: видео работало, ввод/чат/файлы молчали).
@@ -272,8 +337,9 @@ async function operatorAnswer(offerSdp) {
       state.dc = ch;
       state.dc.onopen = () => {
         // #remote-video один на все сеансы страницы: прежние слушатели снимаем,
-        // иначе каждый второй сеанс дублирует ввод (ревью GLM-5.3 v0.3.0)
-        inputDetach?.();
+        // иначе каждый второй сеанс дублирует ввод (ревью GLM-5.3 v0.3.0);
+        // wireBrowserInput возвращает {detach} — вызов метода, не самого объекта
+        inputDetach?.detach?.();
         inputDetach = wireBrowserInput($('remote-video'), (obj) => {
           try { state.dc.send(JSON.stringify(obj)); } catch { /* канал закрывается */ }
         }, { keys: new Set(INPUT_KEYS), onUnsupported: showKeyError });
@@ -386,6 +452,9 @@ async function onSignal(msg) {
       try {
         if (msg.data?.description && msg.data.description.type === 'offer') {
           await operatorAnswer(msg.data.description.sdp);
+          // 'ended'/rtcLinkLost могли прийти во время await — не показываем
+          // экран живого сеанса поверх честной формы (ревью v0.4.3)
+          if (!state.connect) return;
           showOnly('op-remote');
           showStatus(t('status.connected'));
         } else if (msg.data?.description && msg.data.description.type === 'answer'
@@ -393,6 +462,7 @@ async function onSignal(msg) {
           // machine-сеанс: ответ агента на наш offer
           await state.pc.setRemoteDescription({ type: 'answer', sdp: msg.data.description.sdp });
           drainIce(state.pc);
+          if (!state.connect) return;
           showOnly('op-remote');
           showStatus(t('status.connected'));
         } else if (msg.data?.description?.type === 'answer'

@@ -9,13 +9,9 @@ import { showConnectForm } from './views/operator-view.js';
 import { renderContacts } from './views/contacts.js';
 import { renderTeam } from './views/team.js';
 import { renderHistory, renderAudit } from './views/history.js';
-import { cleanupSession, drainIce, startHostRtc, operatorAnswer } from './session-media.js';
+import { cleanupSession, drainIce, startHostRtc, operatorAnswer, resetHostRtcState } from './session-media.js';
 import { resetUnreadChat } from './session-services.js';
 import { checkForUpdate, openFirstRun, updateServerChip } from './settings.js';
-
-// старт захвата в полёте: сервер может реплеить 'approved' (грейс ADR 0013) —
-// без флага реплей успевает запустить второй startHostRtc до создания state.pc
-let hostRtcStarting = false;
 
 function switchView(role) {
   state.role = role;
@@ -35,6 +31,14 @@ enot.onSignal(async (msg) => {
   switch (msg.type) {
     case 'ready':
       break;
+    case 'rtc-reset':
+      // main переподключил сигналинг в грейсе (ADR 0013, только host-роль):
+      // полный сброс host-RTC (эпоха/pc/захват/каналы/файловый приём/очередь/
+      // adaptive/карточка ретрая) — без него реплей 'approved' упирается в
+      // guard и видео не возобновляется (ретест 28.09 + ревью v0.4.3).
+      resetHostRtcState();
+      $('client-file-prompt').replaceChildren(); // карточка недопринятого файла мертва
+      break;
     case 'claim':
       // Клиент подтверждает видимое имя авторизованного оператора (R15/R15.3)
       state.pendingClaim = { sessionId: state.session?.sessionId, claimId: msg.claimId };
@@ -43,9 +47,9 @@ enot.onSignal(async (msg) => {
       break;
     case 'approved':
       if (state.role === 'client' && state.session) {
-        // replay после переподключения — RTC уже поднят/поднимается, второй раз не собираем
-        if (state.pc || hostRtcStarting) break;
-        hostRtcStarting = true;
+        // replay после переподключения: pc уже сброшен rtc-reset'ом — стартуем заново;
+        // живой pc (повторный approved без обрыва) не пересобираем
+        if (state.pc) break;
         clientShow('connected');
         text($('connected-operator'), document.getElementById('consent-operator').textContent);
         try { await startHostRtc(); } catch (e) {
@@ -54,7 +58,7 @@ enot.onSignal(async (msg) => {
             text($('client-error-text'), e.message);
             clientShow('error');
           }
-        } finally { hostRtcStarting = false; }
+        }
         // креды для других операторов: ID + пароль прямо на экране
         if (state.session) {
           text($('client-access-note'), t('client.accessNote', { id: state.session.sessionId, password: state.session.password }));
@@ -68,15 +72,18 @@ enot.onSignal(async (msg) => {
     case 'signal':
       try {
         if (msg.data?.description) {
-          if (state.role === 'operator' && msg.data.description.type === 'offer') {
-            await operatorAnswer(msg.data.description.sdp);
-            show($('op-remote'));
-            hide($('op-waiting'));
-            text($('remote-status'), t('status.connected'));
-          } else if (state.role === 'client' && state.pc && msg.data.description.type === 'answer') {
-            await state.pc.setRemoteDescription({ type: 'answer', sdp: msg.data.description.sdp });
-            drainIce(state.pc);
-          }
+        if (state.role === 'operator' && msg.data.description.type === 'offer') {
+          await operatorAnswer(msg.data.description.sdp);
+          // 'ended'/rtcLinkLost могли прийти во время await — не показываем
+          // экран живого сеанса поверх честной формы (ревью v0.4.3, паритет web)
+          if (!state.connect) break;
+          show($('op-remote'));
+          hide($('op-waiting'));
+          text($('remote-status'), t('status.connected'));
+        } else if (state.role === 'client' && state.pc && msg.data.description.type === 'answer') {
+          await state.pc.setRemoteDescription({ type: 'answer', sdp: msg.data.description.sdp });
+          drainIce(state.pc);
+        }
         } else if (msg.data?.candidate) {
           const c = msg.data.candidate;
           if (state.pc && state.pc.remoteDescription) await state.pc.addIceCandidate(c);
