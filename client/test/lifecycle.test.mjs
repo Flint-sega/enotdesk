@@ -103,7 +103,12 @@ test('регрессия: auth-отказ до ready (неверный токе�
   // Контракт WS (interfaces.md): невалидная сессия/токен → close 4003
   await assert.rejects(
     () => client.open({ role: 'host', sessionId: created.body.sessionId, hostToken: 'заведомо-неверный' }),
-    /closed 4003/,
+    (err) => {
+      assert.match(err.message, /closed 4003/);
+      // поле closeCode — контракт грейс-ретраев (main.mjs: конец по 4003, не по таймеру)
+      assert.equal(err.closeCode, 4003);
+      return true;
+    },
   );
   await new Promise((r) => setTimeout(r, 50)); // close-событие приходит асинхронно
   assert.equal(msgs.find((m) => m.type === 'socket-closed'), undefined, 'до ready socket-closed не эмитится');

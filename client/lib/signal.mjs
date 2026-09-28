@@ -78,7 +78,10 @@ export function createSignalClient({ url, wsFactory = (u) => new WebSocket(u), a
             // Закрытие до ready — всегда отказ открытия. Раньше ветка closedByUs
             // (stopSignal во время connect) не резолвила промис вовсе — await
             // висел вечно (ревью 28.09); теперь честный reject в обоих случаях.
-            fail(new Error(closedByUs ? 'соединение закрыто локально' : `closed ${code} ${reason?.toString?.() ?? ''}`.trim()));
+            // closeCode наружу: 4003 = «сеанса нет» — грейс-ретраи бессмысленны.
+            const e = new Error(closedByUs ? 'соединение закрыто локально' : `closed ${code} ${reason?.toString?.() ?? ''}`.trim());
+            e.closeCode = code;
+            fail(e);
             return;
           }
           emit({ type: 'socket-closed', code, reason: reason?.toString?.() ?? '' });
