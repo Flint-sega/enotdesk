@@ -24,6 +24,14 @@ import { resolveConsoleUser } from './lib/console-user.mjs';
 import { UPDATE_REPO, updateFeedUrl, platformFeedName, updateDecision, updateInstallDecision } from './lib/updater.mjs';
 import { isNewerVersion } from './lib/version-check.mjs';
 import { t, setLocale } from './lib/i18n.mjs';
+import { createSvcDiag, envDiagSlice } from './lib/svc-diag.mjs';
+
+// Диагностика Windows-службы (W-U2): первый маркер каждого запуска процесса —
+// ДО ветки службы. Если svc-ветка НЕ вошла, а эта строка в логе есть —
+// Environment REG_MULTI_SZ не доставлен процессу (гипотеза №1) либо диспетчер
+// отверг таблицу (№2б); различаем по следующим строкам.
+const svcDiag = createSvcDiag();
+svcDiag.write('main', `pid=${process.pid} exec="${process.execPath}" argv=${JSON.stringify(process.argv)} env[${envDiagSlice()}]`);
 
 // Родительский режим Windows-службы (EDESK_AGENT_SVC=1, дефект №4): процесс
 // запущен SCM'ом как службу — Electron не инициализируем, работаем тонкой
@@ -31,18 +39,27 @@ import { t, setLocale } from './lib/i18n.mjs';
 // exe с EDESK_AGENT=1). Без StartServiceCtrlDispatcher SCM убивает процесс
 // по 1053 (живой сеанс 28.09, W-U2). Ветка стоит ДО любого обращения к app.
 if (process.env.EDESK_AGENT_SVC === '1' && process.platform === 'win32') {
+  svcDiag.write('svc', 'svc-ветка вошла (EDESK_AGENT_SVC=1 доставлен)');
   try {
     const { runAsScmParent } = await import('./lib/win-service.mjs');
     await runAsScmParent({
       childArgv: process.argv.slice(1),
       childEnv: { EDESK_AGENT_SVC: '' }, // ребёнок — обычный агент, не родитель
       log: console,
+      diag: svcDiag,
     });
   } catch (e) {
     console.error(`[enotdesk-svc] родительский цикл упал: ${e.message}`);
+    svcDiag.write('svc', `родительский цикл упал: ${e.message}`);
     process.exit(1);
   }
+  svcDiag.write('svc', 'диспетчер вернулся — служба остановлена, exit 0');
   process.exit(0); // диспетчер вернулся — служба остановлена
+}
+// Дошли сюда на запуске SCM'ом — значит EDESK_AGENT_SVC не доставлен: процесс
+// пошёл как обычный GUI-клиент, SCM не дождётся отчёта (7009/1053).
+if (process.platform === 'win32' && process.argv.some((a) => /EnotDesk\.exe/i.test(a)) && process.env.SESSIONNAME === 'Services') {
+  svcDiag.write('main', `ВНИМАНИЕ: svc-ветка НЕ вошла, запущены как служба. env[${envDiagSlice()}]`);
 }
 
 const SMOKE = process.env.EDESK_SMOKE === '1';
@@ -73,6 +90,17 @@ const pkg = (() => {
 // ключ в package.json внутри app.asar (build/electron-builder.yml), dev-прогон
 // может задать его переменной окружения. Пустая строка = «не задано».
 const BAKED_SERVER_URL = pkg.ENOT_BAKED_SERVER_URL || process.env.ENOT_BAKED_SERVER_URL || null;
+
+// ТЕСТОВЫЕ флаги (только сборки для живой приёмки, в prod-релизах отсутствуют):
+// ENOT_AUTO_SESSION=1 — клиент сам создаёт сеанс при старте (ID/пароль стабильны,
+// пока процесс жив; новый — при перезапуске); ENOT_AUTO_CONSENT=1 — claim
+// оператора подтверждается автоматически (без диалога согласия). Включаются
+// вшиванием в package.json при сборке (-c.extraMetadata.ENOT_AUTO_*).
+// ВАЖНО: extraMetadata может записать значение ЧИСЛОМ (1, не '1') — сравнение
+// только строкой молча ломало флаги (сборка-тест 28.09, авто-согласие не
+// срабатывало); приводим к строке.
+const TEST_AUTO_SESSION = String(pkg.ENOT_AUTO_SESSION) === '1';
+const TEST_AUTO_CONSENT = String(pkg.ENOT_AUTO_CONSENT) === '1';
 
 let win = null;
 let settingsPath = null;
@@ -396,6 +424,14 @@ function wireSignal(client, auth, role) {
   client.onMessage((msg) => {
     gate.onSignal(msg);
     if (gate.needInputReset()) nativeInput.end();
+    if (msg.type === 'claim' && msg.claimId) {
+      // Тестовая сборка (ENOT_AUTO_CONSENT): claim подтверждается автоматически —
+      // живая приёмка без человека у клиента. Прод-сборки флаг не содержат.
+      if (TEST_AUTO_CONSENT) {
+        api.request('session.decision', { sessionId: auth.sessionId, claimId: msg.claimId, allow: true })
+          .catch(() => { /* ретрай придёт реплеем approved при переподключении */ });
+      }
+    }
     if (msg.type === 'ended' || msg.type === 'socket-closed') {
       if (heartbeatTimer) { clearInterval(heartbeatTimer); heartbeatTimer = null; }
       // Сокетный обрыв при живом утверждённом сеансе — грейс-переподключение.
@@ -797,7 +833,14 @@ function createWindow() {
   win.on('closed', () => { win = null; winLoaded = false; });
   // Join-ссылка, пришедшая до загрузки страницы, уходит рендереру, когда
   // слушатели (client-view) уже установлены (R04)
-  win.webContents.on('did-finish-load', () => { winLoaded = true; flushPendingJoin(); });
+  win.webContents.on('did-finish-load', () => {
+    winLoaded = true;
+    flushPendingJoin();
+    // Тестовая сборка (ENOT_AUTO_SESSION): сеанс создаётся сам при старте —
+    // ID/пароль стабильны, пока процесс жив (рендерер гвардит двойной старт),
+    // новые — при перезапуске. Рендерер не делает join-report без server/token.
+    if (TEST_AUTO_SESSION) sendToRenderer('enot:onJoinStart', {});
+  });
   win.loadFile(path.join(import.meta.dirname, 'renderer', 'index.html'));
 }
 
@@ -940,12 +983,19 @@ function startAgentMode() {
       backoffMaxMs: 30000,
       tokenStore,
       getInventory: collectInventory, // инвентарь машин (R06) с каждым heartbeat
-      log: console,
+      // W-U2 diag: статусы агента (регистрация/подключение/backoff) дублируются
+      // в файловый лог — у службы stdout теряется
+      log: {
+        log: (...a) => { console.log(...a); svcDiag.write('agent', a.map(String).join(' ')); },
+        warn: (...a) => { console.warn(...a); svcDiag.write('agent', a.map(String).join(' ')); },
+        error: (...a) => { console.error(...a); svcDiag.write('agent', a.map(String).join(' ')); },
+      },
     },
   });
   app.on('before-quit', () => agent.stop());
   const code = process.env.EDESK_AGENT_CODE;
   const started = agent.start(code ? { code } : {});
+  svcDiag.write('agent', `start: ok=${started.ok}${started.error ? ` error=${started.error}` : ''} server=${settings.serverUrl}${code ? ' (по onboarding-коду)' : ' (по сохранённому токену)'}`);
   if (started.ok) {
     console.log(`[enotdesk-agent] запущен: сервер ${settings.serverUrl}, машина «${process.env.EDESK_AGENT_NAME || os.hostname()}»${code ? ' (регистрация по onboarding-коду)' : ''}`);
   } else {

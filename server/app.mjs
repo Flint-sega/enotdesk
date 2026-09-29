@@ -276,6 +276,9 @@ export function createServer(opts = {}) {
     heartbeatMs: opts.heartbeatMs ?? 5000,
     // грейс на переподключение участника в состоянии approved; 0 — старое fail-closed
     graceMs: opts.graceMs ?? 30_000,
+    // сколько свипер ждёт pong после пробного пинга «тихо мёртвому» хосту.
+    // Не env: внутренняя деталь свипера; опция — только для быстрых тестов
+    hostPingGraceMs: opts.hostPingGraceMs ?? 5000,
     // toast на экран машины (R08): сколько ждать подтверждения агента и сколько
     // живёт не забранный агентом запрос (агент ходит heartbeat-ом раз в 5с)
     toastWaitMs: opts.toastWaitMs ?? 12_000,
@@ -464,8 +467,11 @@ export function createServer(opts = {}) {
       endSession(sessionId, who === 'host' ? 'host-lost' : 'operator-lost');
       return;
     }
-    if (who === 'host') rt.hostLostAt = Date.now();
-    else rt.opLostAt = Date.now();
+    // №13b (ретест 28–29.09): грейс уже мог быть объявлен свипером при истечении
+    // лизинга — тогда close «мёртвого» сокета не сдвигает его (иначе грейс
+    // продлевался бы каждым terminate и сеанс жил бы бессрочно)
+    if (who === 'host') rt.hostLostAt ??= Date.now();
+    else rt.opLostAt ??= Date.now();
     if (who === 'host') {
       for (const opWs of rt.opSockets.keys()) send(opWs, { type: 'peer-reconnecting', role: who });
     } else {
@@ -483,40 +489,50 @@ export function createServer(opts = {}) {
     const rows = db.prepare(
       "SELECT id FROM sessions WHERE state!='ended' AND lease_expires_at < ?"
     ).all(cutoff);
-    // Сколько ждать pong'а после пробного пинга «тихо мёртвому» хосту. Не env:
-    // внутренние детали свипера, к настройке разворачивания отношения не имеют.
-    const HOST_PING_GRACE_MS = 5000;
+    // Сколько циклов пинга переживает «понгующий, но не бьющийся heartbeat'ом»
+    // хост. Не env: внутренние детали свипера, к настройке разворачивания
+    // отношения не имеют.
     const HOST_PING_MAX = 8;
     for (const row of rows) {
       const rt = live.get(row.id);
-      if (rt && gracePending(rt, nowMs).any) continue; // ждём переподключения
-      // Пробный пинг «тихо мёртвому» хосту — только в approved (до согласия
-      // грейса нет: fail-closed, как в ADR 0013; тест lifecycle ждёт именно это).
       const stateRow = db.prepare('SELECT state FROM sessions WHERE id = ?').get(row.id);
-      if (rt && stateRow?.state === 'approved' && rt.hostWs != null && rt.hostLostAt == null) {
-        // Лизинг истёк, а close-события нет: хост «тихо мёртв» (физический обрыв
-        // сети не даёт TCP-закрытия — живой сеанс 28.09, W-A9). Пингуем; нет
-        // pong'а — закрываем сокет сервером, close-обработчик запустит
-        // participantLost → честный грейс (ADR 0013) и peer-reconnecting
-        // оператору вместо мгновенного lease-expired.
-        // Лимит циклов: сокет, понгующий на уровне стека, но с мёртвой heartbeat-
-        // логикой клиента, не держит сеанс вечно — после HOST_PING_MAX честный
-        // lease-expired (ревью 28.09: иначе слот live/maxSessions занят бессрочно).
-        if (rt.hostPingAt == null) {
+      // «Тихо мёртвый» хост в approved (лизинг истёк, close-события нет — живой
+      // сеанс 28.09, W-A9). №13b (ретест 28–29.09): грейс объявляем СРАЗУ при
+      // истечении лизинга, а не после terminate — раньше gate 4003 смотрел
+      // только на hostLostAt и отбивал ретраи клиента во всём пинг-окне
+      // (~10-15 с), хотя сеанс формально жив и клиент по контракту честно
+      // завершался («сеанс завершён» у владельца ровно об этом).
+      if (rt && stateRow?.state === 'approved' && rt.hostWs != null) {
+        if (rt.hostLostAt == null) {
+          // Объявляем грейс: ретраи принимаются (gate по hostLostAt), операторы
+          // предупреждены, хосту — пробный пинг. Ответил pong → сокет жив,
+          // terminate не нужен: хост продолжит heartbeat'ы (сбросят hostLostAt
+          // с «resumed» операторам) или переподключится. Лимит циклов: сокет,
+          // понгующий на уровне стека, но с мёртвой heartbeat-логикой клиента,
+          // не держит сеанс вечно — после HOST_PING_MAX честный lease-expired
+          // (ревью 28.09: иначе слот live/maxSessions занят бессрочно).
           if ((rt.hostPingCount ?? 0) >= HOST_PING_MAX) {
             endSession(row.id, 'lease-expired');
             continue;
           }
+          rt.hostLostAt = nowMs;
+          for (const opWs of rt.opSockets.keys()) send(opWs, { type: 'peer-reconnecting', role: 'host' });
           rt.hostPingAt = nowMs;
           rt.hostPingCount = (rt.hostPingCount ?? 0) + 1;
           try { rt.hostWs.ping(); } catch { try { rt.hostWs.terminate(); } catch { /* уже мёртв */ } }
           continue;
         }
-        if (nowMs - rt.hostPingAt <= HOST_PING_GRACE_MS) continue; // ждём pong
-        try { rt.hostWs.terminate(); } catch { /* уже мёртв */ }
-        rt.hostPingAt = null;
-        continue; // close-обработчик выставит hostLostAt и запустит грейс
+        // Грейс уже объявлен: pong не пришёл за hostPingGraceMs — сокет «тихо
+        // мёртв» (физический обрыв сети не даёт TCP-закрытия), закрываем
+        // серверно. close-обработчик запустит participantLost — он НЕ сдвинет
+        // объявленный hostLostAt, грейс тикает от истечения лизинга (ADR 0013).
+        if (rt.hostPingAt != null && nowMs - rt.hostPingAt > cfg.hostPingGraceMs) {
+          try { rt.hostWs.terminate(); } catch { /* уже мёртв */ }
+          rt.hostPingAt = null;
+        }
+        continue; // ждём heartbeat/переподключения; конец — по истечении graceMs
       }
+      if (rt && gracePending(rt, nowMs).any) continue; // ждём переподключения
       endSession(row.id, 'lease-expired');
     }
   }, 1000);
@@ -797,20 +813,20 @@ export function createServer(opts = {}) {
       if (!row || !verifyPassword(password, row.password)) {
         return err(res, 403, 'wrong_password', 'Текущий пароль указан неверно');
       }
-      if (row.totp_enabled) return err(res, 409, 'totp_already', t('totp.already', {}, locale));
+      if (row.totp_enabled) return err(res, 409, 'totp_already', t('err.totp_already', {}, locale));
       const code = typeof body?.code === 'string' ? body.code.trim() : '';
       if (code) {
         // подтверждение включения первым успешным кодом из аутентификатора
         const secret = row.totp_secret_enc ? decryptSecret(secretKey, row.totp_secret_enc) : null;
         if (!secret || !verifyCode(secret, code)) {
-          return err(res, 400, 'bad_code', t('totp.badCode', {}, locale));
+          return err(res, 400, 'bad_code', t('err.bad_code', {}, locale));
         }
         db.prepare('UPDATE users SET totp_enabled = 1 WHERE id = ?').run(user.id);
         auditLog(db, user.id, 'totp.enable', user.id, {});
         return ok(res, 200, { ok: true, enabled: true });
       }
       if (!secretKey) {
-        return err(res, 400, 'secret_key_missing', t('totp.keyMissing', {}, locale));
+        return err(res, 400, 'secret_key_missing', t('err.secret_key_missing', {}, locale));
       }
       const secret = generateSecret();
       db.prepare('UPDATE users SET totp_secret_enc = ?, totp_last_counter = NULL WHERE id = ?').run(encryptSecret(secretKey, secret), user.id);
@@ -838,7 +854,7 @@ export function createServer(opts = {}) {
       if (!row || !verifyPassword(password, row.password)) {
         return err(res, 403, 'wrong_password', 'Текущий пароль указан неверно');
       }
-      if (!row.totp_enabled) return err(res, 409, 'totp_not_enabled', t('totp.notEnabled', {}, locale));
+      if (!row.totp_enabled) return err(res, 409, 'totp_not_enabled', t('err.totp_not_enabled', {}, locale));
       db.prepare('UPDATE users SET totp_secret_enc = NULL, totp_enabled = 0, totp_last_counter = NULL WHERE id = ?').run(user.id);
       db.prepare('DELETE FROM totp_backup_codes WHERE user_id = ?').run(user.id);
       // второй фактор снят: прочие токены умирают (как при смене пароля), текущий остаётся
@@ -1735,8 +1751,9 @@ export function createServer(opts = {}) {
         rt.hostPingAt = null;
         rt.hostWs = ws;
         // живой хост отвечает на пинги автоматически (ws делает это сам):
-        // не ответил — сокет «тихо мёртв» (обрыв сети без close), свипер закроет
-        ws.on('pong', () => { rt.hostPingAt = null; });
+        // не ответил — сокет «тихо мёртв» (обрыв сети без close), свипер закроет.
+        // Guard по hostWs: pong заменённого сокета не должен трогать состояние
+        ws.on('pong', () => { if (rt.hostWs === ws) rt.hostPingAt = null; });
         db.prepare('UPDATE sessions SET lease_expires_at = ? WHERE id = ?')
           .run(new Date(Date.now() + cfg.leaseMs).toISOString(), s.id);
       } else {
@@ -1778,6 +1795,14 @@ export function createServer(opts = {}) {
         const rtBeat = live.get(s.id);
         const nowMs = Date.now();
         if (rtBeat) rtBeat.hostPingCount = 0; // живой heartbeat — лимит ping-циклов свипера не копится
+        // №13b: лизинг истёк, грейс объявлен свипером, но хост оказался жив —
+        // heartbeat снимает объявленный грейс и снимает баннер операторам.
+        // В ГРЕЙСЕ от close'а (hostLostAt от participantLost) сюда не доходим:
+        // мёртвый сокет heartbeat не шлёт
+        if (rtBeat && rtBeat.hostLostAt != null) {
+          rtBeat.hostLostAt = null;
+          for (const opWs of rtBeat.opSockets.keys()) send(opWs, { type: 'resumed' });
+        }
         // Аудит терминала (R09): переходы termActive пишутся как term.open/term.close
         // один раз на смену состояния, не на каждый heartbeat. Актёр — машина
         // (unattended) или null при человеке-хосте, как в machine.claim.

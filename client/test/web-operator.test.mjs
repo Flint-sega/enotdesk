@@ -70,6 +70,23 @@ test('web/operator.html: без inline-стилей и inline-скриптов (
   assert.match(scripts[0], /type="module" src="\/web\/operator\.mjs"/);
 });
 
+// ---- №15 (ретест 28–29.09): RTC-грейс оператора ≥ серверного graceMs ----
+
+test('web/operator.mjs: peer-reconnecting держит видео-сеанс (rtc-hold), а не рвёт по 10с', () => {
+  // hold взводится в обработчике peer-reconnecting...
+  assert.match(operatorJs, /case 'peer-reconnecting':[\s\S]{0,200}holdRtcLinkLost\(\)/,
+    'peer-reconnecting должен взводить rtc-hold (№15)');
+  // ...оба пути rtcLinkLost уважают hold...
+  assert.match(operatorJs, /if \(rtcHoldActive\(\)\) return;[\s\S]{0,80}rtcLinkLost\(\)/,
+    '10с-таймер disconnected должен уважать rtc-hold');
+  assert.match(operatorJs, /&& !rtcHoldActive\(\)\) rtcLinkLost\(\)/,
+    'ветка failed/closed должна уважать rtc-hold');
+  // ...hold не длиннее server-grace + запас и снимается на connected/stopMedia
+  assert.match(operatorJs, /SIGNAL_GRACE_MS \+ 10_000/, 'hold считается от серверного graceMs');
+  assert.match(operatorJs, /clearRtcHold\(\)/, 'hold снимается (connected/stopMedia)');
+  assert.match(operatorJs, /if \(ms <= 0\) return;/, 'ENOT_GRACE_MS=0: hold не взводится (fail-closed сервера)');
+});
+
 // ---- панель «Машины» (R07): только существующий machines API, admin-only ----
 
 test('web/operator.html: панель машин скрыта для не-admin и держит контрактные id', () => {

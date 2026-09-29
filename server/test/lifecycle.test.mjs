@@ -194,6 +194,79 @@ test('грейс: истёкший грейс завершает сеанс ка
   assert.equal(ended.reason, 'host-lost', 'по истечении грейса сеанс завершается с честной причиной');
 });
 
+// ---- грейс от истечения лизинга (№13b, ретест 28–29.09) ----
+// «Тихая смерть»: host жив сокетом (WS не закрыт), но heartbeat'ов нет. Свипер
+// объявляет грейс СРАЗУ при истечении лизинга — раньше во всём окне
+// «лизинг истёк → пинг → terminate» ретраи отбивались 4003, и клиент по
+// контракту «4003 = сеанса нет» честно завершался при живом сеансе.
+
+test('№13b: ретрай в пинг-окне не 4003, после terminate принимается — сеанс жив', async (t) => {
+  const { base, port, admin } = await setup(t, { leaseMs: 400, heartbeatMs: 200, graceMs: 5000, hostPingGraceMs: 300 });
+  const { s, host, op, claimId } = await approvedSession(base, port, admin);
+
+  // хост молчит без close — свипер объявляет грейс и уведомляет оператора
+  assert.equal((await op.wait((m) => m.type === 'peer-reconnecting')).role, 'host');
+
+  // ретрай теми же токенами при ещё живом (серверно) старом сокете: duplicate-чек
+  // даёт 4004 (клиент ретраит сквозь него), но НИКОГДА 4003 — это и есть №13b
+  const retry1 = wsConnect(port);
+  await retry1.opened;
+  retry1.send(JSON.stringify({ type: 'auth', role: 'host', sessionId: s.sessionId, token: s.hostToken }));
+  assert.equal(await retry1.closeCode(), 4004);
+
+  // свипер не дождался pong'а → terminate; тестовый ws-клиент отвечает pong'ы
+  // сам (стек), поэтому слот освобождаем close'ом — тот же close-обработчик,
+  // что и после серверного terminate: rt.hostWs = null + participantLost,
+  // который НЕ двигает объявленный свипером грейс
+  host.close();
+  await new Promise((r) => setTimeout(r, 150));
+  const host2 = wsConnect(port);
+  const ready = await wsAuth(host2, { type: 'auth', role: 'host', sessionId: s.sessionId, token: s.hostToken });
+  assert.equal(ready.state, 'approved');
+  assert.equal((await host2.wait((m) => m.type === 'approved')).claimId, claimId);
+  assert.equal((await host2.wait((m) => m.type === 'resumed')).type, 'resumed');
+  assert.equal((await op.wait((m) => m.type === 'resumed')).type, 'resumed');
+
+  // heartbeat возобновился — сеанс жив и после лизинг-окна (не lease-expired)
+  host2.send(JSON.stringify({ type: 'heartbeat' }));
+  assert.equal((await host2.wait((m) => m.type === 'heartbeat')).type, 'heartbeat');
+  await new Promise((r) => setTimeout(r, 700));
+  const h = await api(base, 'GET', '/history', { token: admin.token });
+  const row = h.json.items.find((it) => it.id === s.sessionId);
+  assert.notEqual(row.state, 'ended');
+});
+
+test('№13b: без ретрая и heartbeat — host-lost по истечении грейса, оператор предупреждён', async (t) => {
+  const { base, port, admin } = await setup(t, { leaseMs: 400, heartbeatMs: 200, graceMs: 1500 });
+  const { host, op } = await approvedSession(base, port, admin);
+
+  const endedP = op.wait((m) => m.type === 'ended', 6000);
+  assert.equal((await op.wait((m) => m.type === 'peer-reconnecting')).role, 'host');
+  const ended = await endedP;
+  assert.equal(ended.reason, 'host-lost', 'грейс, объявленный от лизинга, кончился — host-lost, не lease-expired');
+  host.close();
+});
+
+test('№13b: оживший heartbeat снимает объявленный грейс — оператору resumed, сеанс жив', async (t) => {
+  const { base, port, admin } = await setup(t, { leaseMs: 400, heartbeatMs: 200, graceMs: 2000 });
+  const { s, host, op } = await approvedSession(base, port, admin);
+
+  await op.wait((m) => m.type === 'peer-reconnecting');
+  const resumedP = op.wait((m) => m.type === 'resumed', 4000);
+  // хост «завис и ожил»: heartbeat по ещё живому (не терминированному) сокету
+  host.send(JSON.stringify({ type: 'heartbeat' }));
+  assert.equal((await resumedP).type, 'resumed');
+
+  // держим heartbeat — сеанс переживает и лизинг-окно, и объявленный грейс
+  for (let i = 0; i < 6; i++) {
+    host.send(JSON.stringify({ type: 'heartbeat' }));
+    await new Promise((r) => setTimeout(r, 300));
+  }
+  const h = await api(base, 'GET', '/history', { token: admin.token });
+  const row = h.json.items.find((it) => it.id === s.sessionId);
+  assert.notEqual(row.state, 'ended');
+});
+
 test('повторный decision allow — no-op: approved не рассылается дважды', async (t) => {
   const { base, port, admin } = await setup(t, { leaseMs: 8000, heartbeatMs: 200, graceMs: 0 });
   const { s, claimId } = await approvedSession(base, port, admin);

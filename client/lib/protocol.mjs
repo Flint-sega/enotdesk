@@ -37,9 +37,13 @@ export function validateInputEvent(ev) {
     case 'move':
       if (!isFinite01(ev.x) || !isFinite01(ev.y)) return { ok: false, reason: 'bounds' };
       return { ok: true };
-    case 'button':
+    case 'button': {
       if (!BUTTONS.has(ev.button) || typeof ev.down !== 'boolean') return { ok: false, reason: 'enum' };
+      // №18: координаты клика опциональны; переданы (хоть одно) — оба обязаны
+      // быть валидными нормализованными числами, мусор отклоняем
+      if ((ev.x != null || ev.y != null) && (!isFinite01(ev.x) || !isFinite01(ev.y))) return { ok: false, reason: 'bounds' };
       return { ok: true };
+    }
     case 'key': {
       if (typeof ev.key !== 'string' || typeof ev.down !== 'boolean') return { ok: false, reason: 'enum' };
       if (!KEYS.has(ev.key.toLowerCase())) return { ok: false, reason: 'key-not-allowed' };

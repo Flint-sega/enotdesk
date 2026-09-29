@@ -14,6 +14,8 @@
 // Логика отделена от koffi-клея (createScmParentLogic) и тестируется на
 // инъекциях без koffi и без Windows.
 
+import { envDiagSlice } from './svc-diag.mjs';
+
 const SERVICE_WIN32_OWN_PROCESS = 0x10;
 const SERVICE_STOPPED = 0x1;
 const SERVICE_START_PENDING = 0x2;
@@ -133,8 +135,11 @@ export function createScmParentLogic({ setStatus = () => {}, spawnChild = () => 
 // Koffi-клей: настоящий SCM-цикл. Блокирует поток libuv до остановки службы,
 // возвращает промис. childArgv/childEnv — что и с какими переменными запускать
 // ребёнком (родитель передаёт свой env насквозь, включая EDESK_AGENT=1).
-export async function runAsScmParent({ serviceName = 'EnotDeskAgent', childArgv = [], childEnv = {}, log = console } = {}) {
+// diag (W-U2) — файловый логгер svc-diag: маркеры koffi/диспетчер/ServiceMain/
+// статусы/spawn — ровно те точки, где гипотезы №1/№2б расходятся.
+export async function runAsScmParent({ serviceName = 'EnotDeskAgent', childArgv = [], childEnv = {}, log = console, diag = { write: () => false } } = {}) {
   const koffi = (await import('koffi')).default;
+  diag.write('svc', 'koffi загружен');
   const { spawn, execFileSync } = await import('node:child_process');
   const advapi32 = koffi.load('advapi32.dll');
 
@@ -165,6 +170,7 @@ export async function runAsScmParent({ serviceName = 'EnotDeskAgent', childArgv 
   let lastPid = 0;
 
   const setStatus = (code, { waitHint = 0 } = {}) => {
+    diag.write('svc', `SetServiceStatus code=${code} waitHint=${waitHint} handle=${handle ? 'ok' : 'null'}`);
     if (!handle) return;
     const ok = SetServiceStatus(handle, {
       dwServiceType: SERVICE_WIN32_OWN_PROCESS,
@@ -181,20 +187,25 @@ export async function runAsScmParent({ serviceName = 'EnotDeskAgent', childArgv 
   const logic = createScmParentLogic({
     setStatus,
     spawnChild: (onExit) => {
+      diag.write('svc', `spawn: exec="${process.execPath}" argv=${JSON.stringify(childArgv)} childEnv=[${Object.keys(childEnv).join(',')}] env[${envDiagSlice()}]`);
       const child = spawn(process.execPath, childArgv, {
         env: { ...process.env, ...childEnv },
         stdio: 'ignore',
         windowsHide: true,
       });
       lastPid = child.pid;
-      child.on('exit', () => { lastPid = 0; onExit(); });
-      child.on('error', (e) => { log.error?.(`[svc] ребёнок: ${e.message}`); lastPid = 0; onExit(); });
+      child.on('exit', (code, signal) => {
+        diag.write('svc', `child exit pid=${lastPid} code=${code} signal=${signal ?? '-'}`);
+        lastPid = 0; onExit();
+      });
+      child.on('error', (e) => { log.error?.(`[svc] ребёнок: ${e.message}`); diag.write('svc', `child error: ${e.message}`); lastPid = 0; onExit(); });
       log.info?.(`[svc] дочерний агент запущен (pid ${child.pid})`);
     },
     killChild: () => {
       // Дерево целиком: Electron-агент — несколько процессов. timeout обязателен:
       // execFileSync блокирует единственный JS-поток (onControl — koffi-колбэк).
       if (!lastPid) return;
+      diag.write('svc', `killChild pid=${lastPid}`);
       try { execFileSync('taskkill', ['/PID', String(lastPid), '/T', '/F'], { stdio: 'ignore', timeout: 5000 }); }
       catch { /* уже умер или не дождались — STOPPED всё равно отчитываем */ }
     },
@@ -203,15 +214,18 @@ export async function runAsScmParent({ serviceName = 'EnotDeskAgent', childArgv 
 
   const handlerCb = koffi.register((control) => logic.onControl(control), koffi.pointer(HandlerProc));
   const serviceMainCb = koffi.register(() => {
+    diag.write('svc', 'ServiceMain вошёл (SCM вызвал точку входа)');
     try {
       handle = RegisterServiceCtrlHandlerExA(serviceName, handlerCb, null);
       if (!handle) throw new Error('RegisterServiceCtrlHandlerExA вернул NULL');
       logic.setStatusHandle(handle);
+      diag.write('svc', 'хендлр зарегистрирован');
     } catch (e) {
       // Без хендла SCM не отчитаться вовсе: процесс-служба завис бы навечно
       // (диспетчер ждёт SERVICE_STOPPED, который некому отправить). Честный
       // выход — SCM-failure actions рестартуют службу.
       log.error?.(`[svc] регистрация хендлера не удалась: ${e.message}`);
+      diag.write('svc', `регистрация хендлера не удалась: ${e.message}`);
       process.exit(1);
     }
     logic.onServiceMain();
@@ -223,9 +237,13 @@ export async function runAsScmParent({ serviceName = 'EnotDeskAgent', childArgv 
   ];
 
   return new Promise((resolve) => {
+    diag.write('svc', 'StartServiceCtrlDispatcher вызван');
     StartServiceCtrlDispatcherA.async(table, (err, res) => {
+      // №2б (ретест 28–29.09): res=0 «отверг таблицу» даёт ТОТ ЖЕ портрет, что
+      // и недоставленный Environment — STOPPED/exit 0/7009. Маркер различает их.
       if (err) log.error?.(`[svc] диспетчер завершился ошибкой: ${err.message ?? err}`);
       else if (!res) log.error?.('[svc] StartServiceCtrlDispatcher отверг таблицу (запуск не через SCM?)');
+      diag.write('svc', `диспетчер вернулся: err=${err ? String(err.message ?? err) : '-'} res=${res}`);
       koffi.unregister(handlerCb);
       koffi.unregister(serviceMainCb);
       resolve(res);

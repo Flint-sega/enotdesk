@@ -10,6 +10,8 @@ test('validateInputEvent: допустимые события контракта
   assert.deepEqual(validateInputEvent({ type: 'move', x: 0, y: 0 }), { ok: true });
   assert.deepEqual(validateInputEvent({ type: 'button', button: 'left', down: true }), { ok: true });
   assert.deepEqual(validateInputEvent({ type: 'button', button: 'middle', down: false }), { ok: true });
+  // №18: координаты клика при кнопке опциональны и валидны
+  assert.deepEqual(validateInputEvent({ type: 'button', button: 'left', down: true, x: 0.1, y: 0.9 }), { ok: true });
   assert.deepEqual(validateInputEvent({ type: 'key', key: 'a', down: true }), { ok: true });
   assert.deepEqual(validateInputEvent({ type: 'key', key: 'ArrowLeft', down: false }), { ok: true });
   assert.deepEqual(validateInputEvent({ type: 'scroll', dx: -300, dy: 300 }), { ok: true });
@@ -28,6 +30,10 @@ test('validateInputEvent: координаты вне 0..1, не числа, NaN
 test('validateInputEvent: кнопки вне enum и клавиши вне allowlist отклоняются', () => {
   assert.equal(validateInputEvent({ type: 'button', button: 'left', down: 'yes' }).ok, false);
   assert.equal(validateInputEvent({ type: 'button', button: 'side', down: true }).ok, false);
+  // №18: мусорные координаты кнопки отклоняются (fail-closed на доверенной границе)
+  assert.equal(validateInputEvent({ type: 'button', button: 'left', down: true, x: 2, y: 0.5 }).ok, false);
+  assert.equal(validateInputEvent({ type: 'button', button: 'left', down: true, x: NaN, y: 0.5 }).ok, false);
+  assert.equal(validateInputEvent({ type: 'button', button: 'left', down: true, x: 0.5, y: '0.5' }).ok, false);
   // произвольные клавиши/сканкоды запрещены контрактом
   assert.equal(validateInputEvent({ type: 'key', key: 'F12', down: true }).ok, false);
   assert.equal(validateInputEvent({ type: 'key', key: 'a; rm -rf /', down: true }).ok, false);

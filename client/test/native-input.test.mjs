@@ -232,6 +232,39 @@ test('winAdapter: кнопка с отрицательным виртуальн�
   assert.equal(sent[0].readUInt32LE(12), Math.round((540 * 65535) / 1079), 'dy');
 });
 
+test('winAdapter: координаты клика приоритетнее lastX/lastY — пакет [abs-move][кнопка] в точку цели (№18)', () => {
+  // Регресс ретеста 28–29.09: кнопка несёт координаты КЛИКА, а не полагается на
+  // lastX/lastY от последнего move — потерянный/протроттленный move больше не
+  // телепортирует курсор по устаревшей позиции («клик уезжал на крестик окна»).
+  const sent = [];
+  const fakeKoffi = winUser32Mock({ sent, virtualScreen: { x: 0, y: 0, w: 1920, h: 1080 } });
+  const ad = buildWinAdapter(fakeKoffi);
+  ad.move(960, 540); // stale-позиция (как после потери move в drag'е)
+  ad.button('left', true, [100, 200]); // клик по другой точке
+  assert.equal(sent[0].readUInt32LE(8), Math.round((100 * 65535) / 1919), 'dx из координат клика, не из lastX');
+  assert.equal(sent[0].readUInt32LE(12), Math.round((200 * 65535) / 1079), 'dy из координат клика, не из lastY');
+  // lastX/lastY обновились от координат клика: следующая кнопка без at — в ту же точку
+  sent.length = 0;
+  ad.button('left', false);
+  assert.equal(sent[0].readUInt32LE(8), Math.round((100 * 65535) / 1919), 'up без координат — в позицию клика');
+});
+
+test('диспетчер: кнопка с координатами конвертирует их в пиксели и передаёт адаптеру', () => {
+  const calls = [];
+  const adapter = {
+    available: true, platform: 'test',
+    move() {},
+    button(btn, down, at) { calls.push(['button', btn, down, at]); },
+    key() {}, scroll() {},
+  };
+  const ni = createNativeInput({ adapter });
+  ni.dispatch({ type: 'button', button: 'left', down: true, x: 0.5, y: 0.25 }, { width: 1000, height: 800, originX: 40, originY: 20 });
+  assert.deepEqual(calls[0], ['button', 'left', true, [540, 220]], 'пиксели = x*w+originX / y*h+originY');
+  calls.length = 0;
+  ni.dispatch({ type: 'button', button: 'left', down: false }, { width: 1000, height: 800 });
+  assert.deepEqual(calls[0], ['button', 'left', false, null], 'без координат — at=null (фолбэк lastX/lastY)');
+});
+
 test('winAdapter: windowRect по HWND — данные, фильтры вырожденных и минимизированных окон', () => {
   const fakeKoffi = winUser32Mock({ windowRect: { x: 100, y: 50, w: 800, h: 600 } });
   const ad = buildWinAdapter(fakeKoffi);
