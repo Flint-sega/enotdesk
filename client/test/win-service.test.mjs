@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { createScmParentLogic } from '../lib/win-service.mjs';
+import { createScmParentLogic, runAsScmParent } from '../lib/win-service.mjs';
 
 // SCM-родитель Windows-службы (дефект №4): логика жизненного цикла на инъекциях —
 // koffi и SCM не нужны. Состояния SERVICE_* — константы win32:
@@ -193,4 +193,24 @@ test('эскалация рестартов 1/2/5/10с, кап 30с; сброс 
     globalThis.setTimeout = origSet;
     timers.reset();
   }
+});
+
+// Корень W-U2 (найден diag-логом 29.09 на живой машине): koffi.proto регистрирует
+// тип под именем из строки прототипа; сигнатура RegisterServiceCtrlHandlerExA
+// ссылалась на «HandlerProc *», а тип назывался ENOT_HandlerProc — родитель умирал
+// за 1 с («Unknown or invalid type name») до всякого SetServiceStatus, SCM давал
+// 7009/1053. Этот тест упражняет настоящий koffi-клей: падение резолва типов
+// здесь означает регрессию. Вне SCM диспетчер честно отвергает таблицу (res=0).
+test('runAsScmParent: koffi-клей резолвит типы (win32; вне SCM — честный res=0)', { skip: process.platform !== 'win32' }, async () => {
+  const lines = [];
+  const res = await runAsScmParent({
+    childArgv: ['--win-service-test'],
+    childEnv: {},
+    log: { log() {}, warn() {}, error() {}, info() {} },
+    diag: { write: (tag, msg) => { lines.push(`${tag}: ${msg}`); return true; } },
+  });
+  assert.equal(res, 0, 'вне SCM диспетчер отвергает таблицу и возвращает 0');
+  assert.ok(lines.some((l) => l.includes('koffi загружен')), 'koffi поднялся');
+  assert.ok(lines.some((l) => l.startsWith('svc: StartServiceCtrlDispatcher вызван')), 'дошли до диспетчера — типы зарезолвлены');
+  assert.ok(lines.some((l) => l.includes('диспетчер вернулся')), 'диспетчер вернулся без падения клея');
 });
