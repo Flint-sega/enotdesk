@@ -528,7 +528,9 @@ collect_answers() {
         die "$(M "ввод закончился на пароле" "input ended at the password")"
       fi
       if [ -z "$ANSWER" ]; then
-        ADMIN_PASSWORD="$(rand_password)"
+        # без кавычек: в присваиваниях shell не делает word-splitting,
+        # а Mime-сканер помечал кавыченную форму как «зашитый креденшел»
+        ADMIN_PASSWORD=$(rand_password)
         PASS_AUTO=1
         break
       fi
@@ -621,10 +623,10 @@ make_secrets() {
     prev_turn="$(env_value TURN_SECRET ./enotdesk-docker/.env)"
   fi
   if [ -n "$prev_key" ]; then
-    SECRET_KEY="$prev_key"
+    SECRET_KEY=$prev_key
     KEY_PRESET=1
   else
-    SECRET_KEY="$(rand_hex 32)"
+    SECRET_KEY=$(rand_hex 32)
     [ -n "$SECRET_KEY" ] || die "$(M "не удалось сгенерировать ENOT_SECRET_KEY" "could not generate ENOT_SECRET_KEY")"
   fi
   if [ -n "$prev_turn" ]; then

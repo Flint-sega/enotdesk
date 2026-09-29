@@ -54,26 +54,27 @@ test('координаты вне элемента зажимаются в гр�
   assert.deepEqual(sent, [{ type: 'move', x: 0, y: 1 }]);
 });
 
-test('pointerdown/up кнопок мыши: левая/средняя/правая, клик шлёт move перед button', () => {
+test('pointerdown/up кнопок мыши: левая/средняя/правая, клик шлёт move перед button с координатами', () => {
   const video = fakeVideo();
   const sent = [];
   wireBrowserInput(video, (m) => sent.push(m), { keys: INPUT_KEYS, throttleMs: 0 });
   video.dispatch(ev('pointerdown', { button: 0, clientX: 10, clientY: 20 }));
   assert.deepEqual(sent, [
     { type: 'move', x: 0.1, y: 0.2 },
-    { type: 'button', button: 'left', down: true },
+    // №18: кнопка несёт координаты клика — пакет хоста идёт в точку цели
+    { type: 'button', button: 'left', down: true, x: 0.1, y: 0.2 },
   ]);
   sent.length = 0;
   video.dispatch(ev('pointerup', { button: 2, clientX: 10, clientY: 20 }));
   assert.deepEqual(sent, [
     { type: 'move', x: 0.1, y: 0.2 },
-    { type: 'button', button: 'right', down: false },
+    { type: 'button', button: 'right', down: false, x: 0.1, y: 0.2 },
   ]);
   sent.length = 0;
   video.dispatch(ev('pointerdown', { button: 1, clientX: 0, clientY: 0 }));
   assert.deepEqual(sent, [
     { type: 'move', x: 0, y: 0 },
-    { type: 'button', button: 'middle', down: true },
+    { type: 'button', button: 'middle', down: true, x: 0, y: 0 },
   ]);
 });
 

@@ -91,9 +91,11 @@ function macAdapter(koffi) {
       lastPx[1] = pxY;
       post(CGEventCreateMouseEvent(null, 5, pxX, pxY, MOUSE_BUTTON.left));
     },
-    button(btn, down) {
+    button(btn, down, at) {
       const type = MOUSE_EVENT[btn]?.[down ? 0 : 1];
       if (type === undefined) return false;
+      // №18: координаты клика приоритетнее lastPx от последнего move
+      if (at) { lastPx[0] = at[0]; lastPx[1] = at[1]; }
       post(CGEventCreateMouseEvent(null, type, lastPx[0], lastPx[1], MOUSE_BUTTON[btn]));
       return true;
     },
@@ -179,10 +181,10 @@ function winAdapter(koffi) {
     return buf;
   };
   const sendOne = (buf) => { if (!SendInput(1, buf, 40)) sendFails++; };
-  // Последняя позиция курсора от move(): нужна кнопочным событиям — NC-области
-  // заголовка («свернуть»/«закрыть») взводятся по WM_MOUSEMOVE, и «голый»
-  // down/up сразу после SetCursorPos окном игнорируется (живой сеанс 28.09:
-  // клик по «–» срабатывал только после локального движения мыши на хосте).
+  // Последняя позиция курсора от move(): фолбэк для кнопок без координат.
+  // NC-области заголовка («свернуть»/«закрыть») взводятся по WM_MOUSEMOVE, и
+  // «голый» down/up сразу после SetCursorPos окном игнорируется (живой сеанс
+  // 28.09: клик по «–» срабатывал только после локального движения мыши на хосте).
   let lastX = null;
   let lastY = null;
   // Абсолютные координаты SendInput нормированы на весь виртуальный стол
@@ -212,8 +214,15 @@ function winAdapter(koffi) {
       lastY = Math.round(pxY);
       if (!SetCursorPos(lastX, lastY)) sendFails++;
     },
-    button(btn, down) {
+    button(btn, down, at) {
       const flag = mouseFlag(btn, down);
+      // №18 (ретест 28–29.09, регресс №10): координаты КЛИКА приоритетнее
+      // lastX/lastY от последнего move — потерянный/протроттленный move больше
+      // не телепортирует курсор по устаревшей позиции («клик уезжал на крестик»)
+      if (at) {
+        lastX = Math.round(at[0]);
+        lastY = Math.round(at[1]);
+      }
       if (lastX != null && lastY != null) {
         // SendInput возвращает число внедрённых событий: из 2 должен быть 2 —
         // частичный сбой (move прошёл, кнопка заблокирована UIPI) тоже сбой.
@@ -267,7 +276,12 @@ function x11Adapter(koffi) {
     available: true,
     platform: 'linux-x11',
     move(pxX, pxY) { XTestFakeMotionEvent(dpy, -1, Math.round(pxX), Math.round(pxY), 0); },
-    button(btn, down) { XTestFakeButtonEvent(dpy, BTN[btn], down ? 1 : 0, 0); },
+    button(btn, down, at) {
+      // №18: XTest-кнопка жмёт в текущей позиции курсора — при координатах клика
+      // сначала двигаем указатель в точку цели
+      if (at) XTestFakeMotionEvent(dpy, -1, Math.round(at[0]), Math.round(at[1]), 0);
+      XTestFakeButtonEvent(dpy, BTN[btn], down ? 1 : 0, 0);
+    },
     key(k, down) {
       const name = k.length === 1 ? k : KEYSYM[k];
       if (!name) return false;
@@ -336,10 +350,21 @@ export function createNativeInput({ adapter, koffi = null, getAdapter = null, ma
           ad.move(px, py);
           return { ok: true };
         }
-        case 'button':
+        case 'button': {
           if (ev.down) held.add(ev.button); else held.delete(ev.button);
-          ad.button(ev.button, ev.down);
+          // №18: кнопка несёт координаты клика — пакет [абс-move][кнопка] идёт
+          // в точку ЦЕЛИ, а не по lastX/lastY последнего move. Без bounds
+          // координаты не считаются — фолбэк на lastX/lastY (end() и старики)
+          let at = null;
+          if (bounds && ev.x != null && ev.y != null) {
+            at = [
+              Math.round(ev.x * bounds.width + (bounds.originX ?? 0)),
+              Math.round(ev.y * bounds.height + (bounds.originY ?? 0)),
+            ];
+          }
+          ad.button(ev.button, ev.down, at);
           return { ok: true };
+        }
         case 'key':
           if (ev.down) heldKeys.add(ev.key); else heldKeys.delete(ev.key);
           // адаптер честно сообщает неподдерживаемую клавишу (win: пунктуация вне VK-карты)

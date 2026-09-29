@@ -167,17 +167,13 @@ $('btn-cancel-connect').addEventListener('click', async () => {
 // Пароль между «настроить» и «подтвердить»: живёт до закрытия оверлея.
 let totpSetupPassword = null;
 
-// Код ошибки → словарный текст; серверный message — запасной вариант.
-const TOTP_ERR_KEYS = {
-  wrong_password: 'totp.wrongPassword',
-  bad_code: 'totp.badCode',
-  secret_key_missing: 'totp.keyMissing',
-  totp_already: 'totp.already',
-  totp_not_enabled: 'totp.notEnabled',
-};
+// Известные коды ошибок 2FA → словарные ключи err.<код>; незнакомый код —
+// запасной текст вызывающего (серверный message).
+const TOTP_ERR_CODES = new Set(['wrong_password', 'bad_code', 'secret_key_missing', 'totp_already', 'totp_not_enabled']);
 
 function totpErrorText(res, fallbackKey) {
-  return t(TOTP_ERR_KEYS[res.body?.error?.code] ?? fallbackKey);
+  const code = res.body?.error?.code;
+  return code && TOTP_ERR_CODES.has(code) ? t(`err.${code}`) : t(fallbackKey);
 }
 
 function resetTotpForm() {

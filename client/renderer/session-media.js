@@ -81,9 +81,23 @@ function stopAdaptive() {
   adaptiveTimer = null;
 }
 
+// №15 (ретест 28–29.09): по peer-reconnecting оператор не рвёт видео-сеанс по
+// 10с rtc-таймеру — держим до server-grace + запас, чтобы новый оффер
+// вернувшегося клиента дошёл до живого operatorAnswer. Клиент-роль (host) hold
+// не берёт: его восстановление требует пере-оффера хоста (v0.5), честный
+// локальный конец честнее замороженного экрана. Метка времени, а не таймер —
+// меньше швов на чистку.
+let rtcLinkHoldUntil = 0;
+export function holdRtcLink(ms) {
+  if (!(ms > 0)) return;
+  rtcLinkHoldUntil = Math.max(rtcLinkHoldUntil, Date.now() + ms);
+}
+export function rtcLinkHoldActive() { return Date.now() < rtcLinkHoldUntil; }
+
 export function cleanupSession() {
   stopMedia();
   removeCaptureCard(); // карточка ретрая не переживает сеанс (ревью GLM-5.3 v0.3.0)
+  rtcLinkHoldUntil = 0; // hold №15 не переживает сеанс
   enot.closeSignal().catch(() => {});
   streamPaused = false;
   text($('btn-pause-stream'), t('client.hideScreen'));
@@ -127,15 +141,17 @@ export function makePc(iceServers) {
       rtcGrace ??= setTimeout(() => {
         rtcGrace = null;
         if (state.pc !== pc) return; // pc уже заменён — таймер чужой
+        if (rtcLinkHoldActive()) return; // peer-reconnecting: ждём оффер в серверном грейсе (№15)
         rtcLinkLost();
       }, 10000);
       return;
     }
     if (pc.connectionState === 'connected') {
       if (rtcGrace) { clearTimeout(rtcGrace); rtcGrace = null; }
+      rtcLinkHoldUntil = 0; // связь вернулась — hold №15 больше не нужен
       return;
     }
-    if (['failed', 'closed'].includes(pc.connectionState) && (state.session || state.connect)) rtcLinkLost();
+    if (['failed', 'closed'].includes(pc.connectionState) && (state.session || state.connect) && !rtcLinkHoldActive()) rtcLinkLost();
   };
   return pc;
 }

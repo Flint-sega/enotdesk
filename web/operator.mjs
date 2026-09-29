@@ -102,6 +102,24 @@ function stopSignalReconnect() {
   signalLostAt = 0;
 }
 
+// №15 (ретест 28–29.09): видео-канал оператора умирал через 10-16 с (rtcGrace)
+// и страница выходила из сеанса (state.connect=null) раньше, чем вернувшийся
+// клиент присылал новый оффер — восстановление attended-видео было невозможно
+// в принципе. По peer-reconnecting держим RTC-грейс не короче серверного
+// graceMs (+ запас на детект disconnected): pc не рвём, новый оффер клиента
+// доходит до живого doOperatorAnswer, который заменит pc целиком.
+let rtcHoldTimer = null;
+function holdRtcLinkLost() {
+  const ms = SIGNAL_GRACE_MS > 0 ? SIGNAL_GRACE_MS + 10_000 : 0;
+  if (ms <= 0) return; // сервер fail-closed (ENOT_GRACE_MS=0): сеанса в грейсе не будет
+  if (rtcHoldTimer) clearTimeout(rtcHoldTimer);
+  rtcHoldTimer = setTimeout(() => { rtcHoldTimer = null; }, ms);
+}
+function rtcHoldActive() { return rtcHoldTimer != null; }
+function clearRtcHold() {
+  if (rtcHoldTimer) { clearTimeout(rtcHoldTimer); rtcHoldTimer = null; }
+}
+
 function reconnectWindowMs() {
   return SIGNAL_GRACE_MS > 0 ? SIGNAL_GRACE_MS * 2 + 10_000 : 0;
 }
@@ -230,6 +248,7 @@ function stopMedia() {
   state.pc = null; state.dc = null; state.dcs = null; state.fileRx = null;
   state.iceQueue = [];
   $('remote-video').srcObject = null;
+  clearRtcHold(); // сеанс закрыт — hold №15 не должен переживать его
   stopTimers();
 }
 
@@ -271,7 +290,9 @@ function makePc(iceServers) {
   pc.onicecandidate = (e) => { if (e.candidate) sendSignal({ candidate: e.candidate.toJSON() }); };
   // краткое дрожание сети самовосстанавливается — 10с грейс, 'failed' рвёт сразу.
   // Гвард `state.pc !== pc`: pc заменён новым оффером — его события и осиротевший
-  // 10с-таймер не должны убивать НОВОЕ подключение (ревью v0.4.3, high)
+  // 10с-таймер не должны убивать НОВОЕ подключение (ревью v0.4.3, high).
+  // rtcHold (№15): peer-reconnecting держит видео-сеанс до server-grace+10с —
+  // вернувшийся клиент пришлёт новый оффер в живой doOperatorAnswer.
   let rtcGrace = null;
   pc.onconnectionstatechange = () => {
     if (state.pc !== pc) { if (rtcGrace) { clearTimeout(rtcGrace); rtcGrace = null; } return; }
@@ -279,12 +300,14 @@ function makePc(iceServers) {
       rtcGrace ??= setTimeout(() => {
         rtcGrace = null;
         if (state.pc !== pc) return; // pc уже заменён — таймер чужой
+        if (rtcHoldActive()) return; // peer-reconnecting: ждём оффер в серверном грейсе
         rtcLinkLost();
       }, 10000);
       return;
     }
     if (pc.connectionState === 'connected' && rtcGrace) { clearTimeout(rtcGrace); rtcGrace = null; }
-    if (['failed', 'closed'].includes(pc.connectionState) && state.connect) rtcLinkLost();
+    if (pc.connectionState === 'connected') clearRtcHold(); // связь вернулась — hold больше не нужен
+    if (['failed', 'closed'].includes(pc.connectionState) && state.connect && !rtcHoldActive()) rtcLinkLost();
   };
   return pc;
 }
@@ -487,6 +510,9 @@ async function onSignal(msg) {
       }
       break;
     case 'peer-reconnecting':
+      // клиент потерял связь, сеанс жив (грейс сервера, ADR 0013). №15: держим
+      // видео-сеанс до server-grace+10с — не выходим по 10с rtc-таймеру
+      holdRtcLinkLost();
       showStatus(t('op.clientReconnecting'));
       break;
     case 'resumed':

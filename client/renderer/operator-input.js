@@ -51,7 +51,8 @@ export function wireOperatorInput(dc) {
       e.preventDefault();
       const { x, y } = norm(e); // клик там, где курсор, даже если движение ещё не посылалось
       send({ type: 'move', x, y });
-      send({ type: 'button', button: btnName, down: true });
+      // №18: координаты при кнопке — пакет [абс-move][кнопка] на хосте идёт в точку цели
+      send({ type: 'button', button: btnName, down: true, x, y });
     }
   };
   video.onmouseup = (e) => {
@@ -59,7 +60,7 @@ export function wireOperatorInput(dc) {
     if (btnName) {
       const { x, y } = norm(e);
       send({ type: 'move', x, y });
-      send({ type: 'button', button: btnName, down: false });
+      send({ type: 'button', button: btnName, down: false, x, y });
     }
   };
   video.oncontextmenu = (e) => e.preventDefault();

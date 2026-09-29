@@ -19,6 +19,7 @@ export const state = {
   fileRx: null, // приём файла {rx, dc, prog}
   iceQueue: [],
   busy: false,
+  graceMs: null, // из ready сервера (ENOT_GRACE_MS) — окно hold №15 у оператора
   pages: { contacts: 0, history: 0, audit: 0 },
   query: { contacts: '' },
   activePane: 'connect', // активная боковая вкладка оператора (для счётчика чата)

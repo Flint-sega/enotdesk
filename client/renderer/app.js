@@ -9,7 +9,7 @@ import { showConnectForm } from './views/operator-view.js';
 import { renderContacts } from './views/contacts.js';
 import { renderTeam } from './views/team.js';
 import { renderHistory, renderAudit } from './views/history.js';
-import { cleanupSession, drainIce, startHostRtc, operatorAnswer, resetHostRtcState } from './session-media.js';
+import { cleanupSession, drainIce, startHostRtc, operatorAnswer, resetHostRtcState, holdRtcLink } from './session-media.js';
 import { resetUnreadChat } from './session-services.js';
 import { checkForUpdate, openFirstRun, updateServerChip } from './settings.js';
 
@@ -30,6 +30,9 @@ $('tab-operator').addEventListener('click', () => switchView('operator'));
 enot.onSignal(async (msg) => {
   switch (msg.type) {
     case 'ready':
+      // graceMs от сервера — окно hold №15 у оператора (рвём видео не раньше,
+      // чем сервер погасит сеанс)
+      if (typeof msg.graceMs === 'number' && msg.graceMs >= 0) state.graceMs = msg.graceMs;
       break;
     case 'rtc-reset':
       // main переподключил сигналинг в грейсе (ADR 0013, только host-роль):
@@ -94,7 +97,13 @@ enot.onSignal(async (msg) => {
     case 'peer-reconnecting':
       // второй участник потерял связь, сеанс ещё жив (грейс сервера, ADR 0013)
       if (state.role === 'client') text($('client-live-note'), msg.role === 'operator' ? t('op.operatorReconnecting') : t('op.genericReconnecting'));
-      else text($('remote-status'), t('op.clientReconnecting'));
+      else {
+        // №15: видео-сеанс оператора держим до server-grace + запас — вернувшийся
+        // клиент пришлёт новый оффер в живой operatorAnswer
+        const graceMs = typeof state.graceMs === 'number' && state.graceMs > 0 ? state.graceMs : 30_000;
+        holdRtcLink(graceMs + 10_000);
+        text($('remote-status'), t('op.clientReconnecting'));
+      }
       break;
     case 'resumed':
       if (state.role === 'client') text($('client-live-note'), '');

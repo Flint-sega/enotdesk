@@ -51,6 +51,7 @@ enot.onJoinStart(({ server, token }) => {
 async function handleJoinStart(server, token) {
   const session = await startHelp();
   if (!session) return; // сеанс уже идёт или старт не удался — статус уже показан
+  if (!server || !token) return; // автостарт тестовой сборки: репорта на hub нет
   const status = $('join-status');
   try {
     const r = await enot.joinReport(server, token, { sessionId: session.sessionId, password: session.password });

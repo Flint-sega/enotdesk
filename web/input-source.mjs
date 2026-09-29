@@ -45,14 +45,16 @@ export function wireBrowserInput(video, send, { keys, onUnsupported, throttleMs 
     try { video.setPointerCapture?.(e.pointerId); } catch { /* не критично */ }
     const { x, y } = norm(e); // клик там, где курсор, даже если движение ещё не посылалось
     raw({ type: 'move', x, y });
-    raw({ type: 'button', button: btn, down: true });
+    // №18: координаты при кнопке — хост собирает пакет [абс-move][кнопка] в точку
+    // цели, а не по lastX/lastY от последнего move (клик «уезжал»)
+    raw({ type: 'button', button: btn, down: true, x, y });
   };
   const onUp = (e) => {
     const btn = buttonName(e);
     if (!btn) return;
     const { x, y } = norm(e);
     raw({ type: 'move', x, y });
-    raw({ type: 'button', button: btn, down: false });
+    raw({ type: 'button', button: btn, down: false, x, y });
   };
   const onContext = (e) => prevented(e);
   const onWheel = (e) => {
