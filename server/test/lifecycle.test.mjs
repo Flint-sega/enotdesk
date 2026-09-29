@@ -296,18 +296,26 @@ test('№13b: ретрай в зазоре «лизинг истёк, свипе
 
 test('№13b: close после объявления не двигает грейс (??=) — конец по расписанию от объявления', async (t) => {
   const { base, port, admin } = await setup(t, { leaseMs: 400, heartbeatMs: 200, graceMs: 1500 });
-  const { host, op } = await approvedSession(base, port, admin);
+  const { s, host, op } = await approvedSession(base, port, admin);
 
   // T0 — момент объявления грейса (peer-reconnecting уходит оператору ровно в
-  // объявлении). Поздний close «мёртвого» сокета (T0+1400) не должен сдвигать
-  // clock грейса: конец обязан прийти к T0+2800 (грейс 1500 + тик свипера ≤1с);
-  // мутант `=` вместо `??=` отложил бы конец на close+grace ≈ T0+2900 и окно
-  // не поймал бы (мутационная проверка ревью v0.4.4)
+  // объявлении). Поздний close «мёртвого» сокета (T0+1400) не сдвигает clock
+  // грейса: ended обязан прийти к T0+2500 даже на медленном раннере (тик свипера
+  // ≤1с поверх grace 1500). Мутант `=` вместо `??=` отложил бы конец на
+  // close+grace ≈ T0+2900..3900. Детерминированно: ждём ended щедро, а ассерт —
+  // по серверному endedAt из /history (без гонки доставки) — ревью v0.4.5
+  // (фиксированное окно 2800 мс флакало на CI-macos).
   await op.wait((m) => m.type === 'peer-reconnecting', 4000);
+  const t0 = Date.now();
   await new Promise((r) => setTimeout(r, 1400));
   host.close();
-  const ended = await op.wait((m) => m.type === 'ended', 1400);
+  const ended = await op.wait((m) => m.type === 'ended', 6000);
   assert.equal(ended.reason, 'host-lost');
+  const h = await api(base, 'GET', '/history?limit=1', { token: admin.token });
+  const row = h.json.items.find((it) => it.id === s.sessionId);
+  const elapsed = Date.parse(row.endedAt) - t0;
+  assert.ok(elapsed >= 1000 && elapsed < 2800,
+    `грейс должен тикать от ОБЪЯВЛЕНИЯ: endedAt-t0 = ${elapsed} мс (мутант = дал бы ≥2900)`);
 });
 
 test('повторный decision allow — no-op: approved не рассылается дважды', async (t) => {
