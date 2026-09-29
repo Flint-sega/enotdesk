@@ -152,8 +152,14 @@ export async function runAsScmParent({ serviceName = 'EnotDeskAgent', childArgv 
     dwCheckPoint: 'unsigned long',
     dwWaitHint: 'unsigned long',
   });
-  const HandlerProc = koffi.proto('unsigned long ENOT_HandlerProc(unsigned long, unsigned long, void *, void *)');
-  const ServiceMainProc = koffi.proto('void ENOT_ServiceMainProc(unsigned long, void *)');
+  // ВАЖНО (корень W-U2, найден diag-логом 29.09 на живой машине): koffi.proto
+  // регистрирует тип под именем ИЗ СТРОКИ прототипа. Раньше строка называла
+  // ENOT_HandlerProc, а сигнатура ниже ссылались на HandlerProc * — koffi
+  // бросал «Unknown or invalid type name 'HandlerProc'», родитель умирал за
+  // 1 с (exit 1) до всякого SetServiceStatus, и SCM рапортовал 7009/1053.
+  // Имя типа в прототипе обязано совпадать со строковой ссылкой.
+  const HandlerProc = koffi.proto('unsigned long HandlerProc(unsigned long, unsigned long, void *, void *)');
+  const ServiceMainProc = koffi.proto('void ServiceMainProc(unsigned long, void *)');
   koffi.struct('ENOT_SERVICE_TABLE_ENTRY', {
     lpServiceName: 'const char *',
     // ВАЖНО (ревью 28.09): koffi-тип НЕ конкатенируется со строкой —
