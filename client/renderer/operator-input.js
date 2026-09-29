@@ -49,6 +49,10 @@ export function wireOperatorInput(dc) {
     const btnName = { 0: 'left', 1: 'middle', 2: 'right' }[e.button];
     if (btnName) {
       e.preventDefault();
+      // Захват указателя: отпускание за краем видео всё равно придёт сюда —
+      // иначе кнопка на хосте залипает до конца сеанса (симметрично web-источнику,
+      // ревью v0.4.4; там это чинили ещё в GLM-5.3 #3)
+      try { video.setPointerCapture?.(e.pointerId); } catch { /* не критично */ }
       const { x, y } = norm(e); // клик там, где курсор, даже если движение ещё не посылалось
       send({ type: 'move', x, y });
       // №18: координаты при кнопке — пакет [абс-move][кнопка] на хосте идёт в точку цели

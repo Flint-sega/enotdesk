@@ -49,7 +49,9 @@ enot.onSignal(async (msg) => {
       clientShow('consent');
       break;
     case 'approved':
-      if (state.role === 'client' && state.session) {
+      // Критерий — сеанс, а не state.role (активная вкладка меняется кликом по
+      // табу и не связан с ролью в живом сеансе, ревью v0.4.4)
+      if (state.session) {
         // replay после переподключения: pc уже сброшен rtc-reset'ом — стартуем заново;
         // живой pc (повторный approved без обрыва) не пересобираем
         if (state.pc) break;
@@ -66,7 +68,7 @@ enot.onSignal(async (msg) => {
         if (state.session) {
           text($('client-access-note'), t('client.accessNote', { id: state.session.sessionId, password: state.session.password }));
         }
-      } else if (state.role === 'operator') {
+      } else if (state.connect) {
         if (state.pc) break; // уже отвечаем на оффер
         show($('op-waiting'));
         text($('remote-status'), t('op.waitingScreen'));
@@ -95,9 +97,10 @@ enot.onSignal(async (msg) => {
       } catch { /* некорректный сигнал игнорируется: транспорт не открывается */ }
       break;
     case 'peer-reconnecting':
-      // второй участник потерял связь, сеанс ещё жив (грейс сервера, ADR 0013)
-      if (state.role === 'client') text($('client-live-note'), msg.role === 'operator' ? t('op.operatorReconnecting') : t('op.genericReconnecting'));
-      else {
+      // второй участник потерял связь, сеанс ещё жив (грейс сервера, ADR 0013).
+      // Критерий — сеанс, а не активная вкладка (ревью v0.4.4)
+      if (state.session) text($('client-live-note'), msg.role === 'operator' ? t('op.operatorReconnecting') : t('op.genericReconnecting'));
+      else if (state.connect) {
         // №15: видео-сеанс оператора держим до server-grace + запас — вернувшийся
         // клиент пришлёт новый оффер в живой operatorAnswer
         const graceMs = typeof state.graceMs === 'number' && state.graceMs > 0 ? state.graceMs : 30_000;
@@ -106,8 +109,8 @@ enot.onSignal(async (msg) => {
       }
       break;
     case 'resumed':
-      if (state.role === 'client') text($('client-live-note'), '');
-      else text($('remote-status'), t('status.connected'));
+      if (state.session) text($('client-live-note'), '');
+      else if (state.connect) text($('remote-status'), t('status.connected'));
       break;
     case 'ended': {
       // cleanupSession (не просто stopMedia): гасит карточку ретрая и streamPaused —

@@ -24,14 +24,16 @@ import { resolveConsoleUser } from './lib/console-user.mjs';
 import { UPDATE_REPO, updateFeedUrl, platformFeedName, updateDecision, updateInstallDecision } from './lib/updater.mjs';
 import { isNewerVersion } from './lib/version-check.mjs';
 import { t, setLocale } from './lib/i18n.mjs';
-import { createSvcDiag, envDiagSlice } from './lib/svc-diag.mjs';
+import { createSvcDiag, envDiagSlice, maskJoinTokens } from './lib/svc-diag.mjs';
 
 // Диагностика Windows-службы (W-U2): первый маркер каждого запуска процесса —
 // ДО ветки службы. Если svc-ветка НЕ вошла, а эта строка в логе есть —
 // Environment REG_MULTI_SZ не доставлен процессу (гипотеза №1) либо диспетчер
 // отверг таблицу (№2б); различаем по следующим строкам.
 const svcDiag = createSvcDiag();
-svcDiag.write('main', `pid=${process.pid} exec="${process.execPath}" argv=${JSON.stringify(process.argv)} env[${envDiagSlice()}]`);
+// argv может нести join-ссылку с одноразовым токеном — в лог он не идёт
+// (контракт svc-diag: секреты не пишутся, ревью v0.4.4)
+svcDiag.write('main', `pid=${process.pid} exec="${process.execPath}" argv=${maskJoinTokens(JSON.stringify(process.argv))} env[${envDiagSlice()}]`);
 
 // Родительский режим Windows-службы (EDESK_AGENT_SVC=1, дефект №4): процесс
 // запущен SCM'ом как службу — Electron не инициализируем, работаем тонкой
@@ -58,7 +60,9 @@ if (process.env.EDESK_AGENT_SVC === '1' && process.platform === 'win32') {
 }
 // Дошли сюда на запуске SCM'ом — значит EDESK_AGENT_SVC не доставлен: процесс
 // пошёл как обычный GUI-клиент, SCM не дождётся отчёта (7009/1053).
-if (process.platform === 'win32' && process.argv.some((a) => /EnotDesk\.exe/i.test(a)) && process.env.SESSIONNAME === 'Services') {
+// Ребёнок службы (EDESK_AGENT=1, SESSIONNAME=Services унаследованы) сюда тоже
+// доходит штатно — это НЕ сигнал о недоставке (ревью v0.4.4).
+if (process.platform === 'win32' && process.env.EDESK_AGENT !== '1' && process.argv.some((a) => /EnotDesk\.exe/i.test(a)) && process.env.SESSIONNAME === 'Services') {
   svcDiag.write('main', `ВНИМАНИЕ: svc-ветка НЕ вошла, запущены как служба. env[${envDiagSlice()}]`);
 }
 
@@ -500,6 +504,12 @@ async function listSources() {
   return sources.map((s) => ({ id: s.id, name: s.name }));
 }
 
+// Масштаб координат ИНЪЕКЦИИ: SendInput (Windows) и XTest (X11) работают в
+// физических пикселях, CGEvent (macOS) — в глобальных ЛОГИЧЕСКИХ поинтах:
+// на Retina умножение на scaleFactor уводило инъекцию с 2× смещением
+// (ревью v0.4.4, подтверждено замером CGDisplayBounds)
+const coordScale = (display) => (process.platform === 'darwin' ? 1 : display.scaleFactor);
+
 async function selectSource(id) {
   const sources = await desktopCapturer.getSources({ types: ['screen', 'window'], thumbnailSize: { width: 0, height: 0 } });
   const src = sources.find((s) => s.id === id);
@@ -509,11 +519,12 @@ async function selectSource(id) {
   const display = displays.find((d) => String(d.id) === String(src.display_id)) ?? displays[0];
   // origin: смещение дисплея на виртуальном столе (не-основной монитор) — без него
   // инъекция уезжает в основной монитор (ревью GLM-5.3 v0.3.0)
+  const k = coordScale(display);
   let bounds = {
-    width: Math.round(display.size.width * display.scaleFactor),
-    height: Math.round(display.size.height * display.scaleFactor),
-    originX: Math.round(display.bounds.x * display.scaleFactor),
-    originY: Math.round(display.bounds.y * display.scaleFactor),
+    width: Math.round(display.size.width * k),
+    height: Math.round(display.size.height * k),
+    originX: Math.round(display.bounds.x * k),
+    originY: Math.round(display.bounds.y * k),
   };
   // Окно-источник (дефект №5, живой сеанс 28.09): оператор видит окно, а координаты
   // ввода маппились на весь дисплей — клики уезжали мимо. Берём прямоугольник окна
@@ -542,11 +553,12 @@ async function selectPrimaryScreen() {
     ?? sources[0];
   if (!src) return { ok: false, error: 'Экраны для захвата не найдены' };
   const display = displays.find((d) => String(d.id) === String(src.display_id)) ?? primary;
+  const k = coordScale(display);
   const bounds = {
-    width: Math.round(display.size.width * display.scaleFactor),
-    height: Math.round(display.size.height * display.scaleFactor),
-    originX: Math.round(display.bounds.x * display.scaleFactor),
-    originY: Math.round(display.bounds.y * display.scaleFactor),
+    width: Math.round(display.size.width * k),
+    height: Math.round(display.size.height * k),
+    originX: Math.round(display.bounds.x * k),
+    originY: Math.round(display.bounds.y * k),
   };
   selectedSource = { id: src.id, displayId: String(src.display_id ?? ''), name: src.name, bounds };
   return { ok: true, name: src.name };
@@ -984,9 +996,11 @@ function startAgentMode() {
       tokenStore,
       getInventory: collectInventory, // инвентарь машин (R06) с каждым heartbeat
       // W-U2 diag: статусы агента (регистрация/подключение/backoff) дублируются
-      // в файловый лог — у службы stdout теряется
+      // в файловый лог — у службы stdout теряется. Все четыре метода обязательны:
+      // agent.mjs зовёт info/warn/error без optional chaining (ревью v0.4.4)
       log: {
         log: (...a) => { console.log(...a); svcDiag.write('agent', a.map(String).join(' ')); },
+        info: (...a) => { console.info(...a); svcDiag.write('agent', a.map(String).join(' ')); },
         warn: (...a) => { console.warn(...a); svcDiag.write('agent', a.map(String).join(' ')); },
         error: (...a) => { console.error(...a); svcDiag.write('agent', a.map(String).join(' ')); },
       },

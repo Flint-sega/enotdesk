@@ -504,19 +504,23 @@ export function createServer(opts = {}) {
       // завершался («сеанс завершён» у владельца ровно об этом).
       if (rt && stateRow?.state === 'approved' && rt.hostWs != null) {
         if (rt.hostLostAt == null) {
-          // Объявляем грейс: ретраи принимаются (gate по hostLostAt), операторы
-          // предупреждены, хосту — пробный пинг. Ответил pong → сокет жив,
-          // terminate не нужен: хост продолжит heartbeat'ы (сбросят hostLostAt
-          // с «resumed» операторам) или переподключится. Лимит циклов: сокет,
-          // понгующий на уровне стека, но с мёртвой heartbeat-логикой клиента,
-          // не держит сеанс вечно — после HOST_PING_MAX честный lease-expired
-          // (ревью 28.09: иначе слот live/maxSessions занят бессрочно).
           if ((rt.hostPingCount ?? 0) >= HOST_PING_MAX) {
             endSession(row.id, 'lease-expired');
             continue;
           }
-          rt.hostLostAt = nowMs;
-          for (const opWs of rt.opSockets.keys()) send(opWs, { type: 'peer-reconnecting', role: 'host' });
+          if (cfg.graceMs > 0) {
+            // Объявляем грейс: ретраи принимаются (gate по hostLostAt), операторы
+            // предупреждены, хосту — пробный пинг. Ответил pong → сокет жив,
+            // terminate не нужен: хост продолжит heartbeat'ы (сбросят hostLostAt
+            // с «resumed» операторам) или переподключится. Лимит циклов: сокет,
+            // понгующий на уровне стека, но с мёртвой heartbeat-логикой клиента,
+            // не держит сеанс вечно — после HOST_PING_MAX честный lease-expired
+            // (ревью 28.09: иначе слот live/maxSessions занят бессрочно).
+            // В fail-closed (graceMs=0) грейс не объявляем и операторам ничего
+            // не шлём — как до волны (ревью v0.4.4); пинг и лимит циклов работают.
+            rt.hostLostAt = nowMs;
+            for (const opWs of rt.opSockets.keys()) send(opWs, { type: 'peer-reconnecting', role: 'host' });
+          }
           rt.hostPingAt = nowMs;
           rt.hostPingCount = (rt.hostPingCount ?? 0) + 1;
           try { rt.hostWs.ping(); } catch { try { rt.hostWs.terminate(); } catch { /* уже мёртв */ } }
@@ -781,13 +785,14 @@ export function createServer(opts = {}) {
     }
     if (p === '/auth/password' && req.method === 'PATCH') {
       if (!user) return err(res, 401, 'unauthorized', 'Требуется авторизация');
+      const locale = pickLocale(req.headers['accept-language']);
       const { oldPassword, newPassword } = body || {};
       if (typeof oldPassword !== 'string' || typeof newPassword !== 'string' || newPassword.length < 8) {
         return err(res, 400, 'bad_request', 'Проверьте данные: новый пароль — от 8 символов');
       }
       const row = db.prepare('SELECT password FROM users WHERE id = ?').get(user.id);
       if (!row || !(await verifyPasswordAsync(oldPassword, row.password))) {
-        return err(res, 403, 'wrong_password', 'Текущий пароль указан неверно');
+        return err(res, 403, 'wrong_password', t('err.wrong_password', {}, locale));
       }
       db.prepare('UPDATE users SET password = ? WHERE id = ?').run(hashPassword(newPassword), user.id);
       // прочие сеансы выходят принудительно: старые токены умирают, текущий остаётся;
@@ -811,7 +816,7 @@ export function createServer(opts = {}) {
       }
       const row = db.prepare('SELECT password, totp_enabled, totp_secret_enc FROM users WHERE id = ?').get(user.id);
       if (!row || !verifyPassword(password, row.password)) {
-        return err(res, 403, 'wrong_password', 'Текущий пароль указан неверно');
+        return err(res, 403, 'wrong_password', t('err.wrong_password', {}, locale));
       }
       if (row.totp_enabled) return err(res, 409, 'totp_already', t('err.totp_already', {}, locale));
       const code = typeof body?.code === 'string' ? body.code.trim() : '';
@@ -852,7 +857,7 @@ export function createServer(opts = {}) {
       }
       const row = db.prepare('SELECT password, totp_enabled FROM users WHERE id = ?').get(user.id);
       if (!row || !verifyPassword(password, row.password)) {
-        return err(res, 403, 'wrong_password', 'Текущий пароль указан неверно');
+        return err(res, 403, 'wrong_password', t('err.wrong_password', {}, locale));
       }
       if (!row.totp_enabled) return err(res, 409, 'totp_not_enabled', t('err.totp_not_enabled', {}, locale));
       db.prepare('UPDATE users SET totp_secret_enc = NULL, totp_enabled = 0, totp_last_counter = NULL WHERE id = ?').run(user.id);
@@ -1707,7 +1712,16 @@ export function createServer(opts = {}) {
       if (msg.role === 'host') {
         if (typeof msg.token !== 'string' || sha256(msg.token) !== s.host_token_hash) return ws.close(4003, 'invalid-session');
         const existingRt = live.get(s.id);
-        const inGrace = existingRt?.hostLostAt != null && Date.now() - existingRt.hostLostAt <= cfg.graceMs;
+        // №13b (ревью GLM-5.3 v0.4.4): в approved лизинг — не судья входа, ПОКА
+        // сеанс жив: и в объявленном грейсе, и в зазоре «лизинг истёк, свипер
+        // ещё не объявил» (≥heartbeatMs + тик) ретрай принимается — иначе
+        // вернувшийся клиент получал здесь 4003 («сеанса нет») и по контракту
+        // сдавался навсегда при живом сеансе. Fail-closed (graceMs=0) и
+        // не-approved — как раньше.
+        const inGrace = cfg.graceMs > 0 && (
+          s.state === 'approved' ||
+          (existingRt?.hostLostAt != null && Date.now() - existingRt.hostLostAt <= cfg.graceMs)
+        );
         if (s.lease_expires_at <= now && !inGrace) return ws.close(4003, 'invalid-session');
         role = 'host';
       } else if (msg.role === 'operator') {
@@ -1781,7 +1795,12 @@ export function createServer(opts = {}) {
       }
       if (resumed) {
         send(rt.hostWs, { type: 'resumed' });
-        for (const opWs of rt.opSockets.keys()) send(opWs, { type: 'resumed' });
+        for (const opWs of rt.opSockets.keys()) {
+          // №15 (ревью v0.4.4): оператор, вернувшийся в грейсе, не должен видеть
+          // «Подключено», пока хост ещё потерян, — ему peer-reconnecting (взводит
+          // rtc-hold оператора), а не resumed
+          send(opWs, rt.hostLostAt != null ? { type: 'peer-reconnecting', role: 'host' } : { type: 'resumed' });
+        }
       }
     });
 
