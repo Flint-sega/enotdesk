@@ -137,12 +137,14 @@ export function createScmParentLogic({ setStatus = () => {}, spawnChild = () => 
 // ребёнком (родитель передаёт свой env насквозь, включая EDESK_AGENT=1).
 // diag (W-U2) — файловый логгер svc-diag: маркеры koffi/диспетчер/ServiceMain/
 // статусы/spawn — ровно те точки, где гипотезы №1/№2б расходятся.
-export async function runAsScmParent({ serviceName = 'EnotDeskAgent', childArgv = [], childEnv = {}, log = console, diag = { write: () => false } } = {}) {
-  const koffi = (await import('koffi')).default;
-  diag.write('svc', 'koffi загружен');
-  const { spawn, execFileSync } = await import('node:child_process');
-  const advapi32 = koffi.load('advapi32.dll');
 
+// Именованные типы koffi живут в реестре НА ПРОЦЕСС: повторная регистрация
+// бросает «Duplicate type name» (конвенция native-input.mjs). Мемоизируем —
+// повторный вызов runAsScmParent в одном процессе переиспользует типы
+// (ревью v0.4.5).
+let scmGlue = null;
+function scmTypes(koffi) {
+  if (scmGlue) return scmGlue;
   koffi.struct('ENOT_SERVICE_STATUS', {
     dwServiceType: 'unsigned long',
     dwCurrentState: 'unsigned long',
@@ -167,6 +169,16 @@ export async function runAsScmParent({ serviceName = 'EnotDeskAgent', childArgv 
     // Только явный koffi.pointer(...).
     lpServiceProc: koffi.pointer(ServiceMainProc),
   });
+  scmGlue = { HandlerProc, ServiceMainProc };
+  return scmGlue;
+}
+
+export async function runAsScmParent({ serviceName = 'EnotDeskAgent', childArgv = [], childEnv = {}, log = console, diag = { write: () => false } } = {}) {
+  const koffi = (await import('koffi')).default;
+  diag.write('svc', 'koffi загружен');
+  const { spawn, execFileSync } = await import('node:child_process');
+  const advapi32 = koffi.load('advapi32.dll');
+  const { HandlerProc, ServiceMainProc } = scmTypes(koffi);
 
   const RegisterServiceCtrlHandlerExA = advapi32.func('void *RegisterServiceCtrlHandlerExA(const char *, HandlerProc *, void *)');
   const SetServiceStatus = advapi32.func('int SetServiceStatus(void *, const ENOT_SERVICE_STATUS *)');
