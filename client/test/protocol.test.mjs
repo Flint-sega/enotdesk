@@ -34,6 +34,10 @@ test('validateInputEvent: кнопки вне enum и клавиши вне allo
   assert.equal(validateInputEvent({ type: 'button', button: 'left', down: true, x: 2, y: 0.5 }).ok, false);
   assert.equal(validateInputEvent({ type: 'button', button: 'left', down: true, x: NaN, y: 0.5 }).ok, false);
   assert.equal(validateInputEvent({ type: 'button', button: 'left', down: true, x: 0.5, y: '0.5' }).ok, false);
+  // ровно одна координата из двух — тоже отклонение (ревью v0.4.4: иначе мутант
+  // `||`→`&&` в условии проходит мимо тестов)
+  assert.equal(validateInputEvent({ type: 'button', button: 'left', down: true, x: 0.5 }).ok, false);
+  assert.equal(validateInputEvent({ type: 'button', button: 'left', down: true, y: 0.5 }).ok, false);
   // произвольные клавиши/сканкоды запрещены контрактом
   assert.equal(validateInputEvent({ type: 'key', key: 'F12', down: true }).ok, false);
   assert.equal(validateInputEvent({ type: 'key', key: 'a; rm -rf /', down: true }).ok, false);

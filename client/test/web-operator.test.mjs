@@ -73,17 +73,20 @@ test('web/operator.html: без inline-стилей и inline-скриптов (
 // ---- №15 (ретест 28–29.09): RTC-грейс оператора ≥ серверного graceMs ----
 
 test('web/operator.mjs: peer-reconnecting держит видео-сеанс (rtc-hold), а не рвёт по 10с', () => {
-  // hold взводится в обработчике peer-reconnecting...
-  assert.match(operatorJs, /case 'peer-reconnecting':[\s\S]{0,200}holdRtcLinkLost\(\)/,
-    'peer-reconnecting должен взводить rtc-hold (№15)');
-  // ...оба пути rtcLinkLost уважают hold...
-  assert.match(operatorJs, /if \(rtcHoldActive\(\)\) return;[\s\S]{0,80}rtcLinkLost\(\)/,
-    '10с-таймер disconnected должен уважать rtc-hold');
+  // hold взводится в обработчике peer-reconnecting — и только при живом сеансе
+  // (осиротевшая страница hold не берёт, иначе он протечёт в следующий сеанс)
+  assert.match(operatorJs, /case 'peer-reconnecting':[\s\S]{0,600}if \(state\.connect\) holdRtcLinkLost\(\)/,
+    'peer-reconnecting должен взводить rtc-hold под guardом state.connect (№15)');
+  // 10с-таймер самовозобновляется под hold и после его истечения рвёт честно:
+  // assert на ВЫЗОВЫ clearRtcHold, не на определение (ревью v0.4.4)
+  const clearCalls = operatorJs.match(/clearRtcHold\(\)/g) ?? [];
+  assert.ok(clearCalls.length >= 3, `clearRtcHold должен вызываться (connected + stopMedia), найдено: ${clearCalls.length}`);
+  assert.match(operatorJs, /if \(rtcHoldActive\(\)\) \{ rtcGrace = setTimeout\(tick, 10_000\); return; \}[\s\S]{0,80}rtcLinkLost\(\)/,
+    '10с-таймер должен ждать hold и разорвать сеанс после его истечения');
   assert.match(operatorJs, /&& !rtcHoldActive\(\)\) rtcLinkLost\(\)/,
     'ветка failed/closed должна уважать rtc-hold');
-  // ...hold не длиннее server-grace + запас и снимается на connected/stopMedia
+  // hold не длиннее server-grace + запас и не берётся при ENOT_GRACE_MS=0
   assert.match(operatorJs, /SIGNAL_GRACE_MS \+ 10_000/, 'hold считается от серверного graceMs');
-  assert.match(operatorJs, /clearRtcHold\(\)/, 'hold снимается (connected/stopMedia)');
   assert.match(operatorJs, /if \(ms <= 0\) return;/, 'ENOT_GRACE_MS=0: hold не взводится (fail-closed сервера)');
 });
 

@@ -172,6 +172,23 @@ done
 case "$REPO" in ''|-*|*[!A-Za-z0-9._/-]*) die "ENOT_SETUP_REPO не похож на owner/repo: '$REPO'" ;; esac
 case "$VERSION" in ''|-*|*[!A-Za-z0-9._-]*) die "ENOT_SETUP_VERSION не похож на тег или latest: '$VERSION'" ;; esac
 
+# Значение KEY из env-файла (значения пишутся в одинарных кавычках — env_kv
+# install-server.sh; читаются и старые незакавыченные файлы). Определена ДО
+# HUB-блока: он вызывает её при повторном запуске/--update (ревью v0.4.4 —
+# раньше вызов до определения ронял скрипт с exit 127).
+env_value() { # $1=KEY $2=file
+  local v=""
+  [ -r "$2" ] || { printf ''; return 0; }
+  v="$(sed -n "s/^$1=//p" "$2" 2>/dev/null | tail -n 1 || true)"
+  case "$v" in
+    \'*\')
+      v="${v#\'}"; v="${v%\'}"
+      v="$(printf '%s' "$v" | sed "s/'\\\\''/'/g")"
+      ;;
+  esac
+  printf '%s' "$v"
+}
+
 # Hub: если флага не было — берём решение прежней установки (--update не должен
 # молча сносить установленный хаб); пустое значение спросим в TTY / считаем «нет».
 if [ "$HUB_SET" = "0" ]; then
@@ -181,7 +198,6 @@ if [ "$HUB_SET" = "0" ]; then
     HUB="$(env_value ENOT_HUB /etc/enotdesk/enotdesk.env)"
   fi
 fi
-
 if [ "$MODE" = "docker" ] && [ -n "$TARBALL" ]; then
   warn "в режиме --docker флаг --tarball игнорируется (образ собирается из Dockerfile)"
   TARBALL=""
@@ -290,22 +306,6 @@ valid_name() {
   clean="$(printf '%s' "$1" | tr -d '[:cntrl:]')"
   if [ "$clean" != "$1" ]; then return 1; fi
   [ -n "$(printf '%s' "$1" | tr -d '[:space:]')" ]
-}
-
-# Значение KEY из env-файла (значения пишутся в одинарных кавычках — env_kv
-# install-server.sh; читаются и старые незакавыченные файлы). Это устойчивый
-# вариант конвейера grep ^KEY= | cut -d= -f2- | tr -d "'\"" для значений с кавычками.
-env_value() { # $1=KEY $2=file
-  local v=""
-  [ -r "$2" ] || { printf ''; return 0; }
-  v="$(sed -n "s/^$1=//p" "$2" 2>/dev/null | tail -n 1 || true)"
-  case "$v" in
-    \'*\')
-      v="${v#\'}"; v="${v%\'}"
-      v="$(printf '%s' "$v" | sed "s/'\\\\''/'/g")"
-      ;;
-  esac
-  printf '%s' "$v"
 }
 
 # Случайные байты в hex: openssl → фолбэк /dev/urandom|od.

@@ -50,6 +50,16 @@ test('анти-мёртвые-кнопки: каждая кнопка из HTML 
   }
 });
 
+test('№18: desktop-оператор шлёт координаты клика в кнопке и захватывает указатель', () => {
+  // регресс-защита десктопной половины №18 (web-половину ловит input-source.test):
+  // без x,y у кнопки хост телепортирует курсор по lastX/lastY — «клик на крестик»;
+  // без setPointerCapture отпускание за краем видео залипает кнопку на хосте
+  const src = readFileSync(path.join(dir, 'operator-input.js'), 'utf8');
+  assert.match(src, /down: true, x, y/, 'mousedown несёт координаты клика');
+  assert.match(src, /down: false, x, y/, 'mouseup несёт координаты клика');
+  assert.match(src, /setPointerCapture\?\.\(e\.pointerId\)/, 'указатель захвачен на down');
+});
+
 test('CSP: стили только styles.css, без inline-стилей и inline-скриптов', () => {
   assert.ok(!/\sstyle="/.test(html), 'найден inline style');
   assert.ok(!/<script(?![^>]*\bsrc=)/.test(html), 'найден inline script');

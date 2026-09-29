@@ -138,12 +138,15 @@ export function makePc(iceServers) {
   pc.onconnectionstatechange = () => {
     if (state.pc !== pc) { if (rtcGrace) { clearTimeout(rtcGrace); rtcGrace = null; } return; }
     if (pc.connectionState === 'disconnected') {
-      rtcGrace ??= setTimeout(() => {
+      // Тик самовозобновляется, пока активен hold №15: по его истечении
+      // застрявший 'disconnected'/'failed' честно разрывается (ревью v0.4.4)
+      const tick = () => {
         rtcGrace = null;
         if (state.pc !== pc) return; // pc уже заменён — таймер чужой
-        if (rtcLinkHoldActive()) return; // peer-reconnecting: ждём оффер в серверном грейсе (№15)
+        if (rtcLinkHoldActive()) { rtcGrace = setTimeout(tick, 10_000); return; }
         rtcLinkLost();
-      }, 10000);
+      };
+      rtcGrace ??= setTimeout(tick, 10000);
       return;
     }
     if (pc.connectionState === 'connected') {

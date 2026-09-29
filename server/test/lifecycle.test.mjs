@@ -201,11 +201,11 @@ test('грейс: истёкший грейс завершает сеанс ка
 // контракту «4003 = сеанса нет» честно завершался при живом сеансе.
 
 test('№13b: ретрай в пинг-окне не 4003, после terminate принимается — сеанс жив', async (t) => {
-  const { base, port, admin } = await setup(t, { leaseMs: 400, heartbeatMs: 200, graceMs: 5000, hostPingGraceMs: 300 });
+  const { base, port, admin } = await setup(t, { leaseMs: 400, heartbeatMs: 200, graceMs: 5000 });
   const { s, host, op, claimId } = await approvedSession(base, port, admin);
 
   // хост молчит без close — свипер объявляет грейс и уведомляет оператора
-  assert.equal((await op.wait((m) => m.type === 'peer-reconnecting')).role, 'host');
+  assert.equal((await op.wait((m) => m.type === 'peer-reconnecting', 4000)).role, 'host');
 
   // ретрай теми же токенами при ещё живом (серверно) старом сокете: duplicate-чек
   // даёт 4004 (клиент ретраит сквозь него), но НИКОГДА 4003 — это и есть №13b
@@ -241,7 +241,7 @@ test('№13b: без ретрая и heartbeat — host-lost по истечен
   const { host, op } = await approvedSession(base, port, admin);
 
   const endedP = op.wait((m) => m.type === 'ended', 6000);
-  assert.equal((await op.wait((m) => m.type === 'peer-reconnecting')).role, 'host');
+  assert.equal((await op.wait((m) => m.type === 'peer-reconnecting', 4000)).role, 'host');
   const ended = await endedP;
   assert.equal(ended.reason, 'host-lost', 'грейс, объявленный от лизинга, кончился — host-lost, не lease-expired');
   host.close();
@@ -251,7 +251,7 @@ test('№13b: оживший heartbeat снимает объявленный г�
   const { base, port, admin } = await setup(t, { leaseMs: 400, heartbeatMs: 200, graceMs: 2000 });
   const { s, host, op } = await approvedSession(base, port, admin);
 
-  await op.wait((m) => m.type === 'peer-reconnecting');
+  await op.wait((m) => m.type === 'peer-reconnecting', 4000);
   const resumedP = op.wait((m) => m.type === 'resumed', 4000);
   // хост «завис и ожил»: heartbeat по ещё живому (не терминированному) сокету
   host.send(JSON.stringify({ type: 'heartbeat' }));
@@ -265,6 +265,49 @@ test('№13b: оживший heartbeat снимает объявленный г�
   const h = await api(base, 'GET', '/history', { token: admin.token });
   const row = h.json.items.find((it) => it.id === s.sessionId);
   assert.notEqual(row.state, 'ended');
+});
+
+// ---- №13b доводка по ревью GLM-5.3 v0.4.4 ----
+
+test('№13b: ретрай в зазоре «лизинг истёк, свипер ещё не объявил» — без 4003', async (t) => {
+  const { base, port, admin } = await setup(t, { leaseMs: 400, heartbeatMs: 200, graceMs: 5000 });
+  const { s, host, op } = await approvedSession(base, port, admin);
+
+  // Зазор детерминирован: лизинг истекает t0+400, свипер впервые видит сеанс
+  // только на тике с now > t0+600 — ретрай на t0+450 попадает в зазор, где
+  // старый код отдавал фатальный 4003 («сеанса нет» → клиент сдавался).
+  await new Promise((r) => setTimeout(r, 450));
+  const retry1 = wsConnect(port);
+  await retry1.opened;
+  retry1.send(JSON.stringify({ type: 'auth', role: 'host', sessionId: s.sessionId, token: s.hostToken }));
+  // В зазоре live-сокет хоста даёт duplicate-4004 — клиент ретраит сквозь него;
+  // фатального 4003 в утверждённом сеансе больше не существует вовсе
+  assert.equal(await retry1.closeCode(), 4004);
+
+  // слот освобождается → грейс от participantLost → ретрай принимается
+  host.close();
+  await new Promise((r) => setTimeout(r, 150));
+  const retry2 = wsConnect(port);
+  const ready = await wsAuth(retry2, { type: 'auth', role: 'host', sessionId: s.sessionId, token: s.hostToken });
+  assert.equal(ready.state, 'approved');
+  assert.equal((await retry2.wait((m) => m.type === 'resumed', 3000)).type, 'resumed');
+  assert.equal((await op.wait((m) => m.type === 'resumed', 3000)).type, 'resumed');
+});
+
+test('№13b: close после объявления не двигает грейс (??=) — конец по расписанию от объявления', async (t) => {
+  const { base, port, admin } = await setup(t, { leaseMs: 400, heartbeatMs: 200, graceMs: 1500 });
+  const { host, op } = await approvedSession(base, port, admin);
+
+  // T0 — момент объявления грейса (peer-reconnecting уходит оператору ровно в
+  // объявлении). Поздний close «мёртвого» сокета (T0+1400) не должен сдвигать
+  // clock грейса: конец обязан прийти к T0+2800 (грейс 1500 + тик свипера ≤1с);
+  // мутант `=` вместо `??=` отложил бы конец на close+grace ≈ T0+2900 и окно
+  // не поймал бы (мутационная проверка ревью v0.4.4)
+  await op.wait((m) => m.type === 'peer-reconnecting', 4000);
+  await new Promise((r) => setTimeout(r, 1400));
+  host.close();
+  const ended = await op.wait((m) => m.type === 'ended', 1400);
+  assert.equal(ended.reason, 'host-lost');
 });
 
 test('повторный decision allow — no-op: approved не рассылается дважды', async (t) => {

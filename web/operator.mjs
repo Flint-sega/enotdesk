@@ -297,12 +297,16 @@ function makePc(iceServers) {
   pc.onconnectionstatechange = () => {
     if (state.pc !== pc) { if (rtcGrace) { clearTimeout(rtcGrace); rtcGrace = null; } return; }
     if (pc.connectionState === 'disconnected') {
-      rtcGrace ??= setTimeout(() => {
+      // Тик самовозобновляется, пока активен rtc-hold: по истечении hold
+      // застрявший 'disconnected'/'failed' всё равно честно разрывается —
+      // иначе сеанс с мёртвым видео висел бы вечно (ревью v0.4.4, №15)
+      const tick = () => {
         rtcGrace = null;
         if (state.pc !== pc) return; // pc уже заменён — таймер чужой
-        if (rtcHoldActive()) return; // peer-reconnecting: ждём оффер в серверном грейсе
+        if (rtcHoldActive()) { rtcGrace = setTimeout(tick, 10_000); return; }
         rtcLinkLost();
-      }, 10000);
+      };
+      rtcGrace ??= setTimeout(tick, 10000);
       return;
     }
     if (pc.connectionState === 'connected' && rtcGrace) { clearTimeout(rtcGrace); rtcGrace = null; }
@@ -511,8 +515,11 @@ async function onSignal(msg) {
       break;
     case 'peer-reconnecting':
       // клиент потерял связь, сеанс жив (грейс сервера, ADR 0013). №15: держим
-      // видео-сеанс до server-grace+10с — не выходим по 10с rtc-таймеру
-      holdRtcLinkLost();
+      // видео-сеанс до server-grace+10с — не выходим по 10с rtc-таймеру.
+      // Guard по state.connect: осиротевшая страница (уже вышедшая из сеанса,
+      // но с живым ws) hold не взводит — иначе он протечёт в следующий сеанс
+      // (ревью v0.4.4)
+      if (state.connect) holdRtcLinkLost();
       showStatus(t('op.clientReconnecting'));
       break;
     case 'resumed':
