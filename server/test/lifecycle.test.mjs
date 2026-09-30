@@ -1,6 +1,61 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
+import net from 'node:net';
+import crypto from 'node:crypto';
 import { startServer, api, adminLogin, tmpDb, wsConnect, wsAuth } from './util.mjs';
+
+// Raw WS-клиент БЕЗ авто-pong: библиотеки ws/undici отвечают на ping сами, а для
+// terminate-ветки свипера нужен «тихо мёртвый» сокет, который ping игнорирует.
+// Рукописный handshake + разбор кадров, пинг (0x9) нарочито не отвечается.
+function rawWsNoPong(port) {
+  const sock = net.connect(port, '127.0.0.1');
+  const key = crypto.randomBytes(16).toString('base64');
+  const api = { log: [], closed: false };
+  let buf = Buffer.alloc(0);
+  let handshaken = false;
+  let openedResolve;
+  api.opened = new Promise((r) => { openedResolve = r; });
+  sock.on('connect', () => {
+    sock.write(
+      `GET /signal HTTP/1.1\r\nHost: 127.0.0.1:${port}\r\nUpgrade: websocket\r\nConnection: Upgrade\r\n` +
+      `Sec-WebSocket-Key: ${key}\r\nSec-WebSocket-Version: 13\r\n\r\n`);
+  });
+  sock.on('data', (chunk) => {
+    buf = Buffer.concat([buf, chunk]);
+    if (!handshaken) {
+      const idx = buf.indexOf('\r\n\r\n');
+      if (idx === -1) return;
+      buf = buf.subarray(idx + 4);
+      handshaken = true;
+      openedResolve();
+    }
+    while (buf.length >= 2) {
+      const opcode = buf[0] & 0x0f;
+      let len = buf[1] & 0x7f;
+      let off = 2;
+      if (len === 126) { if (buf.length < off + 2) return; len = buf.readUInt16BE(off); off += 2; }
+      else if (len === 127) { if (buf.length < off + 8) return; len = Number(buf.readBigUInt64BE(off)); off += 8; }
+      if (buf.length < off + len) return;
+      const payload = buf.subarray(off, off + len);
+      buf = buf.subarray(off + len);
+      if (opcode === 0x1) { try { api.log.push(JSON.parse(payload.toString())); } catch { /* не-JSON игнорируем */ } }
+      // ping (0x9) нарочито молчит; close (0x8) — фиксируем
+      if (opcode === 0x8) api.closed = true;
+    }
+  });
+  sock.on('close', () => { api.closed = true; });
+  api.send = (obj) => {
+    const payload = Buffer.from(JSON.stringify(obj));
+    const mask = crypto.randomBytes(4);
+    const header = payload.length < 126
+      ? Buffer.from([0x81, 0x80 | payload.length])
+      : Buffer.from([0x81, 0x80 | 126, (payload.length >> 8) & 0xff, payload.length & 0xff]);
+    const masked = Buffer.from(payload.map((b, i) => b ^ mask[i % 4]));
+    sock.write(Buffer.concat([header, mask, masked]));
+  };
+  api.close = () => sock.destroy();
+  return api;
+}
 
 async function setup(t, extra = {}) {
   const dbPath = tmpDb(t);
@@ -357,6 +412,52 @@ test('№13b: лимит пинг-циклов — «тихо мёртвый» �
   const row = h.json.items.find((it) => it.id === s.sessionId);
   assert.equal(row.endReason, 'lease-expired');
   host.close();
+});
+
+test('свипер: pong не пришёл за hostPingGraceMs — terminate, конец host-lost от объявления (тихая смерть)', async (t) => {
+  // Последняя «отложенная честно» ветка свипера: обычные ws-клиенты отвечают
+  // на ping сами (auto-pong), до v0.4.7 путь был недостижим в тестах. Raw-сокет
+  // ping'и игнорирует: объявление → ping → hostPingGraceMs без понга → terminate
+  // → participantLost НЕ двигает hostLostAt (??=) → конец host-lost по graceMs.
+  const { base, port, admin } = await setup(t, { leaseMs: 300, heartbeatMs: 200, graceMs: 2000, hostPingGraceMs: 400 });
+  const reg = await api(base, 'POST', '/sessions');
+  const s = reg.json;
+  const raw = rawWsNoPong(port);
+  await raw.opened;
+  raw.send({ type: 'auth', role: 'host', sessionId: s.sessionId, token: s.hostToken }); // хелпер сам строкует
+  const readyP = (async () => {
+    for (let i = 0; i < 40; i++) {
+      const m = raw.log.find((x) => x.type === 'ready');
+      if (m) return m;
+      await new Promise((r) => setTimeout(r, 25));
+    }
+    return null;
+  })();
+  const ready = await readyP;
+  assert.ok(ready, 'raw-сокет авторизован (ready)');
+  assert.equal(ready.state, 'waiting');
+
+  const claim = await api(base, 'POST', `/sessions/${s.sessionId}/claim`, { token: admin.token, body: { password: s.password } });
+  const claimId = claim.json.claimId;
+  const op = wsConnect(port);
+  await wsAuth(op, { type: 'auth', role: 'operator', sessionId: s.sessionId, token: admin.token, claimId });
+  await api(base, 'POST', `/sessions/${s.sessionId}/decision`, { token: s.hostToken, body: { claimId, allow: true } });
+  await op.wait((m) => m.type === 'approved');
+  // approved долито и raw-сокету (replay): сеанс утверждён, хост молчит
+
+  // Объявление грейса — первый peer-reconnecting оператору
+  const t0 = Date.now();
+  await op.wait((m) => m.type === 'peer-reconnecting', 5000);
+
+  // terminate (без понга) → participantLost (hostLostAt не сдвинут ??=) → конец строго от объявления
+  const ended = await op.wait((m) => m.type === 'ended', 9000);
+  assert.equal(ended.reason, 'host-lost', 'конец от ОБЪЯВЛЕНИЯ грейса, terminate не продлевает');
+  const elapsed = Date.now() - t0;
+  assert.ok(elapsed >= 1500 && elapsed < 6000,
+    `host-lost через graceMs после объявления: ${elapsed} мс`);
+  assert.equal(raw.closed, true, 'terminate закрыл сырой сокет');
+  raw.close();
+  op.close();
 });
 
 test('повторный decision allow — no-op: approved не рассылается дважды', async (t) => {
