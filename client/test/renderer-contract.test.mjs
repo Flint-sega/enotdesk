@@ -53,11 +53,44 @@ test('анти-мёртвые-кнопки: каждая кнопка из HTML 
 test('№18: desktop-оператор шлёт координаты клика в кнопке и захватывает указатель', () => {
   // регресс-защита десктопной половины №18 (web-половину ловит input-source.test):
   // без x,y у кнопки хост телепортирует курсор по lastX/lastY — «клик на крестик»;
-  // без setPointerCapture отпускание за краем видео залипает кнопку на хосте
+  // без setPointerCapture отпускание за краем видео залипает кнопку на хосте.
+  // Захват обязан идти из pointerdown: у MouseEvent (onmousedown) pointerId нет,
+  // setPointerCapture(undefined) бросал NotFoundError и не ставил ничего
+  // (ревью v0.4.6, high — подтверждено живым репро в Electron)
   const src = readFileSync(path.join(dir, 'operator-input.js'), 'utf8');
-  assert.match(src, /down: true, x, y/, 'mousedown несёт координаты клика');
-  assert.match(src, /down: false, x, y/, 'mouseup несёт координаты клика');
+  assert.match(src, /down: true, x, y/, 'кнопка down несёт координаты клика');
+  assert.match(src, /down: false, x, y/, 'кнопка up несёт координаты клика');
   assert.match(src, /setPointerCapture\?\.\(e\.pointerId\)/, 'указатель захвачен на down');
+  assert.match(src, /addEventListener\('pointerdown', onDown\)/, 'ввод — pointer-события (у MouseEvent нет pointerId)');
+  // pointercancel (тач-жест перехвачен браузером) отпускает кнопку — pointerup после него не придёт
+  assert.match(src, /pointercancel/, 'pointercancel обязан отпускать кнопку');
+  // координаты по кадру видео (videoWidth), а не по 16:9 CSS-боксу с буквицей
+  assert.match(src, /videoWidth/, 'нормализация по кадру видео, не по CSS-боксу (ревью v0.4.6)');
+  assert.match(src, /fit-cover/, 'учтён режим object-fit cover');
+});
+
+test('двойной onJoinStart не создаёт второй сеанс (joinInFlight)', () => {
+  // join-ссылка + TEST_AUTO_SESSION уходят в один тик; гвард по state.session
+  // бессилен против параллельных вызовов (create ещё в полёте) — ревью v0.4.6
+  const src = readFileSync(path.join(dir, 'views', 'client-view.js'), 'utf8');
+  assert.match(src, /joinInFlight/, 'флаг «create в полёте» должен сериализовать старты');
+  assert.match(src, /state\.session \|\| joinInFlight/, 'гвард стоит до первого await');
+});
+
+test('app.js: сигналинг/ended решают по сеансу, а не по активной вкладке', () => {
+  // привязка к state.role роняла восстановление №15 кликом по табу
+  // (оффер вернувшегося хоста молча отбрасывался) — ревью v0.4.6
+  const src = readFileSync(path.join(dir, 'app.js'), 'utf8');
+  assert.match(src, /if \(state\.connect && msg\.data\.description\.type === 'offer'\)/,
+    'оффер диспетчерится по сеансу оператора (state.connect)');
+  assert.match(src, /state\.session && state\.pc && msg\.data\.description\.type === 'answer'/,
+    'answer диспетчерится по сеансу клиента (state.session)');
+  assert.match(src, /const clientSide = state\.role === 'client' \|\| !!state\.session;/,
+    'экран завершения — по сеансу, симметрично rtcLinkLost');
+  assert.match(src, /if \(graceMs > 0\) holdRtcLink/,
+    'graceMs=0 (fail-closed): hold не берётся, паритет web');
+  assert.match(src, /case 'resumed':[\s\S]{0,500}connectionState === 'connected'/,
+    'resumed не заявляет «Подключено» при мёртвом pc');
 });
 
 test('CSP: стили только styles.css, без inline-стилей и inline-скриптов', () => {

@@ -16,11 +16,26 @@ const MOVE_THROTTLE_MS = 25; // как в desktop: не чаще ~40 событ�
 export function wireBrowserInput(video, send, { keys, onUnsupported, throttleMs = MOVE_THROTTLE_MS } = {}) {
   let lastMove = 0;
   const prevented = (e) => { if (typeof e?.preventDefault === 'function') e.preventDefault(); };
+  // Координаты — по КАДРУ видео, не по CSS-боксу: бокс жёстко 16:9 с
+  // object-fit contain/cover, при аспекте источника ≠16:9 буквица/кроп
+  // смещали бы каждый клик (ревью v0.4.6, medium; паритет desktop-оператору).
   const norm = (e) => {
     const r = video.getBoundingClientRect();
+    const vw = video.videoWidth, vh = video.videoHeight;
+    if (!vw || !vh || !r.width || !r.height) {
+      return {
+        x: Math.min(1, Math.max(0, (e.clientX - r.left) / r.width)),
+        y: Math.min(1, Math.max(0, (e.clientY - r.top) / r.height)),
+      };
+    }
+    const scale = video.classList.contains('fit-cover')
+      ? Math.max(r.width / vw, r.height / vh)
+      : Math.min(r.width / vw, r.height / vh);
+    const dw = vw * scale, dh = vh * scale;
+    const ox = (r.width - dw) / 2, oy = (r.height - dh) / 2;
     return {
-      x: Math.min(1, Math.max(0, (e.clientX - r.left) / r.width)),
-      y: Math.min(1, Math.max(0, (e.clientY - r.top) / r.height)),
+      x: Math.min(1, Math.max(0, (e.clientX - r.left - ox) / dw)),
+      y: Math.min(1, Math.max(0, (e.clientY - r.top - oy) / dh)),
     };
   };
   const raw = (obj) => {
@@ -36,6 +51,16 @@ export function wireBrowserInput(video, send, { keys, onUnsupported, throttleMs 
     raw({ type: 'move', x, y });
   };
   const buttonName = (e) => BUTTONS[e.button] ?? null;
+  // Зажатые кнопки по pointerId: pointercancel (тач-жест перехвачен браузером)
+  // не приносит pointerup — без трекинга кнопка залипала бы на хосте до конца
+  // сеанса (ревью v0.4.6, medium)
+  const downByPointer = new Map();
+  const release = (btn, e) => {
+    if (!btn) return;
+    const { x, y } = norm(e);
+    raw({ type: 'move', x, y });
+    raw({ type: 'button', button: btn, down: false, x, y });
+  };
   const onDown = (e) => {
     const btn = buttonName(e);
     if (!btn) return;
@@ -43,6 +68,7 @@ export function wireBrowserInput(video, send, { keys, onUnsupported, throttleMs 
     // Захват указателя: отпускание за краем видео всё равно придёт сюда —
     // иначе кнопка на хосте залипает до конца сеанса (ревью GLM-5.3 #3, confirmed)
     try { video.setPointerCapture?.(e.pointerId); } catch { /* не критично */ }
+    downByPointer.set(e.pointerId, btn);
     const { x, y } = norm(e); // клик там, где курсор, даже если движение ещё не посылалось
     raw({ type: 'move', x, y });
     // №18: координаты при кнопке — хост собирает пакет [абс-move][кнопка] в точку
@@ -50,11 +76,16 @@ export function wireBrowserInput(video, send, { keys, onUnsupported, throttleMs 
     raw({ type: 'button', button: btn, down: true, x, y });
   };
   const onUp = (e) => {
-    const btn = buttonName(e);
-    if (!btn) return;
-    const { x, y } = norm(e);
-    raw({ type: 'move', x, y });
-    raw({ type: 'button', button: btn, down: false, x, y });
+    // явная кнопка из pointerup сильнее трекинга (спека: button = отпущенная);
+    // трекинг — fallback для нестандартных up без button
+    const btn = buttonName(e) ?? downByPointer.get(e.pointerId);
+    downByPointer.delete(e.pointerId);
+    release(btn, e);
+  };
+  const onCancel = (e) => {
+    const btn = downByPointer.get(e.pointerId);
+    downByPointer.delete(e.pointerId);
+    release(btn, e);
   };
   const onContext = (e) => prevented(e);
   const onWheel = (e) => {
@@ -107,6 +138,7 @@ export function wireBrowserInput(video, send, { keys, onUnsupported, throttleMs 
 
   const bindings = [
     ['pointermove', onMove], ['pointerdown', onDown], ['pointerup', onUp],
+    ['pointercancel', onCancel],
     ['contextmenu', onContext], ['wheel', onWheel], ['pointerenter', onEnter], ['pointerleave', onLeave],
   ];
   for (const [type, fn] of bindings) video.addEventListener(type, fn);

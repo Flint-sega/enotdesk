@@ -193,7 +193,11 @@ env_value() { # $1=KEY $2=file
 # молча сносить установленный хаб); пустое значение спросим в TTY / считаем «нет».
 if [ "$HUB_SET" = "0" ]; then
   if [ "$MODE" = "docker" ] && [ -f "./enotdesk-docker/.env" ]; then
-    HUB="$(env_value ENOT_HUB ./enotdesk-docker/.env)"
+    # docker-режим пишет в .env ключ HUB (не ENOT_HUB): чтение только по
+    # ENOT_HUB возвращало пустоту, и --update молча выключал установленный
+    # хаб (ревью v0.4.6) — читаем оба ключа
+    HUB="$(env_value HUB ./enotdesk-docker/.env)"
+    [ -z "$HUB" ] && HUB="$(env_value ENOT_HUB ./enotdesk-docker/.env)"
   elif [ -f /etc/enotdesk/enotdesk.env ]; then
     HUB="$(env_value ENOT_HUB /etc/enotdesk/enotdesk.env)"
   fi

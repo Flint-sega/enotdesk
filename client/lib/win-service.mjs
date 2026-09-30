@@ -14,7 +14,7 @@
 // Логика отделена от koffi-клея (createScmParentLogic) и тестируется на
 // инъекциях без koffi и без Windows.
 
-import { envDiagSlice } from './svc-diag.mjs';
+import { envDiagSlice, maskJoinTokens } from './svc-diag.mjs';
 
 const SERVICE_WIN32_OWN_PROCESS = 0x10;
 const SERVICE_STOPPED = 0x1;
@@ -145,7 +145,16 @@ export function createScmParentLogic({ setStatus = () => {}, spawnChild = () => 
 let scmGlue = null;
 function scmTypes(koffi) {
   if (scmGlue) return scmGlue;
-  koffi.struct('ENOT_SERVICE_STATUS', {
+  // Повторная регистрация имени бросает «Duplicate type name»: при частичном
+  // отказе прошлого вызова (структура зарегистрирована, scmGlue не присвоен)
+  // повторный вызов падал бы тем же классом, что чинил 3349bf4 (ревью v0.4.6).
+  // Конвенция native-input.mjs: дубликат глотаем — тип уже в реестре процесса.
+  const regStruct = (name, fields) => {
+    try { koffi.struct(name, fields); } catch (e) {
+      if (!/Duplicate type name/.test(e?.message ?? '')) throw e;
+    }
+  };
+  regStruct('ENOT_SERVICE_STATUS', {
     dwServiceType: 'unsigned long',
     dwCurrentState: 'unsigned long',
     dwControlsAccepted: 'unsigned long',
@@ -160,13 +169,23 @@ function scmTypes(koffi) {
   // бросал «Unknown or invalid type name 'HandlerProc'», родитель умирал за
   // 1 с (exit 1) до всякого SetServiceStatus, и SCM рапортовал 7009/1053.
   // Имя типа в прототипе обязано совпадать со строковой ссылкой.
-  const HandlerProc = koffi.proto('unsigned long HandlerProc(unsigned long, unsigned long, void *, void *)');
-  const ServiceMainProc = koffi.proto('void ServiceMainProc(unsigned long, void *)');
-  koffi.struct('ENOT_SERVICE_TABLE_ENTRY', {
+  let HandlerProc;
+  let ServiceMainProc;
+  try {
+    HandlerProc = koffi.proto('unsigned long HandlerProc(unsigned long, unsigned long, void *, void *)');
+    ServiceMainProc = koffi.proto('void ServiceMainProc(unsigned long, void *)');
+  } catch (e) {
+    if (!/Duplicate/.test(e?.message ?? '')) throw e;
+    // прототипы уже в реестре (частичный отказ прошлого вызова) —
+    // ссылки по имени: сигнатуры и koffi.pointer принимают имя типа строкой
+    HandlerProc = 'HandlerProc';
+    ServiceMainProc = 'ServiceMainProc';
+  }
+  regStruct('ENOT_SERVICE_TABLE_ENTRY', {
     lpServiceName: 'const char *',
     // ВАЖНО (ревью 28.09): koffi-тип НЕ конкатенируется со строкой —
     // ServiceMainProc + ' *' даёт '[object Object] *' и koffi.struct бросает.
-    // Только явный koffi.pointer(...).
+    // Только явный koffi.pointer(...). Имя-строкой тоже валидно.
     lpServiceProc: koffi.pointer(ServiceMainProc),
   });
   scmGlue = { HandlerProc, ServiceMainProc };
@@ -205,7 +224,9 @@ export async function runAsScmParent({ serviceName = 'EnotDeskAgent', childArgv 
   const logic = createScmParentLogic({
     setStatus,
     spawnChild: (onExit) => {
-      diag.write('svc', `spawn: exec="${process.execPath}" argv=${JSON.stringify(childArgv)} childEnv=[${Object.keys(childEnv).join(',')}] env[${envDiagSlice()}]`);
+      // argv может нести join-ссылку с одноразовым токеном — в лог он не идёт
+      // (контракт svc-diag, ревью v0.4.6: маска была только в main.mjs)
+      diag.write('svc', `spawn: exec="${process.execPath}" argv=${maskJoinTokens(JSON.stringify(childArgv))} childEnv=[${Object.keys(childEnv).join(',')}] env[${envDiagSlice()}]`);
       const child = spawn(process.execPath, childArgv, {
         env: { ...process.env, ...childEnv },
         stdio: 'ignore',

@@ -87,6 +87,21 @@ test('неизвестная кнопка (4 = назад) протокол не
   assert.deepEqual(sent, []);
 });
 
+test('pointercancel отпускает зажатую кнопку — тач-жест планшета не залипает', () => {
+  // перехваченный браузером жест даёт pointercancel без последующего pointerup:
+  // без релиза здесь кнопка оставалась зажатой на хосте до конца сеанса (ревью v0.4.6)
+  const video = fakeVideo();
+  const sent = [];
+  wireBrowserInput(video, (m) => sent.push(m), { keys: INPUT_KEYS, throttleMs: 0 });
+  video.dispatch(ev('pointerdown', { button: 0, clientX: 10, clientY: 20, pointerId: 7 }));
+  sent.length = 0;
+  video.dispatch(ev('pointercancel', { clientX: 12, clientY: 22, pointerId: 7 }));
+  assert.deepEqual(sent, [
+    { type: 'move', x: 0.12, y: 0.22 },
+    { type: 'button', button: 'left', down: false, x: 0.12, y: 0.22 },
+  ]);
+});
+
 test('wheel: 120px по вертикали = 3 строки, мелкий тачпад-жест гасится', () => {
   const video = fakeVideo();
   const sent = [];

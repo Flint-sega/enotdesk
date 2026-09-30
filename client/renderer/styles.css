@@ -463,6 +463,9 @@ input[type="checkbox"] {
   background: var(--bg-deep); border: 1px solid var(--border); border-radius: var(--r-md);
   box-shadow: 0 14px 44px rgba(0, 0, 0, .42);
   object-fit: contain;
+  /* тач-жесты планшета не перехватываются браузером — иначе pointercancel
+     без парного pointerup и кнопка залипает на хосте (ревью v0.4.6) */
+  touch-action: none;
 }
 #remote-video.fit-cover { object-fit: cover; }
 

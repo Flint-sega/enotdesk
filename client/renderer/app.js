@@ -77,7 +77,11 @@ enot.onSignal(async (msg) => {
     case 'signal':
       try {
         if (msg.data?.description) {
-        if (state.role === 'operator' && msg.data.description.type === 'offer') {
+        // Критерий — сеанс, а не state.role (активная вкладка меняется кликом
+        // по табу в живом сеансе; привязка к роли роняла восстановление №15
+        // и answer клиента, ревью v0.4.6). Оператор получает offer'ы,
+        // клиент-хост — answer.
+        if (state.connect && msg.data.description.type === 'offer') {
           await operatorAnswer(msg.data.description.sdp);
           // 'ended'/rtcLinkLost могли прийти во время await — не показываем
           // экран живого сеанса поверх честной формы (ревью v0.4.3, паритет web)
@@ -85,7 +89,7 @@ enot.onSignal(async (msg) => {
           show($('op-remote'));
           hide($('op-waiting'));
           text($('remote-status'), t('status.connected'));
-        } else if (state.role === 'client' && state.pc && msg.data.description.type === 'answer') {
+        } else if (state.session && state.pc && msg.data.description.type === 'answer') {
           await state.pc.setRemoteDescription({ type: 'answer', sdp: msg.data.description.sdp });
           drainIce(state.pc);
         }
@@ -102,21 +106,28 @@ enot.onSignal(async (msg) => {
       if (state.session) text($('client-live-note'), msg.role === 'operator' ? t('op.operatorReconnecting') : t('op.genericReconnecting'));
       else if (state.connect) {
         // №15: видео-сеанс оператора держим до server-grace + запас — вернувшийся
-        // клиент пришлёт новый оффер в живой operatorAnswer
-        const graceMs = typeof state.graceMs === 'number' && state.graceMs > 0 ? state.graceMs : 30_000;
-        holdRtcLink(graceMs + 10_000);
+        // клиент пришлёт новый оффер в живой operatorAnswer. graceMs=0 — сервер
+        // fail-closed: грейса не будет, hold не берём (паритет web, ревью v0.4.6)
+        const graceMs = typeof state.graceMs === 'number' ? state.graceMs : 0;
+        if (graceMs > 0) holdRtcLink(graceMs + 10_000);
         text($('remote-status'), t('op.clientReconnecting'));
       }
       break;
     case 'resumed':
       if (state.session) text($('client-live-note'), '');
-      else if (state.connect) text($('remote-status'), t('status.connected'));
+      else if (state.connect) {
+        // «Подключено» — только при живом pc: сигналинг вернулся раньше медиа,
+        // заявлять успех при мёртвом pc — фейк (ревью v0.4.6)
+        text($('remote-status'), state.pc?.connectionState === 'connected' ? t('status.connected') : t('op.clientReconnecting'));
+      }
       break;
     case 'ended': {
       // cleanupSession (не просто stopMedia): гасит карточку ретрая и streamPaused —
       // они не должны переживать сеанс (ревью GLM-5.3 #3)
       cleanupSession();
-      const clientSide = state.role === 'client';
+      // Критерий — сеанс, а не активная вкладка: симметрично rtcLinkLost
+      // (ревью v0.4.6 — клиент на чужой вкладке видел операторскую форму)
+      const clientSide = state.role === 'client' || !!state.session;
       if (clientSide) {
         text($('ended-reason'), endReasonText(msg.reason));
         clientShow('ended');

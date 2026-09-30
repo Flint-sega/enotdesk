@@ -119,6 +119,21 @@ async function approvedSession(base, port, admin) {
   return { s, host, op, claimId };
 }
 
+// Ожидание НАБЛЮДАЕМОГО предусловия вместо слипа «в надежде»: слип после
+// host.close() на медленном раннере кончался раньше обработки close, auth
+// упирался в duplicate-4004 и ронял тест бессмысленным «timeout»
+// (ревью v0.4.6)
+async function waitFor(cond, ms = 2500, step = 25) {
+  const deadline = Date.now() + ms;
+  while (Date.now() < deadline) {
+    if (cond()) return;
+    await new Promise((r) => setTimeout(r, step));
+  }
+  assert.ok(cond(), 'наблюдаемое предусловие не выполнилось за отведённое время');
+}
+
+const peerNotes = (ws) => ws.log.filter((m) => m?.type === 'peer-reconnecting');
+
 test('грейс: host переподключается тем же токеном — сеанс жив, обе стороны получают resumed', async (t) => {
   const { base, port, admin } = await setup(t, { leaseMs: 400, heartbeatMs: 200, graceMs: 5000 });
   const { s, host, op, claimId } = await approvedSession(base, port, admin);
@@ -219,7 +234,9 @@ test('№13b: ретрай в пинг-окне не 4003, после terminate 
   // что и после серверного terminate: rt.hostWs = null + participantLost,
   // который НЕ двигает объявленный свипером грейс
   host.close();
-  await new Promise((r) => setTimeout(r, 150));
+  // close обработан, когда participantLost долил оператору ВТОРОЙ
+  // peer-reconnecting (объявление было первым) — не «через 150 мс»
+  await waitFor(() => peerNotes(op).length >= 2);
   const host2 = wsConnect(port);
   const ready = await wsAuth(host2, { type: 'auth', role: 'host', sessionId: s.sessionId, token: s.hostToken });
   assert.equal(ready.state, 'approved');
@@ -270,13 +287,16 @@ test('№13b: оживший heartbeat снимает объявленный г�
 // ---- №13b доводка по ревью GLM-5.3 v0.4.4 ----
 
 test('№13b: ретрай в зазоре «лизинг истёк, свипер ещё не объявил» — без 4003', async (t) => {
-  const { base, port, admin } = await setup(t, { leaseMs: 400, heartbeatMs: 200, graceMs: 5000 });
+  // heartbeatMs=800: свипер впервые видит сеанс только на тике с
+  // now > T_claim+1200 — зазор до первого объявляющего тика шире 750 мс,
+  // ретрай на ~450 мс после claim попадает в него и на медленном раннере
+  const { base, port, admin } = await setup(t, { leaseMs: 400, heartbeatMs: 800, graceMs: 5000 });
   const { s, host, op } = await approvedSession(base, port, admin);
 
-  // Зазор детерминирован: лизинг истекает t0+400, свипер впервые видит сеанс
-  // только на тике с now > t0+600 — ретрай на t0+450 попадает в зазор, где
-  // старый код отдавал фатальный 4003 («сеанса нет» → клиент сдавался).
   await new Promise((r) => setTimeout(r, 450));
+  // Предусловие зазора — наблюдаемое: свипер ещё НЕ объявлял грейс оператору.
+  // Без него покрытие мутации gate-4003 вероятностно (ревью v0.4.6)
+  assert.equal(peerNotes(op).length, 0, 'ретрай обязан попасть в зазор ДО объявления грейса');
   const retry1 = wsConnect(port);
   await retry1.opened;
   retry1.send(JSON.stringify({ type: 'auth', role: 'host', sessionId: s.sessionId, token: s.hostToken }));
@@ -284,9 +304,10 @@ test('№13b: ретрай в зазоре «лизинг истёк, свипе
   // фатального 4003 в утверждённом сеансе больше не существует вовсе
   assert.equal(await retry1.closeCode(), 4004);
 
-  // слот освобождается → грейс от participantLost → ретрай принимается
+  // слот освобождается → грейс от participantLost (первый peer-reconnecting
+  // оператору) → ретрай принимается; ждём событие, а не «150 мс»
   host.close();
-  await new Promise((r) => setTimeout(r, 150));
+  await waitFor(() => peerNotes(op).length >= 1);
   const retry2 = wsConnect(port);
   const ready = await wsAuth(retry2, { type: 'auth', role: 'host', sessionId: s.sessionId, token: s.hostToken });
   assert.equal(ready.state, 'approved');
@@ -314,8 +335,28 @@ test('№13b: close после объявления не двигает грей
   const h = await api(base, 'GET', '/history?limit=1', { token: admin.token });
   const row = h.json.items.find((it) => it.id === s.sessionId);
   const elapsed = Date.parse(row.endedAt) - t0;
-  assert.ok(elapsed >= 1000 && elapsed < 2800,
+  // потолок 2900, не 2800: джиттер тика свипера до ~800 мс не должен ронять
+  // честный прогон (мутант `=` даёт ≥2900 всегда — различение сохранено,
+  // ревью v0.4.6)
+  assert.ok(elapsed >= 1000 && elapsed < 2900,
     `грейс должен тикать от ОБЪЯВЛЕНИЯ: endedAt-t0 = ${elapsed} мс (мутант = дал бы ≥2900)`);
+});
+
+test('№13b: лимит пинг-циклов — «тихо мёртвый» хост не держит слот бессрочно (HOST_PING_MAX)', async (t) => {
+  // graceMs=0: грейс не объявляется, hostLostAt не ставится — каждый тик
+  // свипера при истёкшем лизинге и живом (но молчащем) сокете хоста
+  // инкрементит hostPingCount; после HOST_PING_MAX — честный lease-expired.
+  // Раньше ветка не покрывалась ничем: удаление гварда проходило весь сюит
+  // (ревью v0.4.6), а регресс вернул бы бессрочное занятие слота live/maxSessions
+  const { base, port, admin } = await setup(t, { leaseMs: 300, heartbeatMs: 300, graceMs: 0, sweeperMs: 100 });
+  const { s, host, op } = await approvedSession(base, port, admin);
+
+  const ended = await op.wait((m) => m.type === 'ended', 8000);
+  assert.equal(ended.reason, 'lease-expired', 'пинг-лимит должен гасить зомби-хост как lease-expired');
+  const h = await api(base, 'GET', '/history', { token: admin.token });
+  const row = h.json.items.find((it) => it.id === s.sessionId);
+  assert.equal(row.endReason, 'lease-expired');
+  host.close();
 });
 
 test('повторный decision allow — no-op: approved не рассылается дважды', async (t) => {

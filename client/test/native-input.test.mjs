@@ -322,3 +322,112 @@ test('dispatch move: originX/originY не-основного дисплея пр
   ni.dispatch({ type: 'move', x: 0.5, y: 0.5 }, { width: 1000, height: 800, originX: 1920, originY: -200 });
   assert.deepEqual(moved, [[1920 + 500, -200 + 400]]);
 });
+
+// ---- mac/x11 адаптеры (ревью v0.4.6): раньше не покрывались ничем — откат
+// №18-at-координат и новых фиксов (флаги мыши, XFlush) проходил весь сюит.
+
+function buildMacAdapter(fakeKoffi) {
+  const realPlatform = process.platform;
+  Object.defineProperty(process, 'platform', { value: 'darwin' });
+  try { return loadPlatformAdapter(fakeKoffi); }
+  finally { Object.defineProperty(process, 'platform', { value: realPlatform }); }
+}
+
+function macCgMock({ created = [], flags = [], posted = [] } = {}) {
+  return {
+    load() {
+      let handle = 1;
+      return {
+        func(sig) {
+          if (/CGEventCreateMouseEvent/.test(sig)) {
+            return (_a, type, x, y, btn) => { const ev = { h: handle++, kind: 'mouse', type, x, y, btn }; created.push(ev); return ev; };
+          }
+          if (/CGEventCreateKeyboardEvent/.test(sig)) {
+            return (_a, code, down) => { const ev = { h: handle++, kind: 'key', code, down }; created.push(ev); return ev; };
+          }
+          if (/CGEventCreateScrollWheelEvent/.test(sig)) {
+            return (_a, units, count, val) => { const ev = { h: handle++, kind: 'scroll', val }; created.push(ev); return ev; };
+          }
+          if (/CGEventSetFlags/.test(sig)) return (ev, f) => { flags.push([ev.h, f]); };
+          if (/CGEventPost/.test(sig)) return (_t, ev) => { posted.push(ev); };
+          if (/CFRelease/.test(sig)) return () => {};
+          throw new Error('unexpected CG sig: ' + sig);
+        },
+      };
+    },
+  };
+}
+
+test('macAdapter: клик идёт в координаты цели (at, №18) и несёт флаги модификаторов', () => {
+  const created = []; const flags = []; const posted = [];
+  const ad = buildMacAdapter(macCgMock({ created, flags, posted }));
+  assert.equal(ad.platform, 'macos-coregraphics', 'mac-адаптер собрался на моке');
+
+  ad.move(960, 540);
+  ad.button('left', true, [100, 200]);
+  const mice = created.filter((e) => e.kind === 'mouse');
+  assert.deepEqual([mice[0].x, mice[0].y], [960, 540]);
+  assert.deepEqual([mice[1].x, mice[1].y], [100, 200], 'клик — в точку цели, не по lastPx (№18)');
+  // ревью v0.4.6: каждое mouse-событие сопровождается CGEventSetFlags
+  assert.equal(flags.length, mice.length, 'CGEventSetFlags на каждом mouse-событии');
+
+  // shift зажат → следующий клик уходит с kCGEventFlagMaskShift (0x020000):
+  // раньше mouse-события уходили с flags=0 и shift-клик терялся
+  ad.key('shift', true);
+  ad.button('right', true, null);
+  assert.equal(flags.at(-1)[1], 0x020000, 'shift-клик несёт флаг модификатора');
+  assert.ok(posted.length >= 4, 'все события отправлены');
+});
+
+function buildX11Adapter(fakeKoffi) {
+  const realPlatform = process.platform;
+  Object.defineProperty(process, 'platform', { value: 'linux' });
+  try { return loadPlatformAdapter(fakeKoffi); }
+  finally { Object.defineProperty(process, 'platform', { value: realPlatform }); }
+}
+
+function x11Mock(state) {
+  return {
+    load(libPath) {
+      if (/libX11/.test(libPath)) {
+        return {
+          func(sig) {
+            if (/XOpenDisplay/.test(sig)) return () => 0x1000;
+            if (/XCloseDisplay/.test(sig)) return () => 1;
+            if (/XFlush/.test(sig)) return () => { state.flushes += 1; return 1; };
+            if (/XStringToKeysym/.test(sig)) return () => 0xffe1;
+            if (/XKeysymToKeycode/.test(sig)) return () => 50;
+            throw new Error('unexpected X11 sig: ' + sig);
+          },
+        };
+      }
+      return {
+        func(sig) {
+          if (/XTestFakeMotionEvent/.test(sig)) return (_d, _s, x, y) => { state.motions.push([x, y]); return 1; };
+          if (/XTestFakeButtonEvent/.test(sig)) return (_d, b, press) => { state.buttons.push([b, press]); return 1; };
+          if (/XTestFakeKeyEvent/.test(sig)) return (_d, kc, press) => { state.keys.push([kc, press]); return 1; };
+          throw new Error('unexpected Xtst sig: ' + sig);
+        },
+      };
+    },
+  };
+}
+
+test('x11Adapter: координаты цели (at, №18) и XFlush после каждой операции', () => {
+  const state = { motions: [], buttons: [], keys: [], flushes: 0 };
+  const ad = buildX11Adapter(x11Mock(state));
+  assert.equal(ad.platform, 'linux-x11', 'x11-адаптер собрался на моке (wayland-зонд мимо)');
+
+  ad.move(10, 20);
+  assert.deepEqual(state.motions.at(-1), [10, 20]);
+  const afterMove = state.flushes;
+  assert.ok(afterMove >= 1, 'move флашит буфер Xlib — без XFlush ввод доезжал пачками (ревью v0.4.6)');
+
+  ad.button('left', true, [300, 400]);
+  assert.deepEqual(state.motions.at(-1), [300, 400], 'перед кнопкой — движение в точку цели (№18)');
+  assert.deepEqual(state.buttons.at(-1), [1, 1], 'левая кнопка нажата');
+  assert.ok(state.flushes > afterMove, 'button флашит');
+
+  assert.equal(ad.key('a', true), true, 'буква резолвится в keycode');
+  assert.deepEqual(state.keys.at(-1), [50, 1]);
+});
