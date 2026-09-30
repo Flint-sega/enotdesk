@@ -381,9 +381,23 @@ test('macAdapter: клик идёт в координаты цели (at, №18)
 
 function buildX11Adapter(fakeKoffi) {
   const realPlatform = process.platform;
+  // wayland-зонд читает реальный process.env: на машине разработчика с
+  // WAYLAND_DISPLAY/сеансом wayland адаптер честно вернёт linux-wayland и тест
+  // упадёт без всякой регрессии — изолируем env (ревью v0.4.6 доводка)
+  const saved = {
+    platform: realPlatform,
+    WAYLAND_DISPLAY: process.env.WAYLAND_DISPLAY,
+    XDG_SESSION_TYPE: process.env.XDG_SESSION_TYPE,
+  };
+  delete process.env.WAYLAND_DISPLAY;
+  delete process.env.XDG_SESSION_TYPE;
   Object.defineProperty(process, 'platform', { value: 'linux' });
   try { return loadPlatformAdapter(fakeKoffi); }
-  finally { Object.defineProperty(process, 'platform', { value: realPlatform }); }
+  finally {
+    Object.defineProperty(process, 'platform', { value: saved.platform });
+    if (saved.WAYLAND_DISPLAY !== undefined) process.env.WAYLAND_DISPLAY = saved.WAYLAND_DISPLAY;
+    if (saved.XDG_SESSION_TYPE !== undefined) process.env.XDG_SESSION_TYPE = saved.XDG_SESSION_TYPE;
+  }
 }
 
 function x11Mock(state) {

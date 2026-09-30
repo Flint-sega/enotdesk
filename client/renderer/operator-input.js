@@ -99,10 +99,13 @@ export function wireOperatorInput(dc) {
     downButtons.delete(e.pointerId);
     release(btn, e);
   };
-  video.addEventListener('pointermove', onMove);
-  video.addEventListener('pointerdown', onDown);
-  video.addEventListener('pointerup', onUp);
-  video.addEventListener('pointercancel', onCancel);
+  // Слушатели снимаемы: #remote-video один на все сеансы страницы, без detach
+  // каждый re-offer/новый сеанс навсегда добавлял бы по 4 слушателя (паритет
+  // web-твину, ревью v0.4.6 доводка). Свойства (onwheel/onkeydown) самозаменяемы.
+  const bindings = [
+    ['pointermove', onMove], ['pointerdown', onDown], ['pointerup', onUp], ['pointercancel', onCancel],
+  ];
+  for (const [type, fn] of bindings) video.addEventListener(type, fn);
   video.oncontextmenu = (e) => e.preventDefault();
   video.onwheel = (e) => {
     e.preventDefault();
@@ -125,5 +128,10 @@ export function wireOperatorInput(dc) {
     const allowed = await ensureKeys();
     if (!allowed.has(key)) return; // keydown уже отклонён с ошибкой; up молчать нечему
     send({ type: 'key', key, down: false });
+  };
+  return {
+    detach: () => {
+      for (const [type, fn] of bindings) video.removeEventListener(type, fn);
+    },
   };
 }

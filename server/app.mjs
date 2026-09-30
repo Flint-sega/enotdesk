@@ -404,6 +404,7 @@ export function createServer(opts = {}) {
     const out = fs.createWriteStream(filePath);
     let total = 0;
     let aborted = false;
+    let failed = false;
     await new Promise((resolve) => {
       req.on('data', (chunk) => {
         total += chunk.length;
@@ -417,13 +418,16 @@ export function createServer(opts = {}) {
         }
         out.write(chunk);
       });
-      req.on('end', () => { out.end(); resolve(); });
-      req.on('error', () => { out.destroy(); resolve(); });
+      // 201 отдаём только когда данные ДОШЛИ до диска: resolve по 'end' запроса
+      // гонял флаш стрима с ответом — мгновенный download ловил 410/частичный
+      // файл (флейк relay-теста, найден 30.09); честная точка — 'close' стрима
+      req.on('end', () => out.end());
+      req.on('error', () => { failed = true; out.destroy(); });
       out.on('close', () => resolve());
     });
-    if (aborted || total === 0) {
+    if (aborted || failed || total === 0) {
       try { fs.unlinkSync(filePath); } catch { /* уже удалён */ }
-      return err(res, aborted ? 413 : 400, aborted ? 'too_large' : 'bad_request', aborted ? `Файл больше ${Math.round(cfg.relayMax / 1048576)} МБ` : 'Пустой файл');
+      return err(res, aborted ? 413 : 400, aborted ? 'too_large' : 'bad_request', aborted ? `Файл больше ${Math.round(cfg.relayMax / 1024 / 1024)} МБ` : 'Пустой файл');
     }
     const expiresAt = new Date(cfg.nowMs() + cfg.relayTtlDays * 86_400_000).toISOString();
     db.prepare(`INSERT INTO relay_files (id, name, size, path, token_hash, created_by, created_at, expires_at)

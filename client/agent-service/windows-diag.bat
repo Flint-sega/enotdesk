@@ -10,8 +10,16 @@ set "ENOT_DIR=%ProgramData%\EnotDesk"
 
 rem "off" turns diag collection off (marker removed, log stays for support)
 if /i "%~1"=="off" (
-  if exist "%ENOT_DIR%\svc-diag.enabled" del "%ENOT_DIR%\svc-diag.enabled"
-  echo [off] diag collection disabled: marker %ENOT_DIR%\svc-diag.enabled removed.
+  if exist "%ENOT_DIR%\svc-diag.enabled" (
+    del "%ENOT_DIR%\svc-diag.enabled"
+    if errorlevel 1 (
+      echo [error] could not remove the marker - run this AS ADMINISTRATOR.
+    ) else (
+      echo [off] diag collection disabled: marker %ENOT_DIR%\svc-diag.enabled removed.
+    )
+  ) else (
+    echo [off] marker not present - diag collection is already off.
+  )
   echo        Old log kept at %ENOT_DIR%\svc-diag.log - delete it if not needed.
   pause
   exit /b 0
@@ -19,7 +27,9 @@ if /i "%~1"=="off" (
 
 rem Administrator rights are REQUIRED (service restart + marker in ProgramData):
 rem without them every step below fails silently and the report misleads support.
-net session >nul 2>&1
+rem fltmc, not "net session": the latter false-negatives an admin when the
+rem Server (LanmanServer) service is stopped on hardened machines.
+fltmc >nul 2>&1
 if errorlevel 1 (
   echo [error] Run this script AS ADMINISTRATOR - nothing was changed.
   echo         To just disable diag: run as admin:  windows-diag.bat off

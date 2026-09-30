@@ -61,12 +61,17 @@ test('№18: desktop-оператор шлёт координаты клика �
   assert.match(src, /down: true, x, y/, 'кнопка down несёт координаты клика');
   assert.match(src, /down: false, x, y/, 'кнопка up несёт координаты клика');
   assert.match(src, /setPointerCapture\?\.\(e\.pointerId\)/, 'указатель захвачен на down');
-  assert.match(src, /addEventListener\('pointerdown', onDown\)/, 'ввод — pointer-события (у MouseEvent нет pointerId)');
+  assert.match(src, /\['pointerdown', onDown\]/, 'ввод — pointer-события (у MouseEvent нет pointerId)');
   // pointercancel (тач-жест перехвачен браузером) отпускает кнопку — pointerup после него не придёт
   assert.match(src, /pointercancel/, 'pointercancel обязан отпускать кнопку');
   // координаты по кадру видео (videoWidth), а не по 16:9 CSS-боксу с буквицей
   assert.match(src, /videoWidth/, 'нормализация по кадру видео, не по CSS-боксу (ревью v0.4.6)');
   assert.match(src, /fit-cover/, 'учтён режим object-fit cover');
+  // addEventListener без detach накапливал бы слушатели на единственном видео
+  // при каждом re-offer — detach обязателен (паритет web-твину, ревью v0.4.6)
+  assert.match(src, /return \{\s*detach/, 'wireOperatorInput возвращает {detach}');
+  const mediaSrc = readFileSync(path.join(dir, 'session-media.js'), 'utf8');
+  assert.match(mediaSrc, /inputDetach\?\.detach\?\.\(\)/, 'слушатели снимаются при перепроводке/конце сеанса');
 });
 
 test('двойной onJoinStart не создаёт второй сеанс (joinInFlight)', () => {
