@@ -108,6 +108,8 @@ export function cleanupSession() {
 }
 
 export function stopMedia() {
+  inputDetach?.detach?.(); // pointer-слушатели оператора не переживают сеанс
+  inputDetach = null;
   try { state.localStream?.getTracks().forEach((track) => track.stop()); } catch { /* треки уже остановлены */ }
   try { state.dc?.close(); } catch { /* уже закрыт */ }
   for (const ch of Object.values(state.dcs ?? {})) { try { ch.close(); } catch { /* уже закрыт */ } }
@@ -149,8 +151,10 @@ export function makePc(iceServers) {
       };
       // Гонка №15 (ревью v0.4.6): серверный peer-reconnecting при тихой
       // заморозке приходит позже (~20-26 с), чем выстрелил бы локальный 10с-тик
-      // — hold взводим уже здесь по известному серверному graceMs.
-      if (!rtcLinkHoldActive() && (state.graceMs ?? 0) > 0) holdRtcLink(state.graceMs + 10_000);
+      // — hold взводим уже здесь по известному серверному graceMs. Только
+      // оператор (state.connect): клиент-роль hold не берёт — его честный
+      // локальный конец через 10с ценнее замороженного экрана (инвариант №15)
+      if (state.connect && !rtcLinkHoldActive() && (state.graceMs ?? 0) > 0) holdRtcLink(state.graceMs + 10_000);
       rtcGrace ??= setTimeout(tick, 10000);
       return;
     }
@@ -164,11 +168,16 @@ export function makePc(iceServers) {
       // hold-тик не взведён — назначаем проверку на конец hold, иначе мёртвое
       // видео висело бы бессрочно (ревью v0.4.6, medium; паритет web)
       if (rtcLinkHoldActive()) {
-        rtcGrace ??= setTimeout(() => {
+        // Перепроверяем rtcLinkHoldActive() и при продлении hold
+        // (peer-reconnecting пришёл позже) ждём уже НОВЫЙ конец — иначе рвали
+        // бы сеанс до истечения продлённого hold (ревью v0.4.6, доводка)
+        const recheck = () => {
           rtcGrace = null;
           if (state.pc !== pc) return; // pc уже заменён — таймер чужой
+          if (rtcLinkHoldActive()) { rtcGrace = setTimeout(recheck, rtcLinkHoldRemainMs() + 100); return; }
           rtcLinkLost();
-        }, rtcLinkHoldRemainMs() + 100);
+        };
+        rtcGrace ??= setTimeout(recheck, rtcLinkHoldRemainMs() + 100);
         return;
       }
       rtcLinkLost();
@@ -176,6 +185,10 @@ export function makePc(iceServers) {
   };
   return pc;
 }
+
+// Слушатели ввода оператора текущего сеанса: снимаются при конце сеанса и при
+// перепроводке канала (re-offer) — иначе накапливаются на единственном видео.
+let inputDetach = null;
 
 export function rtcLinkLost() {
   if (!state.session && !state.connect) return;
@@ -456,7 +469,11 @@ async function doOperatorAnswer(offerSdp) {
     state.dcs[ch.label] = ch;
     if (ch.label === 'input') {
       state.dc = ch;
-      wireOperatorInput(ch);
+      // #remote-video один на все сеансы страницы: прежние pointer-слушатели
+      // снимаем, иначе каждый re-offer/сеанс навсегда добавлял бы по четыре
+      // (паритет web-твину inputDetach, ревью v0.4.6 доводка)
+      inputDetach?.detach?.();
+      inputDetach = wireOperatorInput(ch);
     } else if (ch.label === 'chat') {
       ch.onmessage = (m) => {
         const msg = parseChatMessage(m.data);
