@@ -343,7 +343,9 @@ export function createAgent({ api, signal, native, policy, termHost, rtc, notify
         }
         if (r.status === 400) {
           state = 'error';
-          error = `Регистрация отклонена (${r.body?.error ?? 'bad_code'}): код недействителен или уже использован`;
+          // код из конверта {error:{code,message}}: печать всего объекта давала
+          // «Регистрация отклонена ([object Object])» и маскировала bad_code vs bad_request
+          error = `Регистрация отклонена (${r.body?.error?.code ?? 'bad_code'}): код недействителен или уже использован`;
           running = false;
           log.error(`Агент: ${error}`);
           return; // бессмысленно долбить: код одноразовый, лимит сервера честно вернёт 429

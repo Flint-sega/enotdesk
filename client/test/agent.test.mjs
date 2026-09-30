@@ -241,8 +241,10 @@ test('отзыв токена: честный статус revoked, токен �
 });
 
 test('одноразовый код отклонён: честная ошибка без долбёжки регистрации', async () => {
+  // форма тела — НАСТОЯЩИЙ конверт сервера {error:{code,message}}: фейк со строкой
+  // `error: 'bad_code'` маскировал печать «[object Object]» вместо кода (ревью v0.4.7)
   const { calls, api } = fakeApi({
-    register: () => ({ status: 400, body: { error: 'bad_code', message: 'Код недействителен или уже использован' } }),
+    register: () => ({ status: 400, body: { error: { code: 'bad_code', message: 'Код недействителен или уже использован' } } }),
   });
   const store = memoryStore();
   const agent = createAgent({
@@ -259,6 +261,9 @@ test('одноразовый код отклонён: честная ошибк�
     assert.equal(store.load(), null);
     assert.equal(st.hasToken, false);
     assert.equal(calls.register.length, 1, 'одноразовый код не ретраится — только честная ошибка');
+    // из конверта извлекается КОД, а не «[object Object]»
+    assert.match(st.error ?? '', /bad_code/);
+    assert.ok(!String(st.error).includes('object Object'), 'код ошибки не должен печататься как [object Object]');
   } finally {
     agent.stop();
   }
