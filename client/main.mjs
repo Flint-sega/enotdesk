@@ -1036,14 +1036,23 @@ app.on('window-all-closed', () => {
   // агент умирал после первого же unattended-сеанса). Жизненным циклом агента
   // управляет SCM-родитель (служба) или внешний процесс.
   if (AGENT) return;
-  app.quit();
-  // Страховка от зависшего выхода (живой сеанс 28.09, находка №9: после закрытия
-  // окна процесс жил ≥26 с с открытым WS и без heartbeat'ов — сеанс умирал по
-  // lease-expired вместо честного host-lost). Через 5 с выходим принудительно:
-  // WS закрывается, сервер видит close и fail-closed срабатывает как задумано.
-  setTimeout(() => {
-    try { app.exit(0); } catch { /* уже мёртв */ }
-  }, 5000).unref();
+  // №9-хвост (крест-тест 01.10, v0.4.7): revoke сеанса — ДО app.quit().
+  // Electron не ждёт промисы в before-quit: fetch session.end проигрывал гонку
+  // выходу процесса, и сеанс умирал host-lost после ВСЕГО грейса вместо честного
+  // 'ended' — оператор 30 с смотрел «переподключается» на намеренное закрытие.
+  // Ждём revoke до 1.2 с, только потом quit (+5с страховка от зависшего выхода).
+  const revokeDone = (api.hostSessionId && api.hostToken)
+    ? Promise.race([
+        api.request('session.end', { sessionId: api.hostSessionId, asHost: true }).catch(() => {}),
+        new Promise((resolve) => setTimeout(resolve, 1200)),
+      ])
+    : Promise.resolve();
+  revokeDone.then(() => {
+    app.quit();
+    setTimeout(() => {
+      try { app.exit(0); } catch { /* уже мёртв */ }
+    }, 5000).unref();
+  });
 });
 
 app.whenReady().then(() => {
