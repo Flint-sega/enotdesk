@@ -262,3 +262,14 @@ test('SEC-002 desktop: incomingClip оператора не пишет в буф
   assert.match(services, /resetOperatorClip/, 'сброс ожидающего текста при завершении сеанса');
   assert.ok('op.clipPaste' in ru && 'op.clipPaste' in en, 'ключ кнопки в обоих словарях');
 });
+
+test('крест: revoke сеанса — ДО app.quit, не внутри before-quit (№9-хвост, ревью v0.4.7)', () => {
+  // Electron не ждёт промисы в before-quit: fetch session.end проигрывал гонку
+  // выходу процесса — сеанс умирал host-lost после всего грейса, оператор 30 с
+  // смотрел «переподключается» на намеренное закрытие (крест-тест 01.10)
+  assert.match(mainJs, /const revokeDone = \(api\.hostSessionId && api\.hostToken\)/,
+    'window-all-closed взводит revoke до quit');
+  assert.match(mainJs, /revokeDone\.then\(\(\) => \{[\s\S]{0,80}app\.quit\(\)/,
+    'quit только после revoke (бюджет 1.2 с)');
+  assert.match(mainJs, /session\.end[\s\S]{0,60}asHost: true/, 'revoke гасит сеанс как хост');
+});
