@@ -46,7 +46,11 @@ test('полный жизненный цикл через модули client: r
   host.onMessage((m) => hostMsgs.push(m));
   await host.open({ role: 'host', sessionId, hostToken: api.hostToken });
   assert.ok(hostMsgs.find((m) => m.type === 'ready' && m.role === 'host' && m.state === 'pending-consent'));
-  const claimEv = hostMsgs.find((m) => m.type === 'claim');
+  // claim приходит ОТДЕЛЬНЫМ кадром после ready: под нагрузкой он влетает после
+  // резолва open() (тот ждёт только ready) — синхронный find гонял флейк
+  // «claimEv undefined» на CI-macos (релиз v0.4.8). Ждём событие через wait()
+  // (буферизованный: и уже пришедший, и запоздавший кадр находятся).
+  const claimEv = await host.wait((m) => m.type === 'claim', 4000);
   assert.equal(claimEv.claimId, claimId, 'имя оператора видно клиенту');
   assert.equal(claimEv.operator.name, operator.name);
 
