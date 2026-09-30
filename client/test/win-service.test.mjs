@@ -201,7 +201,11 @@ test('эскалация рестартов 1/2/5/10с, кап 30с; сброс 
 // за 1 с («Unknown or invalid type name») до всякого SetServiceStatus, SCM давал
 // 7009/1053. Этот тест упражняет настоящий koffi-клей: падение резолва типов
 // здесь означает регрессию. Вне SCM диспетчер честно отвергает таблицу (res=0).
-test('runAsScmParent: koffi-клей резолвит типы (win32; вне SCM — честный res=0)', { skip: process.platform !== 'win32' }, async () => {
+// timeout: вне Windows тест скипается, но если платформенное допущение
+// («диспетчер вне SCM возвращается немедленно») когда-нибудь сломается,
+// вечный промис убил бы CI-джобу по общему таймауту вместо диагностируемого
+// фейла (ревью v0.4.6)
+test('runAsScmParent: koffi-клей резолвит типы (win32; вне SCM — честный res=0)', { skip: process.platform !== 'win32', timeout: 15_000 }, async () => {
   const lines = [];
   const res = await runAsScmParent({
     childArgv: ['--win-service-test'],

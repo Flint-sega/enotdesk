@@ -78,9 +78,11 @@ test('web/operator.mjs: peer-reconnecting держит видео-сеанс (rt
   assert.match(operatorJs, /case 'peer-reconnecting':[\s\S]{0,600}if \(state\.connect\) holdRtcLinkLost\(\)/,
     'peer-reconnecting должен взводить rtc-hold под guardом state.connect (№15)');
   // 10с-таймер самовозобновляется под hold и после его истечения рвёт честно:
-  // assert на ВЫЗОВЫ clearRtcHold, не на определение (ревью v0.4.4)
-  const clearCalls = operatorJs.match(/clearRtcHold\(\)/g) ?? [];
-  assert.ok(clearCalls.length >= 3, `clearRtcHold должен вызываться (connected + stopMedia), найдено: ${clearCalls.length}`);
+  // assert на ВЫЗОВЫ clearRtcHold (определение исключено lookbehind'ом —
+  // «косметическое» вхождение не должно маскировать удаление живого вызова,
+  // ревью v0.4.6; живых вызовов два: connected + stopMedia)
+  const clearCalls = operatorJs.match(/(?<!function )clearRtcHold\(\)/g) ?? [];
+  assert.ok(clearCalls.length >= 2, `clearRtcHold живых вызова (connected + stopMedia), найдено: ${clearCalls.length}`);
   assert.match(operatorJs, /if \(rtcHoldActive\(\)\) \{ rtcGrace = setTimeout\(tick, 10_000\); return; \}[\s\S]{0,80}rtcLinkLost\(\)/,
     '10с-таймер должен ждать hold и разорвать сеанс после его истечения');
   assert.match(operatorJs, /&& !rtcHoldActive\(\)\) rtcLinkLost\(\)/,
@@ -88,6 +90,20 @@ test('web/operator.mjs: peer-reconnecting держит видео-сеанс (rt
   // hold не длиннее server-grace + запас и не берётся при ENOT_GRACE_MS=0
   assert.match(operatorJs, /SIGNAL_GRACE_MS \+ 10_000/, 'hold считается от серверного graceMs');
   assert.match(operatorJs, /if \(ms <= 0\) return;/, 'ENOT_GRACE_MS=0: hold не взводится (fail-closed сервера)');
+  // ревью v0.4.6: hold истёк, а pc так и не поднялся (в т.ч. failed ПРЯМО под
+  // hold, без 'disconnected' до него) — честный разрыв вместо вечного зомби
+  assert.match(operatorJs, /st === 'failed' \|\| st === 'closed'\) rtcLinkLost\(\)/,
+    'истечение hold переоценивает pc — failed/closed под hold рвутся по расписанию');
+  // гонка №15: локальный disconnected взводит hold до прихода серверного сигнала
+  assert.match(operatorJs, /if \(!rtcHoldActive\(\) && SIGNAL_GRACE_MS > 0\) holdRtcLinkLost\(\)/,
+    'disconnected держит hold сам, не дожидаясь peer-reconnecting от сервера');
+});
+
+test('web/operator.mjs: resumed не заявляет «Подключено» при мёртвом pc', () => {
+  // конвенция «никогда не фейкуем успех»: сигналинг возвращается раньше медиа —
+  // статус честно остаётся «переподключается» до фактического connected (ревью v0.4.6)
+  assert.match(operatorJs, /case 'resumed':[\s\S]{0,500}connectionState === 'connected'/,
+    'resumed обязан проверять состояние pc перед «Подключено»');
 });
 
 // ---- панель «Машины» (R07): только существующий machines API, admin-only ----

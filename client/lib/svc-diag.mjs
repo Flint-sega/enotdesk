@@ -49,10 +49,20 @@ export function createSvcDiag({ programData } = {}) {
   const enabled = () => {
     try { return fs.existsSync(marker); } catch { return false; }
   };
+  // Потолок лога с одноступенчатой ротацией (.1): диагностика включается
+  // маркером и без потолка росла бы неограниченно на машинах конечных
+  // пользователей — маркер забывают снять (ревью v0.4.6, medium)
+  const MAX_LOG_BYTES = 1024 * 1024;
   const write = (tag, msg) => {
     try {
       if (!enabled()) return false;
       fs.mkdirSync(enotDir, { recursive: true });
+      try {
+        if (fs.existsSync(logFile) && fs.statSync(logFile).size > MAX_LOG_BYTES) {
+          fs.rmSync(`${logFile}.1`, { force: true });
+          fs.renameSync(logFile, `${logFile}.1`);
+        }
+      } catch { /* ротация best-effort, записи она не мешает */ }
       fs.appendFileSync(logFile, `${new Date().toISOString()} [${tag}] ${msg}\n`);
       return true;
     } catch { return false; }

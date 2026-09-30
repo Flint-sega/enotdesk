@@ -113,7 +113,14 @@ function holdRtcLinkLost() {
   const ms = SIGNAL_GRACE_MS > 0 ? SIGNAL_GRACE_MS + 10_000 : 0;
   if (ms <= 0) return; // сервер fail-closed (ENOT_GRACE_MS=0): сеанса в грейсе не будет
   if (rtcHoldTimer) clearTimeout(rtcHoldTimer);
-  rtcHoldTimer = setTimeout(() => { rtcHoldTimer = null; }, ms);
+  rtcHoldTimer = setTimeout(() => {
+    rtcHoldTimer = null;
+    // hold кончился, а pc так и не поднялся — в том числе если он ушёл в
+    // 'failed'/'closed' ПРЯМО под hold (его ветка уважала hold и не рвала):
+    // честный разрыв вместо вечного зомби-сеанса с мёртвым видео (№15 ревью v0.4.6)
+    const st = state.pc?.connectionState;
+    if (st === 'failed' || st === 'closed') rtcLinkLost();
+  }, ms);
 }
 function rtcHoldActive() { return rtcHoldTimer != null; }
 function clearRtcHold() {
@@ -306,6 +313,10 @@ function makePc(iceServers) {
         if (rtcHoldActive()) { rtcGrace = setTimeout(tick, 10_000); return; }
         rtcLinkLost();
       };
+      // Гонка №15 (ревью v0.4.6): серверный peer-reconnecting при тихой
+      // заморозке сети приходит позже (~20-26 с), чем выстрелил бы локальный
+      // 10с-тик — hold взводим уже здесь, при живом серверном grace.
+      if (!rtcHoldActive() && SIGNAL_GRACE_MS > 0) holdRtcLinkLost();
       rtcGrace ??= setTimeout(tick, 10000);
       return;
     }
@@ -524,8 +535,11 @@ async function onSignal(msg) {
       break;
     case 'resumed':
       stopSignalReconnect();
-      showStatus(t('status.connected'));
       hide($('op-reconnect'));
+      // «Подключено» — только при живом pc: сигналинг вернулся раньше медиа
+      // (новый оффер ещё в пути), заявлять успех при мёртвом pc — фейк (№13b
+      // ревью v0.4.6: сервер сам устранил эту ложь для возвращающегося оператора)
+      showStatus(state.pc?.connectionState === 'connected' ? t('status.connected') : t('op.clientReconnecting'));
       break;
     case 'ended': {
       stopSignalReconnect(); // сеанс завершён сервером — стучаться больше нечего

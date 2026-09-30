@@ -10,7 +10,7 @@ import { createWebhooks } from './webhooks.mjs';
 import { page, downloadsHtml, inviteHtml, operatorPage, isInsecurePage } from './pages.mjs';
 import { t, pickLocale } from '../client/lib/i18n.mjs';
 import {
-  hashPassword, verifyPassword, verifyPasswordAsync, newToken, sha256,
+  hashPassword, verifyPasswordAsync, newToken, sha256,
   sessionPassword, newSessionId, newClaimId,
 } from './crypto.mjs';
 import {
@@ -279,6 +279,8 @@ export function createServer(opts = {}) {
     // сколько свипер ждёт pong после пробного пинга «тихо мёртвому» хосту.
     // Не env: внутренняя деталь свипера; опция — только для быстрых тестов
     hostPingGraceMs: opts.hostPingGraceMs ?? 5000,
+    // шаг свипера; опция — только для быстрых тестов (HOST_PING_MAX за секунды)
+    sweeperMs: opts.sweeperMs ?? 1000,
     // toast на экран машины (R08): сколько ждать подтверждения агента и сколько
     // живёт не забранный агентом запрос (агент ходит heartbeat-ом раз в 5с)
     toastWaitMs: opts.toastWaitMs ?? 12_000,
@@ -317,6 +319,10 @@ export function createServer(opts = {}) {
       machineToast: opts.limits?.machineToast ?? new RateLimiter(10, 60_000),
       // WS-upgrade до всякой аутентификации: аноним не держит сокеты и TLS-рукопожатия
       wsUpgrade: opts.limits?.wsUpgrade ?? new RateLimiter(30, 10_000),
+      // включение/выключение 2FA: маршрут проверяет пароль (scrypt) —
+      // аутентифицированный держатель токена не должен уметь крутить им event loop
+      // (ревью v0.4.6: sync-проверка + отсутствие лимита)
+      totp: opts.limits?.totp ?? new RateLimiter(10, 60_000),
     },
   };
   const db = openDb(cfg.dbPath);
@@ -539,7 +545,7 @@ export function createServer(opts = {}) {
       if (rt && gracePending(rt, nowMs).any) continue; // ждём переподключения
       endSession(row.id, 'lease-expired');
     }
-  }, 1000);
+  }, cfg.sweeperMs);
   sweeper.unref();
 
   // Релей: разовая зачистка просроченных файлов при старте (и далее в housekeeper).
@@ -814,8 +820,11 @@ export function createServer(opts = {}) {
       if (typeof password !== 'string' || !password) {
         return err(res, 400, 'bad_request', t('totp.passwordRequired', {}, locale));
       }
+      // асинхронный scrypt + лимит: sync-проверка (~30 мс) без лимита позволяла
+      // держателю любого токена забивать event loop (ревью v0.4.6)
+      if (!cfg.limits.totp.take(`ip:${ip(req)}`)) return err(res, 429, 'rate_limited', 'Слишком много попыток');
       const row = db.prepare('SELECT password, totp_enabled, totp_secret_enc FROM users WHERE id = ?').get(user.id);
-      if (!row || !verifyPassword(password, row.password)) {
+      if (!row || !(await verifyPasswordAsync(password, row.password))) {
         return err(res, 403, 'wrong_password', t('err.wrong_password', {}, locale));
       }
       if (row.totp_enabled) return err(res, 409, 'totp_already', t('err.totp_already', {}, locale));
@@ -855,8 +864,9 @@ export function createServer(opts = {}) {
       if (typeof password !== 'string' || !password) {
         return err(res, 400, 'bad_request', t('totp.passwordRequired', {}, locale));
       }
+      if (!cfg.limits.totp.take(`ip:${ip(req)}`)) return err(res, 429, 'rate_limited', 'Слишком много попыток');
       const row = db.prepare('SELECT password, totp_enabled FROM users WHERE id = ?').get(user.id);
-      if (!row || !verifyPassword(password, row.password)) {
+      if (!row || !(await verifyPasswordAsync(password, row.password))) {
         return err(res, 403, 'wrong_password', t('err.wrong_password', {}, locale));
       }
       if (!row.totp_enabled) return err(res, 409, 'totp_not_enabled', t('err.totp_not_enabled', {}, locale));

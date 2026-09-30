@@ -93,6 +93,7 @@ export function holdRtcLink(ms) {
   rtcLinkHoldUntil = Math.max(rtcLinkHoldUntil, Date.now() + ms);
 }
 export function rtcLinkHoldActive() { return Date.now() < rtcLinkHoldUntil; }
+function rtcLinkHoldRemainMs() { return Math.max(0, rtcLinkHoldUntil - Date.now()); }
 
 export function cleanupSession() {
   stopMedia();
@@ -146,6 +147,10 @@ export function makePc(iceServers) {
         if (rtcLinkHoldActive()) { rtcGrace = setTimeout(tick, 10_000); return; }
         rtcLinkLost();
       };
+      // Гонка №15 (ревью v0.4.6): серверный peer-reconnecting при тихой
+      // заморозке приходит позже (~20-26 с), чем выстрелил бы локальный 10с-тик
+      // — hold взводим уже здесь по известному серверному graceMs.
+      if (!rtcLinkHoldActive() && (state.graceMs ?? 0) > 0) holdRtcLink(state.graceMs + 10_000);
       rtcGrace ??= setTimeout(tick, 10000);
       return;
     }
@@ -154,7 +159,20 @@ export function makePc(iceServers) {
       rtcLinkHoldUntil = 0; // связь вернулась — hold №15 больше не нужен
       return;
     }
-    if (['failed', 'closed'].includes(pc.connectionState) && (state.session || state.connect) && !rtcLinkHoldActive()) rtcLinkLost();
+    if (['failed', 'closed'].includes(pc.connectionState) && (state.session || state.connect)) {
+      // failed ПРЯМО под hold (свежий pc от re-offer минует 'disconnected'):
+      // hold-тик не взведён — назначаем проверку на конец hold, иначе мёртвое
+      // видео висело бы бессрочно (ревью v0.4.6, medium; паритет web)
+      if (rtcLinkHoldActive()) {
+        rtcGrace ??= setTimeout(() => {
+          rtcGrace = null;
+          if (state.pc !== pc) return; // pc уже заменён — таймер чужой
+          rtcLinkLost();
+        }, rtcLinkHoldRemainMs() + 100);
+        return;
+      }
+      rtcLinkLost();
+    }
   };
   return pc;
 }

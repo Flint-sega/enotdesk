@@ -89,14 +89,22 @@ function macAdapter(koffi) {
     move(pxX, pxY) {
       lastPx[0] = pxX;
       lastPx[1] = pxY;
-      post(CGEventCreateMouseEvent(null, 5, pxX, pxY, MOUSE_BUTTON.left));
+      const ev = CGEventCreateMouseEvent(null, 5, pxX, pxY, MOUSE_BUTTON.left);
+      // флаги и у мыши: shift-драг и модифицированные клики иначе теряются —
+      // CGEvent уходит с flags=0 (ревью v0.4.6)
+      CGEventSetFlags(ev, flags());
+      post(ev);
     },
     button(btn, down, at) {
       const type = MOUSE_EVENT[btn]?.[down ? 0 : 1];
       if (type === undefined) return false;
       // №18: координаты клика приоритетнее lastPx от последнего move
       if (at) { lastPx[0] = at[0]; lastPx[1] = at[1]; }
-      post(CGEventCreateMouseEvent(null, type, lastPx[0], lastPx[1], MOUSE_BUTTON[btn]));
+      const ev = CGEventCreateMouseEvent(null, type, lastPx[0], lastPx[1], MOUSE_BUTTON[btn]);
+      // shift-клик/ctrl-клик: флаги — поле самого CGEvent, без них клик
+      // доходит немодифицированным (ревью v0.4.6)
+      CGEventSetFlags(ev, flags());
+      post(ev);
       return true;
     },
     key(k, down) {
@@ -263,6 +271,7 @@ function x11Adapter(koffi) {
   const xtst = koffi.load('libXtst.so.6');
   const XOpenDisplay = x11.func('void *XOpenDisplay(const char *)');
   const XCloseDisplay = x11.func('int XCloseDisplay(void *)');
+  const XFlush = x11.func('int XFlush(void *)');
   const XStringToKeysym = x11.func('unsigned long XStringToKeysym(const char *)');
   const XKeysymToKeycode = x11.func('int XKeysymToKeycode(void *, unsigned long)');
   const XTestFakeButtonEvent = xtst.func('int XTestFakeButtonEvent(void *, unsigned int, int, unsigned long)');
@@ -270,17 +279,23 @@ function x11Adapter(koffi) {
   const XTestFakeMotionEvent = xtst.func('int XTestFakeMotionEvent(void *, int, int, int, unsigned long)');
   const dpy = XOpenDisplay(null);
   if (!dpy) return { available: false, platform: 'linux-x11', reason: 'x11-display-unavailable' };
+  // XFlush после каждого фейка (как xdotool): без него XTest-запросы копятся
+  // в исходящем буфере Xlib — адаптер не читает X-события, буфер сбрасывается
+  // только при заполнении, и ввод доезжает пачками спустя десятки секунд
+  // (ревью v0.4.6, medium)
+  const flush = () => { try { XFlush(dpy); } catch { /* дисплей уже закрыт */ } };
   const KEYSYM = { space: 'space', enter: 'Return', tab: 'Tab', escape: 'Escape', backspace: 'BackSpace', delete: 'Delete', arrowup: 'Up', arrowdown: 'Down', arrowleft: 'Left', arrowright: 'Right', home: 'Home', end: 'End', pageup: 'Page_Up', pagedown: 'Page_Down', shift: 'Shift_L', control: 'Control_L', alt: 'Alt_L', meta: 'Super_L' };
   const BTN = { left: 1, middle: 2, right: 3 };
   return {
     available: true,
     platform: 'linux-x11',
-    move(pxX, pxY) { XTestFakeMotionEvent(dpy, -1, Math.round(pxX), Math.round(pxY), 0); },
+    move(pxX, pxY) { XTestFakeMotionEvent(dpy, -1, Math.round(pxX), Math.round(pxY), 0); flush(); },
     button(btn, down, at) {
       // №18: XTest-кнопка жмёт в текущей позиции курсора — при координатах клика
       // сначала двигаем указатель в точку цели
       if (at) XTestFakeMotionEvent(dpy, -1, Math.round(at[0]), Math.round(at[1]), 0);
       XTestFakeButtonEvent(dpy, BTN[btn], down ? 1 : 0, 0);
+      flush();
     },
     key(k, down) {
       const name = k.length === 1 ? k : KEYSYM[k];
@@ -288,6 +303,7 @@ function x11Adapter(koffi) {
       const kc = XKeysymToKeycode(dpy, XStringToKeysym(name));
       if (!kc) return false;
       XTestFakeKeyEvent(dpy, kc, down ? 1 : 0, 0);
+      flush();
       return true;
     },
     scroll(dx, dy) {
@@ -296,6 +312,7 @@ function x11Adapter(koffi) {
       for (let i = 0; i < clicks; i++) { XTestFakeButtonEvent(dpy, dy > 0 ? 5 : 4, 1, 0); XTestFakeButtonEvent(dpy, dy > 0 ? 5 : 4, 0, 0); }
       const hclicks = linesToClicks(dx);
       for (let i = 0; i < hclicks; i++) { XTestFakeButtonEvent(dpy, dx > 0 ? 7 : 6, 1, 0); XTestFakeButtonEvent(dpy, dx > 0 ? 7 : 6, 0, 0); }
+      flush();
     },
     close() { XCloseDisplay(dpy); },
   };

@@ -94,3 +94,18 @@ test('createSvcDiag: вне win32 без programData — глухой логге
     Object.defineProperty(process, 'platform', { value: realPlatform });
   }
 });
+
+test('createSvcDiag: потолок лога с ротацией — маркер забыт, файл не растёт вечно', (t) => {
+  // маркер нельзя выключить из кода (только bat off) — без потолка лог рос бы
+  // неограниченно на машинах конечных пользователей (ревью v0.4.6, medium)
+  const dir = tmpDir(t);
+  fs.mkdirSync(path.join(dir, 'EnotDesk'), { recursive: true });
+  fs.writeFileSync(path.join(dir, 'EnotDesk', 'svc-diag.enabled'), '');
+  const diag = createSvcDiag({ programData: dir });
+  fs.writeFileSync(diag.logFile, 'x'.repeat(1024 * 1024 + 1));
+  assert.equal(diag.write('svc', 'после ротации'), true);
+  assert.ok(fs.existsSync(`${diag.logFile}.1`), 'переполненный лог переехал в .1');
+  const fresh = fs.readFileSync(diag.logFile, 'utf8');
+  assert.ok(fresh.length < 4096, 'свежий лог начался с нуля');
+  assert.match(fresh.trim(), /\[svc\] после ротации$/);
+});

@@ -17,8 +17,13 @@ $('btn-retry').addEventListener('click', startHelp);
 
 // Возвращает {sessionId, password} при успехе, null при отказе/ошибке
 // (статус уже показан). Один-клик (R04) переиспользует тот же путь.
+// Флаг «create в полёте»: гвард по state.session бессилен против двух
+// параллельных вызовов (join-ссылка + TEST_AUTO_SESSION уходят в один тик,
+// оба видят state.session=null и создают два сеанса — ревью v0.4.6)
+let joinInFlight = false;
 async function startHelp() {
-  if (state.session) return null; // двойное начало не создаёт второй сеанс
+  if (state.session || joinInFlight) return null; // двойное начало не создаёт второй сеанс
+  joinInFlight = true;
   setBusy($('btn-start'), true, t('client.startBusy'));
   clientShow('registering');
   try {
@@ -36,6 +41,7 @@ async function startHelp() {
     clientShow('error');
     return null;
   } finally {
+    joinInFlight = false;
     setBusy($('btn-start'), false);
   }
 }
