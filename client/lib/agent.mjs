@@ -7,7 +7,9 @@
 // агент только подтверждает allow. Electron-независимый шов §2 (interfaces.md):
 // api/signal/native вводятся снаружи, поэтому цикл тестируется на фейках.
 
+import nodeDgram from 'node:dgram';
 import { createInputGate } from './protocol.mjs';
+import { createWakeSender } from './wol.mjs';
 
 // HTTP-клиент агента: /agent/* плюс host-решение по сеансу. Токен машины
 // передаётся в каждый вызов и нигде не кэшируется здесь — им владеет цикл.
@@ -34,14 +36,15 @@ export function createAgentApi({ baseUrl, fetchImpl = fetch } = {}) {
   return {
     register: ({ code, name, os, version }) => call('/agent/register', { method: 'POST', body: { code, name, os, version } }),
     session: (token) => call('/agent/session', { token }),
-    heartbeat: (token, inventory, toastResult) => call('/agent/heartbeat', {
+    heartbeat: (token, inventory, toastResult, wakeResult) => call('/agent/heartbeat', {
       method: 'POST',
       token,
-      // без инвентаря и результата — тело не отправляется вовсе (старые серверы не заметят)
-      ...((inventory !== undefined || toastResult !== undefined) ? {
+      // без инвентаря и результатов — тело не отправляется вовсе (старые серверы не заметят)
+      ...((inventory !== undefined || toastResult !== undefined || wakeResult !== undefined) ? {
         body: {
           ...(inventory !== undefined ? { inventory } : {}),
           ...(toastResult !== undefined ? { toastResult } : {}),
+          ...(wakeResult !== undefined ? { wakeResult } : {}),
         },
       } : {}),
     }),
@@ -84,7 +87,7 @@ export function createIceServersFetcher({ api, tokenLoad, timeoutMs = 5000 }) {
   };
 }
 
-export function createAgent({ api, signal, native, policy, termHost, rtc, notify, services }) {
+export function createAgent({ api, signal, native, policy, termHost, rtc, notify, services, video }) {
   const missing = !api || typeof api.register !== 'function' || typeof api.session !== 'function'
     || typeof api.heartbeat !== 'function' || typeof api.decision !== 'function' ? 'api (register/session/heartbeat/decision)'
     : typeof signal !== 'function' ? 'signal (фабрика сигнальных клиентов)'
@@ -133,6 +136,36 @@ export function createAgent({ api, signal, native, policy, termHost, rtc, notify
   // Очередь результатов toast (R08): уходит по одному за heartbeat, повторяется
   // только при сетевом сбое; потолок очереди — старшие теряются (не копим).
   const toastResults = [];
+  const wakeResults = [];
+
+  // WoL (v0.6): курьерская задача от сервера — magic packet на все MAC цели.
+  // Отправка не блокирует heartbeat; результат уезжает следующим beat-ом
+  // (шаблон deliverToast). dgram инъекцией — тесты без сети.
+  const wakeSender = createWakeSender({ dgramFactory: () => nodeDgram.createSocket('udp4') });
+  function deliverWake(wake) {
+    const settle = (res) => {
+      const entry = {
+        id: wake.id,
+        ok: res?.ok === true,
+        ...(res && typeof res.reason === 'string' && res.reason ? { reason: res.reason.slice(0, 60) } : {}),
+      };
+      if (wakeResults.length >= 16) wakeResults.shift();
+      wakeResults.push(entry);
+    };
+    const macs = Array.isArray(wake.macs) ? wake.macs : [];
+    if (!macs.length) {
+      settle({ ok: false, reason: 'no-macs' });
+      return;
+    }
+    void Promise.all(macs.map((mac) => wakeSender.sendMagicPacket(mac)))
+      .then((results) => {
+        const failed = results.filter((r) => !r.ok);
+        settle(failed.length === macs.length
+          ? { ok: false, reason: failed[0]?.reason ?? 'send-failed' }
+          : { ok: true });
+      })
+      .catch(() => settle({ ok: false, reason: 'send-failed' }));
+  }
 
   // Показ toast не блокирует heartbeat (WTSSendMessageW с timeout 0 может
   // ждать нажатия минуты): результат встаёт в очередь и уедет следующим beat-ом.
@@ -233,12 +266,16 @@ export function createAgent({ api, signal, native, policy, termHost, rtc, notify
     const openTermRtc = () => {
       if (termPc || !term || !rtcFactory) return;
       let pc;
-      try { pc = rtcFactory(); } catch { pc = null; }
+      let rtcObj;
+      try { rtcObj = rtcFactory(); } catch { rtcObj = null; }
+      pc = rtcObj?.pcLike ?? rtcObj; // v0.6: фабрика может вернуть {pcLike, …}
       if (!pc) {
         log.warn('Агент: терминал недоступен — в этом окружении нет RTCPeerConnection');
         return;
       }
       termPc = pc;
+      // v0.6 (ADR 0027): кадры видео-хелпера уходят в мост текущего сеанса.
+      video?.bind?.();
       pc.onicecandidate = (e) => {
         if (!e?.candidate) return;
         try {
@@ -253,6 +290,9 @@ export function createAgent({ api, signal, native, policy, termHost, rtc, notify
         const ch = e?.channel;
         if (!ch) return;
         if (ch.label === 'term') { term.handleChannel(ch); return; } // открытие — только approved-сеанс: мы уже в нём
+        // v0.6 (ADR 0027): ввод оператора в machine-сеансе → хелперу
+        // (SendInput в консольном сеансе). Гейт — approved: мы уже в нём.
+        if (ch.label === 'input') { video?.handleInputChannel?.(ch); return; }
         // W-U6 (v0.5): чат/файлы machine-сеанса — обработка в main (тост/запись
         // файла); нет services — как раньше, неизвестные каналы закрываются.
         if (services?.handleChannel?.(ch.label, ch)) return;
@@ -270,7 +310,13 @@ export function createAgent({ api, signal, native, policy, termHost, rtc, notify
           })
           .catch(() => { /* транзиентно: replay approved придёт при переподключении */ });
       }
-      if (msg.type === 'approved') openTermRtc();
+      if (msg.type === 'approved') {
+        openTermRtc();
+        // v0.6 (ADR 0027): хелпер видео/ввода живёт в сеансе — спавн в
+        // консольном сеансе + pipe; статусы релеятся операторам.
+        video?.onStatus?.((s) => { try { client.sendMachineVideo(s); } catch { /* WS мёртв */ } });
+        video?.start?.();
+      }
       if (msg.type === 'signal' && termPc) {
         const d = msg.data;
         if (d?.description?.type === 'offer' && typeof d.description.sdp === 'string') {
@@ -308,6 +354,7 @@ export function createAgent({ api, signal, native, policy, termHost, rtc, notify
       releaseInput();
       closeTermRtc();
       if (term) { try { term.close(); } catch { /* терминал мог уже умереть */ } }
+      video?.stop?.(); // хелпер умирает с сеансом; wake дисплея — внутри stop
       try { client.close(); } catch { /* уже закрыт */ }
       currentSignal = null;
       resolveSessionDone = null;
@@ -369,12 +416,19 @@ export function createAgent({ api, signal, native, policy, termHost, rtc, notify
             // Toast (R08): результат прошлого показа уезжает одним полем; не ушёл
             // из-за сети — повторится следующим beat-ом (остаётся в очереди).
             const toastResult = toastResults.length ? toastResults[0] : undefined;
-            return api.heartbeat(token, inventory, toastResult).then((r) => {
+            const wakeResult = wakeResults.length ? wakeResults[0] : undefined;
+            return api.heartbeat(token, inventory, toastResult, wakeResult).then((r) => {
               if (r.status === 200) {
                 if (toastResult) toastResults.shift(); // сервер принял — не повторяем
+                if (wakeResult) wakeResults.shift();
                 const toast = r.body?.toast;
                 if (toast && typeof toast.id === 'string' && typeof toast.text === 'string') {
                   void deliverToast(toast);
+                }
+                // WoL (v0.6): курьерская задача — magic packet соседу
+                const wake = r.body?.wake;
+                if (wake && typeof wake.id === 'string' && Array.isArray(wake.macs)) {
+                  void deliverWake(wake);
                 }
               }
               if (r.status === 401) revoke('Токен машины отозван (heartbeat 401)');

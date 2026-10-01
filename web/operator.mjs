@@ -73,6 +73,7 @@ let keyErrorReset = null;
 // слушатели ввода текущего сеанса: снимаются при конце сеанса — без этого
 // каждый второй сеанс на той же странице дублирует ввод (ревью GLM-5.3 v0.3.0)
 let inputDetach = null;
+let privacyDimmed = false; // privacy MVP (v0.6): экран машины погашен
 // оффер/ответ в полёте: replay 'approved' при переподключении не должен собрать второй pc
 let offerStarting = false;
 
@@ -256,6 +257,9 @@ function stopMedia() {
   state.iceQueue = [];
   $('remote-video').srcObject = null;
   clearRtcHold(); // сеанс закрыт — hold №15 не должен переживать его
+  videoNote = null; // статус видео не протекает в следующий сеанс (v0.6)
+  privacyDimmed = false;
+  hide($('btn-privacy')); // privacy-кнопка не переживает сеанс
   stopTimers();
 }
 
@@ -277,9 +281,21 @@ function startTimers(pc) {
   qualityTimer = setInterval(async () => {
     try {
       const summary = summarizeStats(await pc.getStats());
-      if (pc.connectionState === 'connected') showStatus(formatQuality(t('status.connected'), summary));
+      if (pc.connectionState === 'connected') {
+        // статус видео-хелпера живёт ПОВЕРХ качества (v0.6, ADR 0027):
+        // ошибка видео не должна затираться таймером через 2 секунды
+        showStatus(videoNote ? `${videoNote} · ${formatQuality(t('status.connected'), summary)}` : formatQuality(t('status.connected'), summary));
+      }
     } catch { /* соединение закрывается — не критично */ }
   }, 2000);
+}
+
+// Статус видео-хелпера machine-сеанса (ADR 0027): null = кадры идут (чистый
+// статус), строка = честная причина («видео недоступно: …»).
+let videoNote = null;
+function setVideoStatus(note) {
+  videoNote = note;
+  if (note) showStatus(note);
 }
 function stopTimers() {
   clearInterval(sessionTimer); clearInterval(qualityTimer);
@@ -429,8 +445,28 @@ async function machineOffer() {
     const fileCh = pc.createDataChannel('file');
     fileCh.binaryType = 'arraybuffer';
     fileCh.onmessage = (m) => fileMessage(fileCh, m.data);
-    state.dcs = { term: termCh, chat: chatCh, file: fileCh };
-    pc.ontrack = (e) => { $('remote-video').srcObject = e.streams[0]; };
+    // v0.6 (ADR 0027): видео machine-сеанса — recvonly-трансивер в исходном
+    // offer; агент отвечает sendonly и кладёт кадры хелпера replaceTrack'ом
+    // (без ренеготиации). Канал input — ввод/privacy оператора → хелпер.
+    pc.addTransceiver('video', { direction: 'recvonly' });
+    const inputCh = pc.createDataChannel('input');
+    inputCh.onopen = () => {
+      // #remote-video один на все сеансы страницы: прежние слушатели снимаем
+      inputDetach?.detach?.();
+      inputDetach = wireBrowserInput($('remote-video'), (obj) => {
+        try { inputCh.send(JSON.stringify(obj)); } catch { /* канал закрывается */ }
+      }, { keys: new Set(INPUT_KEYS), onUnsupported: showKeyError });
+    };
+    if (inputCh.readyState === 'open') inputCh.onopen();
+    privacyDimmed = false;
+    text($('btn-privacy'), t('web.privacy.off'));
+    show($('btn-privacy'));
+    state.dcs = { term: termCh, chat: chatCh, file: fileCh, input: inputCh };
+    pc.ontrack = (e) => {
+      $('remote-video').srcObject = e.streams[0];
+      // кадры пошли — статус «нет видео» больше не нужен
+      setVideoStatus(null);
+    };
     startTimers(pc);
     // Повторное открытие терминала (R09): новый DataChannel требует
     // ренеготиации. Первый раунд — offer ниже, поэтому пока нет remote
@@ -544,6 +580,14 @@ async function onSignal(msg) {
     case 'idle-clear':
       hide($('op-idle-note'));
       text($('op-idle-note'), '');
+      break;
+    case 'machine-video':
+      // v0.6 (ADR 0027): статус хелпера. running — видео идёт (ontrack уже
+      // очистил заметку); error/off — честная причина поверх качества.
+      if (msg.state === 'running') setVideoStatus(null);
+      else setVideoStatus(t('web.video.unavailable', {
+        reason: msg.reason ? ` (${msg.reason})` : '',
+      }));
       break;
     case 'peer-reconnecting':
       // клиент потерял связь, сеанс жив (грейс сервера, ADR 0013). №15: держим
@@ -815,7 +859,7 @@ const PIN_MIN = 4;
 const PIN_MAX = 128;
 // Действия строки машины: и значения data-action, и хвосты словарных ключей
 // web.machines.action.* — контракт-тест проверяет, что каждое обработано.
-const MACHINE_ACTIONS = ['toast', 'terminal', 'pin', 'revoke', 'deleteAction'];
+const MACHINE_ACTIONS = ['toast', 'wol', 'terminal', 'pin', 'revoke', 'deleteAction'];
 let machinesOffset = 0;
 let machinesTotal = 0;
 let machinesCache = []; // текущая страница: данные строк для действий по data-id
@@ -857,17 +901,23 @@ function machineBadge(m) {
 }
 
 function machineActionButton(m, action) {
-  // «Сообщение» и «Терминал» — рабочие действия, остальные (PIN/отзыв/удаление)
-  // помечены как опасные. Тост требует живого зарегистрированного агента.
-  const danger = action !== 'terminal' && action !== 'toast';
+  // «Сообщение», «Разбудить» и «Терминал» — рабочие действия, остальные
+  // (PIN/отзыв/удаление) помечены как опасные. Тост и терминал требуют живого
+  // зарегистрированного агента; «Разбудить» — только у офлайн-машины с MAC
+  // в инвентаре (будить живую нечего, без MAC — нечем).
+  const danger = action !== 'terminal' && action !== 'toast' && action !== 'wol';
   const btn = document.createElement('button');
   btn.type = 'button';
   btn.className = `btn ghost sm${danger ? ' danger' : ''}`;
   btn.dataset.action = action;
   btn.dataset.id = m.id;
   btn.textContent = t(`web.machines.action.${action}`);
-  if (action === 'terminal' || action === 'toast') btn.disabled = Boolean(m.revokedAt) || !m.registered;
+  if (action === 'terminal' || action === 'toast' || action === 'wol') btn.disabled = Boolean(m.revokedAt) || !m.registered;
   if (action === 'revoke') btn.disabled = Boolean(m.revokedAt);
+  if (action === 'wol') {
+    if (!m.inventory?.macs?.length) btn.disabled = true;
+    if (m.online) btn.classList.add('hidden'); // смысла нет — машина и так жива
+  }
   return btn;
 }
 
@@ -984,6 +1034,21 @@ async function machineToast(m) {
   else text($('machines-error'), t('web.machines.toastNoConfirm'));
 }
 
+// Разбудить (R10): POST /machines/:id/wol — сервер сам находит онлайн-машину-
+// курьера в той же подсети /24 и ждёт её подтверждения. Исходы честные:
+// доставлено / курьер не смог (с причиной) / подтверждения нет; отказы сервера
+// (404/409/429) — его локализованные тексты, как у toast.
+async function machineWol(m) {
+  const res = await api('POST', `/machines/${encodeURIComponent(m.id)}/wol`, {});
+  if (res.status !== 200 && res.status !== 504) {
+    machineActionError(res); // офлайн-цель в порядке, отказ — по другой причине
+    return;
+  }
+  if (res.body?.delivered === true) text($('machines-error'), t('web.machines.wolDelivered'));
+  else if (res.body?.reason === 'no_confirm') text($('machines-error'), t('web.machines.wolNoConfirm'));
+  else text($('machines-error'), t('web.machines.wolFailed', { reason: res.body?.reason ?? '?' }));
+}
+
 // Открытие терминала машины (R09): claim с обязательной причиной (+PIN, если
 // задан) — политику проверяет сервер; дальше работает существующий flow
 // machine-сеанса, терминал откроется в своей панели.
@@ -1091,6 +1156,17 @@ function wire() {
     ws = null;
   });
 
+  // Privacy MVP (v0.6, ADR 0027): погасить/вернуть экран машины через канал
+  // input (хелпер выполняет SC_MONITORPOWER). Кнопка появляется при открытии
+  // input-канала machine-сеанса (см. machineOffer), гаснет в stopMedia.
+  $('btn-privacy')?.addEventListener('click', () => {
+    const inputCh = state.dcs?.input;
+    if (!inputCh || inputCh.readyState !== 'open') return;
+    privacyDimmed = !privacyDimmed;
+    try { inputCh.send(JSON.stringify({ display: privacyDimmed ? 'off' : 'on' })); } catch { /* канал закрывается */ }
+    text($('btn-privacy'), t(privacyDimmed ? 'web.privacy.on' : 'web.privacy.off'));
+  });
+
   $('btn-reconnect')?.addEventListener('click', () => {
     if (!state.connect) return;
     // Отсчёт грейса НЕ сбрасываем (ревью 28.09): ручная попытка — не продление
@@ -1141,6 +1217,7 @@ function wire() {
     if (!m) return;
     const action = btn.dataset.action;
     if (action === 'toast') void machineToast(m);
+    else if (action === 'wol') void machineWol(m);
     else if (action === 'terminal') openMachineClaim(m);
     else if (action === 'pin') void machinePin(m);
     else if (action === 'revoke') void machineRevoke(m);

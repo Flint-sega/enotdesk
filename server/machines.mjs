@@ -17,7 +17,23 @@ const ONLINE_WINDOW_MS = 60 * 1000;
 // не-объект, не-те типы, переполнение 4 КБ — отбрасывается (null): сервер не
 // хранит то, что не смог понять. Где поле собрать не удалось (например, statfs
 // недоступен) — оно просто отсутствует, фейков агент не присылает и мы не делаем.
-const INVENTORY_LIMITS = { str: 60, bytes: 4096, uptimeSecMax: 1e12, diskFreeGbMax: 1e9 };
+// Массивы macs/localIps (R10, Wake-on-LAN) входят в тот же бюджет 4 КБ: общий
+// size-check идёт по сырому JSON.stringify ДО разборки, так что массивы уже
+// учтены в нём; дальше — только allowlist-фильтрация поэлементно.
+const INVENTORY_LIMITS = { str: 60, bytes: 4096, uptimeSecMax: 1e12, diskFreeGbMax: 1e9, arrItems: 8 };
+// mac — строго EUI-48 через двоеточия (AA:BB:CC:DD:EE:FF), ip — IPv4
+const MAC_RE = /^([0-9a-fA-F]{2}:){5}[0-9a-fA-F]{2}$/;
+const IPV4_RE = /^(25[0-5]|2[0-4]\d|1\d\d|[1-9]?\d)(\.(25[0-5]|2[0-4]\d|1\d\d|[1-9]?\d)){3}$/;
+
+// Строковый массив инвентаря: не-массив и все-невалидные — поле отсутствует;
+// валидные элементы переживают мусорных соседей, потолок — первые arrItems.
+function sanitizeStringArray(value, re) {
+  if (!Array.isArray(value)) return null;
+  const items = value
+    .filter((v) => typeof v === 'string' && v.length <= INVENTORY_LIMITS.str && re.test(v))
+    .slice(0, INVENTORY_LIMITS.arrItems);
+  return items.length ? items : null;
+}
 
 export function sanitizeInventory(value) {
   if (typeof value !== 'object' || value === null || Array.isArray(value)) return null;
@@ -33,6 +49,10 @@ export function sanitizeInventory(value) {
       inv[key] = key === 'uptimeSec' ? Math.floor(n) : Math.round(n * 100) / 100;
     }
   }
+  const macs = sanitizeStringArray(value.macs, MAC_RE);
+  if (macs) inv.macs = macs;
+  const localIps = sanitizeStringArray(value.localIps, IPV4_RE);
+  if (localIps) inv.localIps = localIps;
   return Object.keys(inv).length ? inv : null;
 }
 
@@ -63,6 +83,8 @@ export function createMachinesStore(db, { nowMs = Date.now, onlineWindowMs = ONL
       registered: row.agent_token_hash != null,
       revokedAt: row.revoked_at,
       lastSeenAt: row.last_seen_at,
+      // инвентарь целиком (включая массивы macs/localIps из R10): в БД попадает
+      // только прошедший sanitizeInventory объект, здесь он просто читается
       inventory: storedInventory(row.inventory),
       online: !Number.isNaN(seen) && nowMs() - seen <= onlineWindowMs,
       onboardingExpiresAt: row.onboarding_expires_at,

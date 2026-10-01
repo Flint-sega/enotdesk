@@ -20,6 +20,7 @@ export const BRIDGE_IPC = Object.freeze({
   DC_FROM: 'enot:term-dc-from', // мост → main: {label, data} — сообщение от оператора (string | Uint8Array)
   DC_TO: 'enot:term-dc-to', // main → мост: {label, data} — сообщение оператору
   DC_CLOSED: 'enot:term-dc-closed', // мост → main: канал закрыт (label)
+  VIDEO_FRAME: 'enot:video-frame', // main → мост: jpeg-кадр хелпера (Uint8Array) — ADR 0027
   PAUSE: 'enot:term-dc-pause', // мост → main: приостановить отправку
   RESUME: 'enot:term-dc-resume', // мост → main: возобновить отправку
   FAIL: 'enot:bridge-fail', // мост → main: честная ошибка моста
@@ -268,6 +269,8 @@ export function createBridgeRelay({ send, log = console, onClosed = null, fetchI
     isClosed: () => closed,
     hasAdapter: () => adapters.size > 0,
     hasTermAdapter: () => adapters.has('term'),
+    // main → мост (кадры видео-хелпера): только пока мост жив (ADR 0027)
+    sendToBridge: (channel, payload) => { if (!closed) send(channel, payload); },
     iceServersInfo: () => iceInfo, // для честного лога main: какой TURN ушёл мосту и почему, если пусто
   };
 }

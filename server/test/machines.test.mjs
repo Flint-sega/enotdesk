@@ -246,6 +246,37 @@ test('sanitizeInventory: allowlist полей, строки ограничены
   assert.equal(sanitizeInventory(['linux']), null);
 });
 
+test('sanitizeInventory: macs/localIps — allowlist формата, лимит 8, мусор поэлементно', () => {
+  // валидные элементы переживают мусорных соседей; формат строгий
+  assert.deepEqual(
+    sanitizeInventory({
+      os: 'linux',
+      macs: ['AA:BB:CC:DD:EE:FF', 'aa-bb-cc-dd-ee-ff', 'AA:BB:CC:DD:EE'],
+      localIps: ['192.168.1.10', '10.0.0.256', '::1', '10.0.0.1'],
+    }),
+    { os: 'linux', macs: ['AA:BB:CC:DD:EE:FF'], localIps: ['192.168.1.10', '10.0.0.1'] },
+  );
+  // не-массив — поле отбрасывается целиком
+  assert.deepEqual(sanitizeInventory({ macs: 'AA:BB:CC:DD:EE:FF', localIps: { a: 1 } }), null);
+  // пустой массив и все-невалидные — поле отсутствует, остальные живут
+  assert.deepEqual(sanitizeInventory({ os: 'linux', macs: [] }), { os: 'linux' });
+  assert.deepEqual(sanitizeInventory({ os: 'linux', localIps: ['мусор'] }), { os: 'linux' });
+  // потолок 8 элементов: только первые 8 валидных
+  const many = Array.from({ length: 10 }, (_, i) => `AA:BB:CC:DD:EE:0${i}`);
+  assert.equal(sanitizeInventory({ macs: many }).macs.length, 8);
+  assert.deepEqual(
+    sanitizeInventory({ macs: many }).macs.slice(-1),
+    ['AA:BB:CC:DD:EE:07'],
+    'девятый и дальше отброшены',
+  );
+  // общий бюджет 4 КБ учитывает массивы (проверка идёт по сырому JSON до разборки)
+  assert.equal(
+    sanitizeInventory({ macs: Array.from({ length: 250 }, () => 'AA:BB:CC:DD:EE:FF') }),
+    null,
+    'инвентарь с раздутым массивом — целиком мусор',
+  );
+});
+
 test('store: heartbeat с инвентарём сохраняется и отдаётся; без — старый остаётся, мусор не затирает', () => {
   const db = openDb(':memory:');
   const store = createMachinesStore(db);
@@ -281,7 +312,7 @@ async function setup(t, extra = {}) {
   const dbPath = tmpDb(t);
   const { base, port } = await startServer(t, { dbPath, ...extra });
   const admin = await adminLogin(dbPath, base);
-  return { base, port, admin };
+  return { base, port, admin, dbPath };
 }
 
 async function makeUser(base, admin, role, login) {
@@ -769,4 +800,194 @@ test('toast API: новый toast заменяет ожидающий — уез
   const secondDone = await second;
   assert.deepEqual(firstDone.json, { ok: true, result: null }, 'первый оператор — честное «нет подтверждения»');
   assert.deepEqual(secondDone.json, { ok: true, result: { ok: true } }, 'второй получил результат');
+});
+
+// ---- Wake-on-LAN (R10): POST /machines/:id/wol ----
+// Выбранный путь — тот же одноразовый паттерн в памяти, что у toast, но с
+// курьером: цель офлайн, поэтому wake выдаётся ОНЛАЙН-машине-соседу в той же
+// подсети /24 (её heartbeat, поле wake), подтверждение — wakeResult'ом.
+// Инвертированный онлайн-гейт: online-цель — честный 409 machine_online.
+
+// Фикстура «агент сообщил инвентарь и замолчал»: инвентарь приходит честным
+// heartbeat-ом, затем last_seen гасится напрямую в БД — ждать реального окна
+// online (60с) тест не может, а инвентарь при этом должен остаться.
+function makeTargetOffline(dbPath, machineId) {
+  const db = new DatabaseSync(dbPath);
+  try {
+    db.prepare('UPDATE machines SET last_seen_at = NULL WHERE id = ?').run(machineId);
+  } finally {
+    db.close();
+  }
+}
+
+async function heartbeat(base, token, body) {
+  return api(base, 'POST', '/agent/heartbeat', { token, body });
+}
+
+// Детерминированная синхронизация «wake дошёл до курьера»: как pickupToast —
+// агент в проде сам ходит heartbeat-ом, тест опрашивает, пока wake не появится.
+async function pickupWake(base, token, { deadlineMs = 3000 } = {}) {
+  const deadline = Date.now() + deadlineMs;
+  for (;;) {
+    const beat = await heartbeat(base, token, {});
+    assert.equal(beat.status, 200);
+    if (beat.json.wake) return beat.json.wake;
+    if (Date.now() > deadline) return null;
+    await new Promise((r) => setTimeout(r, 10));
+  }
+}
+
+// Курс «цель офлайн с MAC + курьер онлайн в той же подсети» для успешных сценариев
+async function wolFixture(base, adminToken, dbPath, { targetIps = ['192.168.1.10'], courierIps = ['192.168.1.50'] } = {}) {
+  const admin = { token: adminToken }; // onboardAndRegister использует только .token
+  const target = await onboardAndRegister(base, admin, { name: 'цель-wol', groupName: '' });
+  const courier = await onboardAndRegister(base, admin, { name: 'курьер-wol', groupName: '' });
+  await heartbeat(base, courier.reg.token, { inventory: { localIps: courierIps } });
+  await heartbeat(base, target.reg.token, { inventory: { macs: ['AA:BB:CC:DD:EE:FF'], localIps: targetIps } });
+  makeTargetOffline(dbPath, target.created.machine.id);
+  return { target: target.created.machine.id, courier: courier.created.machine.id, courierToken: courier.reg.token };
+}
+
+test('sanitizeInventory по API: macs/localIps доезжают heartbeat-ом и видны в GET /machines/:id', async (t) => {
+  const { base, admin } = await setup(t);
+  const { created, reg } = await onboardAndRegister(base, admin);
+  const inv = { os: 'linux', macs: ['AA:BB:CC:DD:EE:FF'], localIps: ['192.168.1.10'] };
+  assert.equal((await heartbeat(base, reg.token, { inventory: inv })).status, 200);
+  assert.deepEqual(
+    (await api(base, 'GET', `/machines/${created.machine.id}`, { token: admin.token })).json.inventory,
+    inv,
+    'массивы инвентаря сохранены без изменений',
+  );
+});
+
+test('wol API: RBAC и лимитер после auth — аноним/аудитор не сжигают слоты оператора', async (t) => {
+  const { base, admin } = await setup(t, { limits: { wol: new RateLimiter(1, 60_000) } });
+  const operator = await makeUser(base, admin, 'operator', 'op-wol');
+  const auditor = await makeUser(base, admin, 'auditor', 'aud-wol');
+  const { created } = await onboardAndRegister(base, admin);
+
+  // лимитер ПОСЛЕ auth (P1-1, как claim): если бы он стоял до, 401 и 403
+  // выжгли бы единственный слот окна, и первый операторский запрос получил бы 429
+  assert.equal((await api(base, 'POST', `/machines/${created.machine.id}/wol`)).status, 401, 'аноним');
+  assert.equal((await api(base, 'POST', `/machines/${created.machine.id}/wol`, { token: auditor.token })).status, 403, 'аудитор');
+  const first = await api(base, 'POST', '/machines/no-such/wol', { token: operator.token });
+  assert.equal(first.status, 404, 'первая попытка оператора проходит лимитер');
+  const second = await api(base, 'POST', `/machines/${created.machine.id}/wol`, { token: operator.token });
+  assert.equal(second.status, 429, 'вторая в том же окне — порог исчерпан');
+});
+
+test('wol API: честные отказы — не зарегистрирована / online-цель / офлайн без MAC / нет соседа', async (t) => {
+  const { base, admin, dbPath } = await setup(t);
+  const operator = await makeUser(base, admin, 'operator', 'op-wol2');
+  const { created, reg } = await onboardAndRegister(base, admin);
+
+  // код выдан, агент не приходил — «нет агента»
+  const fresh = await api(base, 'POST', '/machines', { token: admin.token, body: { name: 'свежая', group: '' } });
+  const noAgent = await api(base, 'POST', `/machines/${fresh.json.machine.id}/wol`, { token: operator.token });
+  assert.equal(noAgent.status, 409);
+  assert.equal(noAgent.json.error.code, 'not_registered');
+
+  // онлайн-машина будить не нуждается — инвертированный гейт
+  await heartbeat(base, reg.token, {});
+  const online = await api(base, 'POST', `/machines/${created.machine.id}/wol`, { token: operator.token });
+  assert.equal(online.status, 409);
+  assert.equal(online.json.error.code, 'machine_online');
+
+  // инвентарь есть, MAC-ов нет (и цель офлайн)
+  await heartbeat(base, reg.token, { inventory: { os: 'linux', localIps: ['192.168.1.10'] } });
+  makeTargetOffline(dbPath, created.machine.id);
+  const noMac = await api(base, 'POST', `/machines/${created.machine.id}/wol`, { token: operator.token });
+  assert.equal(noMac.status, 409);
+  assert.equal(noMac.json.error.code, 'wol_no_mac');
+
+  // MAC есть, но ни одной онлайн-машины вообще
+  await heartbeat(base, reg.token, { inventory: { macs: ['AA:BB:CC:DD:EE:FF'], localIps: ['192.168.1.10'] } });
+  makeTargetOffline(dbPath, created.machine.id);
+  const alone = await api(base, 'POST', `/machines/${created.machine.id}/wol`, { token: operator.token });
+  assert.equal(alone.status, 409);
+  assert.equal(alone.json.error.code, 'wol_no_neighbor');
+
+  // сосед есть и онлайн, но в ДРУГОЙ подсети — сервер сам в чужой L2 не шлёт
+  const stranger = await onboardAndRegister(base, admin, { name: 'чужая-сеть', groupName: '' });
+  await heartbeat(base, stranger.reg.token, { inventory: { localIps: ['10.0.0.5'] } });
+  const noNeighbor = await api(base, 'POST', `/machines/${created.machine.id}/wol`, { token: operator.token });
+  assert.equal(noNeighbor.status, 409);
+  assert.equal(noNeighbor.json.error.code, 'wol_no_neighbor');
+});
+
+test('wol API: успех — курьер забирает wake heartbeat-ом и подтверждает, оператор получает delivered', async (t) => {
+  const { base, admin, dbPath } = await setup(t, { toastWaitMs: 5000 });
+  const operator = await makeUser(base, admin, 'operator', 'op-wol3');
+  const { target, courierToken } = await wolFixture(base, admin.token, dbPath);
+
+  const pending = api(base, 'POST', `/machines/${target}/wol`, { token: operator.token });
+
+  // курьер (онлайн-сосед) забирает wake своим машинным heartbeat-ом
+  const pickup = await pickupWake(base, courierToken);
+  assert.ok(pickup, 'курьер получил wake, пока окно ожидания открыто');
+  assert.equal(typeof pickup.id, 'string');
+  assert.equal(pickup.targetMachineId, target, 'в wake видна цель');
+  assert.deepEqual(pickup.macs, ['AA:BB:CC:DD:EE:FF'], 'MAC цели доезжают без изменений');
+
+  // повторный heartbeat без результата: wake уже забран, повторно не выдаётся
+  const again = await heartbeat(base, courierToken, {});
+  assert.equal(again.json.wake, undefined, 'wake выдаётся один раз');
+
+  // курьер подтверждает отправку — запрос оператора разрешается
+  const answer = await heartbeat(base, courierToken, { wakeResult: { id: pickup.id, ok: true } });
+  assert.equal(answer.status, 200);
+  const done = await pending;
+  assert.equal(done.status, 200);
+  assert.deepEqual(done.json, { delivered: true });
+
+  // аудит операции
+  const audit = await api(base, 'GET', '/audit?limit=100', { token: admin.token });
+  const entry = audit.json.items.find((a) => a.action === 'machine.wol' && a.targetId === target);
+  assert.ok(entry, 'machine.wol в аудите');
+  assert.deepEqual(entry.detail.macs, ['AA:BB:CC:DD:EE:FF']);
+});
+
+test('wol API: курьер не смог отправить — честный delivered:false с его причиной', async (t) => {
+  const { base, admin, dbPath } = await setup(t, { toastWaitMs: 5000 });
+  const operator = await makeUser(base, admin, 'operator', 'op-wol4');
+  const { target, courierToken } = await wolFixture(base, admin.token, dbPath);
+
+  const pending = api(base, 'POST', `/machines/${target}/wol`, { token: operator.token });
+  const pickup = await pickupWake(base, courierToken);
+  assert.ok(pickup, 'курьер забрал wake');
+  await heartbeat(base, courierToken, { wakeResult: { id: pickup.id, ok: false, reason: 'send_failed' } });
+  const done = await pending;
+  assert.equal(done.status, 200);
+  assert.deepEqual(done.json, { delivered: false, reason: 'send_failed' }, 'отказ курьера доносится честно');
+
+  // мусорный wakeResult не роняет heartbeat и не разрешает ожидание по чужому id
+  const junk = await heartbeat(base, courierToken, { wakeResult: 'мусор' });
+  assert.equal(junk.status, 200);
+});
+
+test('wol API: курьер молчит — 504 {delivered:false, reason:no_confirm} за toastWaitMs', async (t) => {
+  const { base, admin, dbPath } = await setup(t, { toastWaitMs: 50 });
+  const operator = await makeUser(base, admin, 'operator', 'op-wol5');
+  const { target, courierToken } = await wolFixture(base, admin.token, dbPath);
+  void courierToken;
+
+  const started = Date.now();
+  const silent = await api(base, 'POST', `/machines/${target}/wol`, { token: operator.token });
+  const waited = Date.now() - started;
+  assert.equal(silent.status, 504);
+  assert.deepEqual(silent.json, { delivered: false, reason: 'no_confirm' }, 'нет подтверждения — честное 504');
+  assert.ok(waited >= 40, `ожидание не разрешается мгновением (${waited}мс)`);
+  assert.ok(waited < 5000, `ожидание ограничено toastWaitMs (${waited}мс)`);
+});
+
+test('wol API: лимитер — исчерпанные попытки оператора бьются 429 (порог 1 для детерминизма)', async (t) => {
+  const { base, admin, dbPath } = await setup(t, { limits: { wol: new RateLimiter(1, 60_000) }, toastWaitMs: 50 });
+  const operator = await makeUser(base, admin, 'operator', 'op-wol6');
+  const { target } = await wolFixture(base, admin.token, dbPath);
+
+  // первая проходит лимитер и честно падает в 504 (курьер молчит — окно 50мс)
+  const first = await api(base, 'POST', `/machines/${target}/wol`, { token: operator.token });
+  assert.equal(first.status, 504, `первая попытка прошла лимитер (${first.status})`);
+  const second = await api(base, 'POST', `/machines/${target}/wol`, { token: operator.token });
+  assert.equal(second.status, 429, 'вторая в том же окне — порог исчерпан');
 });

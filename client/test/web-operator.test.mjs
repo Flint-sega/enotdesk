@@ -137,15 +137,16 @@ test('web/*.mjs: панель машин показывается только a
   assert.ok(machinePaths.length >= 5, 'панель машин должна использовать machines API (список, claim, pin, revoke, delete, toast)');
   const allowed = [
     /^`\/machines\?[^`]*`$/, // список с пагинацией limit/offset
-    /^`\/machines\/\$\{[^`]+\}\/(claim|pin|revoke|toast)`$/, // действия одной машины
+    /^`\/machines\/\$\{[^`]+\}\/(claim|pin|revoke|toast|wol)`$/, // действия одной машины
     /^`\/machines\/\$\{[^`]+\}`$/, // GET/DELETE одной машины
   ];
   for (const p of machinePaths) {
     assert.ok(allowed.some((re) => re.test(p)), `неизвестный machines-маршрут: ${p}`);
   }
-  // сообщение на экран (R08, T08) вызывается со страницы машин;
+  // сообщение на экран (R08, T08) и пробуждение (R10) вызываются со страницы машин;
   // инвентарь приезжает в списке машин — отдельного inventory-вызова нет
   assert.ok(machinePaths.some((p) => /toast/.test(p)), 'toast-маршрут вызывается со страницы машин');
+  assert.ok(machinePaths.some((p) => /wol/.test(p)), 'wol-маршрут вызывается со страницы машин');
   assert.ok(!machinePaths.some((p) => /inventory/.test(p)), 'отдельного inventory-маршрута на странице нет');
 });
 
