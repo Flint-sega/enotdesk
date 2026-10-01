@@ -10,20 +10,9 @@ import { createSessionSpawner } from '../lib/session-spawn.mjs';
 // Сценарий передаётся объектом; каждый Win32-вызов пишется в calls для ассертов.
 function makeKoffi(script) {
   const calls = [];
-  const makeEntryClass = () => class {
-    constructor() {
-      this.dwSize = 0;
-      this.cntUsage = 0;
-      this.th32ProcessID = 0;
-      this.th32DefaultHeapID = 0n;
-      this.th32ModuleID = 0;
-      this.cntThreads = 0;
-      this.th32ParentProcessID = 0;
-      this.pcPriClassBase = 0;
-      this.dwFlags = 0;
-      this.szExeFile = new Array(260).fill(0);
-    }
-  };
+  // packEntry-буферы: mock хранит plain-объект под маркерным буфером
+  const entryStore = new Map();
+  let entrySeq = 0;
   const koffiMock = {
     calls,
     load(dll) {
@@ -43,15 +32,14 @@ function makeKoffi(script) {
                 return script.snapshot ?? { tag: 'snapshot' };
               case 'Process32FirstW':
               case 'Process32NextW': {
-                const entry = args[1];
                 const list = script.processes ?? [];
                 if (name === 'Process32FirstW') script.cursor = 0;
                 if (script.cursor >= list.length) return false;
                 const p = list[script.cursor];
                 script.cursor += 1;
-                entry.th32ProcessID = p.pid;
-                const nameUnits = [...p.name].map((c) => c.charCodeAt(0));
-                entry.szExeFile = [...nameUnits, 0];
+                const stored = entryStore.get(args[1]);
+                stored.th32ProcessID = p.pid;
+                stored.szExeFile = [...[...p.name].map((c) => c.charCodeAt(0)), 0];
                 return true;
               }
               case 'ProcessIdToSessionId':
@@ -80,10 +68,19 @@ function makeKoffi(script) {
     },
     struct(name) {
       calls.push(['struct', name]);
-      return makeEntryClass(); // один класс на все структуры — тесту достаточно
+      return { name }; // TypeObject, не конструктор (как реальный koffi 3.2.1)
     },
     sizeof() {
       return 568; // PROCESSENTRY32W x64, точность не важна — поле просто пишется
+    },
+    pack(type, obj) {
+      const marker = Buffer.alloc(8);
+      marker.writeUInt32LE(++entrySeq, 0);
+      entryStore.set(marker, { ...obj });
+      return marker;
+    },
+    unpack(type, buf) {
+      return entryStore.get(buf);
     },
     decode(buf) {
       return Number(buf.readBigUInt64LE(0));

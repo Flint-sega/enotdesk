@@ -74,11 +74,13 @@ export function createSessionSpawner({ koffi, log = console } = {}) {
     api = {
       getActiveSession: kernel32.func('uint32 WTSGetActiveConsoleSessionId()'),
       createSnapshot: kernel32.func('void *CreateToolhelp32Snapshot(uint32 Flags, uint32 ParentPid)'),
-      // Типы структур — ПО ИМЕНИ в прототипе: koffi пакует/распаковывает
-      // plain-объекты только для типизированных указателей (паттерн
-      // native-input.mjs `_Out_ ENOT_WINDOW_RECT *`, доки koffi output.md).
-      process32First: kernel32.func('bool Process32FirstW(void *Snapshot, _Out_ EdeskProcessEntry32W *Entry)'),
-      process32Next: kernel32.func('bool Process32NextW(void *Snapshot, _Out_ EdeskProcessEntry32W *Entry)'),
+      // Структуры с size-полем (Process32* требует dwSize ДО вызова) идут через
+      // koffi.pack/unpack + void*: _Out_ у koffi выделяет НУЛЁВУЮ структуру и
+      // стирает dwSize (живая диагностика V8 — Process32FirstW возвращал false).
+      // CreateProcessAsUserW: StartupInfo как _Inout_ (вход, включая cb и
+      // lpDesktop, пакуется из объекта), ProcessInfo как _Out_ (читаем pid).
+      process32First: kernel32.func('bool Process32FirstW(void *Snapshot, void *Entry)'),
+      process32Next: kernel32.func('bool Process32NextW(void *Snapshot, void *Entry)'),
       pidToSession: kernel32.func('bool ProcessIdToSessionId(uint32 Pid, _Out_ void *SessionId)'),
       closeHandle: kernel32.func('bool CloseHandle(void *Handle)'),
       openProcess: kernel32.func('void *OpenProcess(uint32 Access, bool Inherit, uint32 Pid)'),
@@ -109,31 +111,27 @@ export function createSessionSpawner({ koffi, log = console } = {}) {
   function findWinlogonPid(dll, sessionId) {
     const snapshot = dll.createSnapshot(TH32CS_SNAPPROCESS, 0);
     if (!snapshot) return { pid: 0, reason: 'snapshot-failed' };
-    // plain-объект: koffi упаковывает по типу-указателю из прототипа (_Out_ void *
-    // с именем типа не связывает — поля заполняются по порядку через отдельный
-    // типизированный вызов ниже). Для Process32* нужен типизированный указатель:
-    // koffi 3 позволяет объект с заранее известным размером — заполняем cb и
-    // читаем поля через koffi.decode по смещениям (структура стабильна на x64).
-    const entry = {
+    // Process32* требует dwSize ДО вызова, а koffi для _Out_ выделяет нулевую
+    // структуру и стирает его (живая диагностика V8: Process32FirstW возвращал
+    // false) — поэтому pack/unpack через void*: вход пакуется с dwSize,
+    // выход распаковывается из буфера.
+    const packEntry = () => koffi.pack('EdeskProcessEntry32W', {
       dwSize: koffi.sizeof('EdeskProcessEntry32W'),
-      cntUsage: 0,
-      th32ProcessID: 0,
-      th32DefaultHeapID: 0,
-      th32ModuleID: 0,
-      cntThreads: 0,
-      th32ParentProcessID: 0,
-      pcPriClassBase: 0,
-      dwFlags: 0,
+      cntUsage: 0, th32ProcessID: 0, th32DefaultHeapID: 0, th32ModuleID: 0,
+      cntThreads: 0, th32ParentProcessID: 0, pcPriClassBase: 0, dwFlags: 0,
       szExeFile: new Array(260).fill(0),
-    };
+    });
     try {
+      let buf = packEntry();
       let ok;
       try {
-        ok = dll.process32First(snapshot, entry);
+        ok = dll.process32First(snapshot, buf);
       } catch {
         return { pid: 0, reason: 'snapshot-failed' };
       }
-      while (ok) {
+      if (!ok) return { pid: 0, reason: 'snapshot-failed' }; // первая запись не прочиталась — снапшот невалиден
+      for (;;) {
+        const entry = koffi.unpack('EdeskProcessEntry32W', buf);
         if (entryName(entry).toLowerCase() === 'winlogon.exe') {
           const sidBuf = Buffer.alloc(4);
           if (dll.pidToSession(entry.th32ProcessID, sidBuf)
@@ -141,9 +139,10 @@ export function createSessionSpawner({ koffi, log = console } = {}) {
             return { pid: entry.th32ProcessID };
           }
         }
-        ok = dll.process32Next(snapshot, entry);
+        buf = packEntry();
+        ok = dll.process32Next(snapshot, buf);
+        if (!ok) return { pid: 0, reason: 'winlogon-not-found' };
       }
-      return { pid: 0, reason: 'winlogon-not-found' };
     } finally {
       try { dll.closeHandle(snapshot); } catch { /* снапшот уже мёртв */ }
     }
