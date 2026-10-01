@@ -317,6 +317,9 @@ export function createServer(opts = {}) {
       agentRegister: opts.limits?.agentRegister ?? new RateLimiter(10, 60_000),
       // toast на экран машины: нечастая операция, лимит на всякий случай
       machineToast: opts.limits?.machineToast ?? new RateLimiter(10, 60_000),
+      // Wake-on-LAN (R10): разбудить офлайн-машину через онлайн-соседа — тоже
+      // нечастая операция поддержки
+      wol: opts.limits?.wol ?? new RateLimiter(10, 60_000),
       // WS-upgrade до всякой аутентификации: аноним не держит сокеты и TLS-рукопожатия
       wsUpgrade: opts.limits?.wsUpgrade ?? new RateLimiter(30, 10_000),
       // включение/выключение 2FA: маршрут проверяет пароль (scrypt) —
@@ -354,6 +357,17 @@ export function createServer(opts = {}) {
   // Каждый оператор ждёт свой id: замена toast не разрешает чужое ожидание.
   const pendingToasts = new Map(); // machineId -> {id, text, at, issued}
   const toastWaiters = new Map(); // machineId -> [{id, done, resolve}]
+  // Wake-on-LAN (R10): тот же одноразовый паттерн в памяти, что у toast, но с
+  // курьером. Ключ — ЦЕЛЬ (машина, которую будят); выдача уходит ОНЛАЙН-машине-
+  // курьеру её heartbeat-ом (поле wake), подтверждение курьера (wakeResult) в
+  // следующем heartbeat разрешает ожидавших операторов. Один ожидающий wake на
+  // цель (новый заменяет не забранный старый); вместо одного `mac` — массив
+  // `macs`: у цели может быть несколько NIC, и сервер не знает, какой из них
+  // поддерживает WOL, — курьер честно шлёт magic packet на все MAC инвентаря.
+  // `couriers` — машины, выбраные маршрутом по подсети /24; выдать wake может
+  // любая из них (первая, кто забрал).
+  const pendingWakes = new Map(); // machineId (цель) -> {id, macs, targetMachineId, couriers, queuedAt, issued}
+  const wakeWaiters = new Map(); // machineId (цель) -> [{id, done, resolve}]
 
   function send(ws, obj) {
     if (ws && ws.readyState === ws.OPEN) ws.send(JSON.stringify(obj));
@@ -1443,6 +1457,64 @@ export function createServer(opts = {}) {
       });
       return ok(res, 200, { ok: true, result });
     }
+    m = p.match(/^\/machines\/([^/]+)\/wol$/);
+    if (m && req.method === 'POST') {
+      const locale = pickLocale(req.headers['accept-language']);
+      // лимиты ПОСЛЕ auth (как claim, P1-1): аноним не выжигает лимит операторов
+      if (!user) return err(res, 401, 'unauthorized', 'Требуется авторизация');
+      // операция поддержки, как claim и toast: admin+operator; аудитор — нет
+      if (!['admin', 'operator'].includes(user.role)) return err(res, 403, 'forbidden', 'Недостаточно прав');
+      if (!cfg.limits.wol.take(`ip:${ip(req)}`)) return err(res, 429, 'rate_limited', t('machines.wolLimited', {}, locale));
+      const machine = machinesStore.get(m[1]);
+      if (!machine) return err(res, 404, 'not_found', t('machines.notFound', {}, locale));
+      if (machine.revoked_at) return err(res, 409, 'machine_revoked', t('machines.revoked', {}, locale));
+      if (!machine.agent_token_hash) return err(res, 409, 'not_registered', t('machines.notRegistered', {}, locale));
+      // инвертированный онлайн-гейт: WOL нужен именно офлайн-машине; живая
+      // машина в пробуждении не нуждается — честный отказ вместо фейка
+      if (machinesStore.out(machine).online) return err(res, 409, 'machine_online', t('machines.machineOnline', {}, locale));
+      const inventory = machinesStore.out(machine).inventory;
+      const macs = Array.isArray(inventory?.macs) ? inventory.macs : [];
+      if (!macs.length) return err(res, 409, 'wol_no_mac', t('machines.wolNoMac', {}, locale));
+
+      // Курьеры — ОНЛАЙН машины той же подсети /24 (первые 3 октета любого
+      // localIp): magic packet ходит только внутри своего L2, сервер сам в
+      // чужую подсеть не шлёт — нет соседей, честный отказ
+      const subnets = new Set((Array.isArray(inventory?.localIps) ? inventory.localIps : [])
+        .map((ipStr) => String(ipStr).split('.').slice(0, 3).join('.')));
+      const couriers = subnets.size
+        ? machinesStore.list({ limit: 10_000 }).items.filter((cand) => cand.id !== machine.id
+          && cand.online && !cand.revokedAt
+          && (Array.isArray(cand.inventory?.localIps) ? cand.inventory.localIps : [])
+            .some((ipStr) => subnets.has(String(ipStr).split('.').slice(0, 3).join('.'))))
+        : [];
+      if (!couriers.length) return err(res, 409, 'wol_no_neighbor', t('machines.wolNoNeighbor', {}, locale));
+
+      // один ожидающий wake на цель: новый заменяет не забранный старый
+      const id = crypto.randomUUID();
+      pendingWakes.set(machine.id, {
+        id, macs, targetMachineId: machine.id,
+        couriers: couriers.map((c) => c.id), queuedAt: cfg.nowMs(), issued: false,
+      });
+      auditLog(db, user.id, 'machine.wol', machine.id, { macs, couriers: couriers.map((c) => c.id) });
+      // ожидаем подтверждения курьера (придёт его машинным heartbeat-ом)
+      // ограниченное время; по чужому id не разрешаемся
+      const result = await new Promise((resolve) => {
+        const list = wakeWaiters.get(machine.id) ?? [];
+        const waiter = { id, done: false, resolve };
+        list.push(waiter);
+        wakeWaiters.set(machine.id, list);
+        setTimeout(() => {
+          waiter.done = true;
+          const rest = wakeWaiters.get(machine.id);
+          if (rest) wakeWaiters.set(machine.id, rest.filter((w) => !w.done));
+          resolve(null);
+        }, cfg.toastWaitMs);
+      });
+      if (result === null) return ok(res, 504, { delivered: false, reason: 'no_confirm' });
+      if (result.ok === true) return ok(res, 200, { delivered: true });
+      // курьер ответил отказом — доносим его причину честно
+      return ok(res, 200, { delivered: false, reason: result.reason || 'courier_failed' });
+    }
     m = p.match(/^\/machines\/([^/]+)$/);
     if (m && (req.method === 'GET' || req.method === 'DELETE')) {
       // одна машина: GET — наружный объект с инвентарём (R06), DELETE — удаление.
@@ -1530,7 +1602,47 @@ export function createServer(opts = {}) {
           pendingToasts.delete(machine.id);
         }
       }
-      return ok(res, 200, { ok: true, ...(toast ? { toast } : {}) });
+
+      // Wake-on-LAN (R10): результат курьера по забранному ранее wake — клон
+      // toastResult по форме, но с поиском по id: wake ждёт под id ЦЕЛИ, а
+      // репортит КУРЬЕР. Только актуальный id и allowlist-форма; мусор молча
+      // игнорируется, heartbeat не ломается.
+      const wr = body && typeof body.wakeResult === 'object' && body.wakeResult !== null ? body.wakeResult : null;
+      if (wr && typeof wr.id === 'string') {
+        for (const [targetId, pendingWake] of pendingWakes) {
+          if (pendingWake.id !== wr.id) continue;
+          pendingWakes.delete(targetId);
+          const result = { ok: wr.ok === true };
+          if (typeof wr.reason === 'string' && wr.reason) result.reason = wr.reason.slice(0, 60);
+          const waiters = wakeWaiters.get(targetId) ?? [];
+          wakeWaiters.set(targetId, waiters.filter((w) => {
+            if (w.done) return false; // истёкшие ожидания выбрасываются
+            if (w.id !== pendingWake.id) return true; // чужой id — оператор ждёт свой результат
+            w.done = true;
+            w.resolve(result);
+            return false;
+          }));
+          break;
+        }
+      }
+
+      // выдача ожидающего wake: этот агент может быть курьером офлайн-цели —
+      // один wake за heartbeat, только пока не истёк TTL
+      let wake = null;
+      if (pendingWakes.size > 0) {
+        for (const [targetId, queuedWake] of pendingWakes) {
+          if (queuedWake.issued) continue;
+          if (!Array.isArray(queuedWake.couriers) || !queuedWake.couriers.includes(machine.id)) continue;
+          if (cfg.nowMs() - queuedWake.queuedAt > cfg.toastTtlMs) {
+            pendingWakes.delete(targetId);
+            continue;
+          }
+          queuedWake.issued = true;
+          wake = { id: queuedWake.id, macs: queuedWake.macs, targetMachineId: targetId };
+          break;
+        }
+      }
+      return ok(res, 200, { ok: true, ...(toast ? { toast } : {}), ...(wake ? { wake } : {}) });
     }
 
     // ---- pages / brand / downloads ----
@@ -1904,6 +2016,24 @@ export function createServer(opts = {}) {
         const remainingSec = Number.isInteger(msg.remainingSec) && msg.remainingSec > 0 && msg.remainingSec <= 3600
           ? msg.remainingSec : 60;
         const out = { type: 'idle-warning', remainingSec };
+        for (const opWs of rt.opSockets.keys()) send(opWs, out);
+        return;
+      }
+      // machine-video (v0.6, ADR 0027): статус видео-хелпера host→операторам
+      // (running/error/off + причина). Гейт и rate-limit — как у idle-*.
+      if (msg.type === 'machine-video') {
+        if (role !== 'host') return ws.close(4002, 'bad-message');
+        const rt = live.get(s.id);
+        const isHost = role === 'host' && rt?.hostWs === ws;
+        if (!isHost || s.state !== 'approved') return;
+        const nowMv = Date.now();
+        if (nowMv > rt.sigReset) { rt.sigReset = nowMv + SIGNAL_WINDOW_MS; rt.sigCount = 0; }
+        rt.sigCount += 1;
+        if (rt.sigCount > SIGNAL_MAX) return ws.close(1008, 'slow-consumer');
+        const state = ['spawning', 'connecting', 'running', 'error', 'off'].includes(msg.state) ? msg.state : 'error';
+        const reason = typeof msg.reason === 'string' ? msg.reason.slice(0, 60) : '';
+        const helperState = typeof msg.helper?.state === 'string' ? msg.helper.state.slice(0, 30) : '';
+        const out = { type: 'machine-video', state, ...(reason ? { reason } : {}), ...(helperState ? { helperState } : {}) };
         for (const opWs of rt.opSockets.keys()) send(opWs, out);
         return;
       }

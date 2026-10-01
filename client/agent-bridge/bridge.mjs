@@ -14,6 +14,12 @@ if (!api) {
   let pc = null;
   const dcs = new Map(); // label → DataChannel
   let paused = false;
+  // Видео-хелпер (ADR 0027): JPEG-кадры рисуются на canvas, track уходит в
+  // recvonly-трансивер оператора через replaceTrack (без ренеготиации).
+  let videoCanvas = null;
+  let videoCtx = null;
+  let videoTrack = null;
+  let videoSeq = 0; // пропуск устаревших кадров: декодируем только свежий
   // TURN-конфиг приходит из main до offer (ICE_CONFIG); пусто или сбой —
   // прямое LAN-соединение, причина честно видна в логе окна и в сообщении об отказе.
   let iceServers = [];
@@ -22,13 +28,41 @@ if (!api) {
   const LOW_WATER = 256 * 1024; // опустело ниже — разрешаем снова
   // Зеркало allowlist релея (BRIDGE_DC_LABELS): чат и файлы machine-сеанса (W-U6)
   // проходят в main; всё прочее закрывается здесь же, в рендерере.
-  const LABELS = new Set(['term', 'chat', 'file']);
+  const LABELS = new Set(['term', 'chat', 'file', 'input']);
 
   api.onIceConfig?.((cfg) => {
     iceServers = Array.isArray(cfg?.iceServers) ? cfg.iceServers : [];
     iceReason = typeof cfg?.reason === 'string' && cfg.reason ? cfg.reason : null;
     if (iceReason) console.warn(`agent-bridge: ${iceReason}`);
   });
+
+  // Кадр → canvas → track. Первый кадр создаёт canvas/track и кладёт его в
+  // видео-трансивер (оператор офферил recvonly — replaceTrack не требует
+  // ренеготиации). Устаревшие кадры (пришли во время декодирования
+  // предыдущего) пропускаются по счётчику — latency важнее полноты.
+  async function drawVideoFrame(jpeg) {
+    try {
+      const seq = ++videoSeq;
+      const bitmap = await createImageBitmap(new Blob([jpeg], { type: 'image/jpeg' }));
+      if (seq !== videoSeq) { bitmap.close?.(); return; }
+      if (!videoCanvas) {
+        videoCanvas = document.createElement('canvas');
+        videoCanvas.width = bitmap.width;
+        videoCanvas.height = bitmap.height;
+        videoCtx = videoCanvas.getContext('2d');
+        videoTrack = videoCanvas.captureStream(24).getVideoTracks()[0] ?? null;
+        const vt = pc?.getTransceivers().find((t) => t.receiver.track?.kind === 'video' || t.sender.track?.kind === 'video');
+        if (vt && videoTrack) await vt.sender.replaceTrack(videoTrack).catch(() => {});
+      } else if (videoCanvas.width !== bitmap.width || videoCanvas.height !== bitmap.height) {
+        videoCanvas.width = bitmap.width;
+        videoCanvas.height = bitmap.height;
+      }
+      videoCtx.drawImage(bitmap, 0, 0);
+      bitmap.close?.();
+    } catch { /* битый кадр пропускаем — следующий будет */ }
+  }
+
+  api.onVideoFrame?.((jpeg) => { void drawVideoFrame(jpeg); });
 
   function openPeer(offerSdp) {
     if (pc) return;
@@ -66,7 +100,14 @@ if (!api) {
       };
     };
     pc.setRemoteDescription({ type: 'offer', sdp: offerSdp })
-      .then(() => pc.createAnswer())
+      .then(() => {
+        // Оператор офферил видео recvonly (machine-сеанс, ADR 0027): отвечаем
+        // sendonly — кадры хелпера уйдут в этот трансивер через replaceTrack
+        // без ренеготиации. В attended-сеансах видео-трансивера нет — no-op.
+        const vt = pc.getTransceivers().find((t) => t.receiver.track?.kind === 'video');
+        if (vt) vt.direction = 'sendonly';
+        return pc.createAnswer();
+      })
       .then((answer) => pc.setLocalDescription(answer))
       .then(() => api.sendAnswer(pc.localDescription.sdp))
       .catch((err) => {

@@ -6,6 +6,8 @@ import { app, BrowserWindow, ipcMain, session, desktopCapturer, screen, shell, c
 import path from 'node:path';
 import os from 'node:os';
 import fs from 'node:fs';
+import net from 'node:net';
+import { spawn as nodeSpawn } from 'node:child_process';
 import { createRequire } from 'node:module';
 import { createApi } from './lib/api.mjs';
 import { createSignalClient } from './lib/signal.mjs';
@@ -21,6 +23,8 @@ import { createBridgeRelay, BRIDGE_IPC } from './agent-bridge/relay.mjs';
 import { createTermHost } from './lib/term.mjs';
 import { showToast } from './lib/notify.mjs';
 import { createMachineServices } from './lib/machine-services.mjs';
+import { createSessionSpawner } from './lib/session-spawn.mjs';
+import { createVideoHost } from './lib/video-host.mjs';
 import { resolveConsoleUser } from './lib/console-user.mjs';
 import { UPDATE_REPO, updateFeedUrl, platformFeedName, updateDecision, updateInstallDecision } from './lib/updater.mjs';
 import { isNewerVersion } from './lib/version-check.mjs';
@@ -863,7 +867,7 @@ function createWindow() {
 // фиксированным IPC-каналам (BRIDGE_IPC) через createBridgeRelay. Мост живёт
 // только внутри сеанса: pcLike.close() на ended/stop; краш страницы не роняет
 // агента — терминал честно закрывается (relay.destroy → onclose канала).
-function createAgentRtc({ fetchIceServers } = {}) {
+function createAgentRtc({ fetchIceServers, videoForward = null } = {}) {
   return () => {
     let win = null;
     let relay = null;
@@ -903,6 +907,9 @@ function createAgentRtc({ fetchIceServers } = {}) {
       fetchIceServers,
       log: console,
     });
+    // Кадры видео-хелпера (ADR 0027) идут только в мост текущего сеанса;
+    // videoForward (см. startAgentMode) знает актуальный relay.
+    videoForward?.setRelay?.((channel, payload) => relay.sendToBridge(channel, payload));
     // отправитель — только наше окно: чужие ipc-посылки не проходят
     for (const channel of Object.values(BRIDGE_IPC)) {
       const handler = (e, payload) => {
@@ -937,6 +944,20 @@ async function collectInventory() {
     const st = await fs.promises.statfs(app.getPath('userData'));
     inventory.diskFreeGb = Math.round(((st.bavail * st.bsize) / 1e9) * 100) / 100;
   } catch { /* statfs недоступен на этом томе/платформе — поле честно отсутствует */ }
+  // WoL (v0.6): MAC'и и локальные IPv4 — курьерам magic packet и выбору соседей.
+  // Сервер санитизирует allowlist'ом (≤8×60, мусор выкидывается поэлементно).
+  try {
+    const macs = new Set();
+    const localIps = new Set();
+    for (const list of Object.values(os.networkInterfaces())) {
+      for (const i of list ?? []) {
+        if (i.mac && i.mac !== '00:00:00:00:00:00') macs.add(i.mac.toUpperCase());
+        if (i.family === 'IPv4' && !i.internal) localIps.add(i.address);
+      }
+    }
+    if (macs.size) inventory.macs = [...macs];
+    if (localIps.size) inventory.localIps = [...localIps];
+  } catch { /* networkInterfaces недоступен — поля честно отсутствуют, WoL не обещаем */ }
   return inventory;
 }
 
@@ -961,6 +982,50 @@ function startAgentMode() {
     },
   };
   const agentApi = createAgentApi({ baseUrl: settings.serverUrl });
+
+  // Видео-хелпер (ADR 0027, v0.6): спавн в консольном сеансе + pipe → мост.
+  // Хелпер есть только в упакованной сборке (extraResources); в dev честно
+  // spawn-bad-exe → machine-сеанс живёт без видео.
+  const videoForward = { relay: null };
+  const videoStatusCb = { fn: null };
+  let spawnKoffi;
+  try { spawnKoffi = createRequire(import.meta.url)('koffi'); } catch { spawnKoffi = null; } // честный spawn-koffi-unavailable
+  const videoHost = createVideoHost({
+    spawner: createSessionSpawner({
+      koffi: spawnKoffi,
+      log: { warn: (...a) => { console.warn(...a); svcDiag.write('video', a.map(String).join(' ')); } },
+    }),
+    netFactory: (p) => net.connect(p),
+    killer: (pid) => { nodeSpawn('taskkill', ['/PID', String(pid), '/T', '/F'], { windowsHide: true }); },
+    exePath: app.isPackaged ? path.join(process.resourcesPath, 'enotdesk-video.exe') : '',
+    commandLine: app.isPackaged ? `"${path.join(process.resourcesPath, 'enotdesk-video.exe')}"` : '',
+    log: { warn: (...a) => { console.warn(...a); svcDiag.write('video', a.map(String).join(' ')); } },
+    onFrame: (jpeg) => videoForward.relay?.(BRIDGE_IPC.VIDEO_FRAME, jpeg),
+    onStatus: (s) => videoStatusCb.fn?.(s),
+  });
+  // Контракт для agent.mjs (deps.video): жизненный цикл, ввод, статусы.
+  const video = {
+    bind: () => {}, // relay привязывается в createAgentRtc (videoForward.setRelay)
+    start: () => videoHost.start(),
+    stop: () => videoHost.stop(),
+    sendCommand: (obj) => videoHost.sendCommand(obj),
+    sendInput: (raw) => videoHost.sendCommand({ cmd: 'input', raw }),
+    handleInputChannel: (ch) => {
+      ch.onmessage = (m) => {
+        if (typeof m?.data !== 'string') return;
+        let ev;
+        try { ev = JSON.parse(m.data); } catch { return; }
+        // privacy MVP: управление дисплеем через тот же канал (v0.6)
+        if (ev?.display === 'off' || ev?.display === 'on') {
+          videoHost.sendCommand({ cmd: ev.display === 'off' ? 'sleep' : 'wake' });
+          return;
+        }
+        videoHost.sendCommand({ cmd: 'input', ev });
+      };
+    },
+    onStatus: (cb) => { videoStatusCb.fn = cb; },
+  };
+
   const agent = createAgent({
     api: agentApi,
     signal: () => createSignalClient({ url: new URL('/signal', settings.serverUrl).toString().replace(/^http/, 'ws') }),
@@ -983,6 +1048,7 @@ function startAgentMode() {
       // store в момент открытия терминала — к этому моменту машина
       // зарегистрирована; отзыв/не-200/зависание хук честно отчитает.
       fetchIceServers: createIceServersFetcher({ api: agentApi, tokenLoad: () => tokenStore.load() }),
+      videoForward,
     }),
     // Сообщение на экран машины (R08): платформа известна здесь, текст приходит
     // из heartbeat-ответа сервера. Показ не блокирует цикл (см. deliverToast).
@@ -994,6 +1060,8 @@ function startAgentMode() {
       notify: (text) => showToast(process.platform, text),
       log: { warn: (...a) => { console.warn(...a); svcDiag.write('agent', a.map(String).join(' ')); } },
     }),
+    // v0.6 (ADR 0027): видео+ввод в консольном сеансе через хелпер.
+    video,
     policy: {
       name: process.env.EDESK_AGENT_NAME || os.hostname(),
       os: process.platform,

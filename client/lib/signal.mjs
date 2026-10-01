@@ -126,6 +126,18 @@ export function createSignalClient({ url, wsFactory = (u) => new WebSocket(u), a
       ws.send(JSON.stringify({ type: 'idle-clear' }));
     },
 
+    // machine-video (v0.6, ADR 0027): статус видео-хелпера операторам.
+    sendMachineVideo(status = {}) {
+      const state = typeof status.state === 'string' ? status.state : 'error';
+      if (!ws || ws.readyState !== 1) return;
+      ws.send(JSON.stringify({
+        type: 'machine-video',
+        state,
+        ...(typeof status.reason === 'string' && status.reason ? { reason: status.reason.slice(0, 60) } : {}),
+        ...(status.helper && typeof status.helper === 'object' ? { helper: { state: String(status.helper.state ?? '').slice(0, 30) } } : {}),
+      }));
+    },
+
     // extra — allowlist-расширение heartbeat (R09): только termActive boolean,
     // прочие поля не уходят; без аргумента сообщение как раньше.
     heartbeat(extra) {
