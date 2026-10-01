@@ -191,16 +191,30 @@ fn run() -> Result<i32, String> {
                 continue;
             }
         };
+        // One pending I/O at a time on the synchronous pipe handle (see
+        // pipe_inbound): reader reads and the capture thread writes strictly
+        // under this lock, otherwise WriteFile waits behind a parked ReadFile
+        // and the session deadlocks (v0.6.0 приёмка, dup=7).
+        let pipe_lock = Arc::new(Mutex::new(()));
         let reader = {
             let token = token.clone();
             let shared = shared.clone();
             let io = io.clone();
+            let lock = pipe_lock.clone();
             let privacy_sleep = privacy_sleep.clone();
-            std::thread::spawn(move || reader_thread(io, token, shared, privacy_sleep))
+            std::thread::spawn(move || reader_thread(io, lock, token, shared, privacy_sleep))
         };
         set_state(&shared, "live");
 
-        let end = capture_session(&cap, &mut dup, &mut access_lost_times, &shared, &io, &privacy_sleep);
+        let end = capture_session(
+            &cap,
+            &mut dup,
+            &mut access_lost_times,
+            &shared,
+            &io,
+            &privacy_sleep,
+            &pipe_lock,
+        );
 
         pipe.cancel_io(); // unblock a pending read on the reader thread
         let _ = reader.join();
@@ -236,12 +250,40 @@ enum SessionEnd {
 // Reader thread: hello handshake + command dispatch
 // ---------------------------------------------------------------------------
 
-fn reader_thread(io: Arc<File>, token: Arc<String>, shared: Arc<Shared>, privacy_sleep: Arc<AtomicBool>) {
+fn reader_thread(
+    io: Arc<File>,
+    pipe_lock: Arc<Mutex<()>>,
+    token: Arc<String>,
+    shared: Arc<Shared>,
+    privacy_sleep: Arc<AtomicBool>,
+) {
     let mut io = io; // Arc<File> derefs to File for read_exact
     let mut authenticated = false;
     loop {
+        // Wait for bytes without parking a ReadFile on the handle: the pipe is
+        // synchronous, a pending read would serialize the STATUS/frame writes
+        // behind itself and deadlock the session. Peek (30 ms poll), then read
+        // what arrived under the lock.
+        loop {
+            match win::pipe_inbound(&io) {
+                Ok(n) if n > 0 => break,
+                Ok(_) => {
+                    if shared.stop.load(Ordering::SeqCst) || shared.broken.load(Ordering::SeqCst) {
+                        shared.broken.store(true, Ordering::SeqCst);
+                        return;
+                    }
+                    std::thread::sleep(PIPE_POLL_PERIOD);
+                }
+                Err(_) => {
+                    shared.broken.store(true, Ordering::SeqCst);
+                    return;
+                }
+            }
+        }
+        let guard = pipe_lock.lock().unwrap_or_else(|p| p.into_inner());
         let mut hdr = [0u8; 9];
         if io.read_exact(&mut hdr).is_err() {
+            drop(guard);
             break;
         }
         let magic = u32::from_le_bytes([hdr[0], hdr[1], hdr[2], hdr[3]]);
@@ -255,13 +297,16 @@ fn reader_thread(io: Arc<File>, token: Arc<String>, shared: Arc<Shared>, privacy
                 _ => false,
             };
         if !shape_ok {
+            drop(guard);
             set_last_err(&shared, "pipe: bad message header");
             break;
         }
         let mut payload = vec![0u8; len];
         if len > 0 && io.read_exact(&mut payload).is_err() {
+            drop(guard);
             break;
         }
+        drop(guard);
         if ty == proto::T_HELLO {
             // Byte-exact comparison; the service sends the same bytes it put
             // on our stdin. Any mismatch ends the session and the process.
@@ -277,6 +322,11 @@ fn reader_thread(io: Arc<File>, token: Arc<String>, shared: Arc<Shared>, privacy
     }
     shared.broken.store(true, Ordering::SeqCst);
 }
+
+// Reader poll cadence while the inbound queue is empty. Commands are rare
+// (input/quality/privacy), so the wakeups cost nothing and input latency
+// stays well under the 100 ms frame cadence.
+const PIPE_POLL_PERIOD: Duration = Duration::from_millis(30);
 
 fn handle_command(shared: &Shared, privacy_sleep: &AtomicBool, text: &str) {
     let doc = match proto::parse(text) {
@@ -363,6 +413,7 @@ fn capture_session(
     shared: &Shared,
     io: &File,
     privacy_sleep: &AtomicBool,
+    pipe_lock: &Mutex<()>,
 ) -> SessionEnd {
     let mut last_status = Instant::now();
     let mut last_encode: Option<Instant> = None;
@@ -396,7 +447,7 @@ fn capture_session(
             shared.fps.store(fps, Ordering::Relaxed);
             let body = status_json(shared, fps);
             win::mark_dup_op(7);
-            if send_msg(io, proto::T_STATUS, body.as_bytes()).is_err() {
+            if send_msg(io, pipe_lock, proto::T_STATUS, body.as_bytes()).is_err() {
                 shared.broken.store(true, Ordering::SeqCst);
                 return SessionEnd::Broken;
             }
@@ -455,7 +506,7 @@ fn capture_session(
                     let q = *shared.jpeg_q.lock().unwrap_or_else(|p| p.into_inner()) / 100.0;
                     match cap.wic.encode(pw, ph, &px, q) {
                         Ok(jpeg) => {
-                            if send_msg(io, proto::T_FRAME, &jpeg).is_err() {
+                            if send_msg(io, pipe_lock, proto::T_FRAME, &jpeg).is_err() {
                                 shared.broken.store(true, Ordering::SeqCst);
                                 return SessionEnd::Broken;
                             }
@@ -543,8 +594,13 @@ fn status_json(shared: &Shared, fps: u64) -> String {
     )
 }
 
-fn send_msg(io: &File, ty: u8, payload: &[u8]) -> std::io::Result<()> {
+fn send_msg(io: &File, pipe_lock: &Mutex<()>, ty: u8, payload: &[u8]) -> std::io::Result<()> {
     let msg = proto::encode_msg(ty, payload);
+    // The handle is synchronous (no FILE_FLAG_OVERLAPPED): never write while
+    // the reader holds a read in flight — Windows serializes I/O on the
+    // handle and the write would wait for the reader's next message
+    // (v0.6.0 приёмка: dup=7 deadlock, statuses never reached the client).
+    let _guard = pipe_lock.lock().unwrap_or_else(|p| p.into_inner());
     let mut io = io;
     io.write_all(&msg)
 }
