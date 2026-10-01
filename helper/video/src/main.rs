@@ -383,6 +383,10 @@ fn capture_session(
 
         // Status document every 2 s: fps, lastErr, uac, locked, displayOff.
         if last_status.elapsed() >= STATUS_PERIOD {
+            // 6=in status_json (Toolhelp/OpenInputDesktop), 7=in STATUS write;
+            // both are blocking calls on this thread, invisible to the STATUS
+            // channel itself — the ticker names them (v0.6.0 приёмка: wedge).
+            win::mark_dup_op(6);
             let secs = window_start.elapsed().as_secs_f64();
             let fps = if secs > 0.0 {
                 (frames_window as f64 / secs).round() as u64
@@ -391,10 +395,12 @@ fn capture_session(
             };
             shared.fps.store(fps, Ordering::Relaxed);
             let body = status_json(shared, fps);
+            win::mark_dup_op(7);
             if send_msg(io, proto::T_STATUS, body.as_bytes()).is_err() {
                 shared.broken.store(true, Ordering::SeqCst);
                 return SessionEnd::Broken;
             }
+            win::mark_dup_op(0);
             frames_window = 0;
             window_start = Instant::now();
             last_status = Instant::now();
@@ -617,9 +623,11 @@ fn spawn_ticker(shared: Arc<Shared>) {
                 .unwrap_or_else(|p| p.into_inner())
                 .clone();
             let fps = shared.fps.load(Ordering::Relaxed);
-            // dup/err: where the capture thread currently is (make_dup step) and
-            // the last error text — a wedged DXGI call is otherwise invisible,
-            // because the STATUS channel lives on the same stuck thread.
+            // dup/err: where the capture thread currently is — make_dup steps
+            // (1 cast, 2 DuplicateOutput, 3 desc, 4 staging, 0=done/idle) or the
+            // status path (6=status_json, 7=STATUS write); err = last error text.
+            // A wedged call is otherwise invisible: the STATUS channel lives on
+            // the same stuck thread, the ticker thread does not.
             let err = shared
                 .last_err
                 .lock()
