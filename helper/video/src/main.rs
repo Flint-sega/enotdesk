@@ -612,10 +612,8 @@ fn spawn_ticker(shared: Arc<Shared>) {
     });
 }
 
-/// The service signals shutdown by closing our stdin. A blocked
-/// ConnectNamedPipe has no clean interrupt without overlapped IO (v1 keeps
-/// blocking calls), so the watcher exits the process directly -- blunt, but
-/// panic-free and honest, and no session work is in progress that could lose
-/// more than a frame.
 // v0.6: stdin lifecycle watcher removed — the helper is spawned DETACHED
 // (no stdin at all); the service kills it via taskkill /T on session end.
+// (The original stdin-EOF watcher exited the process directly: a blocked
+// ConnectNamedPipe has no clean interrupt without overlapped IO, v1 keeps
+// blocking calls; nothing else owns clean shutdown.)
