@@ -1,0 +1,49 @@
+[package]
+name = "enotdesk-video"
+version = "0.1.0"
+edition = "2021"
+
+# Windows-only helper (ADR 0026/0027): runs inside the console session, so it
+# is built for x86_64-pc-windows-msvc and shipped by the service installer.
+[dependencies]
+windows = { version = "0.58", features = [
+  # Same pinned major as the proven spike (spike/video-dxgi). Feature set is
+  # the minimal closure needed by src/win.rs, verified by cross-compiling:
+  #   cargo check --target x86_64-pc-windows-msvc
+  "Win32_Foundation",
+  # D3D_DRIVER_TYPE / D3D_FEATURE_LEVEL live one level up from Direct3D11.
+  "Win32_Graphics_Direct3D",
+  "Win32_Graphics_Direct3D11",
+  "Win32_Graphics_Dxgi",
+  # DXGI_FORMAT / DXGI_SAMPLE_DESC / DXGI_OUTPUT_DESC live in the Dxgi::Common
+  # submodule and additionally need Gdi for the output-descriptor struct.
+  "Win32_Graphics_Dxgi_Common",
+  "Win32_Graphics_Gdi",
+  "Win32_Graphics_Imaging",
+  "Win32_System_Com",
+  # IPropertyBag2 / PROPBAG2 live in the StructuredStorage submodule.
+  "Win32_System_Com_StructuredStorage",
+  # Toolhelp process snapshot for the UAC (consent.exe) indicator.
+  "Win32_System_Diagnostics_ToolHelp",
+  # CancelIoEx / OVERLAPPED live in System::IO.
+  "Win32_System_IO",
+  # Named pipe server: CreateNamedPipeW / ConnectNamedPipe / DisconnectNamedPipe.
+  "Win32_System_Pipes",
+  # Gates CreateNamedPipeW (SECURITY_ATTRIBUTES parameter type).
+  "Win32_Security",
+  # OpenInputDesktop / CloseDesktop / DESKTOP_* (stations-and-desktops group).
+  "Win32_System_StationsAndDesktops",
+  # Gates IPropertyBag2::Write (VARIANT parameter).
+  "Win32_System_Variant",
+  # SendInput (mouse + keyboard injection).
+  "Win32_UI_Input_KeyboardAndMouse",
+  # SHCreateMemStream (shlwapi) for the WIC encoder's output stream.
+  "Win32_UI_Shell",
+  # GetSystemMetrics, SendMessageTimeoutW, HWND_BROADCAST.
+  "Win32_UI_WindowsAndMessaging",
+  # PIPE_ACCESS_* open-mode constants.
+  "Win32_Storage_FileSystem",
+] }
+
+[profile.release]
+opt-level = 3
