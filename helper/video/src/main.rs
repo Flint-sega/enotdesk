@@ -195,11 +195,12 @@ fn run() -> Result<i32, String> {
             let token = token.clone();
             let shared = shared.clone();
             let io = io.clone();
+            let privacy_sleep = privacy_sleep.clone();
             std::thread::spawn(move || reader_thread(io, token, shared, privacy_sleep))
         };
         set_state(&shared, "live");
 
-        let end = capture_session(&cap, &mut dup, &mut access_lost_times, &shared, &io);
+        let end = capture_session(&cap, &mut dup, &mut access_lost_times, &shared, &io, &privacy_sleep);
 
         pipe.cancel_io(); // unblock a pending read on the reader thread
         let _ = reader.join();
@@ -361,6 +362,7 @@ fn capture_session(
     access_lost_times: &mut Vec<Instant>,
     shared: &Shared,
     io: &File,
+    privacy_sleep: &AtomicBool,
 ) -> SessionEnd {
     let mut last_status = Instant::now();
     let mut last_encode: Option<Instant> = None;
