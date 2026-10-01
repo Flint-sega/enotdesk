@@ -39,8 +39,10 @@ onboarding-код. Отзыв на стороне сервера: список �
 ## Установка по ОС
 
 - **Windows (приоритет)**: `sc.exe create` (start= auto, description, автоперезапуск при сбоях,
-  переменные через `AppEnvironment`). См. `client/agent-service/windows.md`, скрипты
-  `windows-install.bat` / `windows-remove.bat`.
+  переменные через `Environment` + `AppEnvironment`). См. `client/agent-service/windows.md`, скрипты
+  `windows-install.bat` / `windows-remove.bat`. Установка идемпотентна: повторный запуск
+  на существующей службе обновляет конфиг и перезапускает её (апгрейд бинарников —
+  просто заменить файлы и перезапустить скрипт; ранее апгрейд оставлял службу Stopped).
 - **Linux**: systemd unit с хардненингом как у сервера (`NoNewPrivileges`, `ProtectSystem=strict`,
   `ReadWritePaths` на профиль, `Restart=always`). См. `client/agent-service/linux.md`,
   скрипты `install-linux.sh` / `remove-linux.sh`.
