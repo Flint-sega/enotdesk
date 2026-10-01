@@ -26,6 +26,17 @@ files:
   - "node_modules/koffi/src/koffi/src/*.js"
 asarUnpack:
   - node_modules/koffi/**
+# Видео-хелпер (ADR 0027, v0.6): нативный exe собирается отдельно (helper/video,
+# cargo build --release на Windows; release-воркфлоу делает это перед упаковкой)
+# и кладётся в resources — его запускает служба в консольном сеансе, asar не нужен.
+# Осознанное отступление от ADR 0011 («asarUnpack только для koffi»): хелпер —
+# отдельный бинарник вне asar. На ОС без helper/video/bin сборка идёт без хелпера
+# (клиент честно репортит spawn-bad-exe — machine-сеанс живёт без видео).
+extraResources:
+  - from: helper/video/bin
+    to: .
+    filter:
+      - enotdesk-video.exe
 artifactName: "EnotDesk-${os}-${arch}.${ext}"
 # Вшитый адрес сервера (R03): значение попадает в package.json внутри app.asar,
 # клиент читает его как baked (client/lib/first-run.mjs: pkg → process.env →

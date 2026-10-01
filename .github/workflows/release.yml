@@ -49,6 +49,14 @@ jobs:
         if: runner.os == 'macOS'
         shell: bash
         run: npx electron-builder --config build/electron-builder.yml -c.publish.provider=generic -c.publish.url="$ENOT_FEED_URL" --mac --publish never
+      - name: Build video helper (Windows, ADR 0027)
+        if: runner.os == 'Windows'
+        shell: bash
+        run: |
+          rustup target add x86_64-pc-windows-msvc
+          cargo build --release --manifest-path helper/video/Cargo.toml
+          mkdir -p helper/video/bin
+          cp helper/video/target/release/enotdesk-video.exe helper/video/bin/enotdesk-video.exe
       - name: Pack (Windows — portable и установщик NSIS)
         if: runner.os == 'Windows'
         shell: bash
