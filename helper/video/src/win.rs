@@ -35,7 +35,8 @@ use windows::Win32::System::Diagnostics::ToolHelp::{
     CreateToolhelp32Snapshot, Process32FirstW, Process32NextW, PROCESSENTRY32W, TH32CS_SNAPPROCESS,
 };
 use windows::Win32::System::Pipes::{
-    ConnectNamedPipe, CreateNamedPipeW, DisconnectNamedPipe, PIPE_READMODE_BYTE, PIPE_TYPE_BYTE,
+    ConnectNamedPipe, CreateNamedPipeW, DisconnectNamedPipe, PeekNamedPipe, PIPE_READMODE_BYTE,
+    PIPE_TYPE_BYTE,
 };
 use windows::Win32::System::StationsAndDesktops::{
     CloseDesktop, OpenInputDesktop, DESKTOP_ACCESS_FLAGS, DESKTOP_CONTROL_FLAGS,
@@ -175,10 +176,34 @@ impl PipeServer {
         let _ = unsafe { CancelIoEx(self.raw, None) };
     }
 
-    /// Drop the connected client so the next instance starts clean.
+    /// Disconnect the connected client so the next instance starts clean.
     pub fn disconnect(&self) {
         let _ = unsafe { DisconnectNamedPipe(self.raw) };
     }
+}
+
+/// Bytes waiting in the pipe inbound queue. The reader polls this instead of
+/// parking in a blocking ReadFile: the handle is synchronous (no
+/// FILE_FLAG_OVERLAPPED), and Windows serializes I/O on it — a pending read
+/// would block the STATUS/frame WriteFile until the client speaks first,
+/// which never happens (client waits for us). Classic deadlock, observed live
+/// as dup=7 (v0.6.0 приёмка).
+pub fn pipe_inbound(f: &std::fs::File) -> std::io::Result<u32> {
+    use std::os::windows::io::AsRawHandle;
+    let mut avail: u32 = 0;
+    let ok = unsafe {
+        PeekNamedPipe(
+            HANDLE(f.as_raw_handle() as *mut core::ffi::c_void),
+            None,
+            0,
+            None,
+            Some(&mut avail),
+            None,
+        )
+    };
+    ok.map(|_| avail).map_err(|e| {
+        std::io::Error::from_raw_os_error(e.code().0) // client gone / pipe broken
+    })
 }
 
 impl Drop for PipeServer {
