@@ -41,9 +41,19 @@ if errorlevel 1 (
   exit /b 1
 )
 
-REM --- Создание службы: автостарт, описание ---
-sc.exe create "%SVC_NAME%" binPath= "\"%APP_EXE%\"" start= auto obj= LocalSystem DisplayName= "EnotDesk Agent"
-if errorlevel 1 goto :fail
+REM --- Создание/обновление службы: автостарт, описание. Идемпотентно:
+REM --- повторный запуск по существующей службе ОБНОВЛЯЕТ конфиг (апгрейд
+REM --- бинарников), а не падает на «already exists» (наблюдение 01.10:
+REM --- апгрейд оставлял службу Stopped, т.к. create падал и до start
+REM --- дело не доходило).
+sc.exe query "%SVC_NAME%" >nul 2>&1
+if errorlevel 1 (
+  sc.exe create "%SVC_NAME%" binPath= "\"%APP_EXE%\"" start= auto obj= LocalSystem DisplayName= "EnotDesk Agent"
+  if errorlevel 1 goto :fail
+) else (
+  sc.exe config "%SVC_NAME%" binPath= "\"%APP_EXE%\"" start= auto obj= LocalSystem DisplayName= "EnotDesk Agent"
+  if errorlevel 1 goto :fail
+)
 sc.exe description "%SVC_NAME%" "EnotDesk: unattended agent. Auto-registers on the EnotDesk server, waits for operator claims. No window by design; managed via this service (see docs/AGENT.md)."
 if errorlevel 1 goto :fail
 
@@ -65,13 +75,28 @@ REM --- Автоперезапуск при сбое: 5с, 10с, затем ка
 sc.exe failure "%SVC_NAME%" reset= 86400 actions= restart/5000/restart/10000/restart/30000
 if errorlevel 1 goto :fail
 
+REM --- Гарантированный старт (и рестарт при апгрейде: новые файлы подхватит
+REM --- только новый процесс). Остановка перед стартом — только если бежит.
+sc.exe query "%SVC_NAME%" 2>nul | find.exe /i "RUNNING" >nul
+if errorlevel 1 goto :ensure-started
+sc.exe stop "%SVC_NAME%" >nul 2>&1
+set WAITN=0
+:wait-stop-loop
+timeout.exe /t 2 /nobreak >nul
+sc.exe query "%SVC_NAME%" 2>nul | find.exe /i "RUNNING" >nul
+if errorlevel 1 goto :ensure-started
+set /a WAITN=%WAITN%+1
+if %WAITN% lss 10 goto :wait-stop-loop
+echo [предупреждение] служба не остановилась за 20 с - продолжаем со стартом поверх.
+:ensure-started
 sc.exe start "%SVC_NAME%"
 if errorlevel 1 (
   echo [ошибка] служба создана, но не запустилась - см. Event Viewer ^(System^) и "sc query %SVC_NAME%".
   exit /b 1
 )
 echo.
-echo Готово. Служба %SVC_NAME% создана и запущена (start= auto).
+echo Готово. Служба %SVC_NAME% создана/обновлена и запущена (start= auto).
+echo Повторный запуск скрипта безопасен: конфиг обновляется, служба перезапускается.
 echo Логи в v1 не пишутся на диск (см. docs/AGENT.md, раздел "Логи").
 echo Регистрация машины проверяется на сервере: список машин / journal-стиль диагностики -
 REM Диагностика: остановите службу и запустите в консоли:
