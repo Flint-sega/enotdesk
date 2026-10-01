@@ -620,3 +620,55 @@ test('терминальный сигналинг: answer и ICE-candidate ух�
     await sleep(10);
   }
 });
+
+test('machine-сеанс W-U6: каналы chat/file уходят в services, неизвестные закрываются', async () => {
+  const { api } = fakeApi({
+    session: () => ({ status: 200, body: { sessionId: 91, state: 'pending-consent', claimId: 'cl-10', operator: { id: 'u1', name: 'Оператор' } } }),
+  });
+  const store = memoryStore();
+  store.save('tok-svc');
+  const sig = fakeSignalFactory();
+  let lastPc = null;
+  const handled = [];
+  const closedLabels = [];
+  const fakeRtcFactory = () => {
+    lastPc = {
+      onicecandidate: null,
+      ondatachannel: null,
+      async setRemoteDescription() {},
+      async createAnswer() { return { type: 'answer', sdp: 'v=0-a' }; },
+      async setLocalDescription() {},
+      async addIceCandidate() {},
+      close() {},
+    };
+    return lastPc;
+  };
+  const agent = createAgent({
+    api,
+    signal: sig.factory,
+    native: createNativeInput({ adapter: inertAdapter() }),
+    policy: { name: 'mk-svc', os: 'test', version: '9.9', tokenStore: store, heartbeatMs: 5, backoffBaseMs: 10, backoffMaxMs: 40 },
+    termHost: { handleChannel() {}, isActive() { return false; } },
+    rtc: fakeRtcFactory,
+    services: { handleChannel: (label) => { handled.push(label); return label !== 'clip'; } },
+  });
+  try {
+    assert.equal(agent.start({}).ok, true);
+    await sleep(30);
+    const client = sig.clients[0];
+    client.emit({ type: 'approved' });
+    await sleep(10);
+
+    const mk = (label) => ({ label, close() { closedLabels.push(label); } });
+    lastPc.ondatachannel({ channel: mk('term') });
+    lastPc.ondatachannel({ channel: mk('chat') });
+    lastPc.ondatachannel({ channel: mk('file') });
+    lastPc.ondatachannel({ channel: mk('clip') });
+    lastPc.ondatachannel({ channel: mk('garbage') });
+    assert.deepEqual(handled, ['chat', 'file', 'clip', 'garbage'], 'services опрошен по каждому не-term каналу');
+    assert.deepEqual(closedLabels, ['clip'], 'закрыт только тот, от кого services отказался');
+  } finally {
+    agent.stop();
+    await sleep(10);
+  }
+});

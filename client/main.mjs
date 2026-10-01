@@ -20,6 +20,7 @@ import { createAgent, createAgentApi, createIceServersFetcher } from './lib/agen
 import { createBridgeRelay, BRIDGE_IPC } from './agent-bridge/relay.mjs';
 import { createTermHost } from './lib/term.mjs';
 import { showToast } from './lib/notify.mjs';
+import { createMachineServices } from './lib/machine-services.mjs';
 import { resolveConsoleUser } from './lib/console-user.mjs';
 import { UPDATE_REPO, updateFeedUrl, platformFeedName, updateDecision, updateInstallDecision } from './lib/updater.mjs';
 import { isNewerVersion } from './lib/version-check.mjs';
@@ -986,6 +987,13 @@ function startAgentMode() {
     // Сообщение на экран машины (R08): платформа известна здесь, текст приходит
     // из heartbeat-ответа сервера. Показ не блокирует цикл (см. deliverToast).
     notify: (text) => showToast(process.platform, text),
+    // W-U6 (v0.5): чат (тост консольному пользователю) и файлы (запись в общую
+    // папку) из machine-сеанса. Диагностика — в svc-diag, как у агента.
+    services: createMachineServices({
+      platform: process.platform,
+      notify: (text) => showToast(process.platform, text),
+      log: { warn: (...a) => { console.warn(...a); svcDiag.write('agent', a.map(String).join(' ')); } },
+    }),
     policy: {
       name: process.env.EDESK_AGENT_NAME || os.hostname(),
       os: process.platform,
