@@ -604,3 +604,33 @@ test('idle: host завершает сеанс с причиной idle по POS
   const h = await api(base, 'GET', '/history?limit=1', { token: admin.token });
   assert.equal(h.json.items[0].endReason ?? h.json.items[0].reason, 'idle');
 });
+
+// idle-warning (v0.5): хост предупреждает операторов заранее — релей сервером.
+test('idle-warning: релей host→операторам, санитизация remainingSec, оператору нельзя', async (t) => {
+  const { base, port, admin } = await setup(t);
+  const { host, op } = await approvedSession(base, port, admin);
+
+  // санитизация: мусорный remainingSec → честный дефолт 60
+  host.send(JSON.stringify({ type: 'idle-warning', remainingSec: 999999 }));
+  const warn = await op.wait((m) => m.type === 'idle-warning', 2000).catch(() => null);
+  assert.ok(warn, 'оператор получил idle-warning');
+  assert.equal(warn.remainingSec, 60);
+
+  host.send(JSON.stringify({ type: 'idle-warning', remainingSec: 42 }));
+  const warn2 = await op.wait((m) => m.type === 'idle-warning' && m.remainingSec === 42, 2000).catch(() => null);
+  assert.ok(warn2, 'оператор получил честный remainingSec');
+
+  // оператору такой тип запрещён: сервер рвёт сокет 4002 (как file-link)
+  const opClosed = new Promise((resolve) => op.once('close', (code) => resolve(code)));
+  op.send(JSON.stringify({ type: 'idle-warning', remainingSec: 5 }));
+  assert.equal(await opClosed, 4002, 'оператору idle-warning запрещён — close 4002');
+
+  // не-approved: до подтверждения предупреждение не релеится и не роняет
+  const reg2 = await api(base, 'POST', '/sessions');
+  const host2 = wsConnect(port);
+  await wsAuth(host2, { type: 'auth', role: 'host', sessionId: reg2.json.sessionId, token: reg2.json.hostToken });
+  host2.send(JSON.stringify({ type: 'idle-warning', remainingSec: 5 }));
+  await new Promise((r) => setTimeout(r, 150));
+  host2.close();
+  host.close(); op.close();
+});

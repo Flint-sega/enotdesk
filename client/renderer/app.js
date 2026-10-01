@@ -144,9 +144,11 @@ enot.onSignal(async (msg) => {
     }
     case 'idle-warning':
       if (state.role === 'client') text($('client-live-note'), t('client.idleWarning', { sec: msg.remainingSec ?? 60 }));
+      else text($('remote-status'), t('op.idleWarning', { sec: msg.remainingSec ?? 60 }));
       break;
     case 'idle-clear':
       if (state.role === 'client') text($('client-live-note'), '');
+      else text($('remote-status'), state.pc?.connectionState === 'connected' ? t('status.connected') : t('op.clientReconnecting'));
       break;
     case 'file-link':
       // резервный релей: ссылка на файл (TTL 3 суток) — показать получателю
