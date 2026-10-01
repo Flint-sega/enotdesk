@@ -68,19 +68,56 @@ test('данные ходят в обе стороны: канал term откр
   relay.handleMessage(BRIDGE_IPC.DC_OPEN, 'term');
   assert.ok(channel, 'адаптер канала не создан');
   assert.equal(opened, true); // onopen сработал сразу после проводки
-  relay.handleMessage(BRIDGE_IPC.DC_FROM, '{"type":"in","data":"dir\\r"}');
+  relay.handleMessage(BRIDGE_IPC.DC_FROM, { label: 'term', data: '{"type":"in","data":"dir\\r"}' });
   assert.equal(incoming, '{"type":"in","data":"dir\\r"}');
   channel.send({ type: 'out', data: 'C:\\> ' });
-  assert.deepEqual(sends.at(-1), [BRIDGE_IPC.DC_TO, '{"type":"out","data":"C:\\\\> "}']);
+  assert.deepEqual(sends.at(-1), [BRIDGE_IPC.DC_TO, { label: 'term', data: '{"type":"out","data":"C:\\\\> "}'}]);
   assert.equal(relay.hasAdapter(), true);
-  relay.handleMessage(BRIDGE_IPC.DC_CLOSED);
+  assert.equal(relay.hasTermAdapter(), true);
+  relay.handleMessage(BRIDGE_IPC.DC_CLOSED, 'term');
   assert.equal(relay.hasAdapter(), false);
   assert.equal(channel.readyState, 'closed');
-  // посторонний канал не проходит
+  // посторонняя метка не проходит allowlist (сторонние каналы мост закрывает сам)
   let rogue = null;
   relay.pcLike.ondatachannel = (e) => { rogue = e.channel; };
-  relay.handleMessage(BRIDGE_IPC.DC_OPEN, 'chat');
+  relay.handleMessage(BRIDGE_IPC.DC_OPEN, 'garbage');
   assert.equal(rogue, null);
+});
+
+test('мультиканальность W-U6: chat/file поднимаются параллельно term, бинарные куски без потерь', () => {
+  const { relay, sends } = makeRelay();
+  const channels = new Map();
+  const labels = [];
+  relay.pcLike.ondatachannel = (e) => {
+    channels.set(e.channel.label, e.channel);
+    labels.push(e.channel.label);
+    e.channel.onmessage = (m) => { e.channel.lastSeen = m.data; };
+  };
+  relay.handleMessage(BRIDGE_IPC.DC_OPEN, 'term');
+  relay.handleMessage(BRIDGE_IPC.DC_OPEN, 'chat');
+  relay.handleMessage(BRIDGE_IPC.DC_OPEN, 'file');
+  assert.deepEqual(labels, ['term', 'chat', 'file'], 'все три канала дошли до потребителя');
+  assert.equal(relay.hasTermAdapter(), true);
+
+  // строки — чат
+  relay.handleMessage(BRIDGE_IPC.DC_FROM, { label: 'chat', data: '{"type":"chat","text":"привет"}' });
+  assert.equal(channels.get('chat').lastSeen, '{"type":"chat","text":"привет"}');
+  // бинарные — чанки файла: typed array проходит как есть, без TextDecoder
+  const chunk = new Uint8Array([0, 255, 1, 254, 128]);
+  relay.handleMessage(BRIDGE_IPC.DC_FROM, { label: 'file', data: chunk });
+  assert.ok(channels.get('file').lastSeen instanceof Uint8Array);
+  assert.deepEqual([...channels.get('file').lastSeen], [0, 255, 1, 254, 128]);
+
+  // исходящий бинарный кусок уходит с меткой канала
+  channels.get('file').send(new Uint8Array([9, 8, 7]));
+  assert.deepEqual(sends.at(-1), [BRIDGE_IPC.DC_TO, { label: 'file', data: new Uint8Array([9, 8, 7]) }]);
+
+  // закрытие одного канала не роняет остальные
+  relay.handleMessage(BRIDGE_IPC.DC_CLOSED, 'chat');
+  assert.equal(channels.get('chat').readyState, 'closed');
+  assert.equal(channels.get('term').readyState, 'open');
+  assert.equal(channels.get('file').readyState, 'open');
+  assert.equal(relay.hasAdapter(), true, 'term и file ещё живы');
 });
 
 test('бэкпрешшн: PAUSE ставит отправку в очередь с потолком, RESUME вымывает по порядку', () => {
@@ -95,7 +132,7 @@ test('бэкпрешшн: PAUSE ставит отправку в очередь 
   channel.send({ type: 'out', data: 'b'.repeat(1024) });
   assert.equal(dcTos(sends).length, 0, 'в паузе данные ушли сразу');
   relay.handleMessage(BRIDGE_IPC.RESUME);
-  const flushed = dcTos(sends).map(([, p]) => JSON.parse(p).data[0]);
+  const flushed = dcTos(sends).map(([, p]) => JSON.parse(p.data).data[0]);
   assert.deepEqual(flushed, ['a', 'b']); // порядок очереди сохранён
 });
 
@@ -113,7 +150,7 @@ test('кап очереди: после переполнения остаётс�
   channel.send({ type: 'out', data: `BIG${'y'.repeat(1_500_000)}` }); // сам больше капа — роняется целиком
   relay.handleMessage(BRIDGE_IPC.RESUME);
 
-  const flushed = dcTos(sends).map(([, p]) => JSON.parse(p).data);
+  const flushed = dcTos(sends).map(([, p]) => JSON.parse(p.data).data);
   assert.equal(flushed.length, 10, `в очереди ${flushed.length} кусков — кап не держит хвост ≤ 1 МБ`);
   assert.ok(flushed[0].startsWith('k003'), `хвост должен начинаться с k003, а начался с ${flushed[0].slice(0, 4)}`);
   assert.ok(flushed.at(-1).startsWith('k012'), 'хвост должен заканчиваться на k012');

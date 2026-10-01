@@ -221,7 +221,7 @@ export default {
   "end.host-lost": "The help app was closed — session ended.",
   "end.operator-lost": "The operator disconnected — session ended.",
   "end.lease-expired": "Session ended due to inactivity timeout.",
-  "end.idle": "Session ended automatically: 30 minutes with no operator input (mouse/keyboard). Create a new session to continue.",
+  "end.idle": "Session ended automatically: no operator input (mouse/keyboard) for a long time. Create a new session to continue.",
   "end.server-restart": "The server was restarted — session ended.",
   "end.signal-lost": "Connection to the server was lost — session ended.",
   "end.rtc": "The screen connection was interrupted.",

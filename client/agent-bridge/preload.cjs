@@ -20,8 +20,10 @@ contextBridge.exposeInMainWorld('agentRtc', {
   sendAnswer: (sdp) => ipcRenderer.send('enot:rtc-answer', sdp),
   sendIce: (candidate) => ipcRenderer.send('enot:rtc-ice', candidate),
   dcOpened: (label) => ipcRenderer.send('enot:term-dc-open', label),
-  dcFrom: (data) => ipcRenderer.send('enot:term-dc-from', data),
-  dcClosed: () => ipcRenderer.send('enot:term-dc-closed'),
+  // data — строка ИЛИ Uint8Array (бинарные чанки файлов, W-U6): structured clone
+  // ipc-посылки переносит typed array без потерь.
+  dcFrom: (label, data) => ipcRenderer.send('enot:term-dc-from', { label, data }),
+  dcClosed: (label) => ipcRenderer.send('enot:term-dc-closed', label),
   pause: () => ipcRenderer.send('enot:term-dc-pause'),
   resume: () => ipcRenderer.send('enot:term-dc-resume'),
   fail: (message) => ipcRenderer.send('enot:bridge-fail', message),

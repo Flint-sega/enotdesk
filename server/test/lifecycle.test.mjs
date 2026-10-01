@@ -620,17 +620,30 @@ test('idle-warning: релей host→операторам, санитизаци
   const warn2 = await op.wait((m) => m.type === 'idle-warning' && m.remainingSec === 42, 2000).catch(() => null);
   assert.ok(warn2, 'оператор получил честный remainingSec');
 
+  // idle-clear релеится симметрично: баннер оператора снимается по сети
+  host.send(JSON.stringify({ type: 'idle-clear' }));
+  const cleared = await op.wait((m) => m.type === 'idle-clear', 2000).catch(() => null);
+  assert.ok(cleared, 'оператор получил idle-clear');
+
   // оператору такой тип запрещён: сервер рвёт сокет 4002 (как file-link)
   const opClosed = new Promise((resolve) => op.once('close', (code) => resolve(code)));
   op.send(JSON.stringify({ type: 'idle-warning', remainingSec: 5 }));
   assert.equal(await opClosed, 4002, 'оператору idle-warning запрещён — close 4002');
 
-  // не-approved: до подтверждения предупреждение не релеится и не роняет
+  // не-approved: до подтверждения предупреждение молча игнорируется — сокет
+  // жив (не 4002, как у оператора) и heartbeat продолжает работать (ревью v0.5:
+  // блок был без единого ассерта и пропускал регрессию гейта согласия)
   const reg2 = await api(base, 'POST', '/sessions');
   const host2 = wsConnect(port);
   await wsAuth(host2, { type: 'auth', role: 'host', sessionId: reg2.json.sessionId, token: reg2.json.hostToken });
+  let host2ClosedCode = null;
+  host2.once('close', (code) => { host2ClosedCode = code; });
   host2.send(JSON.stringify({ type: 'idle-warning', remainingSec: 5 }));
   await new Promise((r) => setTimeout(r, 150));
+  assert.equal(host2ClosedCode, null, 'host2 не закрыт после idle-warning до approved');
+  host2.send(JSON.stringify({ type: 'heartbeat' }));
+  const beat = await host2.wait((m) => m.type === 'heartbeat', 2000).catch(() => null);
+  assert.ok(beat, 'heartbeat жив — гейт не оборвал соединение');
   host2.close();
   host.close(); op.close();
 });

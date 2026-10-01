@@ -1875,9 +1875,23 @@ export function createServer(opts = {}) {
         else send(rt.hostWs, out);
         return;
       }
-      // idle-warning (v0.5): хост предупреждает операторов о скором завершении
-      // по таймауту бездействия ввода. Только хост, только approved, rate-limit
-      // общий с сигнальными сообщениями (SIGNAL_MAX).
+      // idle-warning/clear (v0.5): хост предупреждает операторов о скором
+      // завершении по таймауту бездействия ввода и снимает баннер при
+      // возобновлении. Только хост, только approved, rate-limit общий с
+      // сигнальными сообщениями (SIGNAL_MAX).
+      if (msg.type === 'idle-clear') {
+        if (role !== 'host') return ws.close(4002, 'bad-message');
+        const rt = live.get(s.id);
+        const isHost = role === 'host' && rt?.hostWs === ws;
+        if (!isHost || s.state !== 'approved') return;
+        const nowIc = Date.now();
+        if (nowIc > rt.sigReset) { rt.sigReset = nowIc + SIGNAL_WINDOW_MS; rt.sigCount = 0; }
+        rt.sigCount += 1;
+        if (rt.sigCount > SIGNAL_MAX) return ws.close(1008, 'slow-consumer');
+        const out = { type: 'idle-clear' };
+        for (const opWs of rt.opSockets.keys()) send(opWs, out);
+        return;
+      }
       if (msg.type === 'idle-warning') {
         if (role !== 'host') return ws.close(4002, 'bad-message');
         const rt = live.get(s.id);
