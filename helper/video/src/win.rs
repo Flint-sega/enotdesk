@@ -54,6 +54,15 @@ use windows::Win32::UI::WindowsAndMessaging::{
     SM_CYVIRTUALSCREEN, SM_XVIRTUALSCREEN, SM_YVIRTUALSCREEN, WM_SYSCOMMAND,
 };
 
+// Progress marker of the last DXGI call inside make_dup() (see make_dup for
+// the encoding). Read by the stdout ticker: if a call wedges, the tick keeps
+// flowing (separate thread) and names the exact stuck call.
+use std::sync::atomic::{AtomicU8, Ordering};
+static DUP_OP: AtomicU8 = AtomicU8::new(0);
+pub fn last_dup_op() -> u8 {
+    DUP_OP.load(Ordering::Relaxed)
+}
+
 // ---------------------------------------------------------------------------
 // Small helpers
 // ---------------------------------------------------------------------------
@@ -291,16 +300,23 @@ impl Capture {
     /// ACCESS_LOST, and on every display mode change.
     pub fn make_dup(&self) -> Result<Dup, String> {
         unsafe {
+            // 1=output cast, 2=DuplicateOutput, 3=GetDesc, 4=staging texture;
+            // 0=done. A wedged call leaves the marker visible in the stdout
+            // ticker (the STATUS channel is unreachable from inside make_dup).
+            DUP_OP.store(1, Ordering::Relaxed);
             let out1: IDXGIOutput1 = self
                 .output
                 .cast()
                 .map_err(|e| format!("IDXGIOutput1 cast: {e}"))?;
+            DUP_OP.store(2, Ordering::Relaxed);
             let dup = out1
                 .DuplicateOutput(&self.device)
                 .map_err(|e| format!("DuplicateOutput: {e}"))?;
+            DUP_OP.store(3, Ordering::Relaxed);
             let desc = dup.GetDesc();
             let (w, h) = (desc.ModeDesc.Width, desc.ModeDesc.Height);
             if w == 0 || h == 0 {
+                DUP_OP.store(0, Ordering::Relaxed);
                 return Err("duplicate output reports zero size".into());
             }
             // Staging readback texture: same recipe as the spike. CPU reads via
@@ -322,9 +338,11 @@ impl Capture {
                 MiscFlags: 0,
             };
             let mut staging: Option<ID3D11Texture2D> = None;
+            DUP_OP.store(4, Ordering::Relaxed);
             self.device
                 .CreateTexture2D(&sd, None, Some(&mut staging))
                 .map_err(|e| format!("staging texture: {e}"))?;
+            DUP_OP.store(0, Ordering::Relaxed);
             let staging = staging.ok_or("staging texture: none returned")?;
             Ok(Dup {
                 dup,
