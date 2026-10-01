@@ -22,14 +22,14 @@ use windows::Win32::Graphics::Dxgi::{
 };
 use windows::Win32::Graphics::Imaging::{
     CLSID_WICImagingFactory, GUID_ContainerFormatJpeg, GUID_WICPixelFormat32bppBGRA, IWICBitmap,
-    IWICBitmapEncoder, IWICBitmapFrameEncode, IWICBitmapSource, IWICImagingFactory,
+    IWICBitmapEncoder, IWICBitmapFrameEncode, IWICBitmapSource, IWICImagingFactory, IWICStream,
     WICBitmapEncoderNoCache,
 };
 use windows::Win32::Storage::FileSystem::PIPE_ACCESS_DUPLEX;
 use windows::Win32::System::Com::StructuredStorage::{IPropertyBag2, PROPBAG2};
 use windows::Win32::System::Com::{
     CoCreateInstance, CoInitializeEx, IStream, CLSCTX_INPROC_SERVER, COINIT_MULTITHREADED,
-    STREAM_SEEK_END, STREAM_SEEK_SET,
+    ISequentialStream_Impl, IStream_Impl, STATSTG,
 };
 use windows::Win32::System::Diagnostics::ToolHelp::{
     CreateToolhelp32Snapshot, Process32FirstW, Process32NextW, PROCESSENTRY32W, TH32CS_SNAPPROCESS,
@@ -49,7 +49,6 @@ use windows::Win32::UI::Input::KeyboardAndMouse::{
     MOUSEEVENTF_RIGHTDOWN, MOUSEEVENTF_RIGHTUP, MOUSEEVENTF_VIRTUALDESK, MOUSEEVENTF_WHEEL,
     MOUSEINPUT, VIRTUAL_KEY,
 };
-use windows::Win32::UI::Shell::SHCreateMemStream;
 use windows::Win32::UI::WindowsAndMessaging::{
     GetSystemMetrics, SendMessageTimeoutW, HWND_BROADCAST, SMTO_ABORTIFHUNG, SM_CXVIRTUALSCREEN,
     SM_CYVIRTUALSCREEN, SM_XVIRTUALSCREEN, SM_YVIRTUALSCREEN, WM_SYSCOMMAND,
@@ -483,11 +482,15 @@ impl Wic {
                 // vendor GUID left null (documented "no vendor preference")
                 .CreateEncoder(&GUID_ContainerFormatJpeg, std::ptr::null())
                 .map_err(|e| format!("jpeg: encoder: {e}"))?;
-            // shlwapi's in-memory IStream: the encoder writes into it; unlike
-            // the spike's hand-implemented COM class this needs no extra crate
-            // and no manual vtables.
-            let stream: IStream =
-                SHCreateMemStream(None).ok_or("jpeg: memory stream creation failed")?;
+            // The spike-proven in-memory stream (169 KB JPEGs on this very
+            // machine), not SHCreateMemStream: with the shlwapi stream the
+            // encoder committed "successfully" yet the readback came back
+            // EMPTY (40+ zero-length frames live, v0.6.0 приёмка) — this
+            // stream is read back from our own buffer, no Seek games.
+            let mem = InMemoryStream::new();
+            let stream: IStream = mem
+                .cast()
+                .map_err(|e| format!("jpeg: wicstream cast: {e}"))?;
             enc.Initialize(&stream, WICBitmapEncoderNoCache)
                 .map_err(|e| format!("jpeg: enc init: {e}"))?;
             let mut frame: Option<IWICBitmapFrameEncode> = None;
@@ -517,24 +520,148 @@ impl Wic {
                 .map_err(|e| format!("jpeg: frame commit: {e}"))?;
             enc.Commit()
                 .map_err(|e| format!("jpeg: encoder commit: {e}"))?;
-
-            // Read the encoded bytes back out of the memory stream.
-            let mut size: u64 = 0;
-            stream
-                .Seek(0, STREAM_SEEK_END, Some(&mut size))
-                .map_err(|e| format!("jpeg: seek end: {e}"))?;
-            let mut out = vec![0u8; size as usize];
-            let mut got: u32 = 0;
-            let hr = stream.Read(out.as_mut_ptr().cast(), out.len() as u32, Some(&mut got));
-            if hr.is_err() {
-                return Err(format!("jpeg: stream read back failed: {hr:?}"));
+            let out = mem.take();
+            // An empty JPEG must never masquerade as a frame: the pipe client
+            // would silently drop it (that is exactly how "running, no video"
+            // looked from the operator's seat).
+            if out.is_empty() {
+                return Err("jpeg: empty output".into());
             }
-            out.truncate(got as usize);
-            // Rewind for the next encode round (the stream object is reused).
-            let mut pos: u64 = 0;
-            let _ = stream.Seek(0, STREAM_SEEK_SET, Some(&mut pos));
             Ok(out)
         }
+    }
+}
+
+/// Minimal in-memory IStream for WIC encoders, ported verbatim from
+/// spike/video-dxgi (the benchmark that measured 14.9 ms/169 KB JPEG here).
+#[windows::core::implement(IWICStream, IStream, ISequentialStream)]
+struct InMemoryStream {
+    data: std::sync::Mutex<Vec<u8>>,
+    pos: std::sync::Mutex<u64>,
+}
+
+impl InMemoryStream {
+    fn new() -> Self {
+        Self {
+            data: std::sync::Mutex::new(Vec::with_capacity(1 << 20)),
+            pos: std::sync::Mutex::new(0),
+        }
+    }
+    fn take(&self) -> Vec<u8> {
+        self.data.lock().unwrap_or_else(|p| p.into_inner()).clone()
+    }
+}
+
+impl ISequentialStream_Impl for InMemoryStream_Impl {
+    fn Read(&self, pb: *mut u8, cb: u32, pcbread: Option<*mut u32>) -> windows::core::Result<()> {
+        let data = self.data.lock().unwrap_or_else(|p| p.into_inner());
+        let mut pos = self.pos.lock().unwrap_or_else(|p| p.into_inner());
+        let p = (*pos as usize).min(data.len());
+        let n = (cb as usize).min(data.len().saturating_sub(p));
+        unsafe {
+            std::ptr::copy_nonoverlapping(data.as_ptr().add(p), pb, n);
+        }
+        *pos = (p + n) as u64;
+        if let Some(x) = pcbread {
+            unsafe { *x = n as u32 };
+        }
+        Ok(())
+    }
+    fn Write(&self, _pb: *const u8, _cb: u32, _pcbw: Option<*mut u32>) -> windows::core::Result<()> {
+        Err(windows::core::Error::from_hresult(windows::core::HRESULT(
+            -2147467263,
+        ))) // E_NOTIMPL
+    }
+}
+
+impl IStream_Impl for InMemoryStream_Impl {
+    fn Seek(&self, dlibmove: i64, dworigin: u32, plibnewposition: Option<*mut u64>) -> windows::core::Result<()> {
+        let mut pos = self.pos.lock().unwrap_or_else(|p| p.into_inner());
+        let len = self.data.lock().unwrap_or_else(|p| p.into_inner()).len() as i64;
+        let base: i64 = match dworigin {
+            0 => 0,
+            1 => *pos as i64,
+            2 => len,
+            _ => {
+                return Err(windows::core::Error::from_hresult(windows::core::HRESULT(
+                    -2147024707,
+                )))
+            } // STG_E_INVALIDFUNCTION
+        };
+        let np = (base + dlibmove).clamp(0, len);
+        *pos = np as u64;
+        if let Some(p) = plibnewposition {
+            unsafe { *p = np as u64 };
+        }
+        Ok(())
+    }
+    fn SetSize(&self, _libnewsize: u64) -> windows::core::Result<()> {
+        Ok(())
+    }
+    fn CopyTo(
+        &self,
+        _pstm: windows::core::Ref<'_, IStream>,
+        _cb: u64,
+        _pcbread: Option<*mut u64>,
+        _pcbw: Option<*mut u64>,
+    ) -> windows::core::Result<()> {
+        Err(windows::core::Error::from_hresult(windows::core::HRESULT(
+            -2147467263,
+        )))
+    }
+    fn Commit(&self, _grfcommit: u32) -> windows::core::Result<()> {
+        Ok(())
+    }
+    fn Revert(&self) -> windows::core::Result<()> {
+        Ok(())
+    }
+    fn LockRegion(&self, _a: u64, _b: u64, _c: u32) -> windows::core::Result<()> {
+        Ok(())
+    }
+    fn UnlockRegion(&self, _a: u64, _b: u64, _c: u32) -> windows::core::Result<()> {
+        Ok(())
+    }
+    fn Stat(&self, _pstatstg: *mut STATSTG, _grfstatflag: u32) -> windows::core::Result<()> {
+        Err(windows::core::Error::from_hresult(windows::core::HRESULT(
+            -2147467263,
+        )))
+    }
+    fn Clone(&self) -> windows::core::Result<IStream> {
+        Err(windows::core::Error::from_hresult(windows::core::HRESULT(
+            -2147467263,
+        )))
+    }
+}
+
+impl IWICStream_Impl for InMemoryStream_Impl {
+    fn InitializeFromIStream(&self, _pistm: windows::core::Ref<'_, IStream>) -> windows::core::Result<()> {
+        Err(windows::core::Error::from_hresult(windows::core::HRESULT(
+            -2147467263,
+        )))
+    }
+    fn InitializeFromFilename(
+        &self,
+        _wzfilename: &windows::core::PCWSTR,
+        _dwdesiredaccess: u32,
+    ) -> windows::core::Result<()> {
+        Err(windows::core::Error::from_hresult(windows::core::HRESULT(
+            -2147467263,
+        )))
+    }
+    fn InitializeFromMemory(&self, _pbbuffer: &[u8]) -> windows::core::Result<()> {
+        Err(windows::core::Error::from_hresult(windows::core::HRESULT(
+            -2147467263,
+        )))
+    }
+    fn InitializeFromIStreamRegion(
+        &self,
+        _pistm: windows::core::Ref<'_, IStream>,
+        _uloffset: u64,
+        _ulmaxsize: u64,
+    ) -> windows::core::Result<()> {
+        Err(windows::core::Error::from_hresult(windows::core::HRESULT(
+            -2147467263,
+        )))
     }
 }
 
