@@ -7,6 +7,7 @@ import path from 'node:path';
 import os from 'node:os';
 import fs from 'node:fs';
 import net from 'node:net';
+import crypto from 'node:crypto';
 import { spawn as nodeSpawn } from 'node:child_process';
 import { createRequire } from 'node:module';
 import { createApi } from './lib/api.mjs';
@@ -990,7 +991,9 @@ function startAgentMode() {
   const videoStatusCb = { fn: null };
   let spawnKoffi;
   try { spawnKoffi = createRequire(import.meta.url)('koffi'); } catch { spawnKoffi = null; } // честный spawn-koffi-unavailable
+  const videoHostToken = crypto.randomBytes(16).toString('hex'); // hello-токен хелпера (argv + первый кадр pipe)
   const videoHost = createVideoHost({
+    token: videoHostToken,
     spawner: createSessionSpawner({
       koffi: spawnKoffi,
       log: { warn: (...a) => { console.warn(...a); svcDiag.write('video', a.map(String).join(' ')); } },
@@ -998,7 +1001,12 @@ function startAgentMode() {
     netFactory: (p) => net.connect(p),
     killer: (pid) => { nodeSpawn('taskkill', ['/PID', String(pid), '/T', '/F'], { windowsHide: true }); },
     exePath: app.isPackaged ? path.join(process.resourcesPath, 'enotdesk-video.exe') : '',
-    commandLine: app.isPackaged ? `"${path.join(process.resourcesPath, 'enotdesk-video.exe')}"` : '',
+    // v0.6 fix (ревью GLM-5.3): токен дублируется в argv — DETACHED-спавн не
+    // имеет stdin; командная строка видна только в пределах того же домена
+    // доверия, что и дефолтный ACL пайпа (тот же сеанс/пользователь).
+    commandLine: app.isPackaged
+      ? `"${path.join(process.resourcesPath, 'enotdesk-video.exe')}" --token ${videoHostToken}`
+      : '',
     log: { warn: (...a) => { console.warn(...a); svcDiag.write('video', a.map(String).join(' ')); } },
     onFrame: (jpeg) => videoForward.relay?.(BRIDGE_IPC.VIDEO_FRAME, jpeg),
     onStatus: (s) => videoStatusCb.fn?.(s),
