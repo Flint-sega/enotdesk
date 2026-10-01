@@ -617,11 +617,21 @@ fn spawn_ticker(shared: Arc<Shared>) {
                 .unwrap_or_else(|p| p.into_inner())
                 .clone();
             let fps = shared.fps.load(Ordering::Relaxed);
+            // dup/err: where the capture thread currently is (make_dup step) and
+            // the last error text — a wedged DXGI call is otherwise invisible,
+            // because the STATUS channel lives on the same stuck thread.
+            let err = shared
+                .last_err
+                .lock()
+                .unwrap_or_else(|p| p.into_inner())
+                .clone();
             log_line(&format!(
-                "{{\"ev\":\"tick\",\"state\":\"{}\",\"fps\":{},\"displayOff\":{}}}",
+                "{{\"ev\":\"tick\",\"state\":\"{}\",\"fps\":{},\"displayOff\":{},\"dup\":{},\"err\":\"{}\"}}",
                 proto::jstr(&state),
                 fps,
                 display_off(&shared),
+                win::last_dup_op(),
+                proto::jstr(&ascii(&err)),
             ));
         }
     });
