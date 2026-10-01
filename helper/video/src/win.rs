@@ -62,6 +62,11 @@ static DUP_OP: AtomicU8 = AtomicU8::new(0);
 pub fn last_dup_op() -> u8 {
     DUP_OP.load(Ordering::Relaxed)
 }
+/// Progress marker for the capture thread (make_dup steps 1..4, status-json
+/// path 6/7, 0=idle/ok) — the stdout ticker reads it; see capture_session.
+pub fn mark_dup_op(v: u8) {
+    DUP_OP.store(v, Ordering::Relaxed);
+}
 
 // ---------------------------------------------------------------------------
 // Small helpers
