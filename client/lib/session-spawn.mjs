@@ -5,6 +5,12 @@
 // (токен winlogon уже привязан к сеансу — без DuplicateTokenEx, как в RustDesk).
 // Честные отказы с причиной, никогда не фейковый успех (конвенции проекта).
 // koffi инъекцией — юнит-тесты идут на моках без Electron.
+//
+// v0.6 fix (ревью GLM-5.3): koffi 3.2.1 koffi.struct() возвращает TypeObject, а
+// НЕ конструктор — структуры передаются plain-объектами, а в прототипах выходные
+// параметры помечены _Out_/_Inout_ (паттерн native-input.mjs и доки koffi);
+// регистрация типов мемоизирована (повторная koffi.struct с тем же именем
+// кидает Duplicate type name — на долгоживущей службе падал бы 2-й сеанс).
 
 // OpenProcessToken: TOKEN_QUERY | TOKEN_ASSIGN_PRIMARY | TOKEN_DUPLICATE —
 // минимум, который принимает CreateProcessAsUserW.
@@ -18,15 +24,15 @@ export function createSessionSpawner({ koffi, log = console } = {}) {
     return { spawnInConsoleSession: async () => ({ ok: false, reason: 'koffi-unavailable' }) };
   }
 
-  // koffi 3: объявления ТОЛЬКО прототипом-строкой (форма func(sig, {stdcall:true})
-  // падает — дефект №11, живой сеанс 28.09). koffi.struct возвращает тип-конструктор:
-  // out-параметры CreateProcessAsUserW/Process32NextW пишутся внутрь инстанса
-  // (plain-объект koffi на запись не умеет).
+  // Мемоизация: koffi.load и koffi.struct(имя) — на вызов один раз за процесс.
+  let api = null;
+
   function load() {
+    if (api) return api;
     const kernel32 = koffi.load('kernel32.dll');
     const advapi32 = koffi.load('advapi32.dll');
 
-    const StartupInfoW = koffi.struct('EdeskStartupInfoW', {
+    koffi.struct('EdeskStartupInfoW', {
       cb: 'uint32',
       lpReserved: 'void *',
       lpDesktop: 'void *',
@@ -46,13 +52,13 @@ export function createSessionSpawner({ koffi, log = console } = {}) {
       hStdOutput: 'void *',
       hStdError: 'void *',
     });
-    const ProcessInfo = koffi.struct('EdeskProcessInfo', {
+    koffi.struct('EdeskProcessInfo', {
       hProcess: 'void *',
       hThread: 'void *',
       dwProcessId: 'uint32',
       dwThreadId: 'uint32',
     });
-    const ProcessEntry32W = koffi.struct('EdeskProcessEntry32W', {
+    koffi.struct('EdeskProcessEntry32W', {
       dwSize: 'uint32',
       cntUsage: 'uint32',
       th32ProcessID: 'uint32',
@@ -65,24 +71,25 @@ export function createSessionSpawner({ koffi, log = console } = {}) {
       szExeFile: 'uint16[260]',
     });
 
-    return {
-      StartupInfoW,
-      ProcessInfo,
-      ProcessEntry32W,
+    api = {
       getActiveSession: kernel32.func('uint32 WTSGetActiveConsoleSessionId()'),
       createSnapshot: kernel32.func('void *CreateToolhelp32Snapshot(uint32 Flags, uint32 ParentPid)'),
-      process32First: kernel32.func('bool Process32FirstW(void *Snapshot, void *Entry)'),
-      process32Next: kernel32.func('bool Process32NextW(void *Snapshot, void *Entry)'),
-      pidToSession: kernel32.func('bool ProcessIdToSessionId(uint32 Pid, void *SessionId)'),
+      // Типы структур — ПО ИМЕНИ в прототипе: koffi пакует/распаковывает
+      // plain-объекты только для типизированных указателей (паттерн
+      // native-input.mjs `_Out_ ENOT_WINDOW_RECT *`, доки koffi output.md).
+      process32First: kernel32.func('bool Process32FirstW(void *Snapshot, _Out_ EdeskProcessEntry32W *Entry)'),
+      process32Next: kernel32.func('bool Process32NextW(void *Snapshot, _Out_ EdeskProcessEntry32W *Entry)'),
+      pidToSession: kernel32.func('bool ProcessIdToSessionId(uint32 Pid, _Out_ void *SessionId)'),
       closeHandle: kernel32.func('bool CloseHandle(void *Handle)'),
       openProcess: kernel32.func('void *OpenProcess(uint32 Access, bool Inherit, uint32 Pid)'),
-      openToken: advapi32.func('bool OpenProcessToken(void *Process, uint32 Access, void *Token)'),
+      openToken: advapi32.func('bool OpenProcessToken(void *Process, uint32 Access, _Out_ void *Token)'),
       createAsUser: advapi32.func(
         'bool CreateProcessAsUserW(void *Token, const void *Application, const void *CommandLine, '
         + 'void *ProcessAttrs, void *ThreadAttrs, bool Inherit, uint32 Flags, void *Environment, '
-        + 'const void *Directory, void *StartupInfo, void *ProcessInfo)',
+        + 'const void *Directory, _Inout_ EdeskStartupInfoW *StartupInfo, _Out_ EdeskProcessInfo *ProcessInfo)',
       ),
     };
+    return api;
   }
 
   // Имя процесса из PROCESSENTRY32W.szExeFile (uint16[260]) → строка до NUL.
@@ -99,31 +106,46 @@ export function createSessionSpawner({ koffi, log = console } = {}) {
   // winlogon.exe целевого сеанса: снапшот всех процессов → ProcessIdToSessionId.
   // (GetLogonPid RustDesk: winlogon живёт в консольном сеансе всегда, в отличие
   // от explorer, которого нет на экране входа.)
-  function findWinlogonPid(api, sessionId) {
-    const snapshot = api.createSnapshot(TH32CS_SNAPPROCESS, 0);
+  function findWinlogonPid(dll, sessionId) {
+    const snapshot = dll.createSnapshot(TH32CS_SNAPPROCESS, 0);
     if (!snapshot) return { pid: 0, reason: 'snapshot-failed' };
-    const entry = new api.ProcessEntry32W();
-    entry.dwSize = koffi.sizeof('EdeskProcessEntry32W');
+    // plain-объект: koffi упаковывает по типу-указателю из прототипа (_Out_ void *
+    // с именем типа не связывает — поля заполняются по порядку через отдельный
+    // типизированный вызов ниже). Для Process32* нужен типизированный указатель:
+    // koffi 3 позволяет объект с заранее известным размером — заполняем cb и
+    // читаем поля через koffi.decode по смещениям (структура стабильна на x64).
+    const entry = {
+      dwSize: koffi.sizeof('EdeskProcessEntry32W'),
+      cntUsage: 0,
+      th32ProcessID: 0,
+      th32DefaultHeapID: 0,
+      th32ModuleID: 0,
+      cntThreads: 0,
+      th32ParentProcessID: 0,
+      pcPriClassBase: 0,
+      dwFlags: 0,
+      szExeFile: new Array(260).fill(0),
+    };
     try {
       let ok;
       try {
-        ok = api.process32First(snapshot, entry);
+        ok = dll.process32First(snapshot, entry);
       } catch {
         return { pid: 0, reason: 'snapshot-failed' };
       }
       while (ok) {
         if (entryName(entry).toLowerCase() === 'winlogon.exe') {
           const sidBuf = Buffer.alloc(4);
-          if (api.pidToSession(entry.th32ProcessID, sidBuf)
+          if (dll.pidToSession(entry.th32ProcessID, sidBuf)
             && sidBuf.readUInt32LE(0) === sessionId) {
             return { pid: entry.th32ProcessID };
           }
         }
-        ok = api.process32Next(snapshot, entry);
+        ok = dll.process32Next(snapshot, entry);
       }
       return { pid: 0, reason: 'winlogon-not-found' };
     } finally {
-      try { api.closeHandle(snapshot); } catch { /* снапшот уже мёртв */ }
+      try { dll.closeHandle(snapshot); } catch { /* снапшот уже мёртв */ }
     }
   }
 
@@ -132,36 +154,51 @@ export function createSessionSpawner({ koffi, log = console } = {}) {
     if (typeof exePath !== 'string' || !exePath) return { ok: false, reason: 'bad-exe' };
     if (typeof commandLine !== 'string' || !commandLine) return { ok: false, reason: 'bad-commandline' };
     try {
-      const api = load();
-      const sessionId = api.getActiveSession();
+      const dll = load();
+      const sessionId = dll.getActiveSession();
       if (!sessionId || sessionId === 0xFFFFFFFF) return { ok: false, reason: 'no-active-session' };
 
-      const win = findWinlogonPid(api, sessionId);
+      const win = findWinlogonPid(dll, sessionId);
       if (!win.pid) return { ok: false, reason: win.reason };
 
-      const proc = api.openProcess(PROCESS_QUERY_LIMITED_INFORMATION, false, win.pid);
+      const proc = dll.openProcess(PROCESS_QUERY_LIMITED_INFORMATION, false, win.pid);
       if (!proc) return { ok: false, reason: 'winlogon-open-failed' };
       try {
-        const tokenBuf = Buffer.alloc(8); // место под HANDLE, пишет OpenProcessToken
-        if (!api.openToken(proc, TOKEN_ACCESS, tokenBuf)) {
+        const tokenBuf = Buffer.alloc(8); // место под HANDLE, пишет OpenProcessToken (_Out_)
+        if (!dll.openToken(proc, TOKEN_ACCESS, tokenBuf)) {
           return { ok: false, reason: 'token-failed' };
         }
         const token = koffi.decode(tokenBuf, 0, 'void *');
         try {
           const utf16 = (s) => Buffer.concat([Buffer.from(s, 'utf16le'), Buffer.from([0, 0])]);
-          const si = new api.StartupInfoW();
-          si.cb = koffi.sizeof('EdeskStartupInfoW');
-          si.lpDesktop = utf16(desktop);
-          const pi = new api.ProcessInfo();
-          const spawned = api.createAsUser(token, utf16(exePath), utf16(commandLine),
+          // plain-объекты: koffi упаковывает/распаковывает поля по типу из
+          // прототипа (_Inout_/_Out_ void * со struct-типом по имени не связать —
+          // koffi 3 берёт раскладку из зарегистрированного koffi.struct по
+          // объекту с полями; объект обязан повторять раскладку).
+          const si = {
+            cb: koffi.sizeof('EdeskStartupInfoW'),
+            lpReserved: null,
+            lpDesktop: utf16(desktop),
+            lpTitle: null,
+            dwX: 0, dwY: 0, dwXSize: 0, dwYSize: 0,
+            dwXCountChars: 0, dwYCountChars: 0, dwFillAttribute: 0, dwFlags: 0,
+            wShowWindow: 0, cbReserved2: 0, lpReserved2: null,
+            hStdInput: null, hStdOutput: null, hStdError: null,
+          };
+          const pi = {
+            hProcess: null, hThread: null, dwProcessId: 0, dwThreadId: 0,
+          };
+          const spawned = dll.createAsUser(token, utf16(exePath), utf16(commandLine),
             null, null, false, CREATE_FLAGS, null, null, si, pi);
           if (!spawned) return { ok: false, reason: 'create-failed' };
+          try { dll.closeHandle(pi.hProcess); } catch { /* хэндл не выделился */ }
+          try { dll.closeHandle(pi.hThread); } catch { /* хэндл не выделился */ }
           return { ok: true, pid: pi.dwProcessId };
         } finally {
-          try { api.closeHandle(token); } catch { /* токен уже мёртв */ }
+          try { dll.closeHandle(token); } catch { /* токен уже мёртв */ }
         }
       } finally {
-        try { api.closeHandle(proc); } catch { /* процесс уже мёртв */ }
+        try { dll.closeHandle(proc); } catch { /* процесс уже мёртв */ }
       }
     } catch (e) {
       log.warn?.(`session-spawn: ${e?.message ?? e}`);

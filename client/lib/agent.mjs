@@ -140,8 +140,10 @@ export function createAgent({ api, signal, native, policy, termHost, rtc, notify
 
   // WoL (v0.6): курьерская задача от сервера — magic packet на все MAC цели.
   // Отправка не блокирует heartbeat; результат уезжает следующим beat-ом
-  // (шаблон deliverToast). dgram инъекцией — тесты без сети.
-  const wakeSender = createWakeSender({ dgramFactory: () => nodeDgram.createSocket('udp4') });
+  // (шаблон deliverToast). dgram передаётся МОДУЛЕМ — контракт wol.mjs
+  // (v0.6 fix ревью GLM-5.3: раньше ушла функция-фабрика и ни один пакет
+  // не отправлялся).
+  const wakeSender = createWakeSender({ dgramFactory: nodeDgram });
   function deliverWake(wake) {
     const settle = (res) => {
       const entry = {
@@ -159,10 +161,9 @@ export function createAgent({ api, signal, native, policy, termHost, rtc, notify
     }
     void Promise.all(macs.map((mac) => wakeSender.sendMagicPacket(mac)))
       .then((results) => {
-        const failed = results.filter((r) => !r.ok);
-        settle(failed.length === macs.length
-          ? { ok: false, reason: failed[0]?.reason ?? 'send-failed' }
-          : { ok: true });
+        // форма sendMagicPacket: {broadcasts, packets, failed:[адреса]}
+        const ok = results.every((r) => r.packets > 0 && r.failed.length === 0);
+        settle(ok ? { ok: true } : { ok: false, reason: 'send-failed' });
       })
       .catch(() => settle({ ok: false, reason: 'send-failed' }));
   }

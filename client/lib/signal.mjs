@@ -134,7 +134,14 @@ export function createSignalClient({ url, wsFactory = (u) => new WebSocket(u), a
         type: 'machine-video',
         state,
         ...(typeof status.reason === 'string' && status.reason ? { reason: status.reason.slice(0, 60) } : {}),
-        ...(status.helper && typeof status.helper === 'object' ? { helper: { state: String(status.helper.state ?? '').slice(0, 30) } } : {}),
+        ...(status.helper && typeof status.helper === 'object' ? {
+          helper: {
+            state: String(status.helper.state ?? '').slice(0, 30),
+            // privacy-честность (v0.6): реальное состояние дисплея машины —
+            // оператор корректирует кнопку «Погасить экран» по факту
+            ...(typeof status.helper.displayOff === 'boolean' ? { displayOff: status.helper.displayOff } : {}),
+          },
+        } : {}),
       }));
     },
 

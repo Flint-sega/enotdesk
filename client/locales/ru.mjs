@@ -322,6 +322,7 @@ export default {
   "web.privacy.off": "Погасить экран",
   "web.privacy.on": "Вернуть экран",
   "web.video.unavailable": "Видео недоступно{reason}",
+  "web.video.starting": "Видео запускается…",
   "web.reconnect.title": "Связь прервалась. Сеанс ещё живёт в грейс-периоде — пробуем вернуться автоматически.",
   "web.reconnect.action": "Переподключиться сейчас",
   "web.reconnect.expired": "Сеанс завершён: грейс-период истёк. Подключитесь заново — attended по ID и паролю, машину — через панель «Машины».",

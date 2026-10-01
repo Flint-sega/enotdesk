@@ -52,6 +52,7 @@ function fakeServer({ onSocket = null, delayMs = 0 } = {}) {
         written: [],
         handlers: {},
         write(b) { this.written.push(b); },
+        end(b, cb) { if (b) this.written.push(b); this.ended = true; cb?.(); },
         destroy() { this.destroyed = true; this.handlers.close?.(); },
         on(ev, fn) { this.handlers[ev] = fn; },
         emit(ev, ...a) { this.handlers[ev]?.(...a); },
