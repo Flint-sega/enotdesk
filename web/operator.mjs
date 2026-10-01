@@ -583,11 +583,19 @@ async function onSignal(msg) {
       break;
     case 'machine-video':
       // v0.6 (ADR 0027): статус хелпера. running — видео идёт (ontrack уже
-      // очистил заметку); error/off — честная причина поверх качества.
+      // очистил заметку); spawning/connecting — штатный старт (v0.6 fix ревью:
+      // не показывать ложное «недоступно» ~13 с); error/off — честная причина
+      // поверх качества.
       if (msg.state === 'running') setVideoStatus(null);
+      else if (msg.state === 'spawning' || msg.state === 'connecting') setVideoStatus(t('web.video.starting'));
       else setVideoStatus(t('web.video.unavailable', {
         reason: msg.reason ? ` (${msg.reason})` : '',
       }));
+      // privacy-честность: реальное состояние дисплея машины корректирует кнопку
+      if (typeof msg.helperDisplayOff === 'boolean') {
+        privacyDimmed = msg.helperDisplayOff;
+        text($('btn-privacy'), t(privacyDimmed ? 'web.privacy.on' : 'web.privacy.off'));
+      }
       break;
     case 'peer-reconnecting':
       // клиент потерял связь, сеанс жив (грейс сервера, ADR 0013). №15: держим

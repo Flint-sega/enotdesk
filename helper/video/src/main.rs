@@ -147,6 +147,9 @@ fn run() -> Result<i32, String> {
     }
 
     let shared = Arc::new(Shared::new());
+    // v0.6 fix (review): operator-requested privacy sleep must survive the
+    // stuck-display watchdog (which wakes the panel after 5 s of silence).
+    let privacy_sleep = Arc::new(AtomicBool::new(false));
     spawn_ticker(shared.clone());
 
     log_line(&format!(
@@ -192,7 +195,7 @@ fn run() -> Result<i32, String> {
             let token = token.clone();
             let shared = shared.clone();
             let io = io.clone();
-            std::thread::spawn(move || reader_thread(io, token, shared))
+            std::thread::spawn(move || reader_thread(io, token, shared, privacy_sleep))
         };
         set_state(&shared, "live");
 
@@ -232,7 +235,7 @@ enum SessionEnd {
 // Reader thread: hello handshake + command dispatch
 // ---------------------------------------------------------------------------
 
-fn reader_thread(io: Arc<File>, token: Arc<String>, shared: Arc<Shared>) {
+fn reader_thread(io: Arc<File>, token: Arc<String>, shared: Arc<Shared>, privacy_sleep: Arc<AtomicBool>) {
     let mut io = io; // Arc<File> derefs to File for read_exact
     let mut authenticated = false;
     loop {
@@ -268,13 +271,13 @@ fn reader_thread(io: Arc<File>, token: Arc<String>, shared: Arc<Shared>) {
                 break;
             }
         } else {
-            handle_command(&shared, &String::from_utf8_lossy(&payload));
+            handle_command(&shared, &privacy_sleep, &String::from_utf8_lossy(&payload));
         }
     }
     shared.broken.store(true, Ordering::SeqCst);
 }
 
-fn handle_command(shared: &Shared, text: &str) {
+fn handle_command(shared: &Shared, privacy_sleep: &AtomicBool, text: &str) {
     let doc = match proto::parse(text) {
         Ok(d) => d,
         Err(e) => {
@@ -324,10 +327,14 @@ fn handle_command(shared: &Shared, text: &str) {
         "wake" => {
             win::monitor_power(true);
             shared.display_off.store(false, Ordering::Relaxed);
+            privacy_sleep.store(false, Ordering::Relaxed);
         }
         "sleep" => {
             win::monitor_power(false);
             shared.display_off.store(true, Ordering::Relaxed);
+            // v0.6 fix (review): privacy sleep — the stuck-display watchdog
+            // must not silently turn the screen back on after 5 s of silence.
+            privacy_sleep.store(true, Ordering::Relaxed);
         }
         "quality" => {
             if let Some(q) = doc.get("jpegQ").and_then(Json::as_num) {
@@ -468,9 +475,15 @@ fn capture_session(
                 {
                     last_wake = Some(Instant::now());
                     timeout_since = Some(Instant::now()); // restart the 5 s window
-                    win::monitor_power(true);
+                    // v0.6 fix (review): operator-requested privacy sleep must
+                    // NOT be undone by the stuck-display watchdog — zero frames
+                    // is exactly what privacy looks like. Wake only when the
+                    // silence was not our own "sleep" command.
+                    if !privacy_sleep.load(Ordering::Relaxed) {
+                        win::monitor_power(true);
+                        set_last_err(shared, "capture: long timeout, display wake attempted");
+                    }
                     shared.display_off.store(true, Ordering::Relaxed);
-                    set_last_err(shared, "capture: long timeout, display wake attempted");
                 }
             }
             win::Grab::AccessLost => {

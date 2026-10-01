@@ -322,6 +322,7 @@ export default {
   "web.privacy.off": "Dim the screen",
   "web.privacy.on": "Restore the screen",
   "web.video.unavailable": "Video unavailable{reason}",
+  "web.video.starting": "Video is starting…",
   "web.reconnect.title": "Connection lost. The session is still within the grace period — reconnecting automatically.",
   "web.reconnect.action": "Reconnect now",
   "web.reconnect.expired": "Session ended: the grace period has expired. Reconnect — attended via ID and password, machines via the Machines panel.",

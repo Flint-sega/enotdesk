@@ -76,25 +76,27 @@ export function createWakeSender({ dgramFactory } = {}) {
         return;
       }
       let live = true;
-      const finish = () => {
+      // v0.6 fix (ревью GLM-5.3): ВСЕ пути выхода закрывают сокет — раньше
+      // сбои send/bind/error оставляли открытый bound-сокет (утечка fd на
+      // каждый сбойный адрес в долгоживущем агенте).
+      const settle = (failedAddr) => {
         if (!live) return;
         live = false;
+        if (failedAddr) failed.push(addr);
         try { sock.close(); } catch { /* уже закрыт */ }
         resolve();
       };
-      sock.on?.('error', () => {
-        if (live) { live = false; failed.push(addr); resolve(); }
-      });
+      sock.on?.('error', () => settle(addr));
       const sendAt = (attempt) => {
         if (!live) return;
         sock.send(payload, port, addr, (e) => {
           if (e) {
-            if (live) { live = false; failed.push(addr); resolve(); }
+            settle(addr);
             return;
           }
           packets += 1;
           if (attempt + 1 < repeats) setTimeout(() => sendAt(attempt + 1), intervalMs);
-          else finish();
+          else settle(null);
         });
       };
       try {
@@ -104,7 +106,7 @@ export function createWakeSender({ dgramFactory } = {}) {
           sendAt(0);
         });
       } catch {
-        if (live) { live = false; failed.push(addr); resolve(); }
+        settle(addr);
       }
     })));
     return { broadcasts: targets.length, packets, failed };

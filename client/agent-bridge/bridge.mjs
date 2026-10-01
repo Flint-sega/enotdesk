@@ -36,10 +36,23 @@ if (!api) {
     if (iceReason) console.warn(`agent-bridge: ${iceReason}`);
   });
 
-  // Кадр → canvas → track. Первый кадр создаёт canvas/track и кладёт его в
-  // видео-трансивер (оператор офферил recvonly — replaceTrack не требует
-  // ренеготиации). Устаревшие кадры (пришли во время декодирования
-  // предыдущего) пропускаются по счётчику — latency важнее полноты.
+  // Кадр → canvas → track. Первый кадр создаёт canvas/track; привязка к
+  // видео-трансиверу ПОВТОРЯЕТСЯ на каждом кадре до успеха (v0.6 fix ревью:
+  // гонка «кадр раньше offer'а» оставляла видео мёртвым весь сеанс). Устаревшие
+  // кадры (пришли во время декодирования предыдущего) пропускаются по счётчику.
+  let videoAttached = false;
+  async function attachVideoTrack() {
+    if (videoAttached || !videoTrack || !pc) return;
+    const vt = pc.getTransceivers().find((t) => t.receiver.track?.kind === 'video' || t.sender.track?.kind === 'video');
+    if (!vt) return; // offer ещё не применён — повторим на следующем кадре
+    try {
+      await vt.sender.replaceTrack(videoTrack);
+      videoAttached = true;
+    } catch (e) {
+      console.warn(`agent-bridge: replaceTrack отказал (${e?.message ?? e}) — повторим`);
+    }
+  }
+
   async function drawVideoFrame(jpeg) {
     try {
       const seq = ++videoSeq;
@@ -51,14 +64,13 @@ if (!api) {
         videoCanvas.height = bitmap.height;
         videoCtx = videoCanvas.getContext('2d');
         videoTrack = videoCanvas.captureStream(24).getVideoTracks()[0] ?? null;
-        const vt = pc?.getTransceivers().find((t) => t.receiver.track?.kind === 'video' || t.sender.track?.kind === 'video');
-        if (vt && videoTrack) await vt.sender.replaceTrack(videoTrack).catch(() => {});
       } else if (videoCanvas.width !== bitmap.width || videoCanvas.height !== bitmap.height) {
         videoCanvas.width = bitmap.width;
         videoCanvas.height = bitmap.height;
       }
       videoCtx.drawImage(bitmap, 0, 0);
       bitmap.close?.();
+      await attachVideoTrack();
     } catch { /* битый кадр пропускаем — следующий будет */ }
   }
 
@@ -105,7 +117,10 @@ if (!api) {
         // sendonly — кадры хелпера уйдут в этот трансивер через replaceTrack
         // без ренеготиации. В attended-сеансах видео-трансивера нет — no-op.
         const vt = pc.getTransceivers().find((t) => t.receiver.track?.kind === 'video');
-        if (vt) vt.direction = 'sendonly';
+        if (vt) {
+          vt.direction = 'sendonly';
+          void attachVideoTrack(); // кадры могли прийти раньше offer'а (гонка, v0.6 fix)
+        }
         return pc.createAnswer();
       })
       .then((answer) => pc.setLocalDescription(answer))

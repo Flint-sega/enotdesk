@@ -26,6 +26,7 @@ import { showToast } from './lib/notify.mjs';
 import { createMachineServices } from './lib/machine-services.mjs';
 import { createSessionSpawner } from './lib/session-spawn.mjs';
 import { createVideoHost } from './lib/video-host.mjs';
+import { inputEventToCommands } from './lib/input-translate.mjs';
 import { resolveConsoleUser } from './lib/console-user.mjs';
 import { UPDATE_REPO, updateFeedUrl, platformFeedName, updateDecision, updateInstallDecision } from './lib/updater.mjs';
 import { isNewerVersion } from './lib/version-check.mjs';
@@ -987,7 +988,13 @@ function startAgentMode() {
   // Видео-хелпер (ADR 0027, v0.6): спавн в консольном сеансе + pipe → мост.
   // Хелпер есть только в упакованной сборке (extraResources); в dev честно
   // spawn-bad-exe → machine-сеанс живёт без видео.
-  const videoForward = { relay: null };
+  // Релей кадров в мост текущего сеанса: setRelay вызывается из createAgentRtc
+  // при открытии RTC (v0.6 fix ревью GLM-5.3 — раньше метода не существовало и
+  // каждый кадр молча терялся).
+  const videoForward = {
+    relay: null,
+    setRelay(fn) { this.relay = fn; },
+  };
   const videoStatusCb = { fn: null };
   let spawnKoffi;
   try { spawnKoffi = createRequire(import.meta.url)('koffi'); } catch { spawnKoffi = null; } // честный spawn-koffi-unavailable
@@ -1028,7 +1035,9 @@ function startAgentMode() {
           videoHost.sendCommand({ cmd: ev.display === 'off' ? 'sleep' : 'wake' });
           return;
         }
-        videoHost.sendCommand({ cmd: 'input', ev });
+        // v0.6 fix (ревью GLM-5.3): протокольное событие → словарь команд
+        // хелпера (mouse/key/wheel) — хелпер не знает конверта 'input'.
+        for (const cmd of inputEventToCommands(ev)) videoHost.sendCommand(cmd);
       };
     },
     onStatus: (cb) => { videoStatusCb.fn = cb; },

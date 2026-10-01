@@ -2033,7 +2033,14 @@ export function createServer(opts = {}) {
         const state = ['spawning', 'connecting', 'running', 'error', 'off'].includes(msg.state) ? msg.state : 'error';
         const reason = typeof msg.reason === 'string' ? msg.reason.slice(0, 60) : '';
         const helperState = typeof msg.helper?.state === 'string' ? msg.helper.state.slice(0, 30) : '';
-        const out = { type: 'machine-video', state, ...(reason ? { reason } : {}), ...(helperState ? { helperState } : {}) };
+        const helperDisplayOff = typeof msg.helper?.displayOff === 'boolean' ? msg.helper.displayOff : null;
+        const out = {
+          type: 'machine-video',
+          state,
+          ...(reason ? { reason } : {}),
+          ...(helperState ? { helperState } : {}),
+          ...(helperDisplayOff !== null ? { helperDisplayOff } : {}),
+        };
         for (const opWs of rt.opSockets.keys()) send(opWs, out);
         return;
       }

@@ -10,7 +10,8 @@ It is one half of the v0.5 unattended-video stack:
 ```
 Node service (SYSTEM)                    enotdesk-video (console session)
 ---------------------                    --------------------------------
-spawn helper, token -> stdin   --------> reads token (stdin line 1)
+spawn helper, --token <hex> on    -----> reads --token from argv (v0.6 fix:
+command line (DETACHED, no stdin)         DETACHED spawn has no stdin)
 connects to named pipe         <-------> pipe server \\.\pipe\enotdesk-video
 reads frames/status                      DXGI -> downscale 1280 -> JPEG -> pipe
 sends commands (JSON)          --------> SendInput / monitor power / quality
@@ -22,14 +23,15 @@ proven `spike/video-dxgi`).
 ## Launch contract
 
 1. Service (SYSTEM) starts the helper in the console session (token of the
-   logged-on user, `CreateProcessAsUser`) with no arguments.
-2. The service writes the one-time pipe token to the helper's **stdin** (first
-   line, `\n`-terminated). No token / empty token -> exit code 1. The token
-   must not contain leading/trailing whitespace (it is trimmed once).
+   logged-on user, `CreateProcessAsUser`) with `--token <hex>` on the command
+   line (v0.6: DETACHED spawn has no stdin; the command line is visible only
+   within the same trust domain as the default pipe ACL — same session/user).
+2. No/empty `--token` -> exit code 1.
 3. Helper creates the pipe server and blocks in `ConnectNamedPipe`.
 4. Service connects, then MUST send `hello` (type 0) with the same token as the
    first message. Mismatch -> session torn down, exit code 3.
-5. Closing the helper's stdin is the shutdown signal (exit code 0).
+5. Shutdown: the service kills the helper (`taskkill /T /F` by pid). There is
+   no stdin-based shutdown signal (no stdin at all).
 
 stdout carries **only ASCII JSON diagnostic lines**: one `start` event, one
 `tick` every 10 s (`{"ev":"tick","state":"waiting|live","fps":N,
@@ -110,7 +112,7 @@ Commands (JSON object with `"cmd"`):
 
 | code | meaning                                          |
 |------|--------------------------------------------------|
-| 0    | clean shutdown (stdin closed)                    |
+| 0    | clean shutdown (service kill — stdin contract removed in v0.6)                    |
 | 1    | startup failure (no/empty token, DXGI init, pipe)|
 | 2    | capture fatal (access-lost flood, dup/capture errors persist) |
 | 3    | hello token mismatch                             |
@@ -118,7 +120,7 @@ Commands (JSON object with `"cmd"`):
 ## v1 limitations (honest list)
 
 - **Pipe security**: no SDDL — the pipe uses the default ACL of the user the
-  helper runs as. The stdin token is the gate (first-message check). This is a
+  helper runs as. The argv token mirrored by the first pipe hello is the gate. This is a
   simplification agreed for v1; hardening (explicit DACL or token rotation) is
   future work.
 - Single client, single instance of the pipe.

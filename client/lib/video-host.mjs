@@ -156,10 +156,25 @@ export function createVideoHost({
     stop() {
       if (stopped) return;
       stopped = true;
-      // Privacy-гигиена: перед смертью хелпер уже мёртв или умирает — вернуть
-      // дисплей нечем; поэтому wake шлём ДО закрытия, если канал жив.
-      if (state === 'running') this.sendCommand({ cmd: 'wake' });
-      try { sock?.destroy(); } catch { /* уже мёртв */ }
+      // Privacy-гигиена (v0.6 fix ревью): wake обязан доехать ДО разрыва —
+      // sock.destroy() отбрасывает незаписанные данные, поэтому закрываем через
+      // end(wake-кадр) и добиваем сокет после флаша (или по таймауту-страховке).
+      if (state === 'running' && sock) {
+        const s = sock;
+        const bye = encodeMessage(MSG.COMMAND, JSON.stringify({ cmd: 'wake' }));
+        let done = false;
+        const finish = () => {
+          if (done) return;
+          done = true;
+          try { s.destroy(); } catch { /* уже мёртв */ }
+        };
+        try {
+          s.end(bye, finish); // end дожидается флаша, в отличие от write+destroy
+          setTimeout(finish, 500).unref?.();
+        } catch { finish(); }
+      } else {
+        try { sock?.destroy(); } catch { /* уже мёртв */ }
+      }
       sock = null;
       if (pid != null) {
         try { killer?.(pid); } catch (e) { log.warn?.(`video-host: kill ${pid} (${e?.message ?? e})`); }
