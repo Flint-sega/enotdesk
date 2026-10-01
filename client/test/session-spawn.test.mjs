@@ -1,18 +1,13 @@
 // session-spawn (ADR 0027): спавн хелпера в консольном сеансе на моке koffi.
-// Проверяется сама цепочка: сессия → winlogon по сеансу → токен → CreateProcessAsUserW,
-// и честные отказы на каждом звене.
+// Цепочка по живой диагностике (diag-spawn.cjs): WTSGetActiveConsoleSessionId →
+// WTSQueryUserToken → CreateProcessAsUserW (_Inout_ StartupInfo / _Out_ ProcessInfo).
 
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { createSessionSpawner } from '../lib/session-spawn.mjs';
 
-// Мок koffi 3: load→func по сигнатуре, struct→конструктор, sizeof, decode.
-// Сценарий передаётся объектом; каждый Win32-вызов пишется в calls для ассертов.
 function makeKoffi(script) {
   const calls = [];
-  // packEntry-буферы: mock хранит plain-объект под маркерным буфером
-  const entryStore = new Map();
-  let entrySeq = 0;
   const koffiMock = {
     calls,
     load(dll) {
@@ -20,7 +15,6 @@ function makeKoffi(script) {
       return {
         func(sig) {
           // имя функции: первый идентификатор, за которым сразу '('
-          // (учитывает 'void *Name'; параметры идут после первой скобки)
           const name = /([A-Za-z_]\w*)\s*\(/.exec(sig)?.[1] ?? sig;
           calls.push(['decl', name]);
           return (...args) => {
@@ -28,33 +22,17 @@ function makeKoffi(script) {
             switch (name) {
               case 'WTSGetActiveConsoleSessionId':
                 return script.sessionId;
-              case 'CreateToolhelp32Snapshot':
-                return script.snapshot ?? { tag: 'snapshot' };
-              case 'Process32FirstW':
-              case 'Process32NextW': {
-                const list = script.processes ?? [];
-                if (name === 'Process32FirstW') script.cursor = 0;
-                if (script.cursor >= list.length) return false;
-                const p = list[script.cursor];
-                script.cursor += 1;
-                const stored = entryStore.get(args[1]);
-                stored.th32ProcessID = p.pid;
-                stored.szExeFile = [...[...p.name].map((c) => c.charCodeAt(0)), 0];
-                return true;
-              }
-              case 'ProcessIdToSessionId':
-                args[1].writeUInt32LE(script.pidSessions?.[args[0]] ?? 0, 0);
+              case 'WTSQueryUserToken':
+                if (script.tokenOk === false) return false;
+                args[1].writeUInt32LE(script.tokenHandle ?? 0xdeadbeef, 0);
                 return true;
               case 'CloseHandle':
                 return true;
-              case 'OpenProcess':
-                return script.openOk === false ? null : { tag: 'proc', pid: args[2] };
-              case 'OpenProcessToken':
-                if (script.tokenOk === false) return false;
-                args[2].writeUInt32LE(script.tokenHandle ?? 0xdeadbeef, 0);
-                return true;
               case 'CreateProcessAsUserW': {
+                const si = args[9];
                 const pi = args[10];
+                script.gotSi = si;
+                script.gotToken = args[0];
                 if (script.spawnOk === false) return false;
                 pi.dwProcessId = script.spawnPid ?? 4242;
                 return true;
@@ -71,16 +49,7 @@ function makeKoffi(script) {
       return { name }; // TypeObject, не конструктор (как реальный koffi 3.2.1)
     },
     sizeof() {
-      return 568; // PROCESSENTRY32W x64, точность не важна — поле просто пишется
-    },
-    pack(type, obj) {
-      const marker = Buffer.alloc(8);
-      marker.writeUInt32LE(++entrySeq, 0);
-      entryStore.set(marker, { ...obj });
-      return marker;
-    },
-    unpack(type, buf) {
-      return entryStore.get(buf);
+      return 104; // StartupInfoW x64, точность не важна — поле просто пишется
     },
     decode(buf) {
       return Number(buf.readBigUInt64LE(0));
@@ -89,82 +58,50 @@ function makeKoffi(script) {
   return { koffiMock, calls };
 }
 
-const SCRIPT = {
-  sessionId: 1,
-  processes: [
-    { pid: 100, name: 'csrss.exe' },
-    { pid: 200, name: 'winlogon.exe' },
-    { pid: 300, name: 'explorer.exe' },
-  ],
-  pidSessions: { 100: 1, 200: 1, 300: 1 },
-};
+const SCRIPT = { sessionId: 1, spawnPid: 4242 };
 
-test('happy path: winlogon сеанса найден, токен открыт, процесс создан с pid', async () => {
-  const { koffiMock, calls } = makeKoffi({ ...SCRIPT, spawnPid: 4242, cursor: 0 });
+test('happy path: токен сеанса → процесс создан с pid, cb и lpDesktop заполнены', async () => {
+  const script = { ...SCRIPT, cursor: 0 };
+  const { koffiMock, calls } = makeKoffi(script);
   const { spawnInConsoleSession } = createSessionSpawner({ koffi: koffiMock });
-  const r = await spawnInConsoleSession({ exePath: 'C:\\x\\helper.exe', commandLine: '"C:\\x\\helper.exe"' });
+  const r = await spawnInConsoleSession({ exePath: 'C:\\x\\helper.exe', commandLine: '"C:\\x\\helper.exe" --token abc' });
   assert.deepEqual(r, { ok: true, pid: 4242 });
+
   const create = calls.find(([n]) => n === 'CreateProcessAsUserW');
   assert.ok(create, 'CreateProcessAsUserW вызван');
   // create = ['CreateProcessAsUserW', token, exe, cmd, pa, ta, inherit, flags, env, dir, si, pi]
-  assert.equal(create[1], 0xdeadbeef, 'токен из OpenProcessToken (декодирован из буфера)');
+  assert.equal(create[1], 0xdeadbeef, 'токен из WTSQueryUserToken (декодирован из буфера)');
   assert.ok(create[2].toString('utf16le').includes('helper.exe'), 'exe в lpApplicationName');
-  // детached+unicode: 0x8 | 0x400
   assert.equal(create[7], 0x408, 'DETACHED_PROCESS|CREATE_UNICODE_ENVIRONMENT');
+  assert.equal(script.gotSi.cb, 104, 'cb = sizeof(StartupInfoW)');
+  assert.ok(script.gotSi.lpDesktop.length > 4, 'lpDesktop — буфер winsta0\\default');
 });
 
 test('нет активной консольной сессии — честный no-active-session', async () => {
-  const { koffiMock } = makeKoffi({ ...SCRIPT, sessionId: 0xFFFFFFFF, cursor: 0 });
+  const { koffiMock } = makeKoffi({ ...SCRIPT, sessionId: 0xFFFFFFFF });
   const { spawnInConsoleSession } = createSessionSpawner({ koffi: koffiMock });
   const r = await spawnInConsoleSession({ exePath: 'x.exe', commandLine: 'x.exe' });
   assert.deepEqual(r, { ok: false, reason: 'no-active-session' });
 });
 
-test('winlogon другого сеанса не перепутается: ищется по sessionId', async () => {
-  const { koffiMock } = makeKoffi({
-    sessionId: 7,
-    processes: [{ pid: 200, name: 'winlogon.exe' }, { pid: 201, name: 'winlogon.exe' }],
-    pidSessions: { 200: 1, 201: 7 },
-    spawnPid: 5,
-    cursor: 0,
-  });
+test('WTSQueryUserToken отказал — token-failed', async () => {
+  const { koffiMock } = makeKoffi({ ...SCRIPT, tokenOk: false });
   const { spawnInConsoleSession } = createSessionSpawner({ koffi: koffiMock });
   const r = await spawnInConsoleSession({ exePath: 'x.exe', commandLine: 'x.exe' });
-  assert.equal(r.ok, true);
-  assert.equal(r.pid, 5);
-  const open = koffiMock.calls.find(([n]) => n === 'OpenProcess');
-  assert.equal(open[3], 201, 'открыт winlogon ТОЛЬКО целевого сеанса'); // ['OpenProcess', access, inherit, pid]
+  assert.deepEqual(r, { ok: false, reason: 'token-failed' });
 });
 
-test('winlogon не найден (нет процесса нужного сеанса) — winlogon-not-found', async () => {
-  const { koffiMock } = makeKoffi({
-    sessionId: 9,
-    processes: [{ pid: 200, name: 'winlogon.exe' }],
-    pidSessions: { 200: 1 },
-    cursor: 0,
-  });
+test('CreateProcessAsUserW отказал — create-failed', async () => {
+  const { koffiMock } = makeKoffi({ ...SCRIPT, spawnOk: false });
   const { spawnInConsoleSession } = createSessionSpawner({ koffi: koffiMock });
   const r = await spawnInConsoleSession({ exePath: 'x.exe', commandLine: 'x.exe' });
-  assert.deepEqual(r, { ok: false, reason: 'winlogon-not-found' });
-});
-
-test('цепочка честно ломается: openProcess/openToken/CreateProcess', async () => {
-  for (const [patch, reason] of [
-    [{ openOk: false }, 'winlogon-open-failed'],
-    [{ tokenOk: false }, 'token-failed'],
-    [{ spawnOk: false }, 'create-failed'],
-  ]) {
-    const { koffiMock } = makeKoffi({ ...SCRIPT, ...patch, cursor: 0 });
-    const { spawnInConsoleSession } = createSessionSpawner({ koffi: koffiMock });
-    const r = await spawnInConsoleSession({ exePath: 'x.exe', commandLine: 'x.exe' });
-    assert.deepEqual(r, { ok: false, reason }, `сценарий ${reason}`);
-  }
+  assert.deepEqual(r, { ok: false, reason: 'create-failed' });
 });
 
 test('мусорные аргументы и отсутствие koffi — честные отказы', async () => {
   const { spawnInConsoleSession } = createSessionSpawner({ koffi: null });
   assert.deepEqual(await spawnInConsoleSession({ exePath: 'x', commandLine: 'x' }), { ok: false, reason: 'koffi-unavailable' });
-  const { koffiMock } = makeKoffi({ ...SCRIPT, cursor: 0 });
+  const { koffiMock } = makeKoffi({ ...SCRIPT });
   const spawner = createSessionSpawner({ koffi: koffiMock });
   assert.deepEqual(await spawner.spawnInConsoleSession({ commandLine: 'x' }), { ok: false, reason: 'bad-exe' });
   assert.deepEqual(await spawner.spawnInConsoleSession({ exePath: 'x' }), { ok: false, reason: 'bad-commandline' });
