@@ -26,9 +26,10 @@ export const BRIDGE_IPC = Object.freeze({
   FAIL: 'enot:bridge-fail', // мост → main: честная ошибка моста
 });
 
-// Allowlist меток каналов (v0.5, W-U6): term — терминал, chat/file — сервисы
-// machine-сеанса. Всё прочее мост не открывает и в main не передаёт.
-export const BRIDGE_DC_LABELS = Object.freeze(['term', 'chat', 'file']);
+// Allowlist меток каналов (v0.5 W-U6 + v0.6 ADR 0027): term — терминал,
+// chat/file — сервисы machine-сеанса, input — ввод/privacy оператора → хелпер.
+// Всё прочее мост не открывает и в main не передаёт. Зеркалится в bridge.mjs.
+export const BRIDGE_DC_LABELS = Object.freeze(['term', 'chat', 'file', 'input']);
 
 const DC_QUEUE_CAP = 1 << 20; // потолок очереди паузы, байт; хранится хвост ≤ капа, кусок крупнее капа роняется
 

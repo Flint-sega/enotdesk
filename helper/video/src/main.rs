@@ -17,7 +17,7 @@ mod win;
 
 use proto::Json;
 use std::fs::File;
-use std::io::{BufRead, Read, Write as _};
+use std::io::{Read, Write as _};
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
@@ -128,24 +128,26 @@ fn main() {
 }
 
 fn run() -> Result<i32, String> {
-    // The service passes the one-time pipe token on stdin (first line) before
-    // anything else happens, so a stray copy of the binary cannot even start.
-    let mut line = String::new();
-    let n = std::io::stdin()
-        .lock()
-        .read_line(&mut line)
-        .map_err(|e| format!("stdin: {e}"))?;
-    if n == 0 {
-        return Err("no token on stdin".into());
+    // The service passes the one-time pipe token as --token <hex> on the command
+    // line (v0.6 fix): the helper is spawned DETACHED_PROCESS with no stdin, so
+    // the original stdin handshake could never deliver it. The command line of a
+    // process is visible only within the same trust domain as the default pipe
+    // ACL (same-session/same-user), which is the v1 boundary recorded in the
+    // helper README.
+    let mut token_value = String::new();
+    let mut args = std::env::args().skip(1);
+    while let Some(a) = args.next() {
+        if a == "--token" {
+            token_value = args.next().unwrap_or_default();
+        }
     }
-    let token = Arc::new(line.trim().to_string());
+    let token = Arc::new(token_value.trim().to_string());
     if token.is_empty() {
-        return Err("empty token on stdin".into());
+        return Err("no --token argument".into());
     }
 
     let shared = Arc::new(Shared::new());
     spawn_ticker(shared.clone());
-    spawn_stdin_watcher();
 
     log_line(&format!(
         "{{\"ev\":\"start\",\"pipe\":\"{}\"}}",
@@ -615,18 +617,5 @@ fn spawn_ticker(shared: Arc<Shared>) {
 /// blocking calls), so the watcher exits the process directly -- blunt, but
 /// panic-free and honest, and no session work is in progress that could lose
 /// more than a frame.
-fn spawn_stdin_watcher() {
-    std::thread::spawn(|| {
-        let mut buf = [0u8; 256];
-        let mut s = std::io::stdin().lock();
-        loop {
-            match s.read(&mut buf) {
-                Ok(0) => break,    // EOF: parent closed stdin
-                Ok(_) => continue, // drain; commands arrive over the pipe
-                Err(_) => break,
-            }
-        }
-        log_exit(EXIT_OK, "stdin closed");
-        std::process::exit(EXIT_OK);
-    });
-}
+// v0.6: stdin lifecycle watcher removed — the helper is spawned DETACHED
+// (no stdin at all); the service kills it via taskkill /T on session end.

@@ -4,6 +4,7 @@
 // 1=frame(jpeg), 2=status(json), 3=command(json). Хост честно деградирует:
 // нет хелпера/сеанса/пайпа — статус с причиной, machine-сеанс живёт без видео.
 // net/spawner/killer инъекцией — юнит-тесты без Electron и без сети.
+import crypto from 'node:crypto';
 
 export const PIPE_NAME = '\\\\.\\pipe\\enotdesk-video';
 export const FRAME_MAGIC = 0x454e4f54; // 'ENOT' little-endian
@@ -58,7 +59,8 @@ export function createFrameReader() {
 export function createVideoHost({
   spawner, netFactory, killer = null, pipeName = PIPE_NAME,
   exePath, commandLine,
-  token, log = console,
+  token = crypto.randomBytes(16).toString('hex'), // одноразовый токен hello-кадра (v0.6: дублируется в argv хелпера)
+  log = console,
   onFrame = () => {}, onStatus = () => {},
   connectTimeoutMs = CONNECT_TIMEOUT_MS, connectRetries = CONNECT_RETRIES,
 } = {}) {
