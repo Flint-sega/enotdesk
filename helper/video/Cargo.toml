@@ -6,10 +6,15 @@ edition = "2021"
 # Windows-only helper (ADR 0026/0027): runs inside the console session, so it
 # is built for x86_64-pc-windows-msvc and shipped by the service installer.
 [dependencies]
+# The #[implement] macro expands to `windows_core::…` paths, so the crate must
+# be a direct dependency (same pinned major as windows).
+windows-core = "0.58"
 windows = { version = "0.58", features = [
   # Same pinned major as the proven spike (spike/video-dxgi). Feature set is
   # the minimal closure needed by src/win.rs, verified by cross-compiling:
   #   cargo check --target x86_64-pc-windows-msvc
+  # implement: the *_Impl traits for the in-memory WIC stream (InMemoryStream).
+  "implement",
   "Win32_Foundation",
   # D3D_DRIVER_TYPE / D3D_FEATURE_LEVEL live one level up from Direct3D11.
   "Win32_Graphics_Direct3D",

@@ -22,14 +22,15 @@ use windows::Win32::Graphics::Dxgi::{
 };
 use windows::Win32::Graphics::Imaging::{
     CLSID_WICImagingFactory, GUID_ContainerFormatJpeg, GUID_WICPixelFormat32bppBGRA, IWICBitmap,
-    IWICBitmapEncoder, IWICBitmapFrameEncode, IWICBitmapSource, IWICImagingFactory, IWICStream,
+    IWICBitmapEncoder, IWICBitmapFrameEncode, IWICBitmapSource, IWICImagingFactory, IWICStream, IWICStream_Impl,
     WICBitmapEncoderNoCache,
 };
 use windows::Win32::Storage::FileSystem::PIPE_ACCESS_DUPLEX;
 use windows::Win32::System::Com::StructuredStorage::{IPropertyBag2, PROPBAG2};
 use windows::Win32::System::Com::{
     CoCreateInstance, CoInitializeEx, IStream, CLSCTX_INPROC_SERVER, COINIT_MULTITHREADED,
-    ISequentialStream_Impl, IStream_Impl, STATSTG,
+    ISequentialStream, ISequentialStream_Impl, IStream_Impl, LOCKTYPE, STATFLAG, STATSTG,
+    STREAM_SEEK, STGC,
 };
 use windows::Win32::System::Diagnostics::ToolHelp::{
     CreateToolhelp32Snapshot, Process32FirstW, Process32NextW, PROCESSENTRY32W, TH32CS_SNAPPROCESS,
@@ -553,115 +554,81 @@ impl InMemoryStream {
 }
 
 impl ISequentialStream_Impl for InMemoryStream_Impl {
-    fn Read(&self, pb: *mut u8, cb: u32, pcbread: Option<*mut u32>) -> windows::core::Result<()> {
+    fn Read(&self, pv: *mut core::ffi::c_void, cb: u32, pcbread: *mut u32) -> windows::core::HRESULT {
         let data = self.data.lock().unwrap_or_else(|p| p.into_inner());
         let mut pos = self.pos.lock().unwrap_or_else(|p| p.into_inner());
         let p = (*pos as usize).min(data.len());
         let n = (cb as usize).min(data.len().saturating_sub(p));
         unsafe {
-            std::ptr::copy_nonoverlapping(data.as_ptr().add(p), pb, n);
+            std::ptr::copy_nonoverlapping(data.as_ptr().add(p), pv.cast(), n);
         }
         *pos = (p + n) as u64;
-        if let Some(x) = pcbread {
-            unsafe { *x = n as u32 };
+        if !pcbread.is_null() {
+            unsafe { *pcbread = n as u32 };
         }
-        Ok(())
+        windows::core::HRESULT(0) // S_OK
     }
-    fn Write(&self, _pb: *const u8, _cb: u32, _pcbw: Option<*mut u32>) -> windows::core::Result<()> {
-        Err(windows::core::Error::from_hresult(windows::core::HRESULT(
-            -2147467263,
-        ))) // E_NOTIMPL
+    fn Write(&self, _pv: *const core::ffi::c_void, _cb: u32, _pcbwritten: *mut u32) -> windows::core::HRESULT {
+        // The encoder only reads back; writes go through the WIC encoder.
+        windows::core::HRESULT(0x8000_4001u32 as i32) // E_NOTIMPL
     }
 }
 
 impl IStream_Impl for InMemoryStream_Impl {
-    fn Seek(&self, dlibmove: i64, dworigin: u32, plibnewposition: Option<*mut u64>) -> windows::core::Result<()> {
+    fn Seek(&self, dlibmove: i64, dworigin: STREAM_SEEK, plibnewposition: *mut u64) -> windows::core::Result<()> {
         let mut pos = self.pos.lock().unwrap_or_else(|p| p.into_inner());
         let len = self.data.lock().unwrap_or_else(|p| p.into_inner()).len() as i64;
-        let base: i64 = match dworigin {
-            0 => 0,
-            1 => *pos as i64,
-            2 => len,
-            _ => {
-                return Err(windows::core::Error::from_hresult(windows::core::HRESULT(
-                    -2147024707,
-                )))
-            } // STG_E_INVALIDFUNCTION
+        let base: i64 = match dworigin.0 {
+            0 => 0,                      // STREAM_SEEK_FROM_START
+            1 => *pos as i64,            // STREAM_SEEK_FROM_CURRENT
+            2 => len,                    // STREAM_SEEK_FROM_END
+            _ => return Err(windows::core::Error::from_hresult(windows::core::HRESULT(0x8003_0001u32 as i32))), // STG_E_INVALIDFUNCTION
         };
         let np = (base + dlibmove).clamp(0, len);
         *pos = np as u64;
-        if let Some(p) = plibnewposition {
-            unsafe { *p = np as u64 };
+        if !plibnewposition.is_null() {
+            unsafe { *plibnewposition = np as u64 };
         }
         Ok(())
     }
     fn SetSize(&self, _libnewsize: u64) -> windows::core::Result<()> {
         Ok(())
     }
-    fn CopyTo(
-        &self,
-        _pstm: windows::core::Ref<'_, IStream>,
-        _cb: u64,
-        _pcbread: Option<*mut u64>,
-        _pcbw: Option<*mut u64>,
-    ) -> windows::core::Result<()> {
-        Err(windows::core::Error::from_hresult(windows::core::HRESULT(
-            -2147467263,
-        )))
+    fn CopyTo(&self, _pstm: Option<&IStream>, _cb: u64, _pcbread: *mut u64, _pcbwritten: *mut u64) -> windows::core::Result<()> {
+        Err(windows::core::Error::from_hresult(windows::core::HRESULT(0x8000_4001u32 as i32)))
     }
-    fn Commit(&self, _grfcommit: u32) -> windows::core::Result<()> {
+    fn Commit(&self, _grfcommitflags: &STGC) -> windows::core::Result<()> {
         Ok(())
     }
     fn Revert(&self) -> windows::core::Result<()> {
         Ok(())
     }
-    fn LockRegion(&self, _a: u64, _b: u64, _c: u32) -> windows::core::Result<()> {
+    fn LockRegion(&self, _liboffset: u64, _cb: u64, _dwlocktype: &LOCKTYPE) -> windows::core::Result<()> {
         Ok(())
     }
-    fn UnlockRegion(&self, _a: u64, _b: u64, _c: u32) -> windows::core::Result<()> {
+    fn UnlockRegion(&self, _liboffset: u64, _cb: u64, _dwlocktype: u32) -> windows::core::Result<()> {
         Ok(())
     }
-    fn Stat(&self, _pstatstg: *mut STATSTG, _grfstatflag: u32) -> windows::core::Result<()> {
-        Err(windows::core::Error::from_hresult(windows::core::HRESULT(
-            -2147467263,
-        )))
+    fn Stat(&self, _pstatstg: *mut STATSTG, _grfstatflag: &STATFLAG) -> windows::core::Result<()> {
+        Err(windows::core::Error::from_hresult(windows::core::HRESULT(0x8000_4001u32 as i32)))
     }
     fn Clone(&self) -> windows::core::Result<IStream> {
-        Err(windows::core::Error::from_hresult(windows::core::HRESULT(
-            -2147467263,
-        )))
+        Err(windows::core::Error::from_hresult(windows::core::HRESULT(0x8000_4001u32 as i32)))
     }
 }
 
 impl IWICStream_Impl for InMemoryStream_Impl {
-    fn InitializeFromIStream(&self, _pistm: windows::core::Ref<'_, IStream>) -> windows::core::Result<()> {
-        Err(windows::core::Error::from_hresult(windows::core::HRESULT(
-            -2147467263,
-        )))
+    fn InitializeFromIStream(&self, _pistream: Option<&IStream>) -> windows::core::Result<()> {
+        Err(windows::core::Error::from_hresult(windows::core::HRESULT(0x8000_4001u32 as i32)))
     }
-    fn InitializeFromFilename(
-        &self,
-        _wzfilename: &windows::core::PCWSTR,
-        _dwdesiredaccess: u32,
-    ) -> windows::core::Result<()> {
-        Err(windows::core::Error::from_hresult(windows::core::HRESULT(
-            -2147467263,
-        )))
+    fn InitializeFromFilename(&self, _wzfilename: &windows::core::PCWSTR, _dwdesiredaccess: u32) -> windows::core::Result<()> {
+        Err(windows::core::Error::from_hresult(windows::core::HRESULT(0x8000_4001u32 as i32)))
     }
-    fn InitializeFromMemory(&self, _pbbuffer: &[u8]) -> windows::core::Result<()> {
-        Err(windows::core::Error::from_hresult(windows::core::HRESULT(
-            -2147467263,
-        )))
+    fn InitializeFromMemory(&self, _pbbuffer: *const u8, _cbbuffersize: u32) -> windows::core::Result<()> {
+        Err(windows::core::Error::from_hresult(windows::core::HRESULT(0x8000_4001u32 as i32)))
     }
-    fn InitializeFromIStreamRegion(
-        &self,
-        _pistm: windows::core::Ref<'_, IStream>,
-        _uloffset: u64,
-        _ulmaxsize: u64,
-    ) -> windows::core::Result<()> {
-        Err(windows::core::Error::from_hresult(windows::core::HRESULT(
-            -2147467263,
-        )))
+    fn InitializeFromIStreamRegion(&self, _pistream: Option<&IStream>, _uloffset: u64, _ulmaxsize: u64) -> windows::core::Result<()> {
+        Err(windows::core::Error::from_hresult(windows::core::HRESULT(0x8000_4001u32 as i32)))
     }
 }
 
