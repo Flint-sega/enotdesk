@@ -120,6 +120,12 @@ export function createSignalClient({ url, wsFactory = (u) => new WebSocket(u), a
       ws.send(JSON.stringify({ type: 'idle-warning', remainingSec: sec }));
     },
 
+    // idle-clear: ввод возобновился — снять у операторов баннер (релей тот же).
+    sendIdleClear() {
+      if (!ws || ws.readyState !== 1) return;
+      ws.send(JSON.stringify({ type: 'idle-clear' }));
+    },
+
     // extra — allowlist-расширение heartbeat (R09): только termActive boolean,
     // прочие поля не уходят; без аргумента сообщение как раньше.
     heartbeat(extra) {

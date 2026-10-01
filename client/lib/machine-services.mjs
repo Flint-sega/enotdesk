@@ -13,6 +13,9 @@ import {
 } from './file-transfer.mjs';
 
 export const CHAT_TOAST_MAX = 500;
+// Троттл тостов чата (ревью v0.5: на Windows WTSSendMessageW — модальный диалог,
+// серия сообщений складывает стопку модалей консольному пользователю).
+export const CHAT_TOAST_MIN_MS = 3000;
 
 export function machineFilesDir({ platform = process.platform, env = process.env, home = os.homedir() } = {}) {
   // Служба работает от SYSTEM: %USERPROFILE% указывает в systemprofile — общая
@@ -33,18 +36,26 @@ export function createMachineServices({
   const dir = machineFilesDir({ platform, env, home });
 
   function wireChat(ch) {
+    let lastToastAt = 0;
     ch.onmessage = (m) => {
       const msg = parseChatMessage(typeof m?.data === 'string' ? m.data : '');
       if (!msg) return;
+      const now = Date.now();
+      if (now - lastToastAt < CHAT_TOAST_MIN_MS) return; // флуд глушим, не стопкой модалей
+      lastToastAt = now;
       notify(`💬 ${msg.text.slice(0, CHAT_TOAST_MAX)}`);
     };
     return true;
   }
 
-  // Один приём за раз на канал: второй file-meta в процессе передачи — reject.
-  let rx = null;
   function wireFile(ch) {
     ch.binaryType = 'arraybuffer';
+    // Приёмник живёт в замыкании канала (не сервиса): обрыв канала/сеанса сбрасывает
+    // его через onclose — прерванная передача не отравляет следующие (ревью v0.5)
+    let rx = null;
+    ch.onclose = () => {
+      rx = null;
+    };
     ch.onmessage = (m) => {
       if (typeof m?.data === 'string') {
         const ctl = parseFileControl(m.data);
@@ -59,12 +70,13 @@ export function createMachineServices({
           rx = createFileReceiver({ id: ctl.id, name, size: ctl.size });
           try { ch.send(fileAccept(ctl.id)); } catch { /* канал закрывается */ }
         } else if (ctl.kind === 'done') {
-          const current = rx;
-          rx = null;
-          if (!current) return;
-          void saveReceived(current);
-        } else if (ctl.kind === 'reject') {
-          rx = null;
+          // id сверяется: чужой/опоздавший done не сохраняет мусор и не сбрасывает
+          // идущий приём (ревью v0.5)
+          if (rx?.meta?.id === ctl.id) {
+            const current = rx;
+            rx = null;
+            void saveReceived(current);
+          }
         }
         return;
       }

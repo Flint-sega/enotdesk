@@ -77,19 +77,32 @@ if errorlevel 1 goto :fail
 
 REM --- Гарантированный старт (и рестарт при апгрейде: новые файлы подхватит
 REM --- только новый процесс). Остановка перед стартом — только если бежит.
-sc.exe query "%SVC_NAME%" 2>nul | find.exe /i "RUNNING" >nul
+REM --- Состояние проверяем через PowerShell .Status: enum-значение 'Running'
+REM --- локаль-независимо (вывод sc.exe локализован: ru-RU печатает «РАБОТАЕТ»,
+REM --- слова RUNNING там нет — ревью v0.5). Start-Sleep вместо timeout.exe:
+REM --- timeout отказывает при перенаправленном stdin (WinRM/schtasks).
+powershell.exe -NoProfile -Command "if ((Get-Service -Name '%SVC_NAME%' -ErrorAction SilentlyContinue).Status -eq 'Running') { exit 0 } else { exit 1 }"
 if errorlevel 1 goto :ensure-started
 sc.exe stop "%SVC_NAME%" >nul 2>&1
 set WAITN=0
 :wait-stop-loop
-timeout.exe /t 2 /nobreak >nul
-sc.exe query "%SVC_NAME%" 2>nul | find.exe /i "RUNNING" >nul
+powershell.exe -NoProfile -Command "Start-Sleep -Seconds 2"
+powershell.exe -NoProfile -Command "if ((Get-Service -Name '%SVC_NAME%' -ErrorAction SilentlyContinue).Status -eq 'Running') { exit 0 } else { exit 1 }"
 if errorlevel 1 goto :ensure-started
 set /a WAITN=%WAITN%+1
 if %WAITN% lss 10 goto :wait-stop-loop
 echo [предупреждение] служба не остановилась за 20 с - продолжаем со стартом поверх.
 :ensure-started
 sc.exe start "%SVC_NAME%"
+if errorlevel 1 (
+  REM 1056 = служба уже работает (гонка STOP_PENDING) — это не ошибка установки
+  sc.exe query "%SVC_NAME%" 2>nul | find.exe /i "RUNNING" >nul
+  if errorlevel 1 (
+    echo [ошибка] служба создана, но не запустилась - см. Event Viewer ^(System^) и "sc query %SVC_NAME%".
+    exit /b 1
+  )
+  echo [информация] служба уже запущена - продолжаем.
+)
 if errorlevel 1 (
   echo [ошибка] служба создана, но не запустилась - см. Event Viewer ^(System^) и "sc query %SVC_NAME%".
   exit /b 1

@@ -125,6 +125,7 @@ enot.onSignal(async (msg) => {
       // cleanupSession (не просто stopMedia): гасит карточку ретрая и streamPaused —
       // они не должны переживать сеанс (ревью GLM-5.3 #3)
       cleanupSession();
+      hide($('op-idle-note')); // баннер простоя не протекает в следующий сеанс
       // Критерий — сеанс, а не активная вкладка: симметрично rtcLinkLost
       // (ревью v0.4.6 — клиент на чужой вкладке видел операторскую форму)
       const clientSide = state.role === 'client' || !!state.session;
@@ -142,14 +143,26 @@ enot.onSignal(async (msg) => {
       text($('client-operators'), t('client.operatorJoined', { name: op.name ?? '', login: op.login ?? '' }));
       break;
     }
-    case 'idle-warning':
-      if (state.role === 'client') text($('client-live-note'), t('client.idleWarning', { sec: msg.remainingSec ?? 60 }));
-      else text($('remote-status'), t('op.idleWarning', { sec: msg.remainingSec ?? 60 }));
+    case 'idle-warning': {
+      // Критерий — сеанс, а не state.role (конвенция файла, ревью v0.5: вкладка
+      // меняется кликом, сеанс — нет). Хост-клиент видит свой live-note, у
+      // оператора предупреждение живёт в ОТДЕЛЬНОМ баннере: remote-status
+      // перезаписывается таймером качества каждые 2 с.
+      const isClientSide = state.role === 'client' || !!state.session;
+      if (isClientSide) {
+        text($('client-live-note'), t('client.idleWarning', { sec: msg.remainingSec ?? 60 }));
+      } else {
+        show($('op-idle-note'));
+        text($('op-idle-note'), t('op.idleWarning', { sec: msg.remainingSec ?? 60 }));
+      }
       break;
-    case 'idle-clear':
-      if (state.role === 'client') text($('client-live-note'), '');
-      else text($('remote-status'), state.pc?.connectionState === 'connected' ? t('status.connected') : t('op.clientReconnecting'));
+    }
+    case 'idle-clear': {
+      const isClientSide = state.role === 'client' || !!state.session;
+      if (isClientSide) text($('client-live-note'), '');
+      else { hide($('op-idle-note')); text($('op-idle-note'), ''); }
       break;
+    }
     case 'file-link':
       // резервный релей: ссылка на файл (TTL 3 суток) — показать получателю
       if (msg.url && msg.name) {

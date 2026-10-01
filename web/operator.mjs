@@ -535,12 +535,15 @@ async function onSignal(msg) {
       }
       break;
     case 'idle-warning':
-      // клиент-хост предупреждает: 30 мин без ввода — сеанс скоро закроется.
-      // Оператор видит причину заранее, а не разгадывает «не было активности».
-      showStatus(t('op.idleWarning', { sec: msg.remainingSec ?? 60 }));
+      // клиент-хост предупреждает: нет ввода — сеанс скоро закроется. Баннер —
+      // отдельный элемент: remote-status таймер качества перезаписывает каждые 2 с
+      // (ревью v0.5 — предупреждение жило ~2 секунды).
+      show($('op-idle-note'));
+      text($('op-idle-note'), t('op.idleWarning', { sec: msg.remainingSec ?? 60 }));
       break;
     case 'idle-clear':
-      showStatus(state.pc?.connectionState === 'connected' ? t('status.connected') : t('op.clientReconnecting'));
+      hide($('op-idle-note'));
+      text($('op-idle-note'), '');
       break;
     case 'peer-reconnecting':
       // клиент потерял связь, сеанс жив (грейс сервера, ADR 0013). №15: держим
@@ -561,6 +564,7 @@ async function onSignal(msg) {
       break;
     case 'ended': {
       stopSignalReconnect(); // сеанс завершён сервером — стучаться больше нечего
+      hide($('op-idle-note')); // баннер простоя не протекает в следующий сеанс
       const reason = endReasonText(msg.reason);
       showConnectForm();
       text($('conn-error'), reason);

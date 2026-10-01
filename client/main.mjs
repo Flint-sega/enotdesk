@@ -1142,7 +1142,13 @@ if (IDLE_MINUTES > 0) {
     if (!signal || signalRole !== 'host' || !gate.isOpen()) return;
     const idleFor = Date.now() - (lastInputAt || 0);
     if (idleFor < idleMs - 60_000) {
-      if (idleWarned) { idleWarned = false; sendToRenderer('enot:signal', { type: 'idle-clear' }); }
+      if (idleWarned) {
+        idleWarned = false;
+        sendToRenderer('enot:signal', { type: 'idle-clear' });
+        // релей операторам: снять баннер и у них (ревью v0.5: без сети clear
+        // доходил только своему рендереру)
+        try { signal.sendIdleClear(); } catch { /* WS уже мёртв */ }
+      }
       return;
     }
     const remainingSec = Math.max(1, Math.ceil((idleMs - idleFor) / 1000));

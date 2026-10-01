@@ -65,6 +65,53 @@ test('чат: текст оператора → тост; мусор и пере
   assert.ok(last.length <= CHAT_TOAST_MAX + 3, `тост обрезан (${last.length})`);
 });
 
+test('чат: троттл — серия сообщений даёт один тост в окно CHAT_TOAST_MIN_MS', () => {
+  const { svc, calls } = services();
+  const ch = fakeDc();
+  svc.handleChannel('chat', ch);
+  ch.onmessage({ data: chatMessage('один') });
+  ch.onmessage({ data: chatMessage('два') }); // в пределах окна — глушится
+  ch.onmessage({ data: chatMessage('три') }); // и этот
+  assert.deepEqual(calls.notify, ['💬 один'], 'стопка модалей не собирается');
+});
+
+test('файлы: onclose сбрасывает приёмник — прерванная передача не отравляет следующую', async () => {
+  const fsImpl = fakeFs();
+  const { svc } = services({ fsImpl });
+  const ch = fakeDc();
+  svc.handleChannel('file', ch);
+  ch.onmessage({ data: fileMeta('ee1', 'обрыв.bin', 4) });
+  ch.onclose(); // сеанс/канал умер посреди передачи
+  ch.onmessage({ data: new Uint8Array([1]).buffer }); // опоздавший кусок — в никуда
+  ch.onmessage({ data: fileDone('ee1') }); // опоздавший done — не сохраняет мусор
+  await new Promise((r) => setImmediate(r));
+  const keys = [...fsImpl.files.keys()].filter((k) => !k.startsWith('dir:'));
+  assert.equal(keys.length, 0, 'после onclose ничего не пишется');
+
+  // следующий сеанс (новый канал) принимает файл нормально
+  const ch2 = fakeDc();
+  svc.handleChannel('file', ch2);
+  ch2.onmessage({ data: fileMeta('ee2', 'ok.bin', 1) });
+  assert.deepEqual(JSON.parse(ch2.sent.at(-1)), { type: 'file-accept', id: 'ee2' }, 'rx сброшен — приём работает');
+});
+
+test('файлы: done с чужим id не сохраняет и не сбрасывает текущий приём', async () => {
+  const fsImpl = fakeFs();
+  const { svc } = services({ fsImpl });
+  const ch = fakeDc();
+  svc.handleChannel('file', ch);
+  ch.onmessage({ data: fileMeta('ff1', 'a.bin', 2) });
+  ch.onmessage({ data: new Uint8Array([5, 6]).buffer });
+  ch.onmessage({ data: fileDone('zz9') }); // чужой done
+  await new Promise((r) => setImmediate(r));
+  const keys = [...fsImpl.files.keys()].filter((k) => !k.startsWith('dir:'));
+  assert.equal(keys.length, 0, 'чужой done не пишет файл');
+  // передача по-прежнему жива: правильный done завершает
+  ch.onmessage({ data: fileDone('ff1') });
+  await new Promise((r) => setImmediate(r));
+  assert.ok(fsImpl.files.get(svc.filesDir + '/a.bin') !== undefined || fsImpl.files.size > 0, 'свой done завершает передачу');
+});
+
 test('неизвестный канал — false (агент его закроет)', () => {
   const { svc } = services();
   assert.equal(svc.handleChannel('clip', fakeDc()), false);

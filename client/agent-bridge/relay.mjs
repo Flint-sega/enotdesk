@@ -2,9 +2,11 @@
 // тестируется на фейках без запуска Electron (client/test/agent-bridge-relay.test.mjs).
 //
 // В main-процессе Electron нет RTCPeerConnection, в renderer есть, поэтому
-// терминальный pc агента живёт в скрытом BrowserWindow (client/agent-bridge/).
-// Релей превращает IPC-обмен с мостом в pc-подобный объект для createAgent
-// (setRemoteDescription/createAnswer/…) и в DC-адаптер для createTermHost.
+// pc агента живёт в скрытом BrowserWindow (client/agent-bridge/). Релей
+// превращает IPC-обмен с мостом в pc-подобный объект для createAgent
+// (setRemoteDescription/createAnswer/…) и в DC-адаптеры по метке канала —
+// term (createTermHost) и chat/file (machine-services, W-U6); бинарные чанки
+// файлов идут через IPC как Uint8Array (structured clone), строки — как строки.
 // Бэкпрешшн: мост следит за dc.bufferedAmount и просит main приостановить
 // отправку (PAUSE/RESUME); релей в паузе держит очередь с потолком — хвост ≤
 // капа (свежие куски), кусок крупнее капа роняется целиком.
@@ -15,17 +17,24 @@ export const BRIDGE_IPC = Object.freeze({
   ICE_CONFIG: 'enot:rtc-ice-config', // main → мост: {iceServers, reason|null} — TURN для pc терминала
   ANSWER: 'enot:rtc-answer', // мост → main: sdp answer
   DC_OPEN: 'enot:term-dc-open', // мост → main: открыт канал (label)
-  DC_FROM: 'enot:term-dc-from', // мост → main: сырое сообщение от оператора
-  DC_TO: 'enot:term-dc-to', // main → мост: сырое сообщение оператору
-  DC_CLOSED: 'enot:term-dc-closed', // мост → main: канал закрыт
+  DC_FROM: 'enot:term-dc-from', // мост → main: {label, data} — сообщение от оператора (string | Uint8Array)
+  DC_TO: 'enot:term-dc-to', // main → мост: {label, data} — сообщение оператору
+  DC_CLOSED: 'enot:term-dc-closed', // мост → main: канал закрыт (label)
   PAUSE: 'enot:term-dc-pause', // мост → main: приостановить отправку
   RESUME: 'enot:term-dc-resume', // мост → main: возобновить отправку
   FAIL: 'enot:bridge-fail', // мост → main: честная ошибка моста
 });
 
+// Allowlist меток каналов (v0.5, W-U6): term — терминал, chat/file — сервисы
+// machine-сеанса. Всё прочее мост не открывает и в main не передаёт.
+export const BRIDGE_DC_LABELS = Object.freeze(['term', 'chat', 'file']);
+
 const DC_QUEUE_CAP = 1 << 20; // потолок очереди паузы, байт; хранится хвост ≤ капа, кусок крупнее капа роняется
 
-const byteLength = (s) => new TextEncoder().encode(s).length; // среда-нейтрально: main и тесты
+const dataBytes = (data) =>
+  typeof data === 'string'
+    ? new TextEncoder().encode(data).length
+    : (data.byteLength ?? 0);
 
 export function createBridgeRelay({ send, log = console, onClosed = null, fetchIceServers = null } = {}) {
   // send(channel, payload) — доставка main → мост (обёртка над webContents.send)
@@ -43,9 +52,9 @@ export function createBridgeRelay({ send, log = console, onClosed = null, fetchI
   let lastAnswerSdp = null;
   let iceSent = false; // rtc-config запрашивается один раз за релей — одно открытие терминала
   let iceInfo = { iceServers: [], reason: null }; // последний честный статус TURN для моста
-  let adapter = null; // DC-адаптер, видимый termHost как обычный канал
+  const adapters = new Map(); // label → DC-адаптер (виден потребителям как обычный канал)
   let paused = false;
-  let queue = [];
+  let queue = []; // {label, data, bytes} — общая очередь паузы, порядок каналов сохраняется
   let queuedBytes = 0;
 
   const markReady = () => {
@@ -59,49 +68,56 @@ export function createBridgeRelay({ send, log = console, onClosed = null, fetchI
     return readyPromise;
   };
 
-  function dropAdapter() {
-    if (!adapter) return;
-    const a = adapter;
-    adapter = null;
+  function dropAdapter(label) {
+    const a = adapters.get(label);
+    if (!a) return;
+    adapters.delete(label);
+    a.markClosed();
+  }
+
+  function dropAllAdapters() {
+    for (const label of [...adapters.keys()]) dropAdapter(label);
     queue = [];
     queuedBytes = 0;
-    a.markClosed();
   }
 
   function flush() {
     while (!paused && queue.length) {
       const item = queue.shift();
       queuedBytes -= item.bytes;
-      send(BRIDGE_IPC.DC_TO, item.data);
+      send(BRIDGE_IPC.DC_TO, { label: item.label, data: item.data });
     }
   }
 
-  function makeAdapter() {
+  function makeAdapter(label) {
     const ch = {
-      label: 'term',
+      label,
       readyState: 'open',
       onopen: null,
       onmessage: null,
       onclose: null,
       send(obj) {
-        if (closed || ch.readyState !== 'open' || adapter !== ch) return;
-        const data = typeof obj === 'string' ? obj : JSON.stringify(obj);
+        if (closed || ch.readyState !== 'open' || adapters.get(label) !== ch) return;
+        // строки и бинарные куски идут как есть; прочие объекты — JSON (контракт termHost)
+        const data = typeof obj === 'string' || ArrayBuffer.isView(obj) || obj instanceof ArrayBuffer
+          ? obj
+          : JSON.stringify(obj);
         if (paused) {
-          const bytes = byteLength(data);
+          const bytes = dataBytes(data);
           if (bytes > DC_QUEUE_CAP) return; // кусок сам больше капа — роняем целиком
           while (queuedBytes + bytes > DC_QUEUE_CAP && queue.length) {
             const old = queue.shift(); // хвост важнее головы: старые куски выбрасываются
             queuedBytes -= old.bytes;
           }
-          queue.push({ data, bytes });
+          queue.push({ label, data, bytes });
           queuedBytes += bytes;
           return;
         }
-        send(BRIDGE_IPC.DC_TO, data);
+        send(BRIDGE_IPC.DC_TO, { label, data });
       },
       close() {
         if (closed) return;
-        send(BRIDGE_IPC.DC_CLOSED);
+        send(BRIDGE_IPC.DC_CLOSED, label);
         ch.markClosed();
       },
       // внутреннее: мост умер или релей закрыт — честно закрыть канал
@@ -174,7 +190,7 @@ export function createBridgeRelay({ send, log = console, onClosed = null, fetchI
     if (closed) return;
     closed = true;
     markReady(); // ждущие «готовности» выйдут и упрутся в closed
-    dropAdapter();
+    dropAllAdapters();
     if (answerWait) {
       const w = answerWait;
       answerWait = null;
@@ -184,7 +200,7 @@ export function createBridgeRelay({ send, log = console, onClosed = null, fetchI
   }
 
   // Входящие из моста (bridge → main); main привязывает это к ipcMain с проверкой
-  // отправителя. Посторонние каналы не проходят allowlist.
+  // отправителя. Метки каналов проходят только по allowlist BRIDGE_DC_LABELS.
   function handleMessage(channel, payload) {
     if (closed) return;
     switch (channel) {
@@ -205,19 +221,23 @@ export function createBridgeRelay({ send, log = console, onClosed = null, fetchI
         try { pcLike.onicecandidate?.({ candidate: payload }); } catch (e) { log.warn?.(`мост ice: ${e.message}`); }
         return;
       case BRIDGE_IPC.DC_OPEN:
-        if (!adapter && payload === 'term') {
-          adapter = makeAdapter();
+        if (BRIDGE_DC_LABELS.includes(payload) && !adapters.has(payload)) {
+          const adapter = makeAdapter(payload);
+          adapters.set(payload, adapter);
           try { pcLike.ondatachannel?.({ channel: adapter }); } catch (e) { log.warn?.(`мост dc: ${e.message}`); }
           try { adapter.onopen?.(); } catch (e) { log.warn?.(`мост dc open: ${e.message}`); }
         }
         return;
-      case BRIDGE_IPC.DC_FROM:
-        if (adapter && typeof payload === 'string') {
-          try { adapter.onmessage?.({ data: payload }); } catch (e) { log.warn?.(`мост dc msg: ${e.message}`); }
+      case BRIDGE_IPC.DC_FROM: {
+        const { label, data } = payload ?? {};
+        const adapter = adapters.get(label);
+        if (adapter && (typeof data === 'string' || ArrayBuffer.isView(data) || data instanceof ArrayBuffer)) {
+          try { adapter.onmessage?.({ data }); } catch (e) { log.warn?.(`мост dc msg: ${e.message}`); }
         }
         return;
+      }
       case BRIDGE_IPC.DC_CLOSED:
-        dropAdapter();
+        if (typeof payload === 'string') dropAdapter(payload);
         return;
       case BRIDGE_IPC.PAUSE:
         paused = true;
@@ -228,7 +248,7 @@ export function createBridgeRelay({ send, log = console, onClosed = null, fetchI
         return;
       case BRIDGE_IPC.FAIL:
         bridgeFailMessage = typeof payload === 'string' ? payload : 'ошибка моста';
-        dropAdapter();
+        dropAllAdapters();
         if (answerWait) {
           const w = answerWait;
           answerWait = null;
@@ -246,7 +266,8 @@ export function createBridgeRelay({ send, log = console, onClosed = null, fetchI
     markReady,
     destroy,
     isClosed: () => closed,
-    hasAdapter: () => adapter != null,
+    hasAdapter: () => adapters.size > 0,
+    hasTermAdapter: () => adapters.has('term'),
     iceServersInfo: () => iceInfo, // для честного лога main: какой TURN ушёл мосту и почему, если пусто
   };
 }
