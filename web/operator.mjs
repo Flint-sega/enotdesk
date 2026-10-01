@@ -407,8 +407,10 @@ async function doOperatorAnswer(offerSdp) {
   sendSignal({ description: { type: 'answer', sdp: pc.localDescription.sdp } });
 }
 
-// Machine-сеанс (R09): оператор — оферер, агент отвечает answer'ом без медиа;
-// единственный канал — `term` (панель терминала).
+// Machine-сеанс (R09): оператор — оферер, агент отвечает answer'ом без медиа.
+// W-U6 (v0.5): каналы term + chat + file. Чат и файлы в machine-сеансе —
+// в одну сторону: агент показывает сообщение тостом консольному пользователю
+// и сохраняет файлы в общую папку (обратных направлений в v0.5 нет).
 async function machineOffer() {
   try {
     const cfg = await api('GET', '/rtc-config');
@@ -419,7 +421,15 @@ async function machineOffer() {
     state.iceQueue = [];
     const termCh = pc.createDataChannel('term');
     wireTermChannel(termCh);
-    state.dcs = { term: termCh };
+    const chatCh = pc.createDataChannel('chat');
+    chatCh.onmessage = (m) => {
+      const msg = parseChatMessage(m.data);
+      if (msg) appendChat('client', msg.text);
+    };
+    const fileCh = pc.createDataChannel('file');
+    fileCh.binaryType = 'arraybuffer';
+    fileCh.onmessage = (m) => fileMessage(fileCh, m.data);
+    state.dcs = { term: termCh, chat: chatCh, file: fileCh };
     pc.ontrack = (e) => { $('remote-video').srcObject = e.streams[0]; };
     startTimers(pc);
     // Повторное открытие терминала (R09): новый DataChannel требует
@@ -523,6 +533,14 @@ async function onSignal(msg) {
         showConnectForm();
         text($('conn-error'), t('common.serverError'));
       }
+      break;
+    case 'idle-warning':
+      // клиент-хост предупреждает: 30 мин без ввода — сеанс скоро закроется.
+      // Оператор видит причину заранее, а не разгадывает «не было активности».
+      showStatus(t('op.idleWarning', { sec: msg.remainingSec ?? 60 }));
+      break;
+    case 'idle-clear':
+      showStatus(state.pc?.connectionState === 'connected' ? t('status.connected') : t('op.clientReconnecting'));
       break;
     case 'peer-reconnecting':
       // клиент потерял связь, сеанс жив (грейс сервера, ADR 0013). №15: держим

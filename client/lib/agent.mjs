@@ -84,7 +84,7 @@ export function createIceServersFetcher({ api, tokenLoad, timeoutMs = 5000 }) {
   };
 }
 
-export function createAgent({ api, signal, native, policy, termHost, rtc, notify }) {
+export function createAgent({ api, signal, native, policy, termHost, rtc, notify, services }) {
   const missing = !api || typeof api.register !== 'function' || typeof api.session !== 'function'
     || typeof api.heartbeat !== 'function' || typeof api.decision !== 'function' ? 'api (register/session/heartbeat/decision)'
     : typeof signal !== 'function' ? 'signal (фабрика сигнальных клиентов)'
@@ -251,8 +251,12 @@ export function createAgent({ api, signal, native, policy, termHost, rtc, notify
       };
       pc.ondatachannel = (e) => {
         const ch = e?.channel;
-        if (ch && ch.label === 'term') term.handleChannel(ch); // открытие — только approved-сеанс: мы уже в нём
-        else if (ch) { try { ch.close(); } catch { /* уже закрыт */ } }
+        if (!ch) return;
+        if (ch.label === 'term') { term.handleChannel(ch); return; } // открытие — только approved-сеанс: мы уже в нём
+        // W-U6 (v0.5): чат/файлы machine-сеанса — обработка в main (тост/запись
+        // файла); нет services — как раньше, неизвестные каналы закрываются.
+        if (services?.handleChannel?.(ch.label, ch)) return;
+        try { ch.close(); } catch { /* уже закрыт */ }
       };
     };
     const unsubscribe = client.onMessage((msg) => {
