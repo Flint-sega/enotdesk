@@ -414,7 +414,7 @@ async function doOperatorAnswer(offerSdp) {
       ch.onmessage = (m) => fileMessage(ch, m.data);
     }
   };
-  pc.ontrack = (e) => { $('remote-video').srcObject = e.streams[0]; };
+  pc.ontrack = (e) => { $('remote-video').srcObject = e.streams[0] ?? new MediaStream([e.track]); };
   startTimers(pc);
   await pc.setRemoteDescription({ type: 'offer', sdp: offerSdp });
   drainIce(pc);
@@ -463,7 +463,9 @@ async function machineOffer() {
     show($('btn-privacy'));
     state.dcs = { term: termCh, chat: chatCh, file: fileCh, input: inputCh };
     pc.ontrack = (e) => {
-      $('remote-video').srcObject = e.streams[0];
+      // ADR 0027: агент отвечает replaceTrack'ом на transceiver без трека —
+      // у track нет msid, e.streams пуст; живьём на v0.6.0 (V8-приёмка).
+      $('remote-video').srcObject = e.streams[0] ?? new MediaStream([e.track]);
       // кадры пошли — статус «нет видео» больше не нужен
       setVideoStatus(null);
     };
