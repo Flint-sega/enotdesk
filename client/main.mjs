@@ -1150,6 +1150,10 @@ if (IDLE_MINUTES > 0) {
     if (!idleWarned) {
       idleWarned = true;
       sendToRenderer('enot:signal', { type: 'idle-warning', remainingSec });
+      // v0.5: оператор узнаёт заранее (сервер релеит host→операторам), а не
+      // только post factum по ended/reason=idle — иначе конец сеанса выглядит
+      // загадочным «не было активности»
+      try { signal.sendIdleWarning({ remainingSec }); } catch { /* WS уже мёртв */ }
     }
   }, 15_000).unref();
 }

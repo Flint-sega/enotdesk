@@ -110,6 +110,16 @@ export function createSignalClient({ url, wsFactory = (u) => new WebSocket(u), a
       ws.send(JSON.stringify({ type: 'file-link', name, size, url }));
     },
 
+    // idle-warning (v0.5): хост предупреждает операторов о скором завершении
+    // по таймауту бездействия ввода; сервер релеит операторам. Не бросает:
+    // мёртвый WS всё равно скоро даст ended.
+    sendIdleWarning({ remainingSec }) {
+      const sec = Number.isInteger(remainingSec) && remainingSec > 0 && remainingSec <= 3600
+        ? remainingSec : 60;
+      if (!ws || ws.readyState !== 1) return;
+      ws.send(JSON.stringify({ type: 'idle-warning', remainingSec: sec }));
+    },
+
     // extra — allowlist-расширение heartbeat (R09): только termActive boolean,
     // прочие поля не уходят; без аргумента сообщение как раньше.
     heartbeat(extra) {
