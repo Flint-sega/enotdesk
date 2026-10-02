@@ -41,8 +41,8 @@ use windows::Win32::System::Pipes::{
 };
 use windows::Win32::System::RemoteDesktop::ProcessIdToSessionId;
 use windows::Win32::System::StationsAndDesktops::{
-    CloseDesktop, GetUserObjectInformationW, GetThreadDesktop, OpenInputDesktop, DESKTOP_ACCESS_FLAGS,
-    DESKTOP_CONTROL_FLAGS, UOI_NAME,
+    CloseDesktop, GetUserObjectInformationW, GetThreadDesktop, OpenInputDesktop,
+    DESKTOP_ACCESS_FLAGS, DESKTOP_CONTROL_FLAGS, UOI_NAME,
 };
 use windows::Win32::System::Threading::{GetCurrentProcessId, GetCurrentThreadId};
 use windows::Win32::System::IO::CancelIoEx;
@@ -776,7 +776,7 @@ pub fn thread_desktop_name() -> String {
             Ok(h) => obj_name(HANDLE(h.0)),
             Err(e) => format!("?err={e:?}"),
         };
-        let input_desk = match OpenInputDesktop(0, false, DESKTOP_ACCESS_FLAGS(0)) {
+        let input_desk = match OpenInputDesktop(DESKTOP_CONTROL_FLAGS(0), false, DESKTOP_ACCESS_FLAGS(0)) {
             Ok(h) => {
                 let n = obj_name(HANDLE(h.0));
                 let _ = CloseDesktop(h);
