@@ -41,8 +41,9 @@ use windows::Win32::System::Pipes::{
 };
 use windows::Win32::System::RemoteDesktop::ProcessIdToSessionId;
 use windows::Win32::System::StationsAndDesktops::{
-    CloseDesktop, GetUserObjectInformationW, GetThreadDesktop, OpenInputDesktop,
-    DESKTOP_ACCESS_FLAGS, DESKTOP_CONTROL_FLAGS, UOI_NAME,
+    CloseDesktop, GetUserObjectInformationW, GetThreadDesktop, OpenInputDesktop, SetThreadDesktop,
+    DESKTOP_ACCESS_FLAGS, DESKTOP_CONTROL_FLAGS, DESKTOP_READOBJECTS, DESKTOP_SWITCHDESKTOP,
+    DESKTOP_WRITEOBJECTS, UOI_NAME,
 };
 use windows::Win32::System::Threading::{GetCurrentProcessId, GetCurrentThreadId};
 use windows::Win32::System::IO::CancelIoEx;
@@ -805,12 +806,34 @@ pub fn current_session_id() -> u32 {
     }
 }
 
-/// Cursor position as THIS process sees it (GetCursorPos on its own desktop).
+/// Attach the CALLING thread to the session's input desktop with write access.
+/// CreateProcessAsUserW hands the initial thread a desktop handle whose rights
+/// may be truncated — SendInput then "succeeds" while the cursor never moves
+/// and SetCursorPos returns FALSE with LastError=0 (night acceptance
+/// 2026-10-02). A dedicated input thread re-attaches explicitly, RustDesk-style.
+pub fn attach_input_desktop() -> Result<(), String> {
+    unsafe {
+        let h = OpenInputDesktop(
+            DESKTOP_CONTROL_FLAGS(0),
+            false,
+            DESKTOP_ACCESS_FLAGS(
+                DESKTOP_READOBJECTS.0 | DESKTOP_WRITEOBJECTS.0 | DESKTOP_SWITCHDESKTOP.0,
+            ),
+        )
+        .map_err(|e| format!("OpenInputDesktop: {e}"))?;
+        let attached = SetThreadDesktop(h);
+        // The thread keeps its own reference after SetThreadDesktop; close ours.
+        let _ = CloseDesktop(h);
+        attached.map_err(|e| format!("SetThreadDesktop: {e}"))
+    }
+}
+
 /// Virtual-desktop metrics for diagnostics (same numbers SendInput uses).
 pub fn virtual_desktop_metrics_pub() -> (i32, i32, i32, i32) {
     virtual_desktop_metrics()
 }
 
+/// Cursor position as THIS process sees it (GetCursorPos on its own desktop).
 pub fn cursor_pos() -> (i32, i32) {
     unsafe {
         let mut pt = POINT::default();
