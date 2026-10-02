@@ -270,6 +270,9 @@ function loadSettings() {
     if (typeof raw.serverUrl === 'string' && raw.serverUrl) savedUrl = raw.serverUrl;
     settings.allowInsecureHttp = raw.allowInsecureHttp === true;
     settings.locale = raw.locale === 'ru' || raw.locale === 'en' ? raw.locale : null; // null = по системе
+    // Закреплённый ID ПК: читаем сохранённый (иначе генерировался бы заново
+    // при каждом запуске — ровно то, чего владелец не хочет)
+    if (/^\d{9}$/.test(raw.hostId ?? '')) settings.hostId = raw.hostId;
   } catch {
     // первый запуск — файл настроек ещё не существует
   }
