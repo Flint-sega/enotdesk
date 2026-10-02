@@ -171,8 +171,10 @@ fn run() -> Result<i32, String> {
     spawn_ticker(shared.clone());
 
     log_line(&format!(
-        "{{\"ev\":\"start\",\"pipe\":\"{}\"}}",
-        proto::jstr(PIPE_NAME)
+        "{{\"ev\":\"start\",\"pipe\":\"{}\",\"desktop\":\"{}\",\"session\":{}}}",
+        proto::jstr(PIPE_NAME),
+        proto::jstr(&ascii(&win::thread_desktop_name())),
+        win::current_session_id()
     ));
 
     // One-time DXGI/WIC setup: COM, factory, primary output, D3D11 device,
@@ -366,7 +368,8 @@ fn handle_command(shared: &Shared, privacy_sleep: &AtomicBool, text: &str) {
                 .and_then(Json::as_num)
                 .map(|v| v.clamp(0.0, 1.0));
             if let (Some(x), Some(y)) = (x, y) {
-                win::mouse_move_abs(x, y);
+                let sent = win::mouse_move_abs(x, y);
+                set_last_err(shared, &format!("cmd mouse x={x:.2} y={y:.2} sent={sent}"));
             }
             match doc.get("buttons").and_then(Json::as_str) {
                 Some("down") | Some("up") => {
@@ -377,7 +380,6 @@ fn handle_command(shared: &Shared, privacy_sleep: &AtomicBool, text: &str) {
                 // "move" or absent: the absolute move above is the whole event.
                 _ => {}
             }
-            set_last_err(shared, &format!("cmd mouse x={x:?} y={y:?}"));
         }
         "key" => {
             let name = doc.get("key").and_then(Json::as_str).unwrap_or("");
