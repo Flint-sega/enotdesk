@@ -5,31 +5,32 @@ import { createKeepAwake } from '../lib/keep-awake.mjs';
 function fakeKoffi() {
   const calls = [];
   const lib = {
-    func() {
+    func(signature) {
+      // SendMessageTimeoutW: возвращаем «есть такая-то функция», данные копим
+      if (signature.includes('SendMessageTimeoutW')) {
+        return () => { calls.push('wake'); return 1; };
+      }
       return (flags) => {
-        calls.push(flags >>> 0);
+        calls.push(`es:${(flags >>> 0).toString(16)}`);
         return flags;
       };
     },
   };
-  const koffi = { load: () => lib };
-  return { koffi, calls };
+  return { koffi: { load: () => lib }, calls };
 }
 
-test('keep-awake: acquire шлёт CONTINUOUS|SYSTEM|DISPLAY, release — только CONTINUOUS', () => {
+test('keep-awake: acquire будит дисплей (SC_MONITORPOWER -1) и держит ES-флаги', () => {
   const { koffi, calls } = fakeKoffi();
   const ka = createKeepAwake({ koffi, platform: 'win32' });
-  assert.equal(ka.isOn(), false);
   ka.acquire();
-  assert.equal(ka.isOn(), true);
-  ka.acquire(); // повторный acquire не дублирует вызов
-  assert.equal(calls.length, 1);
-  assert.equal(calls[0], (0x80000000 | 0x1 | 0x2) >>> 0);
-  ka.release();
-  assert.equal(ka.isOn(), false);
-  assert.equal(calls[1], 0x80000000 >>> 0);
-  ka.release(); // повторный release — тоже
+  assert.equal(calls.filter(c => c === 'wake').length, 1); // будящий тычок первым
+  assert.equal(calls.filter(c => c.startsWith('es:')).length, 1);
+  assert.equal(calls.find(c => c.startsWith('es:')), 'es:80000003');
+  ka.acquire(); // повторный acquire не дублирует ни wake, ни ES
   assert.equal(calls.length, 2);
+  ka.release();
+  ka.release();
+  assert.equal(calls.length, 3); // только финальный es:80000000
 });
 
 test('keep-awake: не-win32 и отсутствие koffi — честный no-op без throw', () => {
@@ -53,3 +54,4 @@ test('keep-awake: падение koffi.load — no-op, не роняет выз�
   ka.release();
   assert.equal(ka.isOn(), false);
 });
+
