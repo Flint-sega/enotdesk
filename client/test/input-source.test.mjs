@@ -113,6 +113,33 @@ test('wheel: 120px по вертикали = 3 строки, мелкий тач
   assert.deepEqual(sent, [{ type: 'scroll', dx: 1, dy: 0 }]);
 });
 
+test('клавиатурный маршрут: onKeyboardRoute remote/local + onVideoPointerDown при клике', () => {
+  const video = fakeVideo();
+  const sent = [];
+  const events = [];
+  const blurTargets = [];
+  const active = { tagName: 'INPUT', blur() { blurTargets.push('input'); } };
+  Object.defineProperty(globalThis.document, 'activeElement', { configurable: true, get: () => active });
+  const wire = wireBrowserInput(video, (m) => sent.push(m), {
+    keys: new Set(['a']),
+    onVideoPointerDown: () => blurTargets.push('callback'),
+    onKeyboardRoute: (m) => events.push(m),
+  });
+  video.dispatch(ev('pointermove', { clientX: 30, clientY: 30 }));
+  video.dispatch(ev('pointerdown', { clientX: 30, clientY: 30, button: 0 }));
+  assert.deepEqual(blurTargets, ['callback']);
+  // фокус в поле оператора: клавиша уходит в 'local' и НЕ в канал
+  document.dispatch(ev('keydown', { code: 'KeyA', key: 'a', target: active }));
+  assert.equal(sent.filter((m) => m.type === 'key').length, 0);
+  assert.ok(events.includes('local'));
+  // blur (поле больше не поле) → клавиша уходит, route 'remote'
+  active.tagName = 'DIV';
+  document.dispatch(ev('keydown', { code: 'KeyA', key: 'a' }));
+  assert.ok(sent.some((m) => m.type === 'key' && m.key === 'a' && m.down === true));
+  assert.ok(events.includes('remote'));
+  wire.detach();
+});
+
 test('клавиатура по физическому коду: KeyA → key a (раскладка не важна)', () => {
   const video = fakeVideo();
   const sent = [];

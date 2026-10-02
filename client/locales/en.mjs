@@ -315,6 +315,8 @@ export default {
   "web.waiting.title": "Waiting for the client's consent",
   "web.waiting.note": "The client sees your name and must approve access.",
   "web.waiting.cancel": "Cancel",
+  "web.kb.remote": "Keyboard: remote computer",
+  "web.kb.local": "Keyboard: operator panel",
   "web.session.end": "End session",
   "web.session.fullscreen": "Fullscreen",
   "web.session.fitFill": "Fill",

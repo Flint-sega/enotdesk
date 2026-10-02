@@ -176,8 +176,12 @@ function applyJoinLink(raw) {
   api = makeApi();
   pendingJoin = { server: settings.serverUrl, token: parsed.token };
   if (win && !win.isDestroyed()) {
-    if (win.isMinimized()) win.restore();
-    win.focus();
+    // Гвард (приёмка 02.10): во время одобренного сеанса окно — рабочий инструмент
+    // клиента; повторный клик join-ссылки не должен выдёргивать свёрнутое окно.
+    if (!gate.isOpen()) {
+      if (win.isMinimized()) win.restore();
+      win.focus();
+    }
   }
   flushPendingJoin();
 }
@@ -197,8 +201,11 @@ function processPendingJoinLink() {
 
 app.on('second-instance', (_event, argv) => {
   if (win && !win.isDestroyed()) {
-    if (win.isMinimized()) win.restore();
-    win.focus();
+    // Та же гвард: сеанс идёт — не вырываем свёрнутое клиентом окно наверх
+    if (!gate.isOpen()) {
+      if (win.isMinimized()) win.restore();
+      win.focus();
+    }
   }
   // Повторный запуск с join-ссылкой (win/linux) доставляется первому инстансу сюда
   const link = (argv ?? []).find((a) => typeof a === 'string' && parseJoinLink(a));
@@ -883,6 +890,8 @@ function createWindow() {
     }
   });
 
+  win.on('minimize', () => { svcDiag.write('win', 'minimize'); });
+  win.on('restore', () => { svcDiag.write('win', 'restore'); });
   win.on('closed', () => { win = null; winLoaded = false; });
   // Join-ссылка, пришедшая до загрузки страницы, уходит рендереру, когда
   // слушатели (client-view) уже установлены (R04)

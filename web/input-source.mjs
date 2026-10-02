@@ -10,10 +10,15 @@ import { wheelToLines } from '../client/lib/protocol.mjs';
 const BUTTONS = { 0: 'left', 1: 'middle', 2: 'right' };
 const MOVE_THROTTLE_MS = 25; // как в desktop: не чаще ~40 событий/с
 
-// wireBrowserInput(video, send, {keys, onUnsupported?, throttleMs?}) → {detach()}.
+// wireBrowserInput(video, send, {keys, onUnsupported?, throttleMs?, onVideoPointerDown?, onKeyboardRoute?}) → {detach()}.
 // send — куда уходят события (DataChannel); keys — Set допустимых клавиш протокола;
 // неподдерживаемое сообщается через onUnsupported(key) — честная ошибка вместо молчания.
-export function wireBrowserInput(video, send, { keys, onUnsupported, throttleMs = MOVE_THROTTLE_MS } = {}) {
+// onVideoPointerDown — клик по видео (после preventDefault): страница оператора
+// снимает фокус со своих полей, иначе клавиши молча остаются в чате панели
+// (живой случай приёмки 02.10: мышь ок, клавиши не печатают).
+// onKeyboardRoute('remote'|'local') — куда сейчас идут клавиши: для индикатора
+// в статус-баре, чтобы ввод не терялся молча.
+export function wireBrowserInput(video, send, { keys, onUnsupported, throttleMs = MOVE_THROTTLE_MS, onVideoPointerDown, onKeyboardRoute } = {}) {
   let lastMove = 0;
   const prevented = (e) => { if (typeof e?.preventDefault === 'function') e.preventDefault(); };
   // Координаты — по КАДРУ видео, не по CSS-боксу: бокс жёстко 16:9 с
@@ -65,6 +70,7 @@ export function wireBrowserInput(video, send, { keys, onUnsupported, throttleMs 
     const btn = buttonName(e);
     if (!btn) return;
     prevented(e);
+    onVideoPointerDown?.();
     // Захват указателя: отпускание за краем видео всё равно придёт сюда —
     // иначе кнопка на хосте залипает до конца сеанса (ревью GLM-5.3 #3, confirmed)
     try { video.setPointerCapture?.(e.pointerId); } catch { /* не критично */ }
@@ -117,9 +123,15 @@ export function wireBrowserInput(video, send, { keys, onUnsupported, throttleMs 
     return tag === 'INPUT' || tag === 'TEXTAREA' || t.isContentEditable === true;
   };
   const onKeyDown = (e) => {
-    if (!overVideo || isOperatorField(e)) return;
+    if (!overVideo || isOperatorField(e)) {
+      // ввод молча оставался в панели — оператор не видел, куда идут клавиши;
+      // индикатор делает маршрут видимым (приёмка 02.10: «в чате пишу, в блокноте нет»)
+      onKeyboardRoute?.('local');
+      return;
+    }
     const key = keyOf(e);
     if (!key) return;
+    onKeyboardRoute?.('remote');
     prevented(e);
     sentKeys.add(key);
     raw({ type: 'key', key, down: true });
@@ -127,7 +139,7 @@ export function wireBrowserInput(video, send, { keys, onUnsupported, throttleMs 
   const onKeyUp = (e) => {
     const key = keyOf(e);
     if (!key) return;
-    // долив up для зажатой клавиши важен даже вне видео — иначе залипает
+    // долив up для зажатой клавиши важен даже вне видео — ничего не залипает
     if (!overVideo && !sentKeys.has(key)) return;
     if (overVideo) prevented(e);
     sentKeys.delete(key);

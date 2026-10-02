@@ -221,6 +221,22 @@ function showKeyError(key) {
   keyErrorReset = setTimeout(restoreStatus, 2000);
 }
 
+// Клавиатура сеанса идёт НА УДАЛЁННЫЙ ЭКРАН, но фокус страницы оставался в
+// поле чата/терминала оператора — и все клавиши молча печатались в панель
+// (приёмка 02.10: «в чате пишу, в блокноте нет»). Клик по видео снимает фокус
+// со своих полей; индикатор в stage-bar показывает текущий маршрут клавиш.
+function blurOperatorField() {
+  const t = document.activeElement;
+  if (t && (t.tagName === 'INPUT' || t.tagName === 'TEXTAREA' || t.isContentEditable)) t.blur();
+}
+let kbMode = null;
+function setKeyboardMode(mode) {
+  if (mode === kbMode) return;
+  kbMode = mode;
+  const el = document.getElementById('kb-indicator');
+  if (el) el.textContent = mode === 'remote' ? t('web.kb.remote') : t('web.kb.local');
+}
+
 // ---- состояния страницы ----
 
 const VIEWS = ['view-login', 'view-denied', 'view-connect', 'view-machines', 'op-waiting', 'op-reconnect', 'op-remote'];
@@ -396,7 +412,7 @@ async function doOperatorAnswer(offerSdp) {
         inputDetach?.detach?.();
         inputDetach = wireBrowserInput($('remote-video'), (obj) => {
           try { state.dc.send(JSON.stringify(obj)); } catch { /* канал закрывается */ }
-        }, { keys: new Set(INPUT_KEYS), onUnsupported: showKeyError });
+        }, { keys: new Set(INPUT_KEYS), onUnsupported: showKeyError, onVideoPointerDown: blurOperatorField, onKeyboardRoute: setKeyboardMode });
       };
       if (state.dc.readyState === 'open') state.dc.onopen();
     } else if (ch.label === 'chat') {
@@ -455,7 +471,7 @@ async function machineOffer() {
       inputDetach?.detach?.();
       inputDetach = wireBrowserInput($('remote-video'), (obj) => {
         try { inputCh.send(JSON.stringify(obj)); } catch { /* канал закрывается */ }
-      }, { keys: new Set(INPUT_KEYS), onUnsupported: showKeyError });
+      }, { keys: new Set(INPUT_KEYS), onUnsupported: showKeyError, onVideoPointerDown: blurOperatorField, onKeyboardRoute: setKeyboardMode });
     };
     if (inputCh.readyState === 'open') inputCh.onopen();
     privacyDimmed = false;
