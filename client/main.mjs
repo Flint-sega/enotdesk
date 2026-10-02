@@ -1028,6 +1028,7 @@ function startAgentMode() {
     handleInputChannel: (ch) => {
       ch.onmessage = (m) => {
         if (typeof m?.data !== 'string') return;
+        svcDiag.write('video', `input msg: ${m.data.slice(0, 60)}`);
         let ev;
         try { ev = JSON.parse(m.data); } catch { return; }
         // privacy MVP: управление дисплеем через тот же канал (v0.6)
