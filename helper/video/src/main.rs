@@ -369,7 +369,12 @@ fn handle_command(shared: &Shared, privacy_sleep: &AtomicBool, text: &str) {
                 .map(|v| v.clamp(0.0, 1.0));
             if let (Some(x), Some(y)) = (x, y) {
                 let sent = win::mouse_move_abs(x, y);
-                set_last_err(shared, &format!("cmd mouse x={x:.2} y={y:.2} sent={sent}"));
+                std::thread::sleep(Duration::from_millis(150));
+                let cur = win::cursor_pos();
+                set_last_err(
+                    shared,
+                    &format!("cmd mouse x={x:.2} y={y:.2} sent={sent} cursor=({},{})", cur.0, cur.1),
+                );
             }
             match doc.get("buttons").and_then(Json::as_str) {
                 Some("down") | Some("up") => {
