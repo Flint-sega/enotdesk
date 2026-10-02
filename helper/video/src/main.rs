@@ -447,7 +447,10 @@ fn capture_session(
             shared.fps.store(fps, Ordering::Relaxed);
             let body = status_json(shared, fps);
             win::mark_dup_op(7);
-            if send_msg(io, pipe_lock, proto::T_STATUS, body.as_bytes()).is_err() {
+            if let Err(e) = send_msg(io, pipe_lock, proto::T_STATUS, body.as_bytes()) {
+                // The ticker carries this text: a dying pipe must name its
+                // error, not just flip to waiting (v0.6.0 приёмка).
+                set_last_err(shared, &format!("send status: {e}"));
                 shared.broken.store(true, Ordering::SeqCst);
                 return SessionEnd::Broken;
             }
@@ -506,7 +509,8 @@ fn capture_session(
                     let q = *shared.jpeg_q.lock().unwrap_or_else(|p| p.into_inner()) / 100.0;
                     match cap.wic.encode(pw, ph, &px, q) {
                         Ok(jpeg) => {
-                            if send_msg(io, pipe_lock, proto::T_FRAME, &jpeg).is_err() {
+                            if let Err(e) = send_msg(io, pipe_lock, proto::T_FRAME, &jpeg) {
+                                set_last_err(shared, &format!("send frame: {e}"));
                                 shared.broken.store(true, Ordering::SeqCst);
                                 return SessionEnd::Broken;
                             }
