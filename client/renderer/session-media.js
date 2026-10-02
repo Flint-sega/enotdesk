@@ -97,6 +97,7 @@ function rtcLinkHoldRemainMs() { return Math.max(0, rtcLinkHoldUntil - Date.now(
 
 export function cleanupSession() {
   stopMedia();
+  enot.chatWidgetEnd?.(); // чат-виджет сессионный — закрываем вместе с сеансом
   removeCaptureCard(); // карточка ретрая не переживает сеанс (ревью GLM-5.3 v0.3.0)
   rtcLinkHoldUntil = 0; // hold №15 не переживает сеанс
   enot.closeSignal().catch(() => {});

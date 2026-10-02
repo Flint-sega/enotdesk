@@ -20,8 +20,13 @@ function listJs(dirPath) {
 }
 
 const html = readFileSync(path.join(dir, 'index.html'), 'utf8');
+// chat-widget.html — отдельный документ со своими id (окно-виджет, main создаёт
+// отдельный BrowserWindow): проверяется собственным контрактом ниже.
+const WIDGET_JS = 'chat-widget.js';
 const jsFiles = listJs(dir);
-const allJs = jsFiles.map((f) => readFileSync(f, 'utf8')).join('\n');
+const allJs = jsFiles
+  .filter((f) => path.basename(f) !== WIDGET_JS)
+  .map((f) => readFileSync(f, 'utf8')).join('\n');
 const mainJs = readFileSync(path.join(import.meta.dirname, '..', 'main.mjs'), 'utf8');
 
 test('все id, которые ищет JS рендерера, есть в index.html', () => {
@@ -38,6 +43,16 @@ test('все id, которые ищет JS рендерера, есть в inde
   ];
   for (const id of new Set([...referenced, ...dynamic])) {
     assert.ok(htmlIds.has(id), `id «${id}» отсутствует в index.html`);
+  }
+});
+
+test('чат-виджет: все id из chat-widget.js есть в chat-widget.html', () => {
+  const widgetHtml = readFileSync(path.join(dir, 'chat-widget.html'), 'utf8');
+  const widgetJs = readFileSync(path.join(dir, 'chat-widget.js'), 'utf8');
+  const ids = new Set([...widgetHtml.matchAll(/id="([^"]+)"/g)].map((m) => m[1]));
+  const referenced = [...widgetJs.matchAll(/getElementById\('([^']+)'\)/g)].map((m) => m[1]);
+  for (const id of new Set(referenced)) {
+    assert.ok(ids.has(id), `id «${id}» отсутствует в chat-widget.html`);
   }
 });
 

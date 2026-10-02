@@ -10,7 +10,8 @@ import { renderContacts } from './views/contacts.js';
 import { renderTeam } from './views/team.js';
 import { renderHistory, renderAudit } from './views/history.js';
 import { cleanupSession, drainIce, startHostRtc, operatorAnswer, resetHostRtcState, holdRtcLink } from './session-media.js';
-import { resetUnreadChat } from './session-services.js';
+import { resetUnreadChat, listenChatWidgetOut } from './session-services.js';
+listenChatWidgetOut(); // маршрут ответов из чат-виджета в DC чата
 import { checkForUpdate, openFirstRun, updateServerChip } from './settings.js';
 
 function switchView(role) {
