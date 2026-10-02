@@ -1,0 +1,25 @@
+<!doctype html>
+<html lang="ru">
+<head>
+  <meta charset="utf-8">
+  <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self'; style-src 'self'; connect-src 'self' file:">
+  <title>EnotDesk — чат</title>
+  <link rel="stylesheet" href="chat-widget.css">
+</head>
+<body>
+  <div id="wg-bar" role="button" aria-label="Развернуть чат">
+    <span id="wg-title">EnotDesk — чат</span>
+    <span id="wg-unread" class="hidden"></span>
+    <button id="wg-toggle" class="wg-btn" aria-label="Свернуть/развернуть">—</button>
+    <button id="wg-close" class="wg-btn" aria-label="Скрыть чат">×</button>
+  </div>
+  <div id="wg-body">
+    <div id="wg-log" aria-live="polite"></div>
+    <div class="wg-row">
+      <input id="wg-input" placeholder="Сообщение…" autocomplete="off">
+      <button id="wg-send" class="wg-btn send">▶</button>
+    </div>
+  </div>
+  <script src="chat-widget.js"></script>
+</body>
+</html>

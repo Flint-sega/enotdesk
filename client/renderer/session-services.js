@@ -68,7 +68,10 @@ export function wireHostChannel(ch) {
   } else if (ch.label === 'chat') {
     ch.onmessage = (m) => {
       const msg = parseChatMessage(m.data);
-      if (msg) appendChat('client-chat-log', 'operator', msg.text);
+      if (!msg) return;
+      appendChat('client-chat-log', 'operator', msg.text);
+      // чат-виджет в углу (спека владельца 02.10): показываем сообщение оператора
+      enot.chatWidgetMsg?.(msg.text);
     };
   } else if (ch.label === 'clip') {
     ch.onmessage = (m) => {
@@ -82,6 +85,21 @@ export function wireHostChannel(ch) {
     // Терминал — только machine-сеанс (R09): человек-хост честно отказывает.
     rejectTermChannel(ch);
   }
+}
+
+// Ответ клиента из чат-виджета: отправка в DC чата + лог основного окна
+// (маршрут: виджет → main → onChatWidgetOut). Вызывается из session-media.
+export function sendWidgetChat(text) {
+  const wire = chatMessage(text);
+  if (!wire) return;
+  const dc = state.dcs?.chat;
+  if (!dc || dc.readyState !== 'open') return;
+  try { dc.send(wire); } catch { /* канал закрывается */ return; }
+  appendChat('client-chat-log', 'you', text);
+}
+
+export function listenChatWidgetOut() {
+  enot.onChatWidgetOut?.((text) => sendWidgetChat(String(text ?? '').slice(0, 2000)));
 }
 
 // Исходящий буфер: событие copy уходит в канал, только если синхронизация включена.

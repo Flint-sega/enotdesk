@@ -2,7 +2,7 @@
 // ворота нативного ввода по реальному WS-состоянию, выбор источника захвата.
 // Рендереру доступен только context-isolated мост window.enot (preload.cjs).
 
-import { app, BrowserWindow, ipcMain, session, desktopCapturer, screen, shell, clipboard, systemPreferences, Menu, dialog, powerSaveBlocker } from 'electron';
+import { app, BrowserWindow, ipcMain, session, desktopCapturer, screen, shell, clipboard, systemPreferences, Menu, dialog, Notification, powerSaveBlocker } from 'electron';
 import path from 'node:path';
 import os from 'node:os';
 import fs from 'node:fs';
@@ -24,6 +24,7 @@ import { createBridgeRelay, BRIDGE_IPC } from './agent-bridge/relay.mjs';
 import { createTermHost } from './lib/term.mjs';
 import { showToast } from './lib/notify.mjs';
 import { createMachineServices } from './lib/machine-services.mjs';
+import { onIncoming as chatWidgetOnIncoming } from './lib/chat-widget.mjs';
 import { createSessionSpawner } from './lib/session-spawn.mjs';
 import { createVideoHost } from './lib/video-host.mjs';
 import { inputEventToCommands } from './lib/input-translate.mjs';
@@ -629,11 +630,114 @@ function permissionsReport() {
   return report;
 }
 
+// ---------------------------------------------------------------------------
+// Чат-виджет клиента (спека владельца 02.10): маленькое окно в углу; появляется
+// при сообщении оператора, пользователь может свернуть; свёрнутому — уведомление
+// ОС (троттл). Транспорт чата живёт в главном рендерере (DC), виджет — only UI:
+// сообщения заходят сюда и разворачиваются в рендерер/виджет.
+// ---------------------------------------------------------------------------
+let chatWidgetWin = null;
+let chatWidgetState = { visible: false, collapsed: false, unread: 0 };
+let chatWidgetLastNotify = 0;
+
+function positionChatWidget(w) {
+  try {
+    const parent = win && !win.isDestroyed() ? win.getBounds() : screen.getPrimaryDisplay().workArea;
+    w.setPosition(parent.x + parent.width - w.getBounds().width - 12, parent.y + parent.height - w.getBounds().height - 12);
+  } catch { /* экран мог пропасть — позиция останется дефолтной */ }
+}
+
+function createChatWidget() {
+  if (chatWidgetWin && !chatWidgetWin.isDestroyed()) return chatWidgetWin;
+  chatWidgetWin = new BrowserWindow({
+    width: 320, height: 420, minWidth: 260, minHeight: 120,
+    parent: win && !win.isDestroyed() ? win : undefined,
+    show: false, frame: false, resizable: false, alwaysOnTop: true, skipTaskbar: true,
+    title: 'EnotDesk — чат',
+    webPreferences: {
+      preload: path.join(import.meta.dirname, 'renderer', 'chat-widget-preload.cjs'),
+      contextIsolation: true, nodeIntegration: false, sandbox: true,
+      backgroundThrottling: false, spellcheck: false,
+    },
+  });
+  positionChatWidget(chatWidgetWin);
+  chatWidgetWin.on('closed', () => { chatWidgetWin = null; });
+  chatWidgetWin.loadFile(path.join(import.meta.dirname, 'renderer', 'chat-widget.html'));
+  return chatWidgetWin;
+}
+
+function destroyChatWidget() {
+  if (chatWidgetWin && !chatWidgetWin.isDestroyed()) chatWidgetWin.destroy();
+  chatWidgetWin = null;
+  chatWidgetState = { visible: false, collapsed: false, unread: 0 };
+}
+
+function chatWidgetPushState() {
+  if (chatWidgetWin && !chatWidgetWin.isDestroyed()) {
+    chatWidgetWin.webContents.send('enot:chat-widget-state', chatWidgetState);
+  }
+}
+
+function chatWidgetIncoming(text) {
+  if (!api.hostSessionId) return; // виджет сессионный: вне сеанса транспорта нет
+  chatWidgetState = chatWidgetOnIncoming(chatWidgetState);
+  const w = createChatWidget();
+  if (!w.isVisible()) w.showInactive();
+  positionChatWidget(w);
+  w.webContents.send('enot:chat-widget-msg', { who: 'operator', text: String(text).slice(0, 2000) });
+  chatWidgetPushState();
+  if (chatWidgetState.collapsed && chatWidgetState.unread > 0) {
+    const now = Date.now();
+    if (now - chatWidgetLastNotify >= 3000) {
+      chatWidgetLastNotify = now;
+      try { new Notification({ title: 'EnotDesk', body: t('notify.chat', {}) }).show(); } catch { /* нет уведомлений — не критично */ }
+    }
+  }
+}
+
 function registerIpc() {
   const fromOurRenderer = (e) => win !== null && !win.isDestroyed() && e.sender === win.webContents;
   const guard = (e) => {
     if (!fromOurRenderer(e)) throw new Error('Доступ запрещён: недоверенный отправитель');
   };
+
+  const fromWidget = (e) => chatWidgetWin !== null && !chatWidgetWin.isDestroyed() && e.sender === chatWidgetWin.webContents;
+  ipcMain.on('enot:chat-widget-msg', (e, text) => {
+    if (!fromWidget(e) || typeof text !== 'string' || !text) return;
+    // из виджета → в DC чата через главный рендерер (он владеет state.dcs.chat)
+    if (win && !win.isDestroyed()) win.webContents.send('enot:chat-widget-out', text.slice(0, 2000));
+  });
+  ipcMain.on('enot:chat-widget-out', (e, text) => {
+    if (!fromOurRenderer(e) || typeof text !== 'string' || !text) return;
+    // ответ клиента → виджет как «you» (без уведомления и без unread)
+    chatWidgetState = { visible: true, collapsed: chatWidgetState.collapsed, unread: chatWidgetState.unread };
+    const w = chatWidgetWin;
+    if (w && !w.isDestroyed()) {
+      if (!w.isVisible()) w.showInactive();
+      w.webContents.send('enot:chat-widget-msg', { who: 'you', text: text.slice(0, 2000) });
+    }
+  });
+  ipcMain.on('enot:chat-widget-toggle', (e) => {
+    if (!fromWidget(e)) return;
+    chatWidgetState = chatWidgetState.collapsed
+      ? { visible: true, collapsed: false, unread: 0 }
+      : { visible: true, collapsed: true, unread: chatWidgetState.unread };
+    const w = chatWidgetWin;
+    if (w && !w.isDestroyed()) {
+      const b = w.getBounds();
+      w.setBounds({ ...b, height: chatWidgetState.collapsed ? 44 : 420 });
+    }
+    chatWidgetPushState();
+  });
+  ipcMain.on('enot:chat-widget-close', (e) => {
+    if (!fromWidget(e)) return;
+    chatWidgetState = { visible: false, collapsed: false, unread: 0 };
+    destroyChatWidget();
+  });
+  ipcMain.on('enot:chat-widget-end', (e) => {
+    if (!fromOurRenderer(e)) return; // сеанс завершён — виджет больше не нужен
+    destroyChatWidget();
+  });
 
   ipcMain.handle('enot:getSettings', (e) => { guard(e); return { serverUrl: settings.serverUrl, allowInsecureHttp: settings.allowInsecureHttp, locale: settings.locale, firstRun: !fs.existsSync(settingsPath), version: app.isPackaged ? app.getVersion() : pkg.version }; });
 

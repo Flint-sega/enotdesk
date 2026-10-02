@@ -18,6 +18,17 @@ contextBridge.exposeInMainWorld('enot', {
   relayUpload: (name, buffer) => ipcRenderer.invoke('enot:relayUpload', { name, buffer }),
   sendFileLink: (link) => ipcRenderer.invoke('enot:sendFileLink', link),
   permissions: () => ipcRenderer.invoke('enot:permissions'),
+  // Чат-виджет (спека владельца 02.10): рендерер отдаёт сообщения оператора в
+  // main, обратно получает ответы из виджета и события жизненного цикла.
+  chatWidgetMsg: (text) => ipcRenderer.send('enot:chat-widget-msg', String(text ?? '')),
+  chatWidgetShow: () => ipcRenderer.send('enot:chat-widget-show'),
+  chatWidgetEnd: () => ipcRenderer.send('enot:chat-widget-end'),
+  onChatWidgetOut: (callback) => {
+    if (typeof callback !== 'function') return () => {};
+    const listener = (_event, text) => callback(text);
+    ipcRenderer.on('enot:chat-widget-out', listener);
+    return () => ipcRenderer.removeListener('enot:chat-widget-out', listener);
+  },
   input: (event) => ipcRenderer.invoke('enot:input', event),
   copy: (text) => ipcRenderer.invoke('enot:copy', text),
   openExternal: (url) => ipcRenderer.invoke('enot:openExternal', url),
