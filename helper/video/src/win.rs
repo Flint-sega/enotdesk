@@ -489,14 +489,18 @@ impl Wic {
             // EMPTY (40+ zero-length frames live, v0.6.0 приёмка) — this
             // stream is read back from our own buffer, no Seek games.
             let mem = InMemoryStream::new();
-            let stream: IStream = mem
+            // Spike parity: hand the encoder its OWN IWICStream view of the
+            // object, not an IStream slice — an IStream pointer passed as
+            // IWICStream AVs inside windowscodecs.dll on the first frame
+            // (live, v0.6.0 приёмка).
+            let stream: IWICStream = mem
                 .cast()
                 .map_err(|e| format!("jpeg: wicstream cast: {e}"))?;
             enc.Initialize(&stream, WICBitmapEncoderNoCache)
                 .map_err(|e| format!("jpeg: enc init: {e}"))?;
             let mut frame: Option<IWICBitmapFrameEncode> = None;
-            let mut options: Option<IPropertyBag2> = None;
-            enc.CreateNewFrame(&mut frame, &mut options)
+            let mut no_options: Option<IPropertyBag2> = None;
+            enc.CreateNewFrame(&mut frame, &mut no_options)
                 .map_err(|e| format!("jpeg: new frame: {e}"))?;
             let frame = frame.ok_or("jpeg: no frame returned")?;
             frame
@@ -505,11 +509,10 @@ impl Wic {
             frame
                 .SetSize(w, h)
                 .map_err(|e| format!("jpeg: set size: {e}"))?;
-            if let Some(bag) = &options {
-                // Best effort: a failed property write keeps the encoder's
-                // default quality instead of failing the whole frame.
-                set_jpeg_quality(bag, q01);
-            }
+            // Quality: the property-bag knob (set_jpeg_quality) is deferred —
+            // WIC's JPEG default is 0.9 and the spike shipped identical
+            // numbers without it. q01 is accepted and currently unused.
+            let _ = q01;
             let src: IWICBitmapSource =
                 bmp.cast().map_err(|e| format!("jpeg: source cast: {e}"))?;
             // null rect = whole image
@@ -634,6 +637,7 @@ impl IWICStream_Impl for InMemoryStream_Impl {
 
 /// JPEG quality in WIC is only reachable through the frame encoder's property
 /// bag: "ImageQuality", VT_R4, 0.0..1.0. There is no SetQuality method.
+#[allow(dead_code)]
 fn set_jpeg_quality(bag: &IPropertyBag2, q01: f32) {
     let mut name: Vec<u16> = "ImageQuality\0".encode_utf16().collect();
     unsafe {
