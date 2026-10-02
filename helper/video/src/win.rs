@@ -756,24 +756,35 @@ pub fn input_desktop_locked() -> bool {
     }
 }
 
-/// Name of the desktop this thread is attached to — the input SendInput
-/// lands on depends on it (service-spawned processes must be on
-/// winsta0\Default, otherwise the cursor never moves).
+/// "station\desktop" of the thread desktop AND of the input desktop — a
+/// service-spawned process can silently land on Service-0x0-3e7$\Default
+/// (a desktop nobody displays): both are named just "Default", and then
+/// SendInput "succeeds" while the real cursor never moves.
 pub fn thread_desktop_name() -> String {
     unsafe {
-        let hdesk = match GetThreadDesktop(GetCurrentThreadId()) {
-            Ok(h) => h,
-            Err(e) => return format!("?err={e:?}"),
+        let obj_name = |h: HANDLE| -> String {
+            let mut name = [0u16; 96];
+            let mut needed = 0u32;
+            if GetUserObjectInformationW(h, UOI_NAME, Some(name.as_mut_ptr().cast()), 192, Some(&mut needed)).is_ok() {
+                let len = name.iter().position(|c| *c == 0).unwrap_or(0);
+                String::from_utf16_lossy(&name[..len])
+            } else {
+                format!("?err={:?}", GetLastError())
+            }
         };
-        let h = HANDLE(hdesk.0);
-        let mut name = [0u16; 64];
-        let mut needed = 0u32;
-        if GetUserObjectInformationW(h, UOI_NAME, Some(name.as_mut_ptr().cast()), 128, Some(&mut needed)).is_ok() {
-            let len = name.iter().position(|c| *c == 0).unwrap_or(0);
-            String::from_utf16_lossy(&name[..len])
-        } else {
-            format!("?err={:?}", GetLastError())
-        }
+        let thread_desk = match GetThreadDesktop(GetCurrentThreadId()) {
+            Ok(h) => obj_name(HANDLE(h.0)),
+            Err(e) => format!("?err={e:?}"),
+        };
+        let input_desk = match OpenInputDesktop(0, false, DESKTOP_ACCESS_FLAGS(0)) {
+            Ok(h) => {
+                let n = obj_name(HANDLE(h.0));
+                let _ = CloseDesktop(h);
+                n
+            }
+            Err(e) => format!("?err={e:?}"),
+        };
+        format!("thread={thread_desk} input={input_desk}")
     }
 }
 
