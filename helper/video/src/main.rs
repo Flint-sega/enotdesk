@@ -111,7 +111,7 @@ fn log_line(line: &str) {
         if let Ok(mut f) = std::fs::OpenOptions::new()
             .create(true)
             .append(true)
-            .open(format!("\\\\{tmp}\\enotdesk-video.log"))
+            .open(format!("{tmp}\\enotdesk-video.log"))
         {
             let _ = writeln!(f, "{line}");
         }
