@@ -582,9 +582,18 @@ impl ISequentialStream_Impl for InMemoryStream_Impl {
         }
         windows::core::HRESULT(0) // S_OK
     }
-    fn Write(&self, _pv: *const core::ffi::c_void, _cb: u32, _pcbwritten: *mut u32) -> windows::core::HRESULT {
-        // The encoder only reads back; writes go through the WIC encoder.
-        windows::core::HRESULT(0x8000_4001u32 as i32) // E_NOTIMPL
+    fn Write(&self, pv: *const core::ffi::c_void, cb: u32, pcbwritten: *mut u32) -> windows::core::HRESULT {
+        // The encoder writes the JPEG through this stream (NoCache mode) —
+        // an E_NOTIMPL stub here is the difference between WIC working and
+        // AV-ing inside windowscodecs.dll.
+        let mut data = self.data.lock().unwrap_or_else(|p| p.into_inner());
+        unsafe {
+            data.extend_from_slice(std::slice::from_raw_parts(pv.cast(), cb as usize));
+        }
+        if !pcbwritten.is_null() {
+            unsafe { *pcbwritten = cb };
+        }
+        windows::core::HRESULT(0) // S_OK
     }
 }
 
@@ -623,8 +632,15 @@ impl IStream_Impl for InMemoryStream_Impl {
     fn UnlockRegion(&self, _liboffset: u64, _cb: u64, _dwlocktype: u32) -> windows::core::Result<()> {
         Ok(())
     }
-    fn Stat(&self, _pstatstg: *mut STATSTG, _grfstatflag: &STATFLAG) -> windows::core::Result<()> {
-        Err(windows::core::Error::from_hresult(windows::core::HRESULT(0x8000_4001u32 as i32)))
+    fn Stat(&self, pstatstg: *mut STATSTG, _grfstatflag: &STATFLAG) -> windows::core::Result<()> {
+        // WIC probes the stream size here; a stub error is not tolerated.
+        let data = self.data.lock().unwrap_or_else(|p| p.into_inner());
+        unsafe {
+            let st = &mut *pstatstg;
+            st.r#type = 2; // STGTY_STREAM
+            st.cbSize = data.len() as u64;
+        }
+        Ok(())
     }
     fn Clone(&self) -> windows::core::Result<IStream> {
         Err(windows::core::Error::from_hresult(windows::core::HRESULT(0x8000_4001u32 as i32)))
