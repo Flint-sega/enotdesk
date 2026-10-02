@@ -30,7 +30,10 @@ async function startHelp() {
     const res = await enot.request('session.create', {});
     if (res.status !== 201) throw new Error(res.body?.error?.message ?? t('client.serverAnswered', { status: res.status }));
     state.session = { sessionId: res.body.sessionId, password: res.body.password };
-    text($('client-id'), res.body.sessionId);
+    // ID ПК (hostId) закреплён за машиной и не меняется между сеансами —
+    // оператор подключается по нему; sessionId внутренний, в интерфейс не идёт.
+    state.session.hostId = res.body.hostId ?? res.body.sessionId;
+    text($('client-id'), state.session.hostId);
     text($('client-password'), res.body.password);
     await enot.openSignal({ role: 'host', sessionId: res.body.sessionId });
     clientShow('waiting');
@@ -80,9 +83,9 @@ async function copyText(btn, value, okMsg) {
   text($('copy-status'), r.ok ? okMsg : (r.error ?? t('common.copyFail')));
   setBusy(btn, false);
 }
-$('btn-copy-id').addEventListener('click', (e) => copyText(e.currentTarget, state.session?.sessionId ?? '', t('client.idCopied')));
+$('btn-copy-id').addEventListener('click', (e) => copyText(e.currentTarget, state.session?.hostId ?? state.session?.sessionId ?? '', t('client.idCopied')));
 $('btn-copy-password').addEventListener('click', (e) => copyText(e.currentTarget, state.session?.password ?? '', t('client.passCopied')));
-$('btn-copy-both').addEventListener('click', (e) => copyText(e.currentTarget, `ID: ${state.session?.sessionId}\n${t('client.passLabel')}: ${state.session?.password}`, t('client.bothCopied')));
+$('btn-copy-both').addEventListener('click', (e) => copyText(e.currentTarget, `ID: ${state.session?.hostId ?? state.session?.sessionId}\n${t('client.passLabel')}: ${state.session?.password}`, t('client.bothCopied')));
 
 $('btn-allow').addEventListener('click', () => decide(true));
 $('btn-deny').addEventListener('click', () => decide(false));

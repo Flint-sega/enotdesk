@@ -1,7 +1,7 @@
 import { DatabaseSync } from 'node:sqlite';
 
 // Последняя версия схемы; растёт с каждым версионированным шагом (A01 и далее).
-export const SCHEMA_VERSION = 7;
+export const SCHEMA_VERSION = 8;
 
 // Версионированные шаги схемы (A01): каждая база — старая или новая — проходит
 // недостающие шаги по порядку, версия хранится в таблице schema_version.
@@ -175,6 +175,16 @@ const MIGRATIONS = [
         expires_at TEXT NOT NULL
       )`);
       db.exec('CREATE INDEX IF NOT EXISTS idx_relay_expires ON relay_files (expires_at)');
+    },
+  },
+  {
+    // v8: закреплённый идентификатор ПК для attended-сеансов (просьба владельца,
+    // приёмка 02.10): клиент один раз генерирует 9-значный hostId, оператор
+    // подключается по нему; пароль при этом ротируется на каждый сеанс.
+    version: 8,
+    up: (db) => {
+      db.exec('ALTER TABLE sessions ADD COLUMN host_id TEXT');
+      db.exec('CREATE INDEX IF NOT EXISTS idx_sessions_host_id ON sessions (host_id)');
     },
   },
 ];

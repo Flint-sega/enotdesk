@@ -32,6 +32,7 @@ import { UPDATE_REPO, updateFeedUrl, platformFeedName, updateDecision, updateIns
 import { isNewerVersion } from './lib/version-check.mjs';
 import { t, setLocale } from './lib/i18n.mjs';
 import { createSvcDiag, envDiagSlice, maskJoinTokens } from './lib/svc-diag.mjs';
+import { createKeepAwake } from './lib/keep-awake.mjs';
 
 // Диагностика Windows-службы (W-U2): первый маркер каждого запуска процесса —
 // ДО ветки службы. Если svc-ветка НЕ вошла, а эта строка в логе есть —
@@ -115,7 +116,23 @@ const TEST_AUTO_CONSENT = String(pkg.ENOT_AUTO_CONSENT) === '1';
 
 let win = null;
 let settingsPath = null;
-let settings = { serverUrl: DEFAULT_SERVER_URL, allowInsecureHttp: false, locale: null };
+let settings = { serverUrl: DEFAULT_SERVER_URL, allowInsecureHttp: false, locale: null, hostId: null };
+
+// Закреплённый ID ПК (просьба владельца, приёмка 02.10): 9 цифр, генерируется
+// один раз и живёт в settings.json — переустановка/снос профиля меняет его,
+// перезапуски нет. Пароль помощи — наоборот, новый на каждый запуск приложения
+// (в памяти процесса). Оператор подключается по hostId; сервер находит живой
+// сеанс ПК по нему (миграция v8).
+function generateHostId() {
+  return String(100000000 + crypto.randomInt(900000000));
+}
+function launchPassword() {
+  const alphabet = 'abcdefghjkmnpqrstuvwxyzABCDEFGHJKMNPQRSTUVWXYZ23456789';
+  let out = '';
+  for (let i = 0; i < 8; i++) out += alphabet[crypto.randomInt(alphabet.length)];
+  return out;
+}
+let helpPassword = launchPassword();
 
 // Один экземпляр на машину: второй запуск просто уходит, а этот получает
 // second-instance и показывает окно. Заодно закрывает обход «одно окно —
@@ -156,7 +173,7 @@ function applyJoinLink(raw) {
   settings.serverUrl = parsed.server;
   const saved = saveSettings();
   if (!saved.ok) console.error(`[enotdesk] join: не удалось сохранить адрес сервера: ${saved.error}`);
-  api = createApi({ baseUrl: settings.serverUrl });
+  api = makeApi();
   pendingJoin = { server: settings.serverUrl, token: parsed.token };
   if (win && !win.isDestroyed()) {
     if (win.isMinimized()) win.restore();
@@ -200,7 +217,10 @@ app.on('open-url', (event, url) => {
 const STARTUP_JOIN_LINK = process.argv.slice(1).find((a) => typeof a === 'string' && parseJoinLink(a)) ?? null;
 
 // Токены живут только здесь (main). Рендереру не возвращаются.
-let api = createApi({ baseUrl: settings.serverUrl });
+const hostCredentials = () => ({ hostId: settings.hostId, password: helpPassword });
+const makeApi = () => createApi({ baseUrl: settings.serverUrl, hostCredentials });
+let api = makeApi();
+const keepAwake = createKeepAwake();
 
 // Сигналинг и ворота ввода
 let signal = null;
@@ -265,7 +285,13 @@ function loadSettings() {
     baked: BAKED_SERVER_URL,
   }).url;
   setLocale(settings.locale); // строки main-процесса — тоже из словаря (null оставляет ru по умолчанию)
-  api = createApi({ baseUrl: settings.serverUrl });
+  // Закреплённый ID ПК: один раз генерируется и сразу сохраняется — далее
+  // меняется только сносом профиля/переустановкой (просьба владельца, 02.10).
+  if (!/^\d{9}$/.test(settings.hostId ?? '')) {
+    settings.hostId = generateHostId();
+    saveSettings();
+  }
+  api = makeApi();
 }
 
 function saveSettings() {
@@ -624,7 +650,7 @@ function registerIpc() {
     settings.serverUrl = result.url;
     settings.allowInsecureHttp = allowInsecureHttp;
     const saved = saveSettings();
-    api = createApi({ baseUrl: settings.serverUrl });
+    api = makeApi();
     return { ...saved, serverUrl: settings.serverUrl };
   });
 
@@ -633,6 +659,11 @@ function registerIpc() {
     if (typeof operation !== 'string') throw new Error('Некорректная операция');
     if (payload !== undefined && (payload === null || typeof payload !== 'object')) throw new Error('Некорректные данные запроса');
     const result = await api.request(operation, payload ?? {});
+    // Keep-awake на время помощи (тёмный экран/замороженный ввод на ночной
+    // машине — приёмка 02.10): дисплей и система бодрствуют от создания сеанса
+    // до его завершения; на не-Windows/без koffi — no-op внутри либы.
+    if (operation === 'session.create' && result.status === 201) keepAwake.acquire();
+    if (operation === 'session.end') keepAwake.release();
     // Ошибки HTTP приходят рендереру как {status, body:{error}} — честно, без выдуманных данных
     return result;
   });
@@ -1113,6 +1144,7 @@ function startAgentMode() {
 
 // Закрытие окна = реальный выход, без фонового процесса (R16.1)
 function cleanupAndQuit() {
+  keepAwake.release();
   // Best-effort revoke: не ждём сервер дольше ~1с, локальное завершение от него не зависит
   if (api.hostSessionId && api.hostToken) {
     const revoke = api.request('session.end', { sessionId: api.hostSessionId, asHost: true }).catch(() => {});
