@@ -796,3 +796,12 @@ pub fn current_session_id() -> u32 {
         sid
     }
 }
+
+/// Cursor position as THIS process sees it (GetCursorPos on its own desktop).
+pub fn cursor_pos() -> (i32, i32) {
+    unsafe {
+        let mut pt = POINT::default();
+        let _ = GetCursorPos(&mut pt);
+        (pt.x, pt.y)
+    }
+}
