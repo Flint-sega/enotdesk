@@ -315,6 +315,8 @@ export default {
   "web.waiting.title": "Ожидание согласия клиента",
   "web.waiting.note": "Клиент видит ваше имя и должен подтвердить доступ.",
   "web.waiting.cancel": "Отменить",
+  "web.kb.remote": "Клавиатура: удалённый компьютер",
+  "web.kb.local": "Клавиатура: панель оператора",
   "web.session.end": "Завершить сеанс",
   "web.session.fullscreen": "Во весь экран",
   "web.session.fitFill": "Заполнить",
