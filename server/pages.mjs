@@ -234,14 +234,33 @@ function downloadsHtml(items, version, locale, insecure = false) {
 }
 
 function inviteHtml(version, locale, insecure = false) {
+  // Токен в #fragment читает web/invite.js: форма принятия прямо на странице
+  // (спека владельца 02.10 — «ссылка-тупик» больше не тупик); без JS работает
+  // прежний путь «откройте приложение».
   return (insecure ? insecureBanner(locale) : '') + siteHeader(locale) +
     `<main class="wrap invite-page"><section class="invite-card">` +
     `<p class="eyebrow">${esc(t('server.invite.eyebrow', {}, locale))}</p>` +
     `<h1>${esc(t('server.invite.title', {}, locale))}</h1>` +
     `<p class="lead">${esc(t('server.invite.lead', {}, locale))}</p>` +
+    `<section id="invite-accept" hidden>
+      <h2>${esc(t('server.invite.acceptTitle', {}, locale))}</h2>
+      <form id="invite-accept-form">
+        <label for="invite-name">${esc(t('server.invite.name', {}, locale))}</label>
+        <input id="invite-name" name="name" autocomplete="name" required>
+        <label for="invite-login">${esc(t('server.invite.login', {}, locale))}</label>
+        <input id="invite-login" name="login" autocomplete="username" required>
+        <label for="invite-password">${esc(t('server.invite.password', {}, locale))}</label>
+        <input id="invite-password" name="password" type="password" autocomplete="new-password" required>
+        <button class="btn" type="submit">${esc(t('server.invite.submit', {}, locale))}</button>
+      </form>
+      <p class="form-error" id="invite-error" aria-live="polite"></p>
+      <p class="note hidden" id="invite-ok">${esc(t('server.invite.ok', {}, locale))}</p>
+    </section>` +
     `<p class="cta"><a class="btn" href="/downloads">${icon('download')}<span>${esc(t('server.invite.open', {}, locale))}</span></a></p>` +
     `<p class="meta">${esc(t('server.invite.note', {}, locale))}</p>` +
-    `</section></main>` + siteFooter(version, locale);
+    `</section></main>` +
+    `<script src="/web/invite.js" type="module"></script>` +
+    siteFooter(version, locale);
 }
 
 // Браузерный оператор: разметка живёт в web/operator.html (её проверяет контракт-тест),
