@@ -39,9 +39,12 @@ use windows::Win32::System::Pipes::{
     ConnectNamedPipe, CreateNamedPipeW, DisconnectNamedPipe, PeekNamedPipe, PIPE_READMODE_BYTE,
     PIPE_TYPE_BYTE,
 };
+use windows::Win32::System::RemoteDesktop::ProcessIdToSessionId;
 use windows::Win32::System::StationsAndDesktops::{
-    CloseDesktop, OpenInputDesktop, DESKTOP_ACCESS_FLAGS, DESKTOP_CONTROL_FLAGS,
+    CloseDesktop, GetUserObjectInformationW, GetThreadDesktop, OpenInputDesktop, DESKTOP_ACCESS_FLAGS,
+    DESKTOP_CONTROL_FLAGS, UOI_NAME,
 };
+use windows::Win32::System::Threading::{GetCurrentProcessId, GetCurrentThreadId};
 use windows::Win32::System::IO::CancelIoEx;
 use windows::Win32::UI::Input::KeyboardAndMouse::{
     SendInput, INPUT, INPUT_0, INPUT_KEYBOARD, INPUT_MOUSE, KEYBDINPUT, KEYBD_EVENT_FLAGS,
@@ -750,5 +753,35 @@ pub fn input_desktop_locked() -> bool {
                 }
             }
         }
+    }
+}
+
+/// Name of the desktop this thread is attached to — the input SendInput
+/// lands on depends on it (service-spawned processes must be on
+/// winsta0\Default, otherwise the cursor never moves).
+pub fn thread_desktop_name() -> String {
+    unsafe {
+        let hdesk = match GetThreadDesktop(GetCurrentThreadId()) {
+            Ok(h) => h,
+            Err(e) => return format!("?err={e:?}"),
+        };
+        let h = HANDLE(hdesk.0);
+        let mut name = [0u16; 64];
+        let mut needed = 0u32;
+        if GetUserObjectInformationW(h, UOI_NAME, Some(name.as_mut_ptr().cast()), 128, Some(&mut needed)).is_ok() {
+            let len = name.iter().position(|c| *c == 0).unwrap_or(0);
+            String::from_utf16_lossy(&name[..len])
+        } else {
+            format!("?err={:?}", GetLastError())
+        }
+    }
+}
+
+/// Session id of this process (kernel32 ProcessIdToSessionId).
+pub fn current_session_id() -> u32 {
+    unsafe {
+        let mut sid = 0u32;
+        let _ = ProcessIdToSessionId(GetCurrentProcessId(), &mut sid);
+        sid
     }
 }
