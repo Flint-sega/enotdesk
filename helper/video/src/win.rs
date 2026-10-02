@@ -474,10 +474,12 @@ impl Wic {
             return Err("jpeg: buffer smaller than image".into());
         }
         unsafe {
+            enc_step("bitmap");
             let bmp: IWICBitmap = self
                 .factory
                 .CreateBitmapFromMemory(w, h, &GUID_WICPixelFormat32bppBGRA, stride as u32, bgra)
                 .map_err(|e| format!("jpeg: WIC bitmap: {e}"))?;
+            enc_step("encoder");
             let enc: IWICBitmapEncoder = self
                 .factory
                 // vendor GUID left null (documented "no vendor preference")
@@ -493,19 +495,24 @@ impl Wic {
             // object, not an IStream slice — an IStream pointer passed as
             // IWICStream AVs inside windowscodecs.dll on the first frame
             // (live, v0.6.0 приёмка).
+            enc_step("stream");
             let stream: IWICStream = mem
                 .cast()
                 .map_err(|e| format!("jpeg: wicstream cast: {e}"))?;
+            enc_step("enc-init");
             enc.Initialize(&stream, WICBitmapEncoderNoCache)
                 .map_err(|e| format!("jpeg: enc init: {e}"))?;
+            enc_step("new-frame");
             let mut frame: Option<IWICBitmapFrameEncode> = None;
             let mut no_options: Option<IPropertyBag2> = None;
             enc.CreateNewFrame(&mut frame, &mut no_options)
                 .map_err(|e| format!("jpeg: new frame: {e}"))?;
             let frame = frame.ok_or("jpeg: no frame returned")?;
+            enc_step("frame-init");
             frame
                 .Initialize(None)
                 .map_err(|e| format!("jpeg: frame init: {e}"))?;
+            enc_step("size");
             frame
                 .SetSize(w, h)
                 .map_err(|e| format!("jpeg: set size: {e}"))?;
@@ -516,14 +523,18 @@ impl Wic {
             let src: IWICBitmapSource =
                 bmp.cast().map_err(|e| format!("jpeg: source cast: {e}"))?;
             // null rect = whole image
+            enc_step("write");
             frame
                 .WriteSource(&src, std::ptr::null())
                 .map_err(|e| format!("jpeg: write: {e}"))?;
+            enc_step("fcommit");
             frame
                 .Commit()
                 .map_err(|e| format!("jpeg: frame commit: {e}"))?;
+            enc_step("ecommit");
             enc.Commit()
                 .map_err(|e| format!("jpeg: encoder commit: {e}"))?;
+            enc_step("take");
             let out = mem.take();
             // An empty JPEG must never masquerade as a frame: the pipe client
             // would silently drop it (that is exactly how "running, no video"
@@ -647,6 +658,15 @@ fn set_jpeg_quality(bag: &IPropertyBag2, q01: f32) {
         let var = VARIANT::from(q01.clamp(0.0, 1.0));
         let _ = bag.Write(1, &prop, &var);
     }
+}
+
+/// One encode step per stdout line: a crash inside windowscodecs.dll names
+/// its exact step (the stdout log survives the process).
+fn enc_step(step: &str) {
+    use std::io::Write as _;
+    let mut out = std::io::stdout().lock();
+    let _ = writeln!(out, "{{\"ev\":\"enc\",\"step\":\"{step}\"}}");
+    let _ = out.flush();
 }
 
 // ---------------------------------------------------------------------------
