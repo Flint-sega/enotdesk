@@ -56,7 +56,7 @@ function buildUrl(base, path, query) {
   return url;
 }
 
-export function createApi({ baseUrl, fetchImpl = fetch } = {}) {
+export function createApi({ baseUrl, fetchImpl = fetch, hostCredentials = null } = {}) {
   let authToken = null; // оператор/админ: после login
   let hostToken = null; // клиент помощи: после session.create
   let hostSessionId = null;
@@ -79,6 +79,11 @@ export function createApi({ baseUrl, fetchImpl = fetch } = {}) {
       else if (op.auth === 'any') token = payload.asHost ? hostToken : (payload.token ?? authToken);
 
       const { token: _t, asHost: _a, sessionId: _s, id: _i, ...body } = payload;
+      // Закреплённый ID ПК + пароль запуска (просьба владельца, приёмка 02.10):
+      // подставляются в main, рендерер их не знает и не передаёт.
+      if (operation === 'session.create' && typeof hostCredentials === 'function') {
+        Object.assign(body, hostCredentials());
+      }
       const hasBody = op.method !== 'GET';
       const query = op.method === 'GET' ? payload : undefined;
 

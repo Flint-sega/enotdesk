@@ -1132,16 +1132,31 @@ export function createServer(opts = {}) {
       // потолок «висящих» регистраций с одного адреса: без авторизации иначе копить мусор
       const waiting = db.prepare("SELECT count(*) c FROM sessions WHERE created_ip = ? AND state = 'waiting'").get(clientIp).c;
       if (waiting >= 3) return err(res, 429, 'rate_limited', 'Слишком много активных запросов, попробуйте позже');
+      // Закреплённый ID ПК (просьба владельца, приёмка 02.10): клиент один раз
+      // генерирует 9-значный hostId (settings.json) и шлёт его с каждым сеансом;
+      // пароль клиент тоже генерирует сам — на запуск приложения (ротация при
+      // перезапуске). Без hostId — прежнее поведение (серверные генерации).
+      const hostIdRaw = typeof body?.hostId === 'string' ? body.hostId.trim() : '';
+      const hostId = /^\d{9}$/.test(hostIdRaw) ? hostIdRaw : null;
+      if (hostIdRaw && !hostId) return err(res, 400, 'bad_host_id', 'hostId должен быть 9-значным числом');
+      const clientPassword = typeof body?.password === 'string' ? body.password : '';
+      if (clientPassword && (clientPassword.length < 8 || clientPassword.length > 128)) {
+        return err(res, 400, 'bad_password', 'Пароль должен быть от 8 до 128 символов');
+      }
+      const password = clientPassword || sessionPassword(8);
+      // Живой сеанс этого же ПК (прошлый запуск без корректного завершения):
+      // честно завершаем с причиной superseded — закреплённый ID один, сеанс один.
+      const stale = db.prepare("SELECT id FROM sessions WHERE host_id = ? AND state != 'ended' ORDER BY created_at DESC").all(hostId ?? '\u0000');
+      for (const row of stale) endSession(row.id, 'superseded');
       const id = newSessionId(db);
-      const password = sessionPassword(8);
       const hostToken = newToken();
       const now = new Date().toISOString();
       const lease = new Date(Date.now() + cfg.leaseMs).toISOString();
-      db.prepare(`INSERT INTO sessions (id, password_hash, host_token_hash, state, created_at, lease_expires_at, created_ip)
-                  VALUES (?,?,?,'waiting',?,?,?)`)
-        .run(id, hashPassword(password), sha256(hostToken), now, lease, clientIp);
-      auditLog(db, null, 'session.create', id, {});
-      return ok(res, 201, { sessionId: id, password, hostToken, expiresAt: lease });
+      db.prepare(`INSERT INTO sessions (id, password_hash, host_token_hash, state, created_at, lease_expires_at, created_ip, host_id)
+                  VALUES (?,?,?,'waiting',?,?,?,?)`)
+        .run(id, hashPassword(password), sha256(hostToken), now, lease, clientIp, hostId);
+      auditLog(db, null, 'session.create', id, hostId ? { hostId } : {});
+      return ok(res, 201, { sessionId: id, password, hostToken, expiresAt: lease, ...(hostId ? { hostId } : {}) });
     }
     m = p.match(/^\/sessions\/([^/]+)\/claim$/);
     if (m && req.method === 'POST') {
@@ -1153,7 +1168,11 @@ export function createServer(opts = {}) {
         return err(res, 429, 'rate_limited', 'Слишком много попыток подключения');
       }
       const generic = () => err(res, 400, 'bad_request', 'Не удалось подключиться: проверьте идентификатор и пароль');
-      const s = db.prepare('SELECT * FROM sessions WHERE id = ?').get(m[1]);
+      // ID оператора — либо sessionId, либо закреплённый hostId ПК (v8): живой
+      // сеанс по host_id, свежий первым (superseded-хвосты не выбираем).
+      const s = db.prepare('SELECT * FROM sessions WHERE id = ?').get(m[1])
+        ?? db.prepare("SELECT * FROM sessions WHERE host_id = ? AND state != 'ended' ORDER BY created_at DESC LIMIT 1")
+          .get(/^\d{9}$/.test(m[1]) ? m[1] : '\u0000');
       if (!s || !(await verifyPasswordAsync(String(body?.password ?? ''), s.password_hash))) return generic();
       const op = { id: user.id, login: user.login, name: user.name };
       // multi-operator (v0.4.0): сеанс уже занят другим оператором → ПРИСОЕДИНЕНИЕ
