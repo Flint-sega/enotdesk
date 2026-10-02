@@ -15,7 +15,8 @@ const readSrc = (name) => readFileSync(path.join(webDir, name), 'utf8').replace(
 const html = readSrc('operator.html');
 const operatorJs = readSrc('operator.mjs');
 const inputJs = readSrc('input-source.mjs');
-const allJs = `${operatorJs}\n${inputJs}`;
+const teamJs = readSrc('team.js'); // UI команды (admin): свои id/кнопки в operator.html
+const allJs = `${operatorJs}\n${inputJs}\n${teamJs}`;
 
 import ru from '../locales/ru.mjs';
 import en from '../locales/en.mjs';
@@ -50,7 +51,8 @@ test('web/operator.html: анти-мёртвые-кнопки — каждая �
   const buttons = [...html.matchAll(/<button[^>]*id="([^"]+)"/g)].map((m) => m[1]);
   assert.ok(buttons.length >= 9, 'на странице оператора есть живая панель кнопок');
   for (const id of buttons) {
-    const wired = new RegExp(`\\$\\('${id}'\\)`).test(allJs);
+    // team.js использует getElementById (у веб-модулей нет общего $-хелпера)
+    const wired = new RegExp(`\\$\\('${id}'\\)|getElementById\\('${id}'\\)`).test(allJs);
     assert.ok(wired, `кнопка «${id}» есть в HTML, но не подключена в web/*.mjs`);
   }
 });

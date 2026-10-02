@@ -16,6 +16,7 @@ import {
 } from '../client/lib/file-transfer.mjs';
 import { summarizeStats, formatQuality } from '../client/lib/rtc-stats.mjs';
 import { wireBrowserInput } from './input-source.mjs';
+import { bindTeam, teamRoute } from './team.js';
 
 const COOKIE = 'enot_op';
 const ALLOWED_ROLES = ['admin', 'operator'];
@@ -239,7 +240,7 @@ function setKeyboardMode(mode) {
 
 // ---- состояния страницы ----
 
-const VIEWS = ['view-login', 'view-denied', 'view-connect', 'view-machines', 'op-waiting', 'op-reconnect', 'op-remote'];
+const VIEWS = ['view-login', 'view-denied', 'view-connect', 'view-machines', 'view-team', 'op-waiting', 'op-reconnect', 'op-remote'];
 function showOnly(...ids) {
   for (const id of VIEWS) (ids.includes(id) ? show : hide)($(id));
 }
@@ -1094,6 +1095,11 @@ function closeMachineClaim() {
   hide($('machines-claim'));
 }
 
+function showTeam() {
+  showOnly('view-team');
+  void teamRoute();
+}
+
 function showMachines() {
   if (state.connect) return; // во время сеанса панель машин недоступна
   closeMachineClaim();
@@ -1127,7 +1133,7 @@ function wire() {
       saveRoleCookie(res.body.user.role);
       text($('op-user-name'), res.body.user.name);
       text($('op-user-role'), roleName(res.body.user.role));
-      if (res.body.user.role === 'admin') show($('btn-nav-machines'));
+      if (res.body.user.role === 'admin') { show($('btn-nav-machines')); show($('btn-nav-team')); }
       text($('login-error'), '');
       showOnly('view-connect');
       showStatus(t('web.status.idle'));
@@ -1350,7 +1356,7 @@ function wire() {
       return;
     }
     // Панель машин — только admin (spec §UI машин); оператор её не видит.
-    if (user.role === 'admin') show($('btn-nav-machines'));
+    if (user.role === 'admin') { show($('btn-nav-machines')); show($('btn-nav-team')); }
     showOnly('view-connect');
     showStatus(t('web.status.idle'));
     return;

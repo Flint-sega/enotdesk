@@ -119,6 +119,29 @@ video.fit-cover{object-fit:cover}
     <a class="btn ghost" href="/downloads" data-i18n="web.denied.home">На страницу загрузок</a>
   </section>
 
+  <section id="view-team" class="card hidden">
+    <h1 data-i18n="web.team.title">Команда</h1>
+    <p class="lead" data-i18n="web.team.lead">Приглашайте операторов и аудиторов: ссылка действует 24 часа. Приглашённый открывает её, придумывает логин и пароль — учётная запись появится с выбранной ролью.</p>
+    <button id="btn-nav-machines2" class="btn ghost" type="button" data-i18n="web.machines.open">Машины</button>
+    <button id="btn-nav-connect2" class="btn ghost" type="button" data-i18n="web.team.backConnect">К подключению</button>
+    <p class="form-error" id="team-error" aria-live="polite"></p>
+    <h2 data-i18n="web.team.inviteTitle">Создать приглашение</h2>
+    <form id="team-invite-form">
+      <label for="team-invite-role" data-i18n="web.team.role">Роль</label>
+      <select id="team-invite-role">
+        <option value="operator" data-i18n="web.team.roleOperator">Оператор</option>
+        <option value="auditor" data-i18n="web.team.roleAuditor">Аудитор</option>
+        <option value="admin" data-i18n="web.team.roleAdmin">Администратор</option>
+      </select>
+      <button id="team-invite-create" class="btn" type="submit" data-i18n="web.team.create">Создать приглашение</button>
+    </form>
+    <p class="invite-link hidden" id="team-invite-link" aria-live="polite"></p>
+    <h2 data-i18n="web.team.invitesTitle">Приглашения</h2>
+    <div id="team-invites"></div>
+    <h2 data-i18n="web.team.membersTitle">Участники</h2>
+    <div id="team-members"></div>
+  </section>
+
   <section id="view-connect" class="card hidden">
     <h1 data-i18n="web.connect.title">Подключение к клиенту</h1>
     <form id="connect-form" class="connect-grid">
@@ -134,6 +157,7 @@ video.fit-cover{object-fit:cover}
     </form>
     <p class="form-error" id="conn-error" aria-live="polite"></p>
     <button id="btn-nav-machines" class="btn ghost hidden" type="button" data-i18n="web.machines.open">Машины</button>
+    <button id="btn-nav-team" class="btn ghost hidden" type="button" data-i18n="web.team.open">Команда</button>
   </section>
 
   <section id="view-machines" class="card hidden">
