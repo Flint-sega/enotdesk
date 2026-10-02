@@ -6,7 +6,7 @@
 
 use windows::core::{Interface, PCWSTR, PWSTR, VARIANT};
 use windows::Win32::Foundation::{
-    CloseHandle, GetLastError, GENERIC_READ, HANDLE, HGLOBAL, HMODULE, LPARAM, WPARAM,
+    CloseHandle, GetLastError, GENERIC_READ, HANDLE, HGLOBAL, HMODULE, LPARAM, POINT, WPARAM,
 };
 use windows::Win32::Graphics::Direct3D::{D3D_DRIVER_TYPE_UNKNOWN, D3D_FEATURE_LEVEL};
 use windows::Win32::Graphics::Direct3D11::{
@@ -54,8 +54,8 @@ use windows::Win32::UI::Input::KeyboardAndMouse::{
     MOUSEINPUT, VIRTUAL_KEY,
 };
 use windows::Win32::UI::WindowsAndMessaging::{
-    GetSystemMetrics, SendMessageTimeoutW, HWND_BROADCAST, SMTO_ABORTIFHUNG, SM_CXVIRTUALSCREEN,
-    SM_CYVIRTUALSCREEN, SM_XVIRTUALSCREEN, SM_YVIRTUALSCREEN, WM_SYSCOMMAND,
+    GetCursorPos, GetSystemMetrics, SendMessageTimeoutW, HWND_BROADCAST, SMTO_ABORTIFHUNG,
+    SM_CXVIRTUALSCREEN, SM_CYVIRTUALSCREEN, SM_XVIRTUALSCREEN, SM_YVIRTUALSCREEN, WM_SYSCOMMAND,
 };
 
 // Progress marker of the last DXGI call inside make_dup() (see make_dup for
