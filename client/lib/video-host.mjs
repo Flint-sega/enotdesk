@@ -149,7 +149,9 @@ export function createVideoHost({
     },
     // Команда хелперу (input/wake/sleep/quality); не-running — false, не фейк.
     sendCommand(obj) {
-      if (state !== 'running' || !sock) return false;
+      const ok = state === 'running' && !!sock;
+      log.warn?.(`sendCommand ${obj?.cmd} state=${state} sock=${!!sock}`);
+      if (!ok) return false;
       try { sock.write(encodeMessage(MSG.COMMAND, JSON.stringify(obj))); return true; }
       catch { return false; }
     },
