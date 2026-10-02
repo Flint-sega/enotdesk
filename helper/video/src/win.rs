@@ -822,6 +822,13 @@ pub fn cursor_pos() -> (i32, i32) {
 /// Direct cursor set via SetCursorPos (bypasses the input queue entirely) —
 /// diagnostics: if even this does not move the cursor, the position is
 /// system-frozen, not an input-queue issue.
-pub fn set_cursor_pos_probe(x: i32, y: i32) -> bool {
-    unsafe { SetCursorPos(x, y) }.is_ok()
+pub fn set_cursor_pos_probe(x: i32, y: i32) -> String {
+    unsafe {
+        let ok = SetCursorPos(x, y);
+        if ok.is_ok() {
+            format!("ok")
+        } else {
+            format!("err={:?}", GetLastError())
+        }
+    }
 }
