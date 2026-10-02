@@ -321,6 +321,7 @@ export default {
   "web.waiting.title": "Waiting for the client's consent",
   "web.waiting.note": "The client sees your name and must approve access.",
   "web.waiting.cancel": "Cancel",
+  "web.team.adminOnly": "Team management is available to the administrator only.",
   "web.team.open": "Team",
   "web.team.title": "Team",
   "web.team.lead": "Invite operators and auditors: the link is valid for 24 hours. The invitee opens it, picks a login and password — the account appears with the chosen role.",

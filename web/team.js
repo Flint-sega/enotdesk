@@ -54,6 +54,14 @@ export async function renderTeam({ force = false } = {}) {
       api('GET', '/members'),
       api('GET', '/invites'),
     ]);
+    // не-админ: это не «сломалось», а ограничение по роли — говорим честно
+    if (members.status === 403 || invites.status === 403) {
+      const mBox0 = document.getElementById('team-members');
+      if (mBox0) mBox0.innerHTML = `<p class="muted">${esc(t('web.team.adminOnly'))}</p>`;
+      const iBox0 = document.getElementById('team-invites');
+      if (iBox0) iBox0.innerHTML = '';
+      return;
+    }
     if (members.status !== 200 || invites.status !== 200) {
       err().textContent = members.body?.error?.message ?? t('common.serverError');
       return;
