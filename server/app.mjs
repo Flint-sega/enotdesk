@@ -129,7 +129,7 @@ const BRAND_FILES = {
 const OPERATOR_ASSETS = {
   web: {
     dir: '../web/',
-    files: { 'operator.mjs': 'text/javascript', 'input-source.mjs': 'text/javascript' },
+    files: { 'operator.mjs': 'text/javascript', 'input-source.mjs': 'text/javascript', 'team.js': 'text/javascript' },
   },
   'client/lib': {
     dir: '../client/lib/',
