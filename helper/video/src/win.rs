@@ -6,7 +6,7 @@
 
 use windows::core::{Interface, PCWSTR, PWSTR, VARIANT};
 use windows::Win32::Foundation::{
-    CloseHandle, GetLastError, GENERIC_READ, HANDLE, HMODULE, LPARAM, WPARAM,
+    CloseHandle, GetLastError, GENERIC_READ, HANDLE, HGLOBAL, HMODULE, LPARAM, WPARAM,
 };
 use windows::Win32::Graphics::Direct3D::{D3D_DRIVER_TYPE_UNKNOWN, D3D_FEATURE_LEVEL};
 use windows::Win32::Graphics::Direct3D11::{
@@ -29,9 +29,9 @@ use windows::Win32::Storage::FileSystem::PIPE_ACCESS_DUPLEX;
 use windows::Win32::System::Com::StructuredStorage::{IPropertyBag2, PROPBAG2};
 use windows::Win32::System::Com::{
     CoCreateInstance, CoInitializeEx, IStream, CLSCTX_INPROC_SERVER, COINIT_MULTITHREADED,
-    ISequentialStream, ISequentialStream_Impl, IStream_Impl, LOCKTYPE, STATFLAG, STATSTG,
-    STREAM_SEEK, STGC,
+    STREAM_SEEK_END,
 };
+use windows::Win32::System::Com::StructuredStorage::CreateStreamOnHGlobal;
 use windows::Win32::System::Diagnostics::ToolHelp::{
     CreateToolhelp32Snapshot, Process32FirstW, Process32NextW, PROCESSENTRY32W, TH32CS_SNAPPROCESS,
 };
@@ -490,52 +490,53 @@ impl Wic {
             // encoder committed "successfully" yet the readback came back
             // EMPTY (40+ zero-length frames live, v0.6.0 приёмка) — this
             // stream is read back from our own buffer, no Seek games.
-            let mem = InMemoryStream::new();
-            // Spike parity: hand the encoder its OWN IWICStream view of the
-            // object, not an IStream slice — an IStream pointer passed as
-            // IWICStream AVs inside windowscodecs.dll on the first frame
-            // (live, v0.6.0 приёмка).
-            enc_step("stream");
-            let stream: IWICStream = mem
-                .cast()
-                .map_err(|e| format!("jpeg: wicstream cast: {e}"))?;
-            enc_step("enc-init");
+            // Canonical OLE in-memory stream: battle-tested with WIC
+            // encoders for decades. Our own #[implement] COM object AV-ed
+            // inside windowscodecs.dll during Initialize, and shlwapi's
+            // SHCreateMemStream came back EMPTY after a successful Commit —
+            // the OS stream removes both variables at once.
+            let stream: IStream = unsafe { CreateStreamOnHGlobal(HGLOBAL::default(), true) }
+                .map_err(|e| format!("jpeg: hglobal stream: {e}"))?;
             enc.Initialize(&stream, WICBitmapEncoderNoCache)
                 .map_err(|e| format!("jpeg: enc init: {e}"))?;
-            enc_step("new-frame");
             let mut frame: Option<IWICBitmapFrameEncode> = None;
             let mut no_options: Option<IPropertyBag2> = None;
             enc.CreateNewFrame(&mut frame, &mut no_options)
                 .map_err(|e| format!("jpeg: new frame: {e}"))?;
             let frame = frame.ok_or("jpeg: no frame returned")?;
-            enc_step("frame-init");
             frame
                 .Initialize(None)
                 .map_err(|e| format!("jpeg: frame init: {e}"))?;
-            enc_step("size");
             frame
                 .SetSize(w, h)
                 .map_err(|e| format!("jpeg: set size: {e}"))?;
-            // Quality: the property-bag knob (set_jpeg_quality) is deferred —
-            // WIC's JPEG default is 0.9 and the spike shipped identical
-            // numbers without it. q01 is accepted and currently unused.
+            // Quality: the property-bag knob is deferred — WIC's JPEG default
+            // is 0.9 and the spike shipped identical numbers without it.
             let _ = q01;
             let src: IWICBitmapSource =
                 bmp.cast().map_err(|e| format!("jpeg: source cast: {e}"))?;
             // null rect = whole image
-            enc_step("write");
             frame
                 .WriteSource(&src, std::ptr::null())
                 .map_err(|e| format!("jpeg: write: {e}"))?;
-            enc_step("fcommit");
             frame
                 .Commit()
                 .map_err(|e| format!("jpeg: frame commit: {e}"))?;
-            enc_step("ecommit");
             enc.Commit()
                 .map_err(|e| format!("jpeg: encoder commit: {e}"))?;
-            enc_step("take");
-            let out = mem.take();
+
+            // Read the encoded bytes back out of the stream.
+            let mut size: u64 = 0;
+            stream
+                .Seek(0, STREAM_SEEK_END, Some(&mut size))
+                .map_err(|e| format!("jpeg: seek end: {e}"))?;
+            let mut out = vec![0u8; size as usize];
+            let mut got: u32 = 0;
+            let hr = stream.Read(out.as_mut_ptr().cast(), out.len() as u32, Some(&mut got));
+            if hr.is_err() {
+                return Err(format!("jpeg: stream read back failed: {hr:?}"));
+            }
+            out.truncate(got as usize);
             // An empty JPEG must never masquerade as a frame: the pipe client
             // would silently drop it (that is exactly how "running, no video"
             // looked from the operator's seat).
@@ -549,133 +550,6 @@ impl Wic {
 
 /// Minimal in-memory IStream for WIC encoders, ported verbatim from
 /// spike/video-dxgi (the benchmark that measured 14.9 ms/169 KB JPEG here).
-#[windows::core::implement(IWICStream, IStream, ISequentialStream)]
-struct InMemoryStream {
-    data: std::sync::Mutex<Vec<u8>>,
-    pos: std::sync::Mutex<u64>,
-}
-
-impl InMemoryStream {
-    fn new() -> Self {
-        Self {
-            data: std::sync::Mutex::new(Vec::with_capacity(1 << 20)),
-            pos: std::sync::Mutex::new(0),
-        }
-    }
-    fn take(&self) -> Vec<u8> {
-        self.data.lock().unwrap_or_else(|p| p.into_inner()).clone()
-    }
-}
-
-impl ISequentialStream_Impl for InMemoryStream_Impl {
-    fn Read(&self, pv: *mut core::ffi::c_void, cb: u32, pcbread: *mut u32) -> windows::core::HRESULT {
-        let data = self.data.lock().unwrap_or_else(|p| p.into_inner());
-        let mut pos = self.pos.lock().unwrap_or_else(|p| p.into_inner());
-        let p = (*pos as usize).min(data.len());
-        let n = (cb as usize).min(data.len().saturating_sub(p));
-        unsafe {
-            std::ptr::copy_nonoverlapping(data.as_ptr().add(p), pv.cast(), n);
-        }
-        *pos = (p + n) as u64;
-        if !pcbread.is_null() {
-            unsafe { *pcbread = n as u32 };
-        }
-        windows::core::HRESULT(0) // S_OK
-    }
-    fn Write(&self, pv: *const core::ffi::c_void, cb: u32, pcbwritten: *mut u32) -> windows::core::HRESULT {
-        // The encoder writes the JPEG through this stream (NoCache mode) —
-        // an E_NOTIMPL stub here is the difference between WIC working and
-        // AV-ing inside windowscodecs.dll.
-        let mut data = self.data.lock().unwrap_or_else(|p| p.into_inner());
-        unsafe {
-            data.extend_from_slice(std::slice::from_raw_parts(pv.cast(), cb as usize));
-        }
-        if !pcbwritten.is_null() {
-            unsafe { *pcbwritten = cb };
-        }
-        windows::core::HRESULT(0) // S_OK
-    }
-}
-
-impl IStream_Impl for InMemoryStream_Impl {
-    fn Seek(&self, dlibmove: i64, dworigin: STREAM_SEEK, plibnewposition: *mut u64) -> windows::core::Result<()> {
-        let mut pos = self.pos.lock().unwrap_or_else(|p| p.into_inner());
-        let len = self.data.lock().unwrap_or_else(|p| p.into_inner()).len() as i64;
-        let base: i64 = match dworigin.0 {
-            0 => 0,                      // STREAM_SEEK_FROM_START
-            1 => *pos as i64,            // STREAM_SEEK_FROM_CURRENT
-            2 => len,                    // STREAM_SEEK_FROM_END
-            _ => return Err(windows::core::Error::from_hresult(windows::core::HRESULT(0x8003_0001u32 as i32))), // STG_E_INVALIDFUNCTION
-        };
-        let np = (base + dlibmove).clamp(0, len);
-        *pos = np as u64;
-        if !plibnewposition.is_null() {
-            unsafe { *plibnewposition = np as u64 };
-        }
-        Ok(())
-    }
-    fn SetSize(&self, _libnewsize: u64) -> windows::core::Result<()> {
-        Ok(())
-    }
-    fn CopyTo(&self, _pstm: Option<&IStream>, _cb: u64, _pcbread: *mut u64, _pcbwritten: *mut u64) -> windows::core::Result<()> {
-        Err(windows::core::Error::from_hresult(windows::core::HRESULT(0x8000_4001u32 as i32)))
-    }
-    fn Commit(&self, _grfcommitflags: &STGC) -> windows::core::Result<()> {
-        Ok(())
-    }
-    fn Revert(&self) -> windows::core::Result<()> {
-        Ok(())
-    }
-    fn LockRegion(&self, _liboffset: u64, _cb: u64, _dwlocktype: &LOCKTYPE) -> windows::core::Result<()> {
-        Ok(())
-    }
-    fn UnlockRegion(&self, _liboffset: u64, _cb: u64, _dwlocktype: u32) -> windows::core::Result<()> {
-        Ok(())
-    }
-    fn Stat(&self, pstatstg: *mut STATSTG, _grfstatflag: &STATFLAG) -> windows::core::Result<()> {
-        // WIC probes the stream size here; a stub error is not tolerated.
-        let data = self.data.lock().unwrap_or_else(|p| p.into_inner());
-        unsafe {
-            let st = &mut *pstatstg;
-            st.r#type = 2; // STGTY_STREAM
-            st.cbSize = data.len() as u64;
-        }
-        Ok(())
-    }
-    fn Clone(&self) -> windows::core::Result<IStream> {
-        Err(windows::core::Error::from_hresult(windows::core::HRESULT(0x8000_4001u32 as i32)))
-    }
-}
-
-impl IWICStream_Impl for InMemoryStream_Impl {
-    fn InitializeFromIStream(&self, _pistream: Option<&IStream>) -> windows::core::Result<()> {
-        Err(windows::core::Error::from_hresult(windows::core::HRESULT(0x8000_4001u32 as i32)))
-    }
-    fn InitializeFromFilename(&self, _wzfilename: &windows::core::PCWSTR, _dwdesiredaccess: u32) -> windows::core::Result<()> {
-        Err(windows::core::Error::from_hresult(windows::core::HRESULT(0x8000_4001u32 as i32)))
-    }
-    fn InitializeFromMemory(&self, _pbbuffer: *const u8, _cbbuffersize: u32) -> windows::core::Result<()> {
-        Err(windows::core::Error::from_hresult(windows::core::HRESULT(0x8000_4001u32 as i32)))
-    }
-    fn InitializeFromIStreamRegion(&self, _pistream: Option<&IStream>, _uloffset: u64, _ulmaxsize: u64) -> windows::core::Result<()> {
-        Err(windows::core::Error::from_hresult(windows::core::HRESULT(0x8000_4001u32 as i32)))
-    }
-}
-
-/// JPEG quality in WIC is only reachable through the frame encoder's property
-/// bag: "ImageQuality", VT_R4, 0.0..1.0. There is no SetQuality method.
-#[allow(dead_code)]
-fn set_jpeg_quality(bag: &IPropertyBag2, q01: f32) {
-    let mut name: Vec<u16> = "ImageQuality\0".encode_utf16().collect();
-    unsafe {
-        let mut prop = PROPBAG2::default();
-        prop.pstrName = PWSTR(name.as_mut_ptr());
-        // windows-core builds the VT_R4 variant for us via From<f32>.
-        let var = VARIANT::from(q01.clamp(0.0, 1.0));
-        let _ = bag.Write(1, &prop, &var);
-    }
-}
-
 /// One encode step per stdout line: a crash inside windowscodecs.dll names
 /// its exact step (the stdout log survives the process).
 fn enc_step(step: &str) {
