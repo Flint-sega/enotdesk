@@ -525,18 +525,25 @@ impl Wic {
             enc.Commit()
                 .map_err(|e| format!("jpeg: encoder commit: {e}"))?;
 
-            // Read the encoded bytes back out of the stream.
-            let mut size: u64 = 0;
+            // Read the encoded bytes back: rewind to START, then chunk-read
+            // to EOF. No Seek(END) size probing — two different streams both
+            // "measured" zero that way (v0.6.0 приёмка).
             stream
-                .Seek(0, STREAM_SEEK_END, Some(&mut size))
-                .map_err(|e| format!("jpeg: seek end: {e}"))?;
-            let mut out = vec![0u8; size as usize];
-            let mut got: u32 = 0;
-            let hr = stream.Read(out.as_mut_ptr().cast(), out.len() as u32, Some(&mut got));
-            if hr.is_err() {
-                return Err(format!("jpeg: stream read back failed: {hr:?}"));
+                .Seek(0, STREAM_SEEK(0), None) // STREAM_SEEK_FROM_START
+                .map_err(|e| format!("jpeg: rewind: {e}"))?;
+            let mut out: Vec<u8> = Vec::new();
+            let mut chunk = [0u8; 65536];
+            loop {
+                let mut got: u32 = 0;
+                let hr = stream.Read(chunk.as_mut_ptr().cast(), chunk.len() as u32, Some(&mut got));
+                if hr.is_err() {
+                    return Err(format!("jpeg: stream read back failed: {hr:?}"));
+                }
+                if got == 0 {
+                    break;
+                }
+                out.extend_from_slice(&chunk[..got as usize]);
             }
-            out.truncate(got as usize);
             // An empty JPEG must never masquerade as a frame: the pipe client
             // would silently drop it (that is exactly how "running, no video"
             // looked from the operator's seat).
