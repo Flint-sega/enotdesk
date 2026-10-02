@@ -101,8 +101,21 @@ fn ascii(s: &str) -> String {
 }
 
 fn log_line(line: &str) {
-    println!("{line}");
-    let _ = std::io::stdout().flush();
+    use std::io::Write as _;
+    let mut out = std::io::stdout().lock();
+    let _ = writeln!(out, "{line}");
+    let _ = out.flush();
+    // Mirror to a file: the service spawns us DETACHED (stdout is lost), and
+    // the tick/err lines are the only helper-side telemetry (v0.6.0 приёмка).
+    if let Ok(tmp) = std::env::var("TEMP") {
+        if let Ok(mut f) = std::fs::OpenOptions::new()
+            .create(true)
+            .append(true)
+            .open(format!("\\\\{tmp}\\enotdesk-video.log"))
+        {
+            let _ = writeln!(f, "{line}");
+        }
+    }
 }
 
 fn log_exit(code: i32, err: &str) {
@@ -359,6 +372,7 @@ fn handle_command(shared: &Shared, privacy_sleep: &AtomicBool, text: &str) {
                 // "move" or absent: the absolute move above is the whole event.
                 _ => {}
             }
+            set_last_err(shared, &format!("cmd mouse x={x:?} y={y:?}"));
         }
         "key" => {
             let name = doc.get("key").and_then(Json::as_str).unwrap_or("");
