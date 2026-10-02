@@ -54,8 +54,9 @@ use windows::Win32::UI::Input::KeyboardAndMouse::{
     MOUSEINPUT, VIRTUAL_KEY,
 };
 use windows::Win32::UI::WindowsAndMessaging::{
-    GetCursorPos, GetSystemMetrics, SendMessageTimeoutW, HWND_BROADCAST, SMTO_ABORTIFHUNG,
-    SM_CXVIRTUALSCREEN, SM_CYVIRTUALSCREEN, SM_XVIRTUALSCREEN, SM_YVIRTUALSCREEN, WM_SYSCOMMAND,
+    FindWindowW, GetCursorPos, GetSystemMetrics, SendMessageTimeoutW, HWND_BROADCAST,
+    SMTO_ABORTIFHUNG, SM_CXVIRTUALSCREEN, SM_CYVIRTUALSCREEN, SM_XVIRTUALSCREEN, SM_YVIRTUALSCREEN,
+    WM_SYSCOMMAND,
 };
 
 // Progress marker of the last DXGI call inside make_dup() (see make_dup for
@@ -784,7 +785,14 @@ pub fn thread_desktop_name() -> String {
             }
             Err(e) => format!("?err={e:?}"),
         };
-        format!("thread={thread_desk} input={input_desk}")
+        // The shell's taskbar exists ONLY on the real winsta0\Default — a
+        // service station desktop (also named "Default") has none.
+        let tray = FindWindowW(
+            windows::core::w!("Shell_TrayWnd"),
+            None,
+        );
+        let tray_note = if tray.is_ok() && !tray.unwrap().is_invalid() { "tray=yes" } else { "tray=no" };
+        format!("thread={thread_desk} input={input_desk} {tray_note}")
     }
 }
 
