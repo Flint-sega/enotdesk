@@ -107,11 +107,16 @@ fn log_line(line: &str) {
     let _ = out.flush();
     // Mirror to a file: the service spawns us DETACHED (stdout is lost), and
     // the tick/err lines are the only helper-side telemetry (v0.6.0 приёмка).
-    if let Ok(tmp) = std::env::var("TEMP") {
+    // TEMP is absent in the service-built environment — ProgramData is the
+    // directory the rest of EnotDesk already uses (svc-diag).
+    if let Some(dir) = std::env::var("ProgramData")
+        .ok()
+        .or_else(|| std::env::var("TEMP").ok())
+    {
         if let Ok(mut f) = std::fs::OpenOptions::new()
             .create(true)
             .append(true)
-            .open(format!("{tmp}\\enotdesk-video.log"))
+            .open(format!("{dir}\\EnotDesk\\enotdesk-video.log"))
         {
             let _ = writeln!(f, "{line}");
         }
