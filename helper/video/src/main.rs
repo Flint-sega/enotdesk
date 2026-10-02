@@ -173,6 +173,21 @@ fn run() -> Result<i32, String> {
     let privacy_sleep = Arc::new(AtomicBool::new(false));
     spawn_ticker(shared.clone());
 
+    // Ввод исполняет ОТДЕЛЬНЫЙ поток, первым делом подключающийся к
+    // input-десктопу с правами записи: хэндл десктопа, унаследованный от
+    // CreateProcessAsUserW, бывает без DESKTOP_WRITEOBJECTS — тогда SendInput
+    // «успешен», а курсор стоит (ночная приёмка 02.10). Wake/тосты тоже идут
+    // отсюда: broadcast достигает окон только своего десктопа.
+    let (input_tx, input_rx) = std::sync::mpsc::channel::<InputJob>();
+    {
+        let shared = shared.clone();
+        let privacy_sleep = privacy_sleep.clone();
+        std::thread::Builder::new()
+            .name("input".into())
+            .spawn(move || input_thread(&shared, &privacy_sleep, input_rx))
+            .map_err(|e| format!("input thread: {e}"))?;
+    }
+
     log_line(&format!(
         "{{\"ev\":\"start\",\"pipe\":\"{}\",\"desktop\":\"{}\",\"session\":{}}}",
         proto::jstr(PIPE_NAME),
@@ -224,8 +239,9 @@ fn run() -> Result<i32, String> {
             let shared = shared.clone();
             let io = io.clone();
             let lock = pipe_lock.clone();
+            let input_tx = input_tx.clone();
             let privacy_sleep = privacy_sleep.clone();
-            std::thread::spawn(move || reader_thread(io, lock, token, shared, privacy_sleep))
+            std::thread::spawn(move || reader_thread(io, lock, input_tx, token, shared, privacy_sleep))
         };
         set_state(&shared, "live");
 
@@ -292,6 +308,7 @@ enum SessionEnd {
 fn reader_thread(
     io: Arc<File>,
     pipe_lock: Arc<Mutex<()>>,
+    input_tx: std::sync::mpsc::Sender<InputJob>,
     token: Arc<String>,
     shared: Arc<Shared>,
     privacy_sleep: Arc<AtomicBool>,
@@ -356,7 +373,7 @@ fn reader_thread(
                 break;
             }
         } else {
-            handle_command(&shared, &privacy_sleep, &String::from_utf8_lossy(&payload));
+            handle_command(&shared, &privacy_sleep, &String::from_utf8_lossy(&payload), &input_tx);
         }
     }
     shared.broken.store(true, Ordering::SeqCst);
@@ -367,7 +384,12 @@ fn reader_thread(
 // stays well under the 100 ms frame cadence.
 const PIPE_POLL_PERIOD: Duration = Duration::from_millis(30);
 
-fn handle_command(shared: &Shared, privacy_sleep: &AtomicBool, text: &str) {
+fn handle_command(
+    shared: &Shared,
+    privacy_sleep: &AtomicBool,
+    text: &str,
+    input_tx: &std::sync::mpsc::Sender<InputJob>,
+) {
     let doc = match proto::parse(text) {
         Ok(d) => d,
         Err(e) => {
@@ -387,58 +409,22 @@ fn handle_command(shared: &Shared, privacy_sleep: &AtomicBool, text: &str) {
                 .and_then(Json::as_num)
                 .map(|v| v.clamp(0.0, 1.0));
             if let (Some(x), Some(y)) = (x, y) {
-                let sent = win::mouse_move_abs(x, y);
-                std::thread::sleep(Duration::from_millis(150));
-                let cur = win::cursor_pos();
-                let (_vx, _vy, cx, cy) = win::virtual_desktop_metrics_pub();
-                let direct = win::set_cursor_pos_probe(cx / 2, cy / 2);
-                std::thread::sleep(Duration::from_millis(150));
-                let cur2 = win::cursor_pos();
-                set_last_err(
-                    shared,
-                    &format!(
-                        "cmd mouse x={x:.2} y={y:.2} sent={sent} cursor=({},{}) scp={direct} after=({},{})",
-                        cur.0, cur.1, cur2.0, cur2.1
-                    ),
-                );
-            }
-            match doc.get("buttons").and_then(Json::as_str) {
-                Some("down") | Some("up") => {
-                    let down = doc.get("buttons").and_then(Json::as_str) == Some("down");
-                    let button = doc.get("button").and_then(Json::as_str).unwrap_or("left");
-                    win::mouse_button(button, down);
-                }
-                // "move" or absent: the absolute move above is the whole event.
-                _ => {}
+                let buttons = doc.get("buttons").and_then(Json::as_str).unwrap_or("move").to_string();
+                let button = doc.get("button").and_then(Json::as_str).unwrap_or("left").to_string();
+                enqueue(input_tx, InputJob::Mouse { x, y, buttons, button }, shared);
             }
         }
         "key" => {
-            let name = doc.get("key").and_then(Json::as_str).unwrap_or("");
+            let name = doc.get("key").and_then(Json::as_str).unwrap_or("").to_string();
             let down = doc.get("down").and_then(Json::as_bool).unwrap_or(false);
-            match keys::key_vk(name) {
-                Some((vk, ext)) => {
-                    win::key_event(vk, ext, down);
-                }
-                None => set_last_err(shared, "cmd: key not in EnotDesk allowlist"),
-            }
+            enqueue(input_tx, InputJob::Key { name, down }, shared);
         }
         "wheel" => {
             let dy = doc.get("dy").and_then(Json::as_num).unwrap_or(0.0);
-            // f64 -> i32 saturates (Rust guarantee), no panic on huge values.
-            win::wheel(dy as i32);
+            enqueue(input_tx, InputJob::Wheel { dy }, shared);
         }
-        "wake" => {
-            win::monitor_power(true);
-            shared.display_off.store(false, Ordering::Relaxed);
-            privacy_sleep.store(false, Ordering::Relaxed);
-        }
-        "sleep" => {
-            win::monitor_power(false);
-            shared.display_off.store(true, Ordering::Relaxed);
-            // v0.6 fix (review): privacy sleep — the stuck-display watchdog
-            // must not silently turn the screen back on after 5 s of silence.
-            privacy_sleep.store(true, Ordering::Relaxed);
-        }
+        "wake" => enqueue(input_tx, InputJob::Wake, shared),
+        "sleep" => enqueue(input_tx, InputJob::Sleep, shared),
         "quality" => {
             if let Some(q) = doc.get("jpegQ").and_then(Json::as_num) {
                 *shared.jpeg_q.lock().unwrap_or_else(|p| p.into_inner()) =
@@ -450,6 +436,87 @@ fn handle_command(shared: &Shared, privacy_sleep: &AtomicBool, text: &str) {
             }
         }
         other => set_last_err(shared, &format!("cmd: unknown command '{}'", ascii(other))),
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Input thread: the only executor of synthetic input. Attached to the input
+// desktop with write access (see win::attach_input_desktop) BEFORE anything
+// else — the inherited CreateProcessAsUserW desktop handle can lack
+// DESKTOP_WRITEOBJECTS, silently eating SendInput/SetCursorPos.
+// ---------------------------------------------------------------------------
+
+enum InputJob {
+    Mouse { x: f64, y: f64, buttons: String, button: String },
+    Key { name: String, down: bool },
+    Wheel { dy: f64 },
+    Wake,
+    Sleep,
+}
+
+fn enqueue(tx: &std::sync::mpsc::Sender<InputJob>, job: InputJob, shared: &Shared) {
+    if tx.send(job).is_err() {
+        set_last_err(shared, "input thread is gone");
+    }
+}
+
+fn input_thread(shared: &Shared, privacy_sleep: &AtomicBool, rx: std::sync::mpsc::Receiver<InputJob>) {
+    if let Err(e) = win::attach_input_desktop() {
+        set_last_err(shared, &format!("input desktop: {e}"));
+    }
+    log_line(&format!(
+        "{{\"ev\":\"input\",\"desktop\":\"{}\",\"attach\":\"{}\"}}",
+        proto::jstr(&ascii(&win::thread_desktop_name())),
+        if shared.last_err.lock().unwrap_or_else(|p| p.into_inner()).contains("input desktop:") { "failed" } else { "ok" },
+    ));
+    for job in rx {
+        if shared.stop.load(Ordering::SeqCst) || shared.broken.load(Ordering::SeqCst) {
+            break;
+        }
+        execute_job(shared, privacy_sleep, job);
+    }
+}
+
+fn execute_job(shared: &Shared, privacy_sleep: &AtomicBool, job: InputJob) {
+    match job {
+        InputJob::Mouse { x, y, buttons, button } => {
+            let sent = win::mouse_move_abs(x, y);
+            match buttons.as_str() {
+                "down" | "up" => {
+                    win::mouse_button(&button, buttons == "down");
+                }
+                // "move": абсолютный сдвиг выше — вся команда
+                _ => {}
+            }
+            std::thread::sleep(Duration::from_millis(120));
+            let cur = win::cursor_pos();
+            set_last_err(
+                shared,
+                &format!("cmd mouse x={x:.2} y={y:.2} sent={sent} cursor=({},{})", cur.0, cur.1),
+            );
+        }
+        InputJob::Key { name, down } => match keys::key_vk(&name) {
+            Some((vk, ext)) => {
+                win::key_event(vk, ext, down);
+            }
+            None => set_last_err(shared, "cmd: key not in EnotDesk allowlist"),
+        },
+        InputJob::Wheel { dy } => {
+            // f64 -> i32 saturates (Rust guarantee), no panic on huge values.
+            win::wheel(dy as i32);
+        }
+        InputJob::Wake => {
+            win::monitor_power(true);
+            shared.display_off.store(false, Ordering::Relaxed);
+            privacy_sleep.store(false, Ordering::Relaxed);
+        }
+        InputJob::Sleep => {
+            win::monitor_power(false);
+            shared.display_off.store(true, Ordering::Relaxed);
+            // v0.6 fix (review): privacy sleep — the stuck-display watchdog
+            // must not silently turn the screen back on after 5 s of silence.
+            privacy_sleep.store(true, Ordering::Relaxed);
+        }
     }
 }
 
