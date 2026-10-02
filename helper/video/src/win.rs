@@ -54,7 +54,7 @@ use windows::Win32::UI::Input::KeyboardAndMouse::{
     MOUSEINPUT, VIRTUAL_KEY,
 };
 use windows::Win32::UI::WindowsAndMessaging::{
-    FindWindowW, GetCursorPos, GetSystemMetrics, SendMessageTimeoutW, HWND_BROADCAST,
+    FindWindowW, GetCursorPos, GetSystemMetrics, SendMessageTimeoutW, SetCursorPos, HWND_BROADCAST,
     SMTO_ABORTIFHUNG, SM_CXVIRTUALSCREEN, SM_CYVIRTUALSCREEN, SM_XVIRTUALSCREEN, SM_YVIRTUALSCREEN,
     WM_SYSCOMMAND,
 };
@@ -806,10 +806,22 @@ pub fn current_session_id() -> u32 {
 }
 
 /// Cursor position as THIS process sees it (GetCursorPos on its own desktop).
+/// Virtual-desktop metrics for diagnostics (same numbers SendInput uses).
+pub fn virtual_desktop_metrics_pub() -> (i32, i32, i32, i32) {
+    virtual_desktop_metrics()
+}
+
 pub fn cursor_pos() -> (i32, i32) {
     unsafe {
         let mut pt = POINT::default();
         let _ = GetCursorPos(&mut pt);
         (pt.x, pt.y)
     }
+}
+
+/// Direct cursor set via SetCursorPos (bypasses the input queue entirely) —
+/// diagnostics: if even this does not move the cursor, the position is
+/// system-frozen, not an input-queue issue.
+pub fn set_cursor_pos_probe(x: i32, y: i32) -> bool {
+    unsafe { SetCursorPos(x, y) }.is_ok()
 }

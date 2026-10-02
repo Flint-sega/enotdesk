@@ -371,9 +371,16 @@ fn handle_command(shared: &Shared, privacy_sleep: &AtomicBool, text: &str) {
                 let sent = win::mouse_move_abs(x, y);
                 std::thread::sleep(Duration::from_millis(150));
                 let cur = win::cursor_pos();
+                let (_vx, _vy, cx, cy) = win::virtual_desktop_metrics_pub();
+                let direct = win::set_cursor_pos_probe(cx / 2, cy / 2);
+                std::thread::sleep(Duration::from_millis(150));
+                let cur2 = win::cursor_pos();
                 set_last_err(
                     shared,
-                    &format!("cmd mouse x={x:.2} y={y:.2} sent={sent} cursor=({},{})", cur.0, cur.1),
+                    &format!(
+                        "cmd mouse x={x:.2} y={y:.2} sent={sent} cursor=({},{}) scp={direct} after=({},{})",
+                        cur.0, cur.1, cur2.0, cur2.1
+                    ),
                 );
             }
             match doc.get("buttons").and_then(Json::as_str) {
