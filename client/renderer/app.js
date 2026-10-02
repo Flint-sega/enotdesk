@@ -64,9 +64,10 @@ enot.onSignal(async (msg) => {
             clientShow('error');
           }
         }
-        // креды для других операторов: ID + пароль прямо на экране
+        // креды для других операторов: закреплённый ID ПК (hostId, не меняется
+        // между сеансами — просьба владельца 02.10) + пароль этого запуска
         if (state.session) {
-          text($('client-access-note'), t('client.accessNote', { id: state.session.sessionId, password: state.session.password }));
+          text($('client-access-note'), t('client.accessNote', { id: state.session.hostId ?? state.session.sessionId, password: state.session.password }));
         }
       } else if (state.connect) {
         if (state.pc) break; // уже отвечаем на оффер
