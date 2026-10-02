@@ -36,6 +36,9 @@ windows = { version = "0.58", features = [
   "Win32_System_RemoteDesktop",
   # GetCurrentThreadId/ProcessId (helper self-report).
   "Win32_System_Threading",
+  # SetThreadExecutionState: keep system+display awake while a client is live
+  # (Modern Standby swallows synthetic input on a dark panel).
+  "Win32_System_Power",
   # Named pipe server: CreateNamedPipeW / ConnectNamedPipe / DisconnectNamedPipe.
   "Win32_System_Pipes",
   # Gates CreateNamedPipeW (SECURITY_ATTRIBUTES parameter type).

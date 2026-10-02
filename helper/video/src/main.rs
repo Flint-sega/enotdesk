@@ -16,6 +16,9 @@ mod proto;
 mod win;
 
 use proto::Json;
+use windows::Win32::System::Power::{
+    SetThreadExecutionState, ES_CONTINUOUS, ES_DISPLAY_REQUIRED, ES_SYSTEM_REQUIRED,
+};
 use std::fs::File;
 use std::io::{Read, Write as _};
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
@@ -226,6 +229,17 @@ fn run() -> Result<i32, String> {
         };
         set_state(&shared, "live");
 
+        // While a client is connected the system must not doze off: Modern
+        // Standby (S0) freezes synthetic input and swallows SC_MONITORPOWER
+        // wakes (night acceptance 2026-10-02: sent=true, cursor frozen,
+        // SetCursorPos=false). ES_DISPLAY_REQUIRED keeps the panel on — which
+        // is also the ADR 0027 "service must wake the display on claim" duty.
+        unsafe {
+            let _ = SetThreadExecutionState(
+                ES_CONTINUOUS | ES_SYSTEM_REQUIRED | ES_DISPLAY_REQUIRED,
+            );
+        }
+
         let end = capture_session(
             &cap,
             &mut dup,
@@ -235,6 +249,11 @@ fn run() -> Result<i32, String> {
             &privacy_sleep,
             &pipe_lock,
         );
+
+        // Client gone: release the keep-awake (set with ES_CONTINUOUS above).
+        unsafe {
+            let _ = SetThreadExecutionState(ES_CONTINUOUS);
+        }
 
         pipe.cancel_io(); // unblock a pending read on the reader thread
         let _ = reader.join();
