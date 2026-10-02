@@ -99,6 +99,16 @@ $('form-password').addEventListener('submit', async (e) => {
   }
 });
 
+// Deep-link enotdesk://invite#token=… (main разбирает ссылку и просит префилл):
+// раскрываем форму принятия и подставляем токен, чтобы не копировать руками
+enot.onInvitePrefill?.((token) => {
+  if (!token) return;
+  const details = document.querySelector('.invite-details');
+  if (details) details.open = true;
+  const code = $('invite-code');
+  if (code) code.value = `enotdesk://invite#token=${token}`;
+});
+
 $('form-invite-accept').addEventListener('submit', async (e) => {
   e.preventDefault();
   const btn = $('btn-accept-invite');

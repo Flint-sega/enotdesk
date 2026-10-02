@@ -55,4 +55,11 @@ contextBridge.exposeInMainWorld('enot', {
     ipcRenderer.on('enot:onJoinStart', listener);
     return () => ipcRenderer.removeListener('enot:onJoinStart', listener);
   },
+  // Deep-link enotdesk://invite#token=…: main просит префиллить форму принятия
+  onInvitePrefill: (callback) => {
+    if (typeof callback !== 'function') return () => {};
+    const listener = (_event, token) => callback(token);
+    ipcRenderer.on('enot:invite-prefill', listener);
+    return () => ipcRenderer.removeListener('enot:invite-prefill', listener);
+  },
 });

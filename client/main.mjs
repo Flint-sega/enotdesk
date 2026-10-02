@@ -19,6 +19,7 @@ import { INPUT_KEYS } from './lib/protocol.mjs';
 import { normalizeServerUrl } from './lib/server-url.mjs';
 import { resolveServerUrl, DEFAULT_SERVER_URL } from './lib/first-run.mjs';
 import { parseJoinLink, reportJoin } from './lib/join.mjs';
+import { parseInviteLink } from './lib/invite-link.mjs';
 import { createAgent, createAgentApi, createIceServersFetcher } from './lib/agent.mjs';
 import { createBridgeRelay, BRIDGE_IPC } from './agent-bridge/relay.mjs';
 import { createTermHost } from './lib/term.mjs';
@@ -153,8 +154,20 @@ if (PROTOCOL_REGISTERED) app.setAsDefaultProtocolClient('enotdesk');
 // ссылке) и 'open-url' на macOS до ready. Парсим отложенно — после loadSettings,
 // рендереру отправляем после загрузки окна (flushPendingJoin на did-finish-load).
 let pendingRawJoin = null;
-let pendingJoin = null; // {server, token} — разобранная, ждёт загрузки окна
+let pendingJoin = null;
+let pendingInviteToken = null; // {server, token} — разобранная, ждёт загрузки окна
 let winLoaded = false;
+
+function applyInviteLink(raw) {
+  const parsed = parseInviteLink(raw);
+  if (!parsed) return false;
+  pendingInviteToken = parsed.token;
+  if (win && !win.isDestroyed()) {
+    if (win.isMinimized()) win.restore();
+    flushPendingInvite();
+  }
+  return true;
+}
 
 function applyJoinLink(raw) {
   if (AGENT) {
@@ -187,7 +200,18 @@ function applyJoinLink(raw) {
   flushPendingJoin();
 }
 
+function flushPendingInvite() {
+  if (!pendingInviteToken) return;
+  const token = pendingInviteToken;
+  pendingInviteToken = null;
+  if (win && !win.isDestroyed()) {
+    win.webContents.send('enot:invite-prefill', token);
+    win.show();
+  }
+}
+
 function flushPendingJoin() {
+  flushPendingInvite(); // invite-ссылка едет в тот же did-finish-load
   if (!pendingJoin || !win || win.isDestroyed() || !winLoaded) return;
   sendToRenderer('enot:onJoinStart', pendingJoin);
   pendingJoin = null;
@@ -209,8 +233,8 @@ app.on('second-instance', (_event, argv) => {
     }
   }
   // Повторный запуск с join-ссылкой (win/linux) доставляется первому инстансу сюда
-  const link = (argv ?? []).find((a) => typeof a === 'string' && parseJoinLink(a));
-  if (link) applyJoinLink(link);
+  const link = (argv ?? []).find((a) => typeof a === 'string' && (parseJoinLink(a) || parseInviteLink(a)));
+  if (link) { applyJoinLink(link) || applyInviteLink(link); }
 });
 
 // macOS: ссылка приходит через open-url — и до ready (сохраняем до loadSettings),
@@ -223,6 +247,8 @@ app.on('open-url', (event, url) => {
 
 // win/linux: ссылка в argv первого запуска (применяется после ready)
 const STARTUP_JOIN_LINK = process.argv.slice(1).find((a) => typeof a === 'string' && parseJoinLink(a)) ?? null;
+const STARTUP_INVITE_LINK = process.argv.slice(1).find((a) => typeof a === 'string' && parseInviteLink(a)) ?? null;
+const STARTUP_INVITE_TOKEN = process.argv.slice(1).map((a) => parseInviteLink(a)).find(Boolean)?.token ?? null;
 
 // Токены живут только здесь (main). Рендереру не возвращаются.
 const hostCredentials = () => ({ hostId: settings.hostId, password: helpPassword });
@@ -1317,7 +1343,9 @@ app.whenReady().then(() => {
   // Join-ссылка, пришедшая до ready (mac open-url / win-linux argv, R04):
   // применяем после loadSettings — настройки и api уже готовы
   if (STARTUP_JOIN_LINK) pendingRawJoin = STARTUP_JOIN_LINK;
+  if (STARTUP_INVITE_LINK) pendingInviteToken = parseInviteLink(STARTUP_INVITE_LINK).token;
   processPendingJoinLink();
+  flushPendingInvite();
   if (AGENT) {
     // Агент-служба: окно, IPC и рендерер не создаются — только цикл и логи
     startAgentMode();
