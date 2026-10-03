@@ -171,7 +171,22 @@ test('rtc-config: без токена 401; с hostToken и TURN-конфигом
   const reg = await api(base, 'POST', '/sessions');
   const cfg = await api(base, 'GET', '/rtc-config', { token: reg.json.hostToken });
   assert.equal(cfg.status, 200);
+  // turn.example не резолвится: graceful-фолбэк — оригинал без IP-варианта
   assert.deepEqual(cfg.json.iceServers, [{ urls: ['turn:turn.example:3478'], username: 'enot', credential: 'secret-кред' }]);
+  await inst.close();
+});
+
+test('rtc-config: резолвящийся hostname получает IP-вариант рядом с оригиналом', async (t) => {
+  const dbPath = tmpDb(t);
+  const { inst, base } = await startServer(t, { dbPath, turnUrls: 'turn:localhost:3478', turnUsername: 'enot', turnPassword: 'secret-кред' });
+  const reg = await api(base, 'POST', '/sessions');
+  const cfg = await api(base, 'GET', '/rtc-config', { token: reg.json.hostToken });
+  assert.equal(cfg.status, 200);
+  const urls = cfg.json.iceServers[0].urls;
+  assert.ok(urls.includes('turn:localhost:3478'), `оригинал на месте: ${JSON.stringify(urls)}`);
+  assert.ok(urls.includes('turn:127.0.0.1:3478'), `IP-вариант добавлен: ${JSON.stringify(urls)}`);
+  // кред один на оба адреса (use-auth-secret не зависит от адреса)
+  assert.equal(cfg.json.iceServers[0].username, 'enot');
   await inst.close();
 });
 
