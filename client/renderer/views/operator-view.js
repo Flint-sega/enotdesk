@@ -28,6 +28,23 @@ export function showConnectForm() {
   hide($('conn-paste-hint'));
 }
 
+// Кнопка «Завершить» общая с client-видом (btn-end-session), но в операторском
+// сеансе state.session пуст, а state.connect жив: endByHost из client-view
+// отправлял asHost с пустым sessionId — тихий no-op, сеанс висел до operator-lost
+// (прогон 2 03.10). Здесь — операторский путь: end без asHost + форма подключения.
+$('btn-end-session').addEventListener('click', async () => {
+  if (!state.connect || state.session) return; // host-вид обрабатывает endByHost
+  const btn = $('btn-end-session');
+  setBusy(btn, true);
+  await enot.request('session.end', { sessionId: state.connect.sessionId }).catch(() => {});
+  cleanupSession();
+  state.connect = null;
+  setBusy(btn, false);
+  text($('remote-status'), '');
+  text($('session-timer'), '');
+  showConnectForm();
+});
+
 $('form-login').addEventListener('submit', async (e) => {
   e.preventDefault();
   const btn = $('btn-login');
