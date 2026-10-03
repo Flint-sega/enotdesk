@@ -4,7 +4,7 @@
 // signatures in this file are verified against windows 0.58.0 on crates.io by
 // `cargo check --target x86_64-pc-windows-msvc`. Target: Windows only.
 
-use windows::core::{Interface, PCWSTR, PWSTR, VARIANT};
+use windows::core::{Interface, PCWSTR};
 use windows::Win32::Foundation::{
     CloseHandle, GetLastError, GENERIC_READ, HANDLE, HGLOBAL, HMODULE, LPARAM, POINT, WPARAM,
 };
@@ -22,14 +22,14 @@ use windows::Win32::Graphics::Dxgi::{
 };
 use windows::Win32::Graphics::Imaging::{
     CLSID_WICImagingFactory, GUID_ContainerFormatJpeg, GUID_WICPixelFormat32bppBGRA, IWICBitmap,
-    IWICBitmapEncoder, IWICBitmapFrameEncode, IWICBitmapSource, IWICImagingFactory, IWICStream, IWICStream_Impl,
+    IWICBitmapEncoder, IWICBitmapFrameEncode, IWICBitmapSource, IWICImagingFactory,
     WICBitmapEncoderNoCache,
 };
 use windows::Win32::Storage::FileSystem::PIPE_ACCESS_DUPLEX;
 use windows::Win32::System::Com::StructuredStorage::{IPropertyBag2, PROPBAG2};
 use windows::Win32::System::Com::{
     CoCreateInstance, CoInitializeEx, IStream, CLSCTX_INPROC_SERVER, COINIT_MULTITHREADED,
-    STREAM_SEEK, STREAM_SEEK_END,
+    STREAM_SEEK,
 };
 use windows::Win32::System::Com::StructuredStorage::CreateStreamOnHGlobal;
 use windows::Win32::System::Diagnostics::ToolHelp::{

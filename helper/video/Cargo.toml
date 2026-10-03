@@ -49,8 +49,6 @@ windows = { version = "0.58", features = [
   "Win32_System_Variant",
   # SendInput (mouse + keyboard injection).
   "Win32_UI_Input_KeyboardAndMouse",
-  # SHCreateMemStream (shlwapi) for the WIC encoder's output stream.
-  "Win32_UI_Shell",
   # GetSystemMetrics, SendMessageTimeoutW, HWND_BROADCAST.
   "Win32_UI_WindowsAndMessaging",
   # PIPE_ACCESS_* open-mode constants.

@@ -222,3 +222,51 @@ test('detach снимает обработчики: после него ниче
   document.dispatch(ev('keydown', { code: 'KeyA', key: 'a' }));
   assert.deepEqual(sent, []);
 });
+
+test('keyup в поле оператора не шлёт сиротский up (ревью GLM-5.3)', () => {
+  const video = fakeVideo();
+  const sent = [];
+  const events = [];
+  const active = { tagName: 'INPUT', blur() {} };
+  Object.defineProperty(globalThis.document, 'activeElement', { configurable: true, get: () => active });
+  const wire = wireBrowserInput(video, (m) => sent.push(m), {
+    keys: new Set(['a']),
+    onVideoPointerDown: () => {},
+    onKeyboardRoute: (m) => events.push(m),
+  });
+  video.dispatch(ev('pointerenter'));
+  // печать в своём поле при курсоре над видео: ни down, ни up не уходят на хост
+  document.dispatch(ev('keydown', { code: 'KeyA', key: 'a', target: active }));
+  document.dispatch(ev('keyup', { code: 'KeyA', key: 'a', target: active }));
+  assert.deepEqual(sent, []);
+  assert.ok(events.includes('local'));
+  wire.detach();
+});
+
+test('клавиша, зажатая над видео и отпущенная в поле, всё же получает up (не залипает)', () => {
+  const video = fakeVideo();
+  const sent = [];
+  const active = { tagName: 'INPUT', blur() {} };
+  Object.defineProperty(globalThis.document, 'activeElement', { configurable: true, get: () => active });
+  const wire = wireBrowserInput(video, (m) => sent.push(m), { keys: new Set(['a']) });
+  video.dispatch(ev('pointerenter'));
+  document.dispatch(ev('keydown', { code: 'KeyA', key: 'a' })); // над видео — down ушёл
+  assert.deepEqual(sent, [{ type: 'key', key: 'a', down: true }]);
+  document.dispatch(ev('keyup', { code: 'KeyA', key: 'a', target: active })); // отпустили в поле
+  assert.deepEqual(sent, [
+    { type: 'key', key: 'a', down: true },
+    { type: 'key', key: 'a', down: false },
+  ]);
+  wire.detach();
+});
+
+test('detach отпускает незакрытые клавиши — пересборка pc не залипает на хосте', () => {
+  const video = fakeVideo();
+  const sent = [];
+  const w = wireBrowserInput(video, (m) => sent.push(m), { keys: new Set(['a']) });
+  video.dispatch(ev('pointerenter'));
+  document.dispatch(ev('keydown', { code: 'KeyA', key: 'a' }));
+  sent.length = 0;
+  w.detach();
+  assert.deepEqual(sent, [{ type: 'key', key: 'a', down: false }]);
+});

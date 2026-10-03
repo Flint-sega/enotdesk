@@ -139,6 +139,17 @@ export function wireBrowserInput(video, send, { keys, onUnsupported, throttleMs 
   const onKeyUp = (e) => {
     const key = keyOf(e);
     if (!key) return;
+    // Гард тот же, что у keydown (ревью GLM-5.3: без него каждый up печатаемой
+    // клавиши улетал на хост сиротским {key,down:false}). Исключение — клавиша,
+    // зажатая над видео: up доливаем, чтобы хост не залип.
+    if (isOperatorField(e)) {
+      if (sentKeys.has(key)) {
+        sentKeys.delete(key);
+        raw({ type: 'key', key, down: false });
+      }
+      onKeyboardRoute?.('local');
+      return;
+    }
     // долив up для зажатой клавиши важен даже вне видео — ничего не залипает
     if (!overVideo && !sentKeys.has(key)) return;
     if (overVideo) prevented(e);
@@ -160,6 +171,11 @@ export function wireBrowserInput(video, send, { keys, onUnsupported, throttleMs 
     detach: () => {
       for (const [type, fn] of bindings) video.removeEventListener(type, fn);
       for (const [type, fn] of docBindings) document.removeEventListener(type, fn);
+      // Пересборка pc (ренеготиация) создаёт новый wire с пустым sentKeys:
+      // отпускаем всё зажатое, иначе клавиша залипала бы на хосте до конца
+      // сеанса (ревью GLM-5.3).
+      for (const key of sentKeys) raw({ type: 'key', key, down: false });
+      sentKeys.clear();
     },
   };
 }

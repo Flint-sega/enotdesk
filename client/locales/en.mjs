@@ -348,6 +348,7 @@ export default {
   "web.team.active": "active",
   "web.team.disabled": "disabled",
   "web.kb.remote": "Keyboard: remote computer",
+  "notify.chat": "New message from the operator",
   "web.kb.local": "Keyboard: operator panel",
   "web.session.end": "End session",
   "web.session.fullscreen": "Fullscreen",

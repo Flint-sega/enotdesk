@@ -42,6 +42,7 @@ body {
 .wg-btn.send { width: auto; padding: 0 10px; }
 #wg-body { flex: 1; display: flex; flex-direction: column; min-height: 0; }
 #wg-body.hidden { display: none; }
+#wg-unread.hidden { display: none; }
 #wg-log { flex: 1; overflow-y: auto; padding: 8px; }
 .wg-line { margin: 0 0 6px; word-break: break-word; }
 .wg-operator { color: #9fc0ff; }

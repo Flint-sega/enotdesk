@@ -21,7 +21,6 @@ contextBridge.exposeInMainWorld('enot', {
   // Чат-виджет (спека владельца 02.10): рендерер отдаёт сообщения оператора в
   // main, обратно получает ответы из виджета и события жизненного цикла.
   chatWidgetMsg: (text) => ipcRenderer.send('enot:chat-widget-msg', String(text ?? '')),
-  chatWidgetShow: () => ipcRenderer.send('enot:chat-widget-show'),
   chatWidgetEnd: () => ipcRenderer.send('enot:chat-widget-end'),
   onChatWidgetOut: (callback) => {
     if (typeof callback !== 'function') return () => {};

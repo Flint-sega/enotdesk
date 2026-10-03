@@ -349,6 +349,7 @@ export default {
   "web.team.disabled": "отключён",
   "web.kb.remote": "Клавиатура: удалённый компьютер",
   "web.kb.local": "Клавиатура: панель оператора",
+  "notify.chat": "Новое сообщение от оператора",
   "web.session.end": "Завершить сеанс",
   "web.session.fullscreen": "Во весь экран",
   "web.session.fitFill": "Заполнить",

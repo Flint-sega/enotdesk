@@ -20,6 +20,7 @@ function formatSize(bytes, locale) {
 const BASE_STYLE = `
 :root{color-scheme:dark;--bg:#070D17;--panel:#0F1A2C;--line:#1C2C44;--text:#EAF2FF;--muted:#8FA3BF;--accent:#35E0C4}
 *{box-sizing:border-box}
+.hidden{display:none!important}
 html{-webkit-text-size-adjust:100%}
 .insecure-warn{display:flex;align-items:flex-start;gap:10px;background:#2A1F0E;border-bottom:1px solid #57431F;color:#F2D49B;padding:12px 24px;font-size:14.5px;line-height:1.5}
 .insecure-warn svg{width:18px;height:18px;flex:none;margin-top:2px;color:#F2C063}
@@ -161,7 +162,7 @@ function insecureBanner(locale) {
 function page(res, title, bodyHtml, locale) {
   res.writeHead(200, {
     'Content-Type': 'text/html; charset=utf-8',
-    'Content-Security-Policy': "default-src 'none'; img-src 'self'; style-src 'unsafe-inline'",
+    'Content-Security-Policy': "default-src 'none'; img-src 'self'; style-src 'unsafe-inline'; script-src 'self'",
     'X-Content-Type-Options': 'nosniff',
     'X-Frame-Options': 'DENY',
   });
