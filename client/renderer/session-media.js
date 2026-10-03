@@ -490,7 +490,10 @@ async function doOperatorAnswer(offerSdp) {
       ch.onmessage = (m) => operatorFileMessage(ch, m.data);
     }
   };
-  pc.ontrack = (e) => { $('remote-video').srcObject = e.streams[0]; };
+  // Фолбэк как в web-панели (web/operator.mjs): replaceTrack без трека даёт
+  // answer без msid — e.streams пуст и без обёртки MediaStream([e.track])
+  // настольный оператор смотрел в чёрный экран (приёмка 03.10, V8-находка)
+  pc.ontrack = (e) => { $('remote-video').srcObject = e.streams[0] ?? new MediaStream([e.track]); };
   startSessionTimer();
   startQualityPolling(pc);
   await pc.setRemoteDescription({ type: 'offer', sdp: offerSdp });
