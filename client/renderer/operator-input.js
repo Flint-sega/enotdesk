@@ -66,6 +66,7 @@ export function wireOperatorInput(dc) {
     send({ type: 'button', button: btn, down: false, x, y });
   };
   const onMove = (e) => {
+    overVideo = true; // движение над видео — сигнал присутствия для клавиатуры
     const now = Date.now();
     if (now - lastMove < 25) return; // не чаще ~40 событий/с
     lastMove = now;
@@ -101,9 +102,10 @@ export function wireOperatorInput(dc) {
   };
   // Слушатели снимаемы: #remote-video один на все сеансы страницы, без detach
   // каждый re-offer/новый сеанс навсегда добавлял бы по 4 слушателя (паритет
-  // web-твину, ревью v0.4.6 доводка). Свойства (onwheel/onkeydown) самозаменяемы.
+  // web-твину, ревью v0.4.6 доводка). Свойства (onwheel) самозаменяемы.
   const bindings = [
     ['pointermove', onMove], ['pointerdown', onDown], ['pointerup', onUp], ['pointercancel', onCancel],
+    ['pointerenter', () => { overVideo = true; }], ['pointerleave', () => { overVideo = false; }],
   ];
   for (const [type, fn] of bindings) video.addEventListener(type, fn);
   video.oncontextmenu = (e) => e.preventDefault();
@@ -113,25 +115,51 @@ export function wireOperatorInput(dc) {
     const dy = wheelToLines(e.deltaY);
     if (dx || dy) send({ type: 'scroll', dx, dy });
   };
-  video.onkeydown = async (e) => {
+  // Клавиатура — на DOCUMENT, как в web-твине (web/input-source.mjs). Раньше
+  // keydown вешался на само видео: onDown делает preventDefault → клик не даёт
+  // видео фокус, и keydown на video не возникает никогда — клавиатура
+  // настольного оператора была мертва при живой мыши (независимая приёмка №2,
+  // 03.10). Гварды те же: курсор над видео; поля оператора не перехватываем;
+  // зажатая над видео клавиша получает up даже из чужого поля.
+  let overVideo = false;
+  const sentKeys = new Set();
+  const isOperatorField = (e) => {
+    const t = e.target;
+    if (!t || !t.tagName) return false;
+    const tag = t.tagName.toUpperCase();
+    return tag === 'INPUT' || tag === 'TEXTAREA' || t.isContentEditable === true;
+  };
+  const onDocKeyDown = async (e) => {
+    if (!overVideo || isOperatorField(e)) return;
     const key = keyFromCode(e.code, e.key);
     if (!key) { showKeyError(e.key); return; }
     e.preventDefault();
     const allowed = await ensureKeys();
     if (!allowed.has(key)) { showKeyError(e.key); return; }
+    sentKeys.add(key);
     send({ type: 'key', key, down: true });
   };
-  video.onkeyup = async (e) => {
+  const onDocKeyUp = async (e) => {
     const key = keyFromCode(e.code, e.key);
     if (!key) return;
+    if (isOperatorField(e) && !sentKeys.has(key)) return; // своя печать — не ретранслируем
     e.preventDefault();
     const allowed = await ensureKeys();
+    sentKeys.delete(key);
     if (!allowed.has(key)) return; // keydown уже отклонён с ошибкой; up молчать нечему
     send({ type: 'key', key, down: false });
   };
+  document.addEventListener('keydown', onDocKeyDown);
+  document.addEventListener('keyup', onDocKeyUp);
   return {
     detach: () => {
       for (const [type, fn] of bindings) video.removeEventListener(type, fn);
+      document.removeEventListener('keydown', onDocKeyDown);
+      document.removeEventListener('keyup', onDocKeyUp);
+      // Пересборка dc создаёт новый wire с пустым sentKeys: отпускаем всё
+      // зажатое, иначе клавиша залипала бы на удалённой машине до конца сеанса
+      for (const key of sentKeys) send({ type: 'key', key, down: false });
+      sentKeys.clear();
     },
   };
 }
