@@ -52,7 +52,9 @@ TMP="$(mktemp -d)"
 trap 'rm -rf "$TMP"' EXIT
 
 info "собираю tarball (server/, hub/, assets/, web/, client/lib/, client/renderer/, client/locales/, package.json, package-lock.json, scripts/install-server.sh)"
-tar -czf "$TMP/app.tar.gz" -C "$ROOT" server hub assets web package.json package-lock.json scripts/install-server.sh client/lib client/renderer client/locales
+# COPYFILE_DISABLE: macOS bsdtar иначе кладёт AppleDouble (._server и т.п.) —
+# allowlist-проверка установщика честно отвергает такой tarball (живой деплой 03.10)
+COPYFILE_DISABLE=1 tar -czf "$TMP/app.tar.gz" -C "$ROOT" server hub assets web package.json package-lock.json scripts/install-server.sh client/lib client/renderer client/locales
 
 # Значения ENOT_* уходят на сервер только файлом 0600: в argv ssh/bash их нет.
 ENV_FILE_LOCAL="$TMP/deploy.env"

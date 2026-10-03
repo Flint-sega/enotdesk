@@ -707,6 +707,14 @@ if [ ! -d "$RELEASE/node_modules" ]; then
 fi
 chown -R "$ENOT_USER:$ENOT_USER" "$RELEASE"
 
+# current обязан быть симлинком на релиз; реальный каталог на его месте
+# (распаковка прямо в current старыми способами) не даёт mv -T перезаписать —
+# переносим его в releases/ и линкуем (живой деплой 03.10)
+if [ -d "$CURRENT_LINK" ] && [ ! -L "$CURRENT_LINK" ]; then
+  LEGACY="$RELEASES_DIR/legacy-$(date +%Y%m%d%H%M%S)"
+  info "обнаружен каталог вместо симлинка: $CURRENT_LINK — переношу в $LEGACY"
+  mv "$CURRENT_LINK" "$LEGACY"
+fi
 rm -f "$CURRENT_LINK.tmp"
 ln -s "$RELEASE" "$CURRENT_LINK.tmp"
 mv -Tf "$CURRENT_LINK.tmp" "$CURRENT_LINK"
