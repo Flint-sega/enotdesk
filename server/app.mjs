@@ -1903,7 +1903,7 @@ export function createServer(opts = {}) {
         return ws.close(4005, 'server-busy');
       }
       if (!rt) {
-        rt = { hostWs: null, opSockets: new Map(), operatorUserId: null, sigCount: 0, sigReset: 0, hostLostAt: null, opLostAt: null, lastBeat: 0, termActive: false, hostPingAt: null, hostPingCount: 0 };
+        rt = { hostWs: null, opSockets: new Map(), operatorUserId: null, sigCount: 0, sigReset: 0, hostLostAt: null, opLostAt: null, lastBeat: 0, termActive: false, hostPingAt: null, hostPingCount: 0, lastOffer: null, iceBuf: [] };
         live.set(s.id, rt);
       }
       let resumed;
@@ -1940,6 +1940,16 @@ export function createServer(opts = {}) {
       }
       if (role === 'operator' && fresh.state === 'approved') {
         send(ws, { type: 'approved', claimId: s.claim_id });
+        // Реплей offer/ICE (приёмка 03.10): хост шлёт offer один раз в момент
+        // approve; если операторский сокет прицепился позже (reload панели,
+        // реконнект, второй оператор), offer умирал в пустоту — видео не было
+        // никогда. Свежему сокету (не возврату в грейсе — там pc жив) отдаём
+        // сохранённый offer и буфер его ICE-кандидатов.
+        const ent = rt.opSockets.get(ws);
+        if (!resumed && ent && !ent.sawOffer && rt.lastOffer) {
+          send(ws, rt.lastOffer);
+          for (const cand of rt.iceBuf) send(ws, cand);
+        }
       }
       if (resumed) {
         send(rt.hostWs, { type: 'resumed' });
@@ -2089,6 +2099,15 @@ export function createServer(opts = {}) {
           : { type: 'signal', data: { candidate: msg.data.candidate } };
         if (isHost) {
           // multi-operator (v0.4.0): сигналы хоста получает каждый операторский сокет
+          if (clean.data.description) {
+            if (clean.data.description.type === 'offer') {
+              rt.lastOffer = clean; // обёрнутое {type:'signal',data} — реплей идёт как живой сигнал
+              rt.iceBuf = [];
+            }
+          } else if (rt.lastOffer && rt.iceBuf.length < 100) {
+            rt.iceBuf.push(clean);
+          }
+          for (const ent of rt.opSockets.values()) ent.sawOffer = true;
           for (const opWs of rt.opSockets.keys()) send(opWs, clean);
           return send(ws, clean);
         }
