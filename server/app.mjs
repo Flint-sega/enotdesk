@@ -2,6 +2,7 @@ import http from 'node:http';
 import path from 'node:path';
 import fs from 'node:fs';
 import crypto from 'node:crypto';
+import dns from 'node:dns';
 import { WebSocketServer } from 'ws';
 import { openDb, endLiveSessions, auditLog, runRetention } from './db.mjs';
 import { sanitizeFileName } from '../client/lib/file-transfer.mjs';
@@ -231,6 +232,54 @@ function validSignalData(data) {
     return keys.every((k) => k === 'candidate');
   }
   return false;
+}
+
+// IP-вариант TURN-адреса с кэшем (приёмка 03.10): desktop-клиенты флапают по
+// DNS при старте WebRTC (Electron: «Failed to resolve address … -105», STUN
+// lookup error) — ICE умирал, пока живы только LAN-кандидаты. Сервер сам
+// резолвит hostname и рядом с оригиналом отдаёт turn:<IP>:port; креды одни
+// (use-auth-secret не зависит от адреса). Не резолвится — отдаём как есть.
+const turnIpCache = new Map(); // host -> { ip, at } | { fail: true, at }
+const TURN_IP_TTL_MS = 10 * 60_000;
+const TURN_IP_FAIL_TTL_MS = 60_000;
+const TURN_LOOKUP_TIMEOUT_MS = 1500;
+
+function lookupIpv4(host) {
+  // getaddrinfo (учитывает /etc/hosts — важно для localhost), с потолком времени:
+  // подвисший резолв не должен задерживать ответ /rtc-config
+  let timer;
+  const timeout = new Promise((resolve) => {
+    timer = setTimeout(() => resolve(null), TURN_LOOKUP_TIMEOUT_MS);
+    if (timer.unref) timer.unref();
+  });
+  return Promise.race([
+    dns.promises.lookup(host, { family: 4 }).then((r) => r?.address ?? null).catch(() => null),
+    timeout,
+  ]).finally(() => clearTimeout(timer));
+}
+
+async function turnUrlVariants(url) {
+  try {
+    const m = /^(turns?):([^:/?]+)(:\d+)?(\?.*)?$/.exec(url);
+    if (!m) return [url];
+    const host = m[2];
+    if (/^\d{1,3}(\.\d{1,3}){3}$/.test(host)) return [url]; // уже IP-литерал
+    const cached = turnIpCache.get(host);
+    let ip = null;
+    if (cached) {
+      const ttl = cached.fail ? TURN_IP_FAIL_TTL_MS : TURN_IP_TTL_MS;
+      if (Date.now() - cached.at < ttl) ip = cached.ip ?? null;
+    }
+    if (!cached || (ip === null && Date.now() - cached.at >= (cached.fail ? TURN_IP_FAIL_TTL_MS : TURN_IP_TTL_MS))) {
+      ip = await lookupIpv4(host);
+      turnIpCache.set(host, ip ? { ip, at: Date.now() } : { fail: true, at: Date.now() });
+    }
+    if (!ip) return [url];
+    const variant = `${m[1]}:${ip}${m[3] ?? ''}${m[4] ?? ''}`;
+    return variant === url ? [url] : [url, variant];
+  } catch {
+    return [url];
+  }
 }
 
 const CONTACT_LIMITS = { name: 120, notes: 2000, tags: 10, tag: 30 };
@@ -1289,7 +1338,11 @@ export function createServer(opts = {}) {
       if (u && u.role === 'auditor') return err(res, 403, 'forbidden', 'Недостаточно прав');
       const iceServers = [];
       if (cfg.turnUrls) {
-        const urls = cfg.turnUrls.split(',').map((x) => x.trim()).filter(Boolean);
+        // + IP-вариант каждого hostname-адреса (см. turnUrlVariants): клиентский
+        // DNS при старте WebRTC флапает — ICE не должен зависеть от резолва
+        const urls = (await Promise.all(
+          cfg.turnUrls.split(',').map((x) => x.trim()).filter(Boolean).map(turnUrlVariants),
+        )).flat();
         if (cfg.turnSecret) {
           // Эфемерный кред coturn REST API (use-auth-secret): username — метка
           // истечения (unix-секунды), credential — base64(HMAC-SHA1(секрет,
