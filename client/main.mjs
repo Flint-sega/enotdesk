@@ -25,7 +25,7 @@ import { createBridgeRelay, BRIDGE_IPC } from './agent-bridge/relay.mjs';
 import { createTermHost } from './lib/term.mjs';
 import { showToast } from './lib/notify.mjs';
 import { createMachineServices } from './lib/machine-services.mjs';
-import { onIncoming as chatWidgetOnIncoming } from './lib/chat-widget.mjs';
+import { onIncoming as chatWidgetOnIncoming, shouldNotify as chatWidgetShouldNotify } from './lib/chat-widget.mjs';
 import { createSessionSpawner } from './lib/session-spawn.mjs';
 import { createVideoHost } from './lib/video-host.mjs';
 import { inputEventToCommands } from './lib/input-translate.mjs';
@@ -155,7 +155,7 @@ if (PROTOCOL_REGISTERED) app.setAsDefaultProtocolClient('enotdesk');
 // рендереру отправляем после загрузки окна (flushPendingJoin на did-finish-load).
 let pendingRawJoin = null;
 let pendingJoin = null;
-let pendingInviteToken = null; // {server, token} — разобранная, ждёт загрузки окна
+let pendingInviteToken = null; // строка-токен из parseInviteLink — ждёт загрузки окна
 let winLoaded = false;
 
 function applyInviteLink(raw) {
@@ -163,7 +163,12 @@ function applyInviteLink(raw) {
   if (!parsed) return false;
   pendingInviteToken = parsed.token;
   if (win && !win.isDestroyed()) {
-    if (win.isMinimized()) win.restore();
+    // Тот же гвард, что у join (приёмка 02.10): живой сеанс не прерываем и
+    // свёрнутое клиентом окно не выдёргиваем; префилл уйдёт на did-finish-load.
+    if (!gate.isOpen()) {
+      if (win.isMinimized()) win.restore();
+      win.show();
+    }
     flushPendingInvite();
   }
   return true;
@@ -172,18 +177,22 @@ function applyInviteLink(raw) {
 function applyJoinLink(raw) {
   if (AGENT) {
     console.log('[enotdesk] join-ссылка игнорируется: режим службы агента');
-    return;
+    return false;
   }
   const parsed = parseJoinLink(raw);
-  if (!parsed) {
-    console.log('[enotdesk] получена некорректная join-ссылка — проигнорирована');
-    return;
-  }
+  if (!parsed) return false; // не join-ссылка (может быть invite) — молча, решает вызывающий
   // Сервер из ссылки заменяет текущий адрес: сохраняем и пересоздаём api, затем
   // автостарт сеанса рендерером (тот же путь, что кнопка «Получить помощь»).
   // Галочку «Разрешить HTTP» ссылка не трогает: допуск для не-loopback http живёт
   // только в памяти процесса (пока жив join-сеанс), settings.json не ослабляем —
   // при следующем старте адрес пройдёт ту же валидацию, что любой сохранённый.
+  // Живой сеанс нельзя осиротить: hostToken/hostSessionId живут в замыкании
+  // старого api — после подмены revoke-пути видели бы новый api без токенов и
+  // сеанс умирал бы host-lost вместо честного 'ended' (ревью GLM-5.3).
+  if (api.hostSessionId && api.hostToken) {
+    const old = api;
+    old.request('session.end', { sessionId: old.hostSessionId, asHost: true }).catch(() => {});
+  }
   settings.serverUrl = parsed.server;
   const saved = saveSettings();
   if (!saved.ok) console.error(`[enotdesk] join: не удалось сохранить адрес сервера: ${saved.error}`);
@@ -198,16 +207,17 @@ function applyJoinLink(raw) {
     }
   }
   flushPendingJoin();
+  return true;
 }
 
 function flushPendingInvite() {
   if (!pendingInviteToken) return;
+  // Гард ДО потребления (ревью GLM-5.3: токен съедался, пока win ещё null при
+  // старте, и did-finish-load получал уже пусто): не готово окно — ждём.
+  if (!win || win.isDestroyed() || !winLoaded) return;
   const token = pendingInviteToken;
   pendingInviteToken = null;
-  if (win && !win.isDestroyed()) {
-    win.webContents.send('enot:invite-prefill', token);
-    win.show();
-  }
+  win.webContents.send('enot:invite-prefill', token);
 }
 
 function flushPendingJoin() {
@@ -221,7 +231,9 @@ function processPendingJoinLink() {
   if (!pendingRawJoin || !app.isReady()) return;
   const raw = pendingRawJoin;
   pendingRawJoin = null;
-  applyJoinLink(raw);
+  // macOS open-url приносит и join, и invite (enotdesk://invite#…): раньше
+  // invite отбрасывался parseJoinLink'ом (ревью GLM-5.3)
+  if (!applyJoinLink(raw)) applyInviteLink(raw);
 }
 
 app.on('second-instance', (_event, argv) => {
@@ -232,9 +244,11 @@ app.on('second-instance', (_event, argv) => {
       win.focus();
     }
   }
-  // Повторный запуск с join-ссылкой (win/linux) доставляется первому инстансу сюда
+  // Повторный запуск с join/invite-ссылкой (win/linux) доставляется первому инстансу
   const link = (argv ?? []).find((a) => typeof a === 'string' && (parseJoinLink(a) || parseInviteLink(a)));
-  if (link) { applyJoinLink(link) || applyInviteLink(link); }
+  if (link && !applyJoinLink(link) && !applyInviteLink(link)) {
+    console.log('[enotdesk] получена некорректная ссылка — проигнорирована');
+  }
 });
 
 // macOS: ссылка приходит через open-url — и до ready (сохраняем до loadSettings),
@@ -248,7 +262,6 @@ app.on('open-url', (event, url) => {
 // win/linux: ссылка в argv первого запуска (применяется после ready)
 const STARTUP_JOIN_LINK = process.argv.slice(1).find((a) => typeof a === 'string' && parseJoinLink(a)) ?? null;
 const STARTUP_INVITE_LINK = process.argv.slice(1).find((a) => typeof a === 'string' && parseInviteLink(a)) ?? null;
-const STARTUP_INVITE_TOKEN = process.argv.slice(1).map((a) => parseInviteLink(a)).find(Boolean)?.token ?? null;
 
 // Токены живут только здесь (main). Рендереру не возвращаются.
 const hostCredentials = () => ({ hostId: settings.hostId, password: helpPassword });
@@ -665,6 +678,11 @@ function permissionsReport() {
 let chatWidgetWin = null;
 let chatWidgetState = { visible: false, collapsed: false, unread: 0 };
 let chatWidgetLastNotify = 0;
+// loadFile асинхронен: сообщения оператора, пришедшие до did-finish-load,
+// очередь дольёт после загрузки — иначе первое сообщение терялось безвозвратно
+// (тот же класс гонки, что flushPendingJoin у главного окна; ревью GLM-5.3).
+let chatWidgetLoaded = false;
+const chatWidgetQueue = [];
 
 function positionChatWidget(w) {
   try {
@@ -687,7 +705,13 @@ function createChatWidget() {
     },
   });
   positionChatWidget(chatWidgetWin);
-  chatWidgetWin.on('closed', () => { chatWidgetWin = null; });
+  chatWidgetWin.on('closed', () => { chatWidgetWin = null; chatWidgetLoaded = false; });
+  chatWidgetWin.webContents.once('did-finish-load', () => {
+    chatWidgetLoaded = true;
+    const queued = chatWidgetQueue.splice(0);
+    for (const m of queued) chatWidgetWin?.webContents.send('enot:chat-widget-msg', m);
+    chatWidgetPushState();
+  });
   chatWidgetWin.loadFile(path.join(import.meta.dirname, 'renderer', 'chat-widget.html'));
   return chatWidgetWin;
 }
@@ -695,12 +719,22 @@ function createChatWidget() {
 function destroyChatWidget() {
   if (chatWidgetWin && !chatWidgetWin.isDestroyed()) chatWidgetWin.destroy();
   chatWidgetWin = null;
+  chatWidgetLoaded = false;
+  chatWidgetQueue.length = 0;
   chatWidgetState = { visible: false, collapsed: false, unread: 0 };
 }
 
 function chatWidgetPushState() {
-  if (chatWidgetWin && !chatWidgetWin.isDestroyed()) {
+  if (chatWidgetWin && !chatWidgetWin.isDestroyed() && chatWidgetLoaded) {
     chatWidgetWin.webContents.send('enot:chat-widget-state', chatWidgetState);
+  }
+}
+
+function pushChatWidgetMsg(payload) {
+  if (chatWidgetWin && !chatWidgetWin.isDestroyed() && chatWidgetLoaded) {
+    chatWidgetWin.webContents.send('enot:chat-widget-msg', payload);
+  } else {
+    chatWidgetQueue.push(payload);
   }
 }
 
@@ -710,14 +744,13 @@ function chatWidgetIncoming(text) {
   const w = createChatWidget();
   if (!w.isVisible()) w.showInactive();
   positionChatWidget(w);
-  w.webContents.send('enot:chat-widget-msg', { who: 'operator', text: String(text).slice(0, 2000) });
+  pushChatWidgetMsg({ who: 'operator', text: String(text).slice(0, 2000) });
   chatWidgetPushState();
-  if (chatWidgetState.collapsed && chatWidgetState.unread > 0) {
-    const now = Date.now();
-    if (now - chatWidgetLastNotify >= 3000) {
-      chatWidgetLastNotify = now;
-      try { new Notification({ title: 'EnotDesk', body: t('notify.chat', {}) }).show(); } catch { /* нет уведомлений — не критично */ }
-    }
+  // Троттл из lib (юнит-тесты гоняют именно её): уведомляем только в свёрнутом виде.
+  const now = Date.now();
+  if (chatWidgetShouldNotify({ collapsed: chatWidgetState.collapsed, lastNotifiedAt: chatWidgetLastNotify, nowMs: now })) {
+    chatWidgetLastNotify = now;
+    try { new Notification({ title: 'EnotDesk', body: t('notify.chat', {}) }).show(); } catch { /* нет уведомлений — не критично */ }
   }
 }
 
@@ -728,20 +761,21 @@ function registerIpc() {
   };
 
   const fromWidget = (e) => chatWidgetWin !== null && !chatWidgetWin.isDestroyed() && e.sender === chatWidgetWin.webContents;
+  // Гварды по НАЗНАЧЕНИЮ канала (ревью GLM-5.3: были перепутаны местами и оба
+  // направления молча дропались). 'msg' — сообщения оператора из главного
+  // рендерера (владельца DC-чата) в виджет; 'out' — ответ клиента из виджета
+  // обратно в рендерер.
   ipcMain.on('enot:chat-widget-msg', (e, text) => {
-    if (!fromWidget(e) || typeof text !== 'string' || !text) return;
-    // из виджета → в DC чата через главный рендерер (он владеет state.dcs.chat)
-    if (win && !win.isDestroyed()) win.webContents.send('enot:chat-widget-out', text.slice(0, 2000));
+    if (!fromOurRenderer(e) || typeof text !== 'string' || !text) return;
+    chatWidgetIncoming(text);
   });
   ipcMain.on('enot:chat-widget-out', (e, text) => {
-    if (!fromOurRenderer(e) || typeof text !== 'string' || !text) return;
-    // ответ клиента → виджет как «you» (без уведомления и без unread)
-    chatWidgetState = { visible: true, collapsed: chatWidgetState.collapsed, unread: chatWidgetState.unread };
-    const w = chatWidgetWin;
-    if (w && !w.isDestroyed()) {
-      if (!w.isVisible()) w.showInactive();
-      w.webContents.send('enot:chat-widget-msg', { who: 'you', text: text.slice(0, 2000) });
-    }
+    if (!fromWidget(e) || typeof text !== 'string' || !text) return;
+    const clean = text.slice(0, 2000);
+    // ответ клиента → в DC чата через главный рендерер (он владеет state.dcs.chat)
+    if (win && !win.isDestroyed()) win.webContents.send('enot:chat-widget-out', clean);
+    // эхо в виджет как «you» (без unread и без уведомления)
+    pushChatWidgetMsg({ who: 'you', text: clean });
   });
   ipcMain.on('enot:chat-widget-toggle', (e) => {
     if (!fromWidget(e)) return;
@@ -750,6 +784,9 @@ function registerIpc() {
       : { visible: true, collapsed: true, unread: chatWidgetState.unread };
     const w = chatWidgetWin;
     if (w && !w.isDestroyed()) {
+      // 44px «полоска» ниже дефолтного minHeight: Electron клампит setBounds
+      // минимумом окна — ослабляем на время сворачивания (ревью GLM-5.3).
+      w.setMinimumSize(260, chatWidgetState.collapsed ? 44 : 120);
       const b = w.getBounds();
       w.setBounds({ ...b, height: chatWidgetState.collapsed ? 44 : 420 });
     }
@@ -1345,7 +1382,6 @@ app.whenReady().then(() => {
   if (STARTUP_JOIN_LINK) pendingRawJoin = STARTUP_JOIN_LINK;
   if (STARTUP_INVITE_LINK) pendingInviteToken = parseInviteLink(STARTUP_INVITE_LINK).token;
   processPendingJoinLink();
-  flushPendingInvite();
   if (AGENT) {
     // Агент-служба: окно, IPC и рендерер не создаются — только цикл и логи
     startAgentMode();
@@ -1353,6 +1389,7 @@ app.whenReady().then(() => {
   }
   registerIpc();
   createWindow();
+  flushPendingInvite(); // гард в flush не съест токен до did-finish-load (ревью GLM-5.3)
   startUpdater();
   if (SMOKE) {
     setTimeout(async () => {

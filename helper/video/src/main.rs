@@ -461,17 +461,31 @@ fn enqueue(tx: &std::sync::mpsc::Sender<InputJob>, job: InputJob, shared: &Share
 }
 
 fn input_thread(shared: &Shared, privacy_sleep: &AtomicBool, rx: std::sync::mpsc::Receiver<InputJob>) {
+    let mut attached = true;
     if let Err(e) = win::attach_input_desktop() {
+        attached = false;
         set_last_err(shared, &format!("input desktop: {e}"));
     }
     log_line(&format!(
         "{{\"ev\":\"input\",\"desktop\":\"{}\",\"attach\":\"{}\"}}",
         proto::jstr(&ascii(&win::thread_desktop_name())),
-        if shared.last_err.lock().unwrap_or_else(|p| p.into_inner()).contains("input desktop:") { "failed" } else { "ok" },
+        if attached { "ok" } else { "failed" },
     ));
+    // Выходим только по stop процесса. По broken НЕ выходим (ревью GLM-5.3:
+    // процесс переживает обрыв и ждёт следующего клиента — умерший здесь поток
+    // не респавнится, ввод следующей сессии был бы мёртв до рестарта хелпера).
     for job in rx {
-        if shared.stop.load(Ordering::SeqCst) || shared.broken.load(Ordering::SeqCst) {
+        if shared.stop.load(Ordering::SeqCst) {
             break;
+        }
+        // Ретрай attach: на старте мог быть активен lock-screen/UAC (OpenInputDesktop
+        // без WRITEOBJECTS падает) — повторяем на каждом job, пока не прицепимся,
+        // иначе ввод молча мёртв до конца сессии (ревью GLM-5.3).
+        if !attached {
+            match win::attach_input_desktop() {
+                Ok(()) => attached = true,
+                Err(e) => set_last_err(shared, &format!("input desktop: {e}")),
+            }
         }
         execute_job(shared, privacy_sleep, job);
     }
@@ -488,12 +502,16 @@ fn execute_job(shared: &Shared, privacy_sleep: &AtomicBool, job: InputJob) {
                 // "move": абсолютный сдвиг выше — вся команда
                 _ => {}
             }
-            std::thread::sleep(Duration::from_millis(120));
-            let cur = win::cursor_pos();
-            set_last_err(
-                shared,
-                &format!("cmd mouse x={x:.2} y={y:.2} sent={sent} cursor=({},{})", cur.0, cur.1),
-            );
+            // Сна и трассы успеха больше нет: 120 мс на каждый job при темпе
+            // оператора ~40 соб/с копили неограниченную задержку ввода (ревью
+            // GLM-5.3, high). Ошибка — честно в last_err, успех не шумит.
+            if !sent {
+                let cur = win::cursor_pos();
+                set_last_err(
+                    shared,
+                    &format!("cmd mouse x={x:.2} y={y:.2} sent=false cursor=({},{})", cur.0, cur.1),
+                );
+            }
         }
         InputJob::Key { name, down } => match keys::key_vk(&name) {
             Some((vk, ext)) => {

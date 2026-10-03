@@ -17,13 +17,16 @@ function append(kind, text) {
 
 function setCollapsed(collapsed) {
   body.classList.toggle('hidden', collapsed);
-  unread.classList.toggle('hidden', collapsed || !(+unread.dataset.count > 0));
-  unread.textContent = unread.dataset.count > 0 ? String(unread.dataset.count) : '';
+  // Непрочитанные копятся только в свёрнутом виде (lib/chat-widget.mjs) —
+  // бейдж живёт именно там (спека: «полоска с непрочитанными»); раньше
+  // условие было перевёрнуто и прятало счётчик ровно в этом состоянии.
+  const count = +unread.dataset.count > 0 ? +unread.dataset.count : 0;
+  unread.classList.toggle('hidden', !(collapsed && count > 0));
+  unread.textContent = count ? String(count) : '';
   document.getElementById('wg-toggle').textContent = collapsed ? '▢' : '—';
 }
 
 window.chatWidget.onState((s) => {
-  setCollapsed(s.collapsed);
   unread.dataset.count = String(s.unread ?? 0);
   setCollapsed(s.collapsed);
 });

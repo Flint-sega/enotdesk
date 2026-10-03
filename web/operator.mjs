@@ -234,8 +234,15 @@ let kbMode = null;
 function setKeyboardMode(mode) {
   if (mode === kbMode) return;
   kbMode = mode;
-  const el = document.getElementById('kb-indicator');
+  const el = $('kb-indicator');
   if (el) el.textContent = mode === 'remote' ? t('web.kb.remote') : t('web.kb.local');
+}
+// Индикатор маршрута не переживает сеанс: новый сеанс до первого нажатия
+// показывал маршрут прошлого (ревью GLM-5.3).
+function resetKeyboardMode() {
+  kbMode = null;
+  const el = $('kb-indicator');
+  if (el) el.textContent = '';
 }
 
 // ---- состояния страницы ----
@@ -277,6 +284,7 @@ function stopMedia() {
   videoNote = null; // статус видео не протекает в следующий сеанс (v0.6)
   privacyDimmed = false;
   hide($('btn-privacy')); // privacy-кнопка не переживает сеанс
+  resetKeyboardMode(); // индикатор клавиш не переживает сеанс
   stopTimers();
 }
 
@@ -1097,7 +1105,7 @@ function closeMachineClaim() {
 
 function showTeam() {
   showOnly('view-team');
-  void teamRoute();
+  void teamRoute({ api, t });
 }
 
 function showMachines() {
@@ -1294,10 +1302,16 @@ function wire() {
   $('btn-machines-claim-cancel')?.addEventListener('click', () => closeMachineClaim());
 
   $('btn-nav-machines')?.addEventListener('click', () => showMachines());
+  $('btn-nav-team')?.addEventListener('click', () => {
+    closeMachineClaim();
+    showTeam();
+  });
   $('btn-nav-connect')?.addEventListener('click', () => {
     closeMachineClaim();
     showConnectForm();
   });
+  // Панель команды: монтируем один раз (формы/кнопки внутри view-team).
+  bindTeam({ api, t, showOnly, onOpenMachines: () => showMachines() });
 
   // Drag&drop файла на экран сеанса, как в desktop.
   const zone = $('op-remote');
