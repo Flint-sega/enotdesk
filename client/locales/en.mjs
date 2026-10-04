@@ -128,6 +128,7 @@ export default {
   "op.fitFit": "Fit",
   "op.fullscreen": "Fullscreen",
   "op.end": "End",
+  "op.endForbidden": "Only the participant who started the session can end it",
   "status.connecting": "Connecting…",
   "status.connected": "Connected",
   "op.clientReconnecting": "Client is reconnecting…",

@@ -1897,8 +1897,15 @@ export function createServer(opts = {}) {
         rt.hostWs = null;
         participantLost(session.id, rt, 'host');
       } else if (role === 'operator' && rt.opSockets?.has(ws)) {
+        const ent = rt.opSockets.get(ws);
         rt.opSockets.delete(ws);
-        if (rt.opSockets.size === 0) participantLost(session.id, rt, 'operator');
+        if (rt.opSockets.size === 0) {
+          // ЧЬЯ утрата: fresh-оператор другого пользователя в грейсе — не
+          // «вернувшийся» (ревью 04.10 F2: иначе он лишался реплея offer и
+          // получал чужой 'resumed')
+          rt.opLostUser = ent?.userId ?? null;
+          participantLost(session.id, rt, 'operator');
+        }
       }
     });
 
@@ -1956,7 +1963,7 @@ export function createServer(opts = {}) {
         return ws.close(4005, 'server-busy');
       }
       if (!rt) {
-        rt = { hostWs: null, opSockets: new Map(), operatorUserId: null, sigCount: 0, sigReset: 0, hostLostAt: null, opLostAt: null, lastBeat: 0, termActive: false, hostPingAt: null, hostPingCount: 0, lastOffer: null, iceBuf: [] };
+        rt = { hostWs: null, opSockets: new Map(), operatorUserId: null, sigCount: 0, sigReset: 0, hostLostAt: null, opLostAt: null, opLostUser: null, lastBeat: 0, termActive: false, hostPingAt: null, hostPingCount: 0, lastOffer: null, iceBuf: [] };
         live.set(s.id, rt);
       }
       let resumed;
@@ -1972,7 +1979,10 @@ export function createServer(opts = {}) {
         db.prepare('UPDATE sessions SET lease_expires_at = ? WHERE id = ?')
           .run(new Date(Date.now() + cfg.leaseMs).toISOString(), s.id);
       } else {
-        resumed = rt.opLostAt != null;
+        // «Вернулся» = в грейсе потерян ИМЕННО ЭТОТ пользователь (ревью 04.10
+        // F2: глобальный opLostAt от чужой утраты делал fresh-оператора B
+        // «вернувшимся» без реплея offer — видео у B не появлялось никогда)
+        resumed = rt.opLostAt != null && rt.opLostUser === userId;
         rt.opLostAt = null;
         rt.opSockets.set(ws, { userId, claimId: msg.claimId });
       }
