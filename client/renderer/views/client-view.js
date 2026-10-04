@@ -108,7 +108,10 @@ async function decide(allow) {
 }
 
 $('btn-stop').addEventListener('click', endByHost);
-$('btn-end-session').addEventListener('click', endByHost);
+// Кнопка общая с операторским видом: host-ветка только при живом host-сеансе,
+// иначе клик оператора шёл POST /sessions/undefined/end и переключал вкладку
+// в чужой экран «ended» (ревью 04.10 F3; операторский путь — operator-view.js)
+$('btn-end-session').addEventListener('click', () => { if (state.session) endByHost(); });
 
 async function endByHost() {
   await enot.request('session.end', { sessionId: state.session?.sessionId, asHost: true }).catch(() => {});

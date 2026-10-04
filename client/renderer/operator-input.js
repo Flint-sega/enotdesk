@@ -134,15 +134,24 @@ export function wireOperatorInput(dc) {
     const key = keyFromCode(e.code, e.key);
     if (!key) { showKeyError(e.key); return; }
     e.preventDefault();
-    const allowed = await ensureKeys();
-    if (!allowed.has(key)) { showKeyError(e.key); return; }
+    // sentKeys ДО await: keyup первого нажатия не должен обогнать down
+    // (ревью 04.10 F4); клавиша вне allowlist вычтется ниже
     sentKeys.add(key);
+    const allowed = await ensureKeys();
+    if (!allowed.has(key)) { sentKeys.delete(key); showKeyError(e.key); return; }
     send({ type: 'key', key, down: true });
   };
   const onDocKeyUp = async (e) => {
     const key = keyFromCode(e.code, e.key);
     if (!key) return;
-    if (isOperatorField(e) && !sentKeys.has(key)) return; // своя печать — не ретранслируем
+    // Паритет web-твину (input-source.mjs): up без парного down уходит на хост
+    // только для клавиши, зажатой над видео; чужая печать в полях — молча.
+    // Сиротский up на не-поле (body/кнопка) раньше уходил всегда (ревью 04.10 F1)
+    if (isOperatorField(e)) {
+      if (!sentKeys.has(key)) return;
+    } else if (!overVideo && !sentKeys.has(key)) {
+      return;
+    }
     e.preventDefault();
     const allowed = await ensureKeys();
     sentKeys.delete(key);

@@ -128,6 +128,7 @@ export default {
   "op.fitFit": "Вписать",
   "op.fullscreen": "Во весь экран",
   "op.end": "Завершить",
+  "op.endForbidden": "Завершить сеанс может только участник, который его начал",
   "status.connecting": "Подключение…",
   "status.connected": "Подключено",
   "op.clientReconnecting": "Клиент переподключается…",

@@ -53,11 +53,18 @@ test('/downloads: hero, чипы, шаги, карточки платформ и
 
 test('/invite: тот же стиль, шапка и футер с версией', async (t) => {
   const { base } = await startServer(t, { version: '4.5.6' });
-  const html = await (await fetch(base + '/invite')).text();
+  const res = await fetch(base + '/invite');
+  const html = await res.text();
   assert.match(html, /Приглашение в команду EnotDesk/);
   assert.match(html, /class="site-head"/);
   assert.match(html, /v4\.5\.6/);
   assert.match(html, /С заботой о ваших задачах/);
+  // Форма принятия приглашения живая: скрипт грузится, его fetch к
+  // /api/v1/invites/accept не блокируется CSP (ревью 04.10: без connect-src
+  // форма загрузалась, но submit умирал в «Failed to fetch»)
+  const csp = res.headers.get('content-security-policy') ?? '';
+  assert.match(csp, /script-src 'self'/);
+  assert.match(csp, /connect-src 'self'/);
 });
 
 test('/brand/: бренд-статика и маскоты отдаются, traversal и лишние имена — 404', async (t) => {

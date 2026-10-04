@@ -32,17 +32,26 @@ export function showConnectForm() {
 // сеансе state.session пуст, а state.connect жив: endByHost из client-view
 // отправлял asHost с пустым sessionId — тихий no-op, сеанс висел до operator-lost
 // (прогон 2 03.10). Здесь — операторский путь: end без asHost + форма подключения.
+// Второму (присоединённому) оператору сервер честно отвечает 403 — показываем,
+// не маскируем (ревью 04.10 Н1).
 $('btn-end-session').addEventListener('click', async () => {
   if (!state.connect || state.session) return; // host-вид обрабатывает endByHost
   const btn = $('btn-end-session');
   setBusy(btn, true);
-  await enot.request('session.end', { sessionId: state.connect.sessionId }).catch(() => {});
-  cleanupSession();
-  state.connect = null;
-  setBusy(btn, false);
-  text($('remote-status'), '');
-  text($('session-timer'), '');
-  showConnectForm();
+  try {
+    const res = await enot.request('session.end', { sessionId: state.connect.sessionId }).catch(() => ({ status: 0, body: {} }));
+    if (res.status === 200) {
+      cleanupSession();
+      state.connect = null;
+      text($('remote-status'), '');
+      text($('session-timer'), '');
+      showConnectForm();
+    } else {
+      text($('conn-error'), res.status === 403 ? t('op.endForbidden') : t('common.serverError'));
+    }
+  } finally {
+    setBusy(btn, false);
+  }
 });
 
 $('form-login').addEventListener('submit', async (e) => {
