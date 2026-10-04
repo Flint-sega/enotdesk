@@ -385,17 +385,22 @@ export function routeOperatorSignal(from, data) {
   }
 }
 
-export function attachOperator(claimId, name = '') {
+// async не для await: все ранние выходы обязаны возвращать Promise —
+// вызывающие вешают .catch (живая приёмка v0.6.2: undefined.catch ронял
+// startHostRtc в «Не удалось начать» сразу после «Разрешить»)
+export async function attachOperator(claimId, name = '') {
   if (!claimId || typeof claimId !== 'string') return;
   if (state.operators.has(claimId)) return; // уже подключён (upsert не нужен)
   if (!state.localStream || !state.session) {
     pendingAttaches.add(claimId); // захват ещё не готов — доиграем после
     return;
   }
-  attachOperatorNow(claimId, name).catch(() => {
+  try {
+    await attachOperatorNow(claimId, name);
+  } catch {
     // пере-оффер по таймеру: операторский WS жив — сервер доставит
     scheduleReattach(claimId);
-  });
+  }
 }
 
 function scheduleReattach(claimId) {
