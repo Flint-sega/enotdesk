@@ -111,8 +111,15 @@ test('app.js: сигналинг/ended решают по сеансу, а не �
     'answer/ICE клиента-хоста роутятся в персональный pc оператора');
   assert.match(src, /case 'operator-joined':[\s\S]{0,300}attachOperator\(msg\.claimId/,
     'operator-joined поднимает персональный pc по claimId');
+  assert.match(src, /attachOperator\(msg\.claimId, op\.name \?\? ''\)\.catch/,
+    'attachOperator вызывается с .catch — не роняет approved-ветку');
   assert.match(src, /case 'operator-left':[\s\S]{0,200}dropOperator\(msg\.claimId\)/,
     'operator-left снимает персональный pc, сеанс живёт');
+  // живая приёмка v0.6.2: sync-функция с ранними return + .catch() снаружи =
+  // TypeError «reading 'catch'» и падение startHostRtc сразу после «Разрешить»
+  const media = readFileSync(path.join(dir, 'session-media.js'), 'utf8');
+  assert.match(media, /export async function attachOperator\(/,
+    'attachOperator — async: ранние выходы возвращают Promise, .catch снаружи безопасен');
   assert.match(src, /const clientSide = state\.role === 'client' \|\| !!state\.session;/,
     'экран завершения — по сеансу, симметрично rtcLinkLost');
   assert.match(src, /if \(graceMs > 0\) holdRtcLink/,
