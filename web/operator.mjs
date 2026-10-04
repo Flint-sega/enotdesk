@@ -562,6 +562,9 @@ async function onSignal(msg) {
     case 'signal':
       try {
         if (msg.data?.description && msg.data.description.type === 'offer') {
+          // Гвард адресации (мультиоператор: offer адресован по claimId;
+          // defense-in-depth — сервер уже маршрутизирует)
+          if (msg.to && state.connect?.claimId && msg.to !== state.connect.claimId) return;
           await operatorAnswer(msg.data.description.sdp);
           // 'ended'/rtcLinkLost могли прийти во время await — не показываем
           // экран живого сеанса поверх честной формы (ревью v0.4.3)

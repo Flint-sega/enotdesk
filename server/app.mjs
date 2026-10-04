@@ -1236,7 +1236,7 @@ export function createServer(opts = {}) {
           .run(s.id, user.id, claimId, new Date().toISOString());
         auditLog(db, user.id, 'session.join', s.id, {});
         const rt = live.get(s.id);
-        if (rt?.hostWs) send(rt.hostWs, { type: 'operator-joined', operator: op });
+        if (rt?.hostWs) send(rt.hostWs, { type: 'operator-joined', claimId, operator: op });
         return ok(res, 201, { sessionId: s.id, claimId, operator: op, state: s.state, joined: true });
       }
       const claimId = newClaimId();
@@ -1899,6 +1899,8 @@ export function createServer(opts = {}) {
       } else if (role === 'operator' && rt.opSockets?.has(ws)) {
         const ent = rt.opSockets.get(ws);
         rt.opSockets.delete(ws);
+        // Хосту — уход оператора: он снимет персональный pc (мультиоператор)
+        if (rt.hostWs) send(rt.hostWs, { type: 'operator-left', claimId: ent?.claimId ?? null });
         if (rt.opSockets.size === 0) {
           // ЧЬЯ утрата: fresh-оператор другого пользователя в грейсе — не
           // «вернувшийся» (ревью 04.10 F2: иначе он лишался реплея offer и
@@ -1963,7 +1965,7 @@ export function createServer(opts = {}) {
         return ws.close(4005, 'server-busy');
       }
       if (!rt) {
-        rt = { hostWs: null, opSockets: new Map(), operatorUserId: null, sigCount: 0, sigReset: 0, hostLostAt: null, opLostAt: null, opLostUser: null, lastBeat: 0, termActive: false, hostPingAt: null, hostPingCount: 0, lastOffer: null, iceBuf: [] };
+        rt = { hostWs: null, opSockets: new Map(), operatorUserId: null, sigCount: 0, sigReset: 0, hostLostAt: null, opLostAt: null, opLostUser: null, lastBeat: 0, termActive: false, hostPingAt: null, hostPingCount: 0 };
         live.set(s.id, rt);
       }
       let resumed;
@@ -1985,6 +1987,13 @@ export function createServer(opts = {}) {
         resumed = rt.opLostAt != null && rt.opLostUser === userId;
         rt.opLostAt = null;
         rt.opSockets.set(ws, { userId, claimId: msg.claimId });
+        // Мультиоператор: хост поднимает ПЕРСОНАЛЬНЫЙ pc на каждое присоединение
+        // (offer адресуется по claimId). Сообщаем и при WS-(пере)подключении, не
+        // только при claim-approve: reconnect оператора = новый attach.
+        if (rt.hostWs) {
+          const op = db.prepare('SELECT id, name, login FROM users WHERE id = ?').get(userId);
+          if (op) send(rt.hostWs, { type: 'operator-joined', claimId: msg.claimId, operator: op });
+        }
       }
       session = s;
       authed = true;
@@ -2000,19 +2009,19 @@ export function createServer(opts = {}) {
       if (role === 'host' && fresh.state === 'approved') {
         // replay после переподключения: ворота ввода открывает только реальный approved
         send(ws, { type: 'approved', claimId: s.claim_id });
+        // Мультиоператор (модель RustDesk): хост после обрыва сигналинга должен
+        // знать ВСЕХ присоединённых операторов — каждому он поднимет свой pc
+        // (offer адресуется). Без этого оператор, зацепившийся в окно обрыва,
+        // оставался бы без видео навсегда.
+        for (const ent of rt.opSockets.values()) {
+          const op = db.prepare('SELECT id, name, login FROM users WHERE id = ?').get(ent.userId);
+          if (op) send(ws, { type: 'operator-joined', claimId: ent.claimId, operator: op });
+        }
       }
       if (role === 'operator' && fresh.state === 'approved') {
         send(ws, { type: 'approved', claimId: s.claim_id });
-        // Реплей offer/ICE (приёмка 03.10): хост шлёт offer один раз в момент
-        // approve; если операторский сокет прицепился позже (reload панели,
-        // реконнект, второй оператор), offer умирал в пустоту — видео не было
-        // никогда. Свежему сокету (не возврату в грейсе — там pc жив) отдаём
-        // сохранённый offer и буфер его ICE-кандидатов.
-        const ent = rt.opSockets.get(ws);
-        if (!resumed && ent && !ent.sawOffer && rt.lastOffer) {
-          send(ws, rt.lastOffer);
-          for (const cand of rt.iceBuf) send(ws, cand);
-        }
+        // offer приходит АДРЕСОВАННО от хоста (host → attachOperator → offer c
+        // to:claimId): реплей не нужен и невозможен — у каждого оператора свой pc
       }
       if (resumed) {
         send(rt.hostWs, { type: 'resumed' });
@@ -2161,20 +2170,28 @@ export function createServer(opts = {}) {
           ? { type: 'signal', data: { description: { type: msg.data.description.type, sdp: msg.data.description.sdp } } }
           : { type: 'signal', data: { candidate: msg.data.candidate } };
         if (isHost) {
-          // multi-operator (v0.4.0): сигналы хоста получает каждый операторский сокет
-          if (clean.data.description) {
-            if (clean.data.description.type === 'offer') {
-              rt.lastOffer = clean; // обёрнутое {type:'signal',data} — реплей идёт как живой сигнал
-              rt.iceBuf = [];
+          // Мультиоператор (модель RustDesk, N подписчиков на один поток):
+          // to=claimId — адресованный offer/ICE ПЕРСОНАЛЬНОМУ pc оператора;
+          // без to — fan-out всем (машина-хост: прежний поток, первый answer
+          // выигрывает). Валидный `to` без сокета (оператор ушёл) — сигнал дропается.
+          const to = typeof msg.to === 'string' && msg.to.length <= 128 ? msg.to : null;
+          if (to) {
+            let delivered = false;
+            for (const [opWs, ent] of rt.opSockets) {
+              if (ent.claimId !== to) continue;
+              send(opWs, clean);
+              delivered = true;
+              break;
             }
-          } else if (rt.lastOffer && rt.iceBuf.length < 100) {
-            rt.iceBuf.push(clean);
+            return delivered ? send(ws, clean) : undefined;
           }
-          for (const ent of rt.opSockets.values()) ent.sawOffer = true;
           for (const opWs of rt.opSockets.keys()) send(opWs, clean);
           return send(ws, clean);
         }
-        return send(rt.hostWs, clean);
+        // op→host: тегируем источником claimId — хост роутит answer/ICE
+        // в персональный pc этого оператора (ревью волны v0.6.2)
+        const opEnt = rt.opSockets.get(ws);
+        return send(rt.hostWs, { type: 'signal', from: opEnt.claimId, data: clean.data });
       }
       return send(ws, { type: 'error', code: 'bad_message', message: 'Некорректное сообщение' });
     }

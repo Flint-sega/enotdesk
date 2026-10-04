@@ -570,10 +570,12 @@ test('multi-operator: join по ID+паролю в approved, свой claimId, W
   const c2 = await api(base, 'GET', `/sessions/${sessionId}/connect`, { token: op2Login.json.token });
   assert.equal(c2.json.claimId, join.json.claimId);
 
-  // WS: хост получает operator-joined, оба оператора живут параллельно
+  // WS: хост получает operator-joined, оба оператора живут параллельно.
+  // Мультиоператор (волна v0.6.2): attach-уведомление приходит и для ПЕРВОГО
+  // оператора (root-admin) — матчим по claimId второго, а не по первому встречному.
   const op2ws = wsConnect(port);
   await wsAuth(op2ws, { type: 'auth', role: 'operator', sessionId, token: op2Login.json.token, claimId: join.json.claimId });
-  const joined = await host.wait((m) => m.type === 'operator-joined', 3000);
+  const joined = await host.wait((m) => m.type === 'operator-joined' && m.claimId === join.json.claimId, 3000);
   t.diagnostic('joined ok: ' + joined.operator.login);
   assert.equal(joined.operator.login, 'op2');
 

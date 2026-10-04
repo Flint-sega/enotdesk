@@ -103,8 +103,16 @@ test('app.js: сигналинг/ended решают по сеансу, а не �
   const src = readFileSync(path.join(dir, 'app.js'), 'utf8');
   assert.match(src, /if \(state\.connect && msg\.data\.description\.type === 'offer'\)/,
     'оффер диспетчерится по сеансу оператора (state.connect)');
-  assert.match(src, /state\.session && state\.pc && msg\.data\.description\.type === 'answer'/,
+  assert.match(src, /state\.session && msg\.data\.description\.type === 'answer'/,
     'answer диспетчерится по сеансу клиента (state.session)');
+  // мультиоператор (волна v0.6.2): answer тегирован from=claimId — роутится
+  // в персональный pc оператора, не в единственный state.pc
+  assert.match(src, /routeOperatorSignal\(msg\.from, msg\.data\)/,
+    'answer/ICE клиента-хоста роутятся в персональный pc оператора');
+  assert.match(src, /case 'operator-joined':[\s\S]{0,300}attachOperator\(msg\.claimId/,
+    'operator-joined поднимает персональный pc по claimId');
+  assert.match(src, /case 'operator-left':[\s\S]{0,200}dropOperator\(msg\.claimId\)/,
+    'operator-left снимает персональный pc, сеанс живёт');
   assert.match(src, /const clientSide = state\.role === 'client' \|\| !!state\.session;/,
     'экран завершения — по сеансу, симметрично rtcLinkLost');
   assert.match(src, /if \(graceMs > 0\) holdRtcLink/,

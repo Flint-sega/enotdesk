@@ -18,6 +18,10 @@ export const state = {
   clip: { client: true, operator: true },
   fileRx: null, // приём файла {rx, dc, prog}
   iceQueue: [],
+  // Мультиоператор (модель RustDesk: N подписчиков на один поток): персональный
+  // pc и каналы на каждого присоединённого оператора, ключ — claimId.
+  // localStream (захват) на хосте один и расшаривается во все pc.
+  operators: new Map(), // claimId → {pc, iceQueue: [], dcs: {label: channel}}
   busy: false,
   graceMs: null, // из ready сервера (ENOT_GRACE_MS) — окно hold №15 у оператора
   pages: { contacts: 0, history: 0, audit: 0 },

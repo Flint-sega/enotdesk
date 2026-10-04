@@ -5,7 +5,7 @@ import { $, enot, text, setBusyAll } from './dom.js';
 import { state, endReasonText } from './state.js';
 import { t } from '../lib/i18n.mjs';
 import { wireOperatorInput } from './operator-input.js';
-import { wireHostChannel } from './session-services.js';
+import { wireHostChannel, resetFileReceivers } from './session-services.js';
 import { setVideoEnabled } from '../lib/media-toggle.mjs';
 import { summarizeStats, formatQuality } from '../lib/rtc-stats.mjs';
 import { nextTarget, TOP_BITRATE } from '../lib/adaptive-bitrate.mjs';
@@ -61,19 +61,23 @@ function stopQualityPolling() {
 // summarizeStats), rtt — из candidate-pair своей стороны.
 let adaptive = { target: TOP_BITRATE, lastChangeAt: 0 };
 let adaptiveTimer = null;
-function startAdaptive(pc) {
-  stopAdaptive();
-  adaptive = { target: TOP_BITRATE, lastChangeAt: 0 };
+// Мультиоператор: per-viewer контроль (у каждого pc свой энкодер и свой REMB/
+// TWCC — проще и точнее глобального VIDEO_QOS RustDesk). Ступень по каждому pc
+// своя; новая ступень applyVideoCap-ится в свой sender.
+function startAdaptiveIfNeeded() {
+  if (adaptiveTimer) return;
   adaptiveTimer = setInterval(async () => {
-    try {
-      const summary = summarizeStats(await pc.getStats());
-      if (!summary) return;
-      const now = Date.now();
-      const { target, changed } = nextTarget(summary, adaptive.target, adaptive.lastChangeAt, now);
-      if (!changed) return;
-      adaptive = { target, lastChangeAt: now };
-      applyVideoCap(pc, target);
-    } catch { /* соединение закрывается — не критично */ }
+    const now = Date.now();
+    for (const op of state.operators.values()) {
+      try {
+        const summary = summarizeStats(await op.pc.getStats());
+        if (!summary) continue;
+        const { target, changed } = nextTarget(summary, op.adaptive.target, op.adaptive.lastChangeAt, now);
+        if (!changed) continue;
+        op.adaptive = { target, lastChangeAt: now };
+        applyVideoCap(op.pc, target);
+      } catch { /* соединение закрывается — не критично */ }
+    }
   }, 2000);
 }
 function stopAdaptive() {
@@ -111,6 +115,7 @@ export function cleanupSession() {
 export function stopMedia() {
   inputDetach?.detach?.(); // pointer-слушатели оператора не переживают сеанс
   inputDetach = null;
+  stopAllOperators(); // персональные pc всех операторов закрываются вместе с сеансом
   try { state.localStream?.getTracks().forEach((track) => track.stop()); } catch { /* треки уже остановлены */ }
   try { state.dc?.close(); } catch { /* уже закрыт */ }
   for (const ch of Object.values(state.dcs ?? {})) { try { ch.close(); } catch { /* уже закрыт */ } }
@@ -285,12 +290,6 @@ export async function startHostRtc() {
   if (hostRtcStarting) return;
   hostRtcStarting = true;
   const epoch = hostRtcEpoch;
-  const stale = (stream, pc) => {
-    // менялась эпоха (rtc-reset при грейс-переподключении): гасим СВОИ частичные
-    // ресурсы, state не трогаем — там уже следующий старт
-    if (pc) { try { pc.close(); } catch { /* уже закрыт */ } }
-    if (stream) { try { stream.getTracks().forEach((track) => track.stop()); } catch { /* уже остановлены */ } }
-  };
   try {
     const got = await acquirePrimaryStream();
     if (epoch !== hostRtcEpoch) { got.stream?.getTracks().forEach((track) => track.stop()); return; }
@@ -310,32 +309,15 @@ export async function startHostRtc() {
     // работает ли инъекция — без этого «не двигается мышь» не диагностируется.
     try {
       const perms = await enot.permissions();
-      if (epoch !== hostRtcEpoch) { stale(stream, null); return; }
+      if (epoch !== hostRtcEpoch) return;
       const ni = perms.nativeInput ?? {};
       text($('client-input-status'), ni.available
         ? t('client.inputStatus', { backend: ni.platform })
         : t('client.inputUnavailable', { reason: ni.reason ?? 'native-unavailable' }));
     } catch { /* статус не критичен для трансляции */ }
-    const cfg = await enot.request('rtc.config', { asHost: true });
-    if (epoch !== hostRtcEpoch) { stale(stream, null); return; }
-    const pc = makePc(cfg.body?.iceServers ?? []);
-    if (epoch !== hostRtcEpoch) { stale(stream, pc); return; }
-    state.pc = pc;
-    // Каналы данных создаёт офферер (ADR 0014): answer оператора не может
-    // добавить m=application, которого нет в offer — иначе ввод/чат/файлы
-    // никогда не согласуются (найдено живым сеансом 25.09).
-    state.dc = pc.createDataChannel('input');
-    const chatCh = pc.createDataChannel('chat');
-    const clipCh = pc.createDataChannel('clip');
-    const fileCh = pc.createDataChannel('file');
-    fileCh.binaryType = 'arraybuffer';
-    for (const ch of [state.dc, chatCh, clipCh, fileCh]) wireHostChannel(ch);
-    for (const track of stream.getTracks()) pc.addTrack(track, stream);
-    applyVideoCap(pc);
-    startAdaptive(pc);
-    const offer = await pc.createOffer();
-    await pc.setLocalDescription(offer);
-    await enot.sendSignal({ type: 'signal', data: { description: { type: 'offer', sdp: pc.localDescription.sdp } } });
+    // pc больше НЕТ на этом этапе: мультиоператор — хост поднимает ПЕРСОНАЛЬНЫЙ
+    // pc на каждого оператора в attachOperator (по operator-joined c claimId)
+    flushPendingAttaches();
   } catch (e) {
     // устаревший старт (эпоха сменилась): СВОИ ресурсы не трогаем через stopMedia —
     // там уже состояние нового старта; частичное гасит stale-пути выше
@@ -354,6 +336,151 @@ export async function startHostRtc() {
     if (epoch === hostRtcEpoch) hostRtcStarting = false;
   }
   clientShow('connected');
+}
+
+// ---------------------------------------------------------------------------
+// Мультиоператор (модель RustDesk, N подписчиков на один поток): захваченный
+// track расшаривается в ПЕРСОНАЛЬНЫЙ pc каждого оператора (pc-per-operator).
+// offer адресуется (to:claimId), answer/ICE оператора тегируются сервером
+// (from) и роутятся сюда по claimId. Ввод обоих операторов идёт в одну
+// очередь инъекции — last-write-wins (input-pipeline).
+// ---------------------------------------------------------------------------
+
+const pendingAttaches = new Set(); // claimId: operator-joined до готовности захвата
+const reattachTimers = new Map(); // claimId → таймер пере-оффера
+
+function flushPendingAttaches() {
+  for (const claimId of [...pendingAttaches]) attachOperator(claimId).catch(() => {});
+  pendingAttaches.clear();
+}
+
+// Само-восстановление после approved-replay: пере-оффер операторам, чей pc
+// не подключён (персональный pc живёт P2P и обычно переживает сигналинг)
+export function rehomeOperators() {
+  flushPendingAttaches();
+  for (const [claimId, op] of state.operators) {
+    if (op.pc.connectionState !== 'connected') scheduleReattach(claimId);
+  }
+}
+
+// Роутинг op→host сигналов (answer/ICE тегированы сервером from=claimId):
+// доставляются в персональный pc этого оператора; чужие/устаревшие — молча.
+export function routeOperatorSignal(from, data) {
+  const op = from ? state.operators.get(from) : null;
+  if (!op) return;
+  if (data.description) {
+    if (data.description.type !== 'answer') return;
+    op.pc.setRemoteDescription({ type: 'answer', sdp: data.description.sdp })
+      .then(() => {
+        for (const c of op.iceQueue) op.pc.addIceCandidate(c).catch(() => {});
+        op.iceQueue.length = 0;
+      })
+      .catch(() => { /* некорректный answer — pc не портим */ });
+    return;
+  }
+  if (data.candidate) {
+    const c = data.candidate;
+    if (op.pc.remoteDescription) op.pc.addIceCandidate(c).catch(() => {});
+    else op.iceQueue.push(c);
+  }
+}
+
+export function attachOperator(claimId, name = '') {
+  if (!claimId || typeof claimId !== 'string') return;
+  if (state.operators.has(claimId)) return; // уже подключён (upsert не нужен)
+  if (!state.localStream || !state.session) {
+    pendingAttaches.add(claimId); // захват ещё не готов — доиграем после
+    return;
+  }
+  attachOperatorNow(claimId, name).catch(() => {
+    // пере-оффер по таймеру: операторский WS жив — сервер доставит
+    scheduleReattach(claimId);
+  });
+}
+
+function scheduleReattach(claimId) {
+  if (!state.session || reattachTimers.has(claimId)) return;
+  reattachTimers.set(claimId, setTimeout(() => {
+    reattachTimers.delete(claimId);
+    if (state.session && !state.operators.has(claimId)) {
+      attachOperator(claimId).catch(() => {});
+    }
+  }, 3000));
+}
+
+async function attachOperatorNow(claimId, name) {
+  const cfg = await enot.request('rtc.config', { asHost: true });
+  if (!state.localStream || !state.session || state.operators.has(claimId)) return;
+  const pc = makePcOperator(claimId, cfg.body?.iceServers ?? []);
+  for (const track of state.localStream.getTracks()) pc.addTrack(track, state.localStream);
+  applyVideoCap(pc);
+  const op = { pc, iceQueue: [], dcs: {}, name, adaptive: { target: adaptive.target, lastChangeAt: Date.now() } };
+  state.operators.set(claimId, op);
+  startAdaptiveIfNeeded(); // первый подписчик — цикл per-viewer ступеней
+  // Каналы создаёт офферер (ADR 0014): per-operator набор input/chat/clip/file
+  for (const label of ['input', 'chat', 'clip', 'file']) {
+    const ch = pc.createDataChannel(label);
+    if (label === 'file') ch.binaryType = 'arraybuffer';
+    wireHostChannel(ch, claimId);
+  }
+  const offer = await pc.createOffer();
+  await pc.setLocalDescription(offer);
+  await enot.sendSignal({ type: 'signal', to: claimId, data: { description: { type: 'offer', sdp: pc.localDescription.sdp } } });
+}
+
+function makePcOperator(claimId, iceServers) {
+  const pc = new RTCPeerConnection({ iceServers });
+  pc.onicecandidate = (e) => {
+    if (e.candidate) {
+      enot.sendSignal({ type: 'signal', to: claimId, data: { candidate: e.candidate.toJSON() } }).catch(() => {});
+    }
+  };
+  pc.ondatachannel = (e) => wireHostChannel(e.channel, claimId);
+  // Персональный pc: его смерть ≠ смерть сеанса (другие операторы не трогаются).
+  // Оператор перезапустится: host пере-офферит по таймеру (answerChain у
+  // оператора пересобирает pc на каждый новый offer — само-восстановление).
+  let opGrace = null;
+  pc.onconnectionstatechange = () => {
+    const op = state.operators.get(claimId);
+    if (!op || op.pc !== pc) return; // оператор уже заменён/удалён — таймер чужой
+    if (pc.connectionState === 'connected') {
+      if (opGrace) { clearTimeout(opGrace); opGrace = null; }
+      return;
+    }
+    if (pc.connectionState === 'disconnected') {
+      opGrace ??= setTimeout(() => {
+        opGrace = null;
+        const cur = state.operators.get(claimId);
+        if (!cur || cur.pc !== pc || pc.connectionState === 'connected') return;
+        dropOperator(claimId);
+        scheduleReattach(claimId);
+      }, 10_000);
+      return;
+    }
+    if (['failed', 'closed'].includes(pc.connectionState)) {
+      if (opGrace) { clearTimeout(opGrace); opGrace = null; }
+      dropOperator(claimId);
+      scheduleReattach(claimId);
+    }
+  };
+  return pc;
+}
+
+export function dropOperator(claimId) {
+  const op = state.operators.get(claimId);
+  if (!op) return;
+  try { op.pc.close(); } catch { /* уже закрыт */ }
+  for (const ch of Object.values(op.dcs)) { try { ch.close(); } catch { /* уже закрыт */ } }
+  state.operators.delete(claimId);
+  resetFileReceivers(claimId); // недокачанный файл этого оператора — вместе с каналом
+  if (!state.operators.size) stopAdaptive(); // подписчиков нет — захват не крутится вхолостую (аналог has_subscribes у RustDesk)
+}
+
+function stopAllOperators() {
+  for (const claimId of [...state.operators.keys()]) dropOperator(claimId);
+  for (const t of reattachTimers.values()) clearTimeout(t);
+  reattachTimers.clear();
+  pendingAttaches.clear();
 }
 
 // Выбор источника: экраны отдельно, окна — по одному; onChoose решает, стартовать
@@ -420,15 +547,12 @@ function applyVideoCap(pc, maxBitrate = adaptive.target) {
 }
 
 // Полный сброс host-RTC при грейс-переподключении (main шлёт 'rtc-reset' только
-// host-роли): эпоха, pc, захват, каналы, файловый приём, очередь, adaptive-таймер,
-// карточка ретрая. Зеркало неполных чисток сведено в одно место (ревью v0.4.3).
+// host-роли). Мультиоператор: pc операторов — P2P, смерть сигналинга хоста их
+// НЕ убивает; захваченный трек тоже живёт (его остановка = обрыв видео всем).
+// Сбрасываем только стартовые флаги и карточку ретрая; операторы пере-офферятся
+// по необходимости (сервер реплеит operator-joined, attachOperator доцепит).
 export function resetHostRtcState() {
   invalidateHostRtc();
-  try { state.pc?.close(); } catch { /* уже закрыт */ }
-  try { state.localStream?.getTracks().forEach((track) => track.stop()); } catch { /* уже остановлены */ }
-  state.pc = null; state.localStream = null;
-  state.dc = null; state.dcs = {}; state.fileRx = null; state.iceQueue = [];
-  stopAdaptive();
   removeCaptureCard();
 }
 
@@ -518,7 +642,7 @@ $('btn-fit').addEventListener('click', () => {
   text($('btn-fit'), cover ? t('op.fitFit') : t('op.fitFill'));
 });
 $('btn-switch-source').addEventListener('click', () => {
-  if (!state.pc) return;
+  if (!state.localStream) return;
   showSourcePicker(async (id, pickEl) => {
     const stream = await acquireStream(id, pickEl);
     if (!stream) {
@@ -529,11 +653,14 @@ $('btn-switch-source').addEventListener('click', () => {
     pickEl.remove();
     const old = state.localStream;
     state.localStream = stream;
-    const videoSender = state.pc.getSenders().find((s) => s.track?.kind === 'video');
-    if (videoSender) await videoSender.replaceTrack(stream.getVideoTracks()[0]);
-    else for (const track of stream.getTracks()) state.pc.addTrack(track, stream);
-    // Смена источника: держим текущую адаптивную ступень, не сбрасывая наверх.
-    applyVideoCap(state.pc);
+    // Смена источника: track подменяется в КАЖДОМ персональном pc (мультиоператор)
+    for (const op of state.operators.values()) {
+      const videoSender = op.pc.getSenders().find((s) => s.track?.kind === 'video');
+      if (videoSender) await videoSender.replaceTrack(stream.getVideoTracks()[0]);
+      else for (const track of stream.getTracks()) op.pc.addTrack(track, stream);
+      // Смена источника: держим текущую адаптивную ступень, не сбрасывая наверх.
+      applyVideoCap(op.pc);
+    }
     old?.getTracks().forEach((track) => track.stop());
   }).catch((e) => text($('client-live-note'), e.message));
 });

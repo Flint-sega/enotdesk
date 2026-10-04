@@ -9,7 +9,7 @@ import { showConnectForm } from './views/operator-view.js';
 import { renderContacts } from './views/contacts.js';
 import { renderTeam } from './views/team.js';
 import { renderHistory, renderAudit } from './views/history.js';
-import { cleanupSession, drainIce, startHostRtc, operatorAnswer, resetHostRtcState, holdRtcLink } from './session-media.js';
+import { cleanupSession, startHostRtc, operatorAnswer, resetHostRtcState, holdRtcLink, attachOperator, dropOperator, rehomeOperators, routeOperatorSignal } from './session-media.js';
 import { resetUnreadChat, listenChatWidgetOut } from './session-services.js';
 listenChatWidgetOut(); // маршрут ответов из чат-виджета в DC чата
 import { checkForUpdate, openFirstRun, updateServerChip } from './settings.js';
@@ -53,9 +53,10 @@ enot.onSignal(async (msg) => {
       // Критерий — сеанс, а не state.role (активная вкладка меняется кликом по
       // табу и не связан с ролью в живом сеансе, ревью v0.4.4)
       if (state.session) {
-        // replay после переподключения: pc уже сброшен rtc-reset'ом — стартуем заново;
-        // живой pc (повторный approved без обрыва) не пересобираем
-        if (state.pc) break;
+        // Мультиоператор: захват живёт через грейс-переподключение (pc операторов
+        // — P2P, сигналинг их не убивает). Если захвата нет — стартуем; если есть
+        // — пере-оффер тем операторам, чей pc не подключён (само-восстановление).
+        if (state.localStream) { rehomeOperators(); break; }
         clientShow('connected');
         text($('connected-operator'), document.getElementById('consent-operator').textContent);
         try { await startHostRtc(); } catch (e) {
@@ -81,9 +82,12 @@ enot.onSignal(async (msg) => {
         if (msg.data?.description) {
         // Критерий — сеанс, а не state.role (активная вкладка меняется кликом
         // по табу в живом сеансе; привязка к роли роняла восстановление №15
-        // и answer клиента, ревью v0.4.6). Оператор получает offer'ы,
-        // клиент-хост — answer.
+        // и answer клиента, ревью v0.4.6). Оператор получает АДРЕСОВАННЫЙ offer
+        // (мультиоператор: to=мой claimId, сервер маршрутизирует), клиент-хост —
+        // answer с тегом from (роутинг в персональный pc оператора).
         if (state.connect && msg.data.description.type === 'offer') {
+          // Гвард адресации (defense-in-depth: сервер уже фильтрует по claimId)
+          if (msg.to && state.connect.claimId && msg.to !== state.connect.claimId) break;
           await operatorAnswer(msg.data.description.sdp);
           // 'ended'/rtcLinkLost могли прийти во время await — не показываем
           // экран живого сеанса поверх честной формы (ревью v0.4.3, паритет web)
@@ -91,14 +95,21 @@ enot.onSignal(async (msg) => {
           show($('op-remote'));
           hide($('op-waiting'));
           text($('remote-status'), t('status.connected'));
-        } else if (state.session && state.pc && msg.data.description.type === 'answer') {
-          await state.pc.setRemoteDescription({ type: 'answer', sdp: msg.data.description.sdp });
-          drainIce(state.pc);
+        } else if (state.session && msg.data.description.type === 'answer') {
+          // Мультиоператор: answer тегирован claimId оператора (from) — роутится
+          // в персональный pc; чужой/устаревший answer молча игнорируется
+          routeOperatorSignal(msg.from, msg.data);
         }
         } else if (msg.data?.candidate) {
           const c = msg.data.candidate;
-          if (state.pc && state.pc.remoteDescription) await state.pc.addIceCandidate(c);
-          else state.iceQueue.push(c); // кандидаты в очередь до remote description
+          if (state.connect) {
+            // операторская роль: один pc, одна очередь
+            if (state.pc && state.pc.remoteDescription) await state.pc.addIceCandidate(c);
+            else state.iceQueue.push(c); // кандидаты в очередь до remote description
+          } else if (state.session) {
+            // хост: candidate тегирован claimId оператора — в его pc/очередь
+            routeOperatorSignal(msg.from, msg.data);
+          }
         }
       } catch { /* некорректный сигнал игнорируется: транспорт не открывается */ }
       break;
@@ -141,8 +152,16 @@ enot.onSignal(async (msg) => {
       break;
     }
     case 'operator-joined': {
+      // Мультиоператор: хост поднимает ПЕРСОНАЛЬНЫЙ pc этому оператору
       const op = msg.operator ?? {};
+      attachOperator(msg.claimId, op.name ?? '');
       text($('client-operators'), t('client.operatorJoined', { name: op.name ?? '', login: op.login ?? '' }));
+      break;
+    }
+    case 'operator-left': {
+      // Оператор ушёл (WS закрыт): персональный pc снимается, сеанс живёт,
+      // пока подключён хотя бы один оператор
+      if (msg.claimId) dropOperator(msg.claimId);
       break;
     }
     case 'idle-warning': {
