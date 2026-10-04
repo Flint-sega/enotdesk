@@ -199,14 +199,18 @@ function steps(locale) {
 
 function platformCard(platform, files, locale) {
   const head = `<div class="card-head"><span class="os-icon">${icon(platform.icon)}</span><h3>${esc(platform.label)}</h3></div>`;
-  const f = files[0];
-  if (!f) {
+  if (!files.length) {
     return `<article class="card">${head}<p class="meta">${esc(t('server.notReady', {}, locale))}</p><span class="soon">${esc(t('server.soon', {}, locale))}</span></article>`;
   }
-  return `<article class="card active">${head}` +
+  // Все сборки платформы (portable и setup оба актуальны — ревью 04.10:
+  // files[0] прятал портатив за setup-ом при совпадении имён в каталоге).
+  // Свежей сборке — первый ряд: сортируем по mtime убыванию.
+  const rows = [...files].sort((a, b) => b.mtimeMs - a.mtimeMs).map((f, i) =>
     `<p class="file">${esc(f.name)}</p>` +
     `<p class="meta">${esc(formatSize(f.size, locale))} · ${esc(f.arch)}</p>` +
-    `<a class="btn" href="${esc(f.url)}">${icon('download')}<span>${esc(t('server.download', {}, locale))}</span></a></article>`;
+    `<a class="btn${i > 0 ? ' btn-ghost' : ''}" href="${esc(f.url)}">${icon('download')}<span>${esc(t('server.download', {}, locale))}</span></a>`
+  ).join('');
+  return `<article class="card active">${head}${rows}</article>`;
 }
 
 function downloadsHtml(items, version, locale, insecure = false) {
