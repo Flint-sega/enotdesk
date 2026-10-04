@@ -45,6 +45,17 @@ function sendChat(side) {
   if (!value) return;
   const wire = chatMessage(value);
   if (!wire) { input.value = ''; return; }
+  if (side === 'client') {
+    // Мультиоператор: сообщение клиента уходит ВСЕМ присоединённым операторам
+    let sent = false;
+    for (const dc of hostOperatorChannels('chat')) {
+      try { dc.send(wire); sent = true; } catch { /* канал закрывается */ }
+    }
+    if (!sent) return;
+    appendChat(logId, 'you', value);
+    input.value = '';
+    return;
+  }
   const dc = state.dcs?.chat;
   if (!dc || dc.readyState !== 'open') return;
   try { dc.send(wire); } catch { /* канал закрывается */ return; }
@@ -59,10 +70,16 @@ for (const id of ['client-chat-input', 'op-chat-input']) {
   });
 }
 
-// Host-сторона: приём каналов оператора.
-export function wireHostChannel(ch) {
+// Host-сторона: приём каналов оператора. opKey (claimId) различает операторов —
+// каналы keyed `${label}:${opKey}`; ввод ЛЮБОГО оператора идёт в одну очередь
+// инъекции (last-write-wins, модель RustDesk).
+export function wireHostChannel(ch, opKey = 'primary') {
   state.dcs ??= {};
-  state.dcs[ch.label] = ch;
+  state.dcs[`${ch.label}:${opKey}`] = ch;
+  // Зеркало в персональную карту оператора: fan-out (чат/буфер) и дроп
+  // читают op.dcs, keyed-запись в state.dcs — плоский индекс.
+  const op = state.operators.get(opKey);
+  if (op) { op.dcs ??= {}; op.dcs[ch.label] = ch; }
   if (ch.label === 'input') {
     ch.onmessage = (m) => { enot.input(m.data).catch(() => {}); };
   } else if (ch.label === 'chat') {
@@ -80,11 +97,22 @@ export function wireHostChannel(ch) {
     };
   } else if (ch.label === 'file') {
     ch.binaryType = 'arraybuffer';
-    ch.onmessage = (m) => hostFileMessage(ch, m.data);
+    ch.onmessage = (m) => hostFileMessage(ch, m.data, opKey);
   } else if (ch.label === 'term') {
     // Терминал — только machine-сеанс (R09): человек-хост честно отказывает.
     rejectTermChannel(ch);
   }
+}
+
+// Открытые каналы `label` всех присоединённых операторов (fan-out клиентских
+// сообщений: чат/буфер/файл).
+function hostOperatorChannels(label) {
+  const out = [];
+  for (const op of state.operators.values()) {
+    const ch = op.dcs?.[label];
+    if (ch?.readyState === 'open') out.push(ch);
+  }
+  return out;
 }
 
 // Ответ клиента из чат-виджета: отправка в DC чата + лог основного окна
@@ -92,9 +120,11 @@ export function wireHostChannel(ch) {
 export function sendWidgetChat(text) {
   const wire = chatMessage(text);
   if (!wire) return;
-  const dc = state.dcs?.chat;
-  if (!dc || dc.readyState !== 'open') return;
-  try { dc.send(wire); } catch { /* канал закрывается */ return; }
+  let sent = false;
+  for (const dc of hostOperatorChannels('chat')) {
+    try { dc.send(wire); sent = true; } catch { /* канал закрывается */ }
+  }
+  if (!sent) return;
   appendChat('client-chat-log', 'you', text);
 }
 
@@ -106,23 +136,39 @@ export function listenChatWidgetOut() {
 document.addEventListener('copy', () => {
   const on = state.role === 'client' ? state.clip.client : state.clip.operator;
   if (!on) return;
-  const dc = state.dcs?.clip;
-  if (!dc || dc.readyState !== 'open') return;
   const selected = String(document.getSelection?.() ?? '');
   const wire = clipMessage(selected);
   if (!wire) return;
+  if (state.role === 'client') {
+    // Мультиоператор: буфер уходит всем присоединённым операторам
+    for (const dc of hostOperatorChannels('clip')) {
+      try { dc.send(wire); } catch { /* канал закрывается */ }
+    }
+    return;
+  }
+  const dc = state.dcs?.clip;
+  if (!dc || dc.readyState !== 'open') return;
   try { dc.send(wire); } catch { /* канал закрывается */ }
 });
 $('clip-client-toggle').addEventListener('change', (e) => { state.clip.client = e.target.checked; });
 $('clip-op-toggle').addEventListener('change', (e) => { state.clip.operator = e.target.checked; });
 
-function showFileProgress(size) {
+// Приём файлов per-оператор (key = claimId): файловые каналы независимы.
+const fileRxs = new Map(); // opKey → {rx, dc, prog}
+
+// Уборка при дропе оператора (конец сеанса / смерть его pc): недокачанный
+// приёмник не должен переживать канал.
+export function resetFileReceivers(opKey) {
+  if (opKey === undefined) fileRxs.clear();
+  else fileRxs.delete(opKey);
+}
+
+function showFileProgress(rx) {
   return () => {
-    const rx = state.fileRx?.rx;
-    if (!rx || rx.meta.size !== size) return;
-    state.fileRx.prog.textContent = t('files.progress', {
+    if (!rx || !rx.prog) return;
+    rx.prog.textContent = t('files.progress', {
       got: (rx.received / 1048576).toFixed(1),
-      total: (size / 1048576).toFixed(1),
+      total: (rx.meta.size / 1048576).toFixed(1),
     });
   };
 }
@@ -139,7 +185,8 @@ function saveReceivedBlob(blob, name, box) {
 }
 
 // Клиент: оператор отправляет файл — явное «Принять/Отклонить» обязательно.
-function hostFileMessage(ch, data) {
+// Приём per-оператор (key = claimId): файловые каналы независимы.
+function hostFileMessage(ch, data, opKey) {
   if (typeof data === 'string') {
     const ctl = parseFileControl(data);
     if (!ctl) return;
@@ -147,7 +194,7 @@ function hostFileMessage(ch, data) {
       const rx = createFileReceiver(ctl);
       const prog = document.createElement('p');
       prog.className = 'note';
-      state.fileRx = { rx, dc: ch, prog };
+      fileRxs.set(opKey, { rx, dc: ch, prog });
       const box = $('client-file-prompt');
       box.textContent = '';
       const label = document.createElement('p');
@@ -164,24 +211,25 @@ function hostFileMessage(ch, data) {
       reject.className = 'btn danger-ghost';
       reject.textContent = t('files.reject');
       reject.addEventListener('click', () => {
-        state.fileRx = null;
+        fileRxs.delete(opKey);
         box.textContent = '';
         try { ch.send(fileReject(ctl.id)); } catch { /* канал закрыт */ }
       });
       box.append(label, accept, reject);
     } else if (ctl.kind === 'done') {
-      const { rx } = state.fileRx ?? {};
+      const entry = fileRxs.get(opKey);
+      const { rx } = entry ?? {};
       if (!rx) return;
       const blob = rx.complete();
       const name = rx.meta.name;
-      state.fileRx = null;
+      fileRxs.delete(opKey);
       if (!blob) { appendChat('client-chat-log', 'system', t('files.broken')); return; }
       saveReceivedBlob(blob, name, $('client-file-prompt'));
     }
     return;
   }
-  const { rx } = state.fileRx ?? {};
-  if (rx?.push(data)) showFileProgress(rx.meta.size)();
+  const { rx } = fileRxs.get(opKey) ?? {};
+  if (rx?.push(data)) showFileProgress(rx)();
 }
 
 // Оператор: клиент шлёт файл только по своему явному действию — принимаем сами.
@@ -243,7 +291,14 @@ $('btn-op-clip-paste').addEventListener('click', () => {
 // Обе стороны видят передачу: отправителю — прогресс, получателю — «Принять»/прогресс/ссылку.
 export async function sendFileFrom(side, file) {
   if (!file) return;
-  const dc = state.dcs?.file;
+  let dc = state.dcs?.file;
+  if (!dc && side === 'client') {
+    // Мультиоператор: файловые каналы keyed `file:<claimId>`. Волна 1 шлёт
+    // первому открытому каналу (адресная передача нескольким — волна 2).
+    for (const key of Object.keys(state.dcs ?? {})) {
+      if (key.startsWith('file:') && state.dcs[key]?.readyState === 'open') { dc = state.dcs[key]; break; }
+    }
+  }
   if (!dc || dc.readyState !== 'open') {
     // Фолбэк: резервный релей сервера (TTL 3 суток) — файл уходит ссылкой получателю
     try {
