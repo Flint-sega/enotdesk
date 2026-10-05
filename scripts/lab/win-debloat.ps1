@@ -14,10 +14,14 @@
 #   - OneDrive autostart (Run keys, Startup shortcuts, OneDrive* scheduled tasks) -- app kept;
 #   - Delivery Optimization -> HTTP-only (DODownloadMode=1, no P2P peering);
 #   - consumer features (ContentDeliveryManager promo/silent installs) -> off;
-#   - telemetry AllowTelemetry=0 (Security on Pro) via policy + DiagTrack autologger off.
-# Deliberately NOT touched: Windows Update, Defender, Store, StickyNotes, Weather,
-#   YourPhone (not in ticket list; tiebreak: doubtful items stay), OneDrive app files,
-#   EnotDesk agent, SSH server, network profile.
+#   - telemetry AllowTelemetry=0 (Security on Pro) via policy + DiagTrack autologger off;
+#   - Windows Update OFF (owner decision): policy NoAutoUpdate=1 + SetDisableUXWUAccess=1
+#     (both policy branches), wuauserv -> Disabled; revert = delete those policy values,
+#     wuauserv -> Manual.
+# Deliberately NOT touched: Defender, Store, Photos, Paint, Notepad, Terminal, StickyNotes,
+#   Weather, YourPhone, OneDrive app files, UsoSvc/WaaSMedicSvc (protected/self-heal --
+#   suppressed by the NoAutoUpdate policy, not by direct touching), EnotDesk agent,
+#   SSH server, network profile.
 # Exit code: non-zero if any hard step fails; soft (optional package) failures never fatal.
 
 param([switch]$VerifyOnly)
@@ -31,13 +35,23 @@ $AppxNames = @(
     'Microsoft.Clipchamp',            # video promo editor
     'Microsoft.MicrosoftSolitaireCollection',
     'Microsoft.Getstarted',           # Get Started tips
+    'Microsoft.GetHelp',              # "Windows support" promo
     'Microsoft.WindowsFeedbackHub',
     'Microsoft.BingNews',             # News
+    'Microsoft.WindowsCamera',        # Camera app (unused on lab VMs)
+    'Microsoft.WindowsSoundRecorder', # Voice recorder
+    'Microsoft.AlarmsClock',          # Alarms & Clock
+    'Microsoft.Microsoft3DViewer',    # 3D Viewer
+    'Microsoft.Print3D',              # 3D Print
+    'Microsoft.MixedReality.Portal',  # Mixed Reality Portal
+    'Microsoft.WindowsCommunicationsApps', # Mail/Calendar
     'Microsoft.GamingApp',            # Xbox gaming app (new)
     'Microsoft.XboxApp',              # Xbox console companion (old)
-    'Microsoft.XboxSpeechToTextOverlay',
     'Microsoft.XboxGameOverlay',      # Game Bar overlay hooks
     'Microsoft.XboxGamingOverlay',    # Game Bar app
+    'Microsoft.XboxIdentityProvider', # Xbox identity (owner: remove with the set)
+    'Microsoft.Xbox.TCUI',            # Xbox TCUI (owner: remove with the set)
+    'Microsoft.XboxSpeechToTextOverlay',
     'Microsoft.549981C3F5F10',        # Cortana (consumer)
     'Microsoft.Copilot',              # Copilot promo
     'Microsoft.Windows.Ai.Copilot.Provider',
@@ -63,7 +77,7 @@ function Disable-TaskRobust([string]$path, [string]$name) {
 if ($VerifyOnly) {
     # ---------- fact check only, no mutations ----------
     Report "== VERIFY $env:COMPUTERNAME =="
-    foreach ($svc in @('DiagTrack', 'dmwappushservice', 'wuauserv', 'WinDefend')) {
+    foreach ($svc in @('DiagTrack', 'dmwappushservice', 'wuauserv', 'WinDefend', 'EnotDeskAgent')) {
         try {
             $s = Get-Service -Name $svc -ErrorAction Stop
             Report "SVC $svc StartType=$($s.StartType) Status=$($s.Status)"
@@ -99,6 +113,8 @@ if ($VerifyOnly) {
     foreach ($path in @(
         'HKLM:\SOFTWARE\Policies\Microsoft\Windows\DeliveryOptimization',
         'HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\DeliveryOptimization\Config',
+        'HKLM:\SOFTWARE\Policies\Microsoft\Windows\WindowsUpdate\AU',
+        'HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\Policies\WindowsUpdate\AU',
         'HKLM:\SOFTWARE\Policies\Microsoft\Windows\DataCollection',
         'HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\ContentDeliveryManager',
         'HKLM:\SOFTWARE\Policies\Microsoft\Windows\CloudContent',
@@ -108,7 +124,7 @@ if ($VerifyOnly) {
         if ($null -eq $v) { Report "REG $path MISSING" }
         else {
             $parts = @()
-            foreach ($pn in @('DODownloadMode', 'AllowTelemetry', 'SilentInstalledAppsEnabled', 'DisableWindowsConsumerFeatures', 'Start')) {
+            foreach ($pn in @('DODownloadMode', 'NoAutoUpdate', 'SetDisableUXWUAccess', 'AllowTelemetry', 'SilentInstalledAppsEnabled', 'DisableWindowsConsumerFeatures', 'Start')) {
                 if ($null -ne $v.$pn) { $parts += "$pn=$($v.$pn)" }
             }
             Report "REG $path :: $($parts -join ' ')"
@@ -135,6 +151,33 @@ foreach ($svc in @('DiagTrack', 'dmwappushservice')) {
         # dmwappushservice may be absent on some builds -- absence is fine, it is not required.
         Report "SVC $svc absent or not settable: skipped ($($_.Exception.Message.Trim()))"
     }
+}
+
+# ---------- 1b. Windows Update: OFF (owner decision) ----------
+# Policy suppresses WU behavior incl. UsoSvc/WaaSMedic self-heal paths; the service
+# itself is disabled. UsoSvc/WaaSMedicSvc are NOT touched directly (protected).
+foreach ($path in @(
+    'HKLM:\SOFTWARE\Policies\Microsoft\Windows\WindowsUpdate\AU',
+    'HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\Policies\WindowsUpdate\AU'
+)) {
+    try {
+        if (-not (Test-Path $path)) { New-Item -Path $path -Force -ErrorAction Stop | Out-Null }
+        New-ItemProperty -Path $path -Name 'NoAutoUpdate' -Value 1 -PropertyType DWord -Force -ErrorAction Stop | Out-Null
+        New-ItemProperty -Path $path -Name 'SetDisableUXWUAccess' -Value 1 -PropertyType DWord -Force -ErrorAction Stop | Out-Null
+        Report "WU $path :: NoAutoUpdate=1 SetDisableUXWUAccess=1"
+    } catch {
+        $hardFails++
+        Report "WU policy set FAILED at $path : $($_.Exception.Message.Trim())"
+    }
+}
+try {
+    Stop-Service -Name wuauserv -Force -ErrorAction SilentlyContinue
+    Set-Service -Name wuauserv -StartupType Disabled -ErrorAction Stop
+    $s = Get-Service -Name wuauserv
+    Report "WU wuauserv -> Disabled (now: StartType=$($s.StartType) Status=$($s.Status))"
+} catch {
+    $hardFails++
+    Report "WU wuauserv disable FAILED: $($_.Exception.Message.Trim())"
 }
 
 # ---------- 2. Scheduled tasks: CEIP / Feedback ----------
@@ -369,16 +412,30 @@ foreach ($al in @('AutoLogger-SQMLogger', 'Diagtrack-Listener')) {
     }
 }
 
-# ---------- 8. Guards: normal-PC must-haves remain ----------
-foreach ($svc in @('wuauserv', 'WinDefend')) {
-    try {
-        $s = Get-Service -Name $svc -ErrorAction Stop
-        if ($s.StartType -eq 'Disabled') { $hardFails++; Report "GUARD FAILED: $svc is Disabled" }
-        else { Report "GUARD ok: $svc StartType=$($s.StartType) Status=$($s.Status)" }
-    } catch {
-        $hardFails++
-        Report "GUARD FAILED: $svc not found: $($_.Exception.Message.Trim())"
-    }
+# ---------- 8. Guards: lab must-haves remain ----------
+try {
+    $s = Get-Service -Name wuauserv -ErrorAction Stop
+    if ($s.StartType -eq 'Disabled') { Report "GUARD ok: wuauserv Disabled (WU off by owner decision)" }
+    else { $hardFails++; Report "GUARD FAILED: wuauserv StartType=$($s.StartType) -- must be Disabled (WU off)" }
+} catch {
+    $hardFails++
+    Report "GUARD FAILED: wuauserv not found: $($_.Exception.Message.Trim())"
+}
+try {
+    $s = Get-Service -Name WinDefend -ErrorAction Stop
+    if ($s.StartType -eq 'Disabled') { $hardFails++; Report "GUARD FAILED: WinDefend is Disabled" }
+    else { Report "GUARD ok: WinDefend StartType=$($s.StartType) Status=$($s.Status)" }
+} catch {
+    $hardFails++
+    Report "GUARD FAILED: WinDefend not found: $($_.Exception.Message.Trim())"
+}
+try {
+    $a = Get-Service -Name EnotDeskAgent -ErrorAction Stop
+    if ($a.Status -eq 'Running') { Report "GUARD ok: EnotDeskAgent Running" }
+    else { $hardFails++; Report "GUARD FAILED: EnotDeskAgent Status=$($a.Status) -- must be Running" }
+} catch {
+    $hardFails++
+    Report "GUARD FAILED: EnotDeskAgent not found: $($_.Exception.Message.Trim())"
 }
 
 Report "DEBLOAT-DONE hardFails=$hardFails"
