@@ -90,12 +90,12 @@ qm snapshot 102 clean --description "…"   # переснять (сначала
 (проверено на VM 101). Переснимать `clean` стоит после осознанных изменений
 базового состояния (обновление EnotDesk, смена конфига агента).
 
-## Деблоат Windows-VM (G01)
+## Деблоат Windows-VM (G01+G02)
 
 Обе клиентские VM дeблоачены скриптом `scripts/lab/win-debloat.ps1` (репо — источник
 истины; копия на гостях `%USERPROFILE%\win-debloat.ps1`, на хосте `/tmp/win-debloat.ps1`).
-Снапшот `clean` переснят ПОСЛЕ деблоата (2026-10-05): откат `qm rollback <vmid> clean`
-возвращает уже дeблоаченное состояние.
+Снапшот `clean` переснят ПОСЛЕ полного деблоата G01+G02 включая отключение WU
+(2026-10-05 12:46): откат `qm rollback <vmid> clean` возвращает это состояние.
 
 Запуск (с хоста, scp + `powershell -File` — stdin-режим не использовать):
 
@@ -108,13 +108,27 @@ ssh … enotadmin@198.51.100.11 "powershell -NoProfile -ExecutionPolicy Bypass -
 Что отключено (идемпотентно, на 101 и 102):
 
 - **Службы**: `DiagTrack` (Connected User Experiences) и `dmwappushservice` → Disabled.
+- **Windows Update ОТКЛЮЧЁН решением владельца** (G02 — источник WU-волн, вешавших
+  машины): политика `NoAutoUpdate=1` + `SetDisableUXWUAccess=1` в обеих ветках
+  (`SOFTWARE\Policies\Microsoft\Windows\WindowsUpdate\AU` и
+  `SOFTWARE\Microsoft\Windows\CurrentVersion\Policies\WindowsUpdate\AU`), служба
+  `wuauserv` → Disabled. UsoSvc/WaaSMedicSvc напрямую не трогаются (защищены,
+  self-heal — их гасит политика). Вернуть WU: удалить `NoAutoUpdate` и
+  `SetDisableUXWUAccess` из обеих веток политики, затем
+  `Set-Service wuauserv -StartupType Manual`.
 - **CEIP/Feedback-задачи**: Consolidator, UsbCeip, QueueReporting → Disabled
   (KernelCeipTask и Microsoft-Windows-Feedback* на этих сборках отсутствуют).
 - **AppX-мусор** (развлекательное/промо, снято с текущего профиля и deprovisioned —
   новым профилям не возвращается): Solitaire Collection, Feedback Hub, Get Started,
-  Xbox-набор (XboxApp, GameOverlay, GamingOverlay, SpeechToTextOverlay, GamingApp),
-  Cortana, Office Hub, News (Win11). Clipchamp/King.*/Copilot отсутствовали на этих
-  сборках — скрипт снимает их, если появятся.
+  Xbox-набор (XboxApp, GameOverlay, GamingOverlay, SpeechToTextOverlay, GamingApp,
+  XboxIdentityProvider, Xbox.TCUI), Cortana, Office Hub, News (Win11).
+  Clipchamp/King.*/Copilot отсутствовали на этих сборках — скрипт снимает их,
+  если появятся.
+- **AppX, удалённые решением владельца** (G02): Камера (WindowsCamera), Запись
+  звука (WindowsSoundRecorder), Техподдержка Windows (GetHelp), Будильники и часы
+  (AlarmsClock), 3D-набор (Microsoft3DViewer, Print3D, MixedReality.Portal),
+  Почта/Календарь (WindowsCommunicationsApps). Не тронуты: Store, Calculator,
+  Notepad, Terminal, Photos, Paint, Defender.
 - **OneDrive**: автозапуск выключен (Run-ключи, Startup-ярлыки, OneDrive*-задачи
   в планировщике); само приложение и каталоги оставлены.
 - **Delivery Optimization**: `DODownloadMode=1` (HTTP-only, без P2P-раздачи наружу;
@@ -124,8 +138,8 @@ ssh … enotadmin@198.51.100.11 "powershell -NoProfile -ExecutionPolicy Bypass -
 - **Телеметрия**: политика `AllowTelemetry=0` (Security на Pro) + автологгер
   `Diagtrack-Listener` Start=0.
 
-Намеренно НЕ тронуто («штатный рабочий ПК клиента»): Windows Update (`wuauserv`),
-Defender, Store, StickyNotes, Weather, YourPhone, каталоги OneDrive,
+Намеренно НЕ тронуто: Defender, Store, StickyNotes, Weather, YourPhone,
+каталоги OneDrive, UsoSvc/WaaSMedicSvc (гасятся политикой, не напрямую),
 EnotDeskAgent, SSH-сервер, профиль сети.
 
 Грабли (учтены в скрипте/эксплуатации):
