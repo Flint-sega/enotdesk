@@ -90,6 +90,58 @@ qm snapshot 102 clean --description "…"   # переснять (сначала
 (проверено на VM 101). Переснимать `clean` стоит после осознанных изменений
 базового состояния (обновление EnotDesk, смена конфига агента).
 
+## Деблоат Windows-VM (G01)
+
+Обе клиентские VM дeблоачены скриптом `scripts/lab/win-debloat.ps1` (репо — источник
+истины; копия на гостях `%USERPROFILE%\win-debloat.ps1`, на хосте `/tmp/win-debloat.ps1`).
+Снапшот `clean` переснят ПОСЛЕ деблоата (2026-10-05): откат `qm rollback <vmid> clean`
+возвращает уже дeблоаченное состояние.
+
+Запуск (с хоста, scp + `powershell -File` — stdin-режим не использовать):
+
+```sh
+scp -i /root/enot-lab-keys/enot-lab-ed25519 /tmp/win-debloat.ps1 enotadmin@198.51.100.11:win-debloat.ps1
+ssh … enotadmin@198.51.100.11 "powershell -NoProfile -ExecutionPolicy Bypass -File C:/Users/enotadmin/win-debloat.ps1"             # применить
+ssh … enotadmin@198.51.100.11 "powershell -NoProfile -ExecutionPolicy Bypass -File C:/Users/enotadmin/win-debloat.ps1 -VerifyOnly" # только проверить факты
+```
+
+Что отключено (идемпотентно, на 101 и 102):
+
+- **Службы**: `DiagTrack` (Connected User Experiences) и `dmwappushservice` → Disabled.
+- **CEIP/Feedback-задачи**: Consolidator, UsbCeip, QueueReporting → Disabled
+  (KernelCeipTask и Microsoft-Windows-Feedback* на этих сборках отсутствуют).
+- **AppX-мусор** (развлекательное/промо, снято с текущего профиля и deprovisioned —
+  новым профилям не возвращается): Solitaire Collection, Feedback Hub, Get Started,
+  Xbox-набор (XboxApp, GameOverlay, GamingOverlay, SpeechToTextOverlay, GamingApp),
+  Cortana, Office Hub, News (Win11). Clipchamp/King.*/Copilot отсутствовали на этих
+  сборках — скрипт снимает их, если появятся.
+- **OneDrive**: автозапуск выключен (Run-ключи, Startup-ярлыки, OneDrive*-задачи
+  в планировщике); само приложение и каталоги оставлены.
+- **Delivery Optimization**: `DODownloadMode=1` (HTTP-only, без P2P-раздачи наружу;
+  политика + конфиг-ветка).
+- **Consumer-фичи**: 13 флагов `ContentDeliveryManager` = 0 (silent-установка приложений,
+  советы/реклама в Пуске) + политика `DisableWindowsConsumerFeatures=1`.
+- **Телеметрия**: политика `AllowTelemetry=0` (Security на Pro) + автологгер
+  `Diagtrack-Listener` Start=0.
+
+Намеренно НЕ тронуто («штатный рабочий ПК клиента»): Windows Update (`wuauserv`),
+Defender, Store, StickyNotes, Weather, YourPhone, каталоги OneDrive,
+EnotDeskAgent, SSH-сервер, профиль сети.
+
+Грабли (учтены в скрипте/эксплуатации):
+
+- `Remove-AppxPackage -AllUsers` из SSH-сессии падает с 0x80070002 — скрипт сначала
+  снимает per-user (enotadmin — единственный интерактивный профиль), `-AllUsers` только добором.
+- Файл `.ps1` строго ASCII: PS 5.1 читает BOM-less файлы в ANSI, «умные» тире ломают парсинг.
+- Проверка фактов одной командой — `-VerifyOnly` (службы, задачи, AppX, реестр, guards).
+- `qm snapshot` на Win11 (102): `guest-fsfreeze-thaw` иногда таймаутит, гость может
+  зависнуть (налагается волна свежих WU) — лечение: `qm reset 102` (деблоат уже на
+  диске, снапшот не страдает), после загрузки агент и сеть возвращаются сами.
+
+Откат: состояние машины целиком — `qm rollback <vmid> clean` + `qm start <vmid>`
+(см. раздел выше). Откат самого деблоата снапшотом невозможен — `clean` уже содержит
+деблоат; полная перестройка — через `win-vm.sh`.
+
 ## Старт/стоп и ребут
 
 ```sh
