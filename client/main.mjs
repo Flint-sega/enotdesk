@@ -45,6 +45,21 @@ const svcDiag = createSvcDiag();
 // (контракт svc-diag: секреты не пишутся, ревью v0.4.4)
 svcDiag.write('main', `pid=${process.pid} exec="${process.execPath}" argv=${maskJoinTokens(JSON.stringify(process.argv))} env[${envDiagSlice()}]`);
 
+// Локале-независимый первый запуск (лаба 05.10): на Windows с пустой/нечитаемой
+// системной локалью Chromium не находит подходящий pak — ResourceBundle пуст
+// («locale resources are not loaded»), а элементы с локализованными строками
+// Chromium (file input, details, video) падают Access Violation в рендерере.
+// Пустой/мусорный locale → явный en-US (pak входит в пакет, см.
+// build/electron-builder.yml electronLanguages). До ready — это ещё можно
+// переключить; корень (состав pak'ов) чинится в конфиге сборки.
+try {
+  const osLocale = app.getLocale?.() ?? '';
+  if (!/^[a-z]{2,3}([-_][A-Za-z0-9]{2,8})*$/.test(osLocale)) {
+    app.commandLine.appendSwitch('lang', 'en-US');
+    svcDiag.write('main', `locale "${osLocale}" не распознан → --lang=en-US`);
+  }
+} catch { /* getLocale недоступен до ready на каких-то платформах — живём как есть */ }
+
 // Родительский режим Windows-службы (EDESK_AGENT_SVC=1, дефект №4): процесс
 // запущен SCM'ом как службу — Electron не инициализируем, работаем тонкой
 // SCM-обёрткой (win-service.mjs), которая держит живым дочерний агент (тот же
@@ -1060,6 +1075,31 @@ function createWindow() {
   win.on('minimize', () => { svcDiag.write('win', 'minimize'); });
   win.on('restore', () => { svcDiag.write('win', 'restore'); });
   win.on('closed', () => { win = null; winLoaded = false; });
+  // «Окно не молчит» (лаба 05.10): packaged-отказ рендерера раньше был немым —
+  // пустое окно без единой строки в логах, дефект искали неделю. Все жизненные
+  // события главного окна идут в svc-diag; краш рендерера — один честный
+  // автоперезапуск страницы.
+  let rendererReloaded = false;
+  win.webContents.on('render-process-gone', (e, details) => {
+    svcDiag.write('win', `render-process-gone ${JSON.stringify(details)}`);
+    console.error('render-process-gone:', JSON.stringify(details));
+    if (!rendererReloaded && !win.isDestroyed()) {
+      rendererReloaded = true;
+      svcDiag.write('win', 'auto-reload после краша рендерера');
+      win.webContents.reload();
+    }
+  });
+  win.webContents.on('did-fail-load', (e, code, desc, url, isMain) => {
+    if (!isMain) return; // ошибки подресурсов не убивают страницу
+    svcDiag.write('win', `did-fail-load ${code} ${desc} ${url}`);
+    console.error('did-fail-load:', code, desc, url);
+  });
+  win.webContents.on('preload-error', (e, p, err) => {
+    svcDiag.write('win', `preload-error ${p} ${err}`);
+    console.error('preload-error:', p, err);
+  });
+  win.webContents.on('unresponsive', () => { svcDiag.write('win', 'unresponsive'); });
+  win.webContents.on('responsive', () => { svcDiag.write('win', 'responsive'); });
   // Join-ссылка, пришедшая до загрузки страницы, уходит рендереру, когда
   // слушатели (client-view) уже установлены (R04)
   win.webContents.on('did-finish-load', () => {
