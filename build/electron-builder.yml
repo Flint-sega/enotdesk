@@ -2,8 +2,13 @@ appId: com.enotdesk.app
 productName: EnotDesk
 compression: maximum
 electronLanguages:
+  # ВНИМАНИЕ (лаба 05.10): только полные теги. «en» не матчится ни с одним
+  # pak-файлом и выпадает из сборки — у Windows с локалью, отличной от ru, не
+  # остаётся НИ ОДНОГО языкового пака, ResourceBundle пуст, а рендерер падает
+  # Access Violation (0xC0000005) при создании <input type=file>/<details>/<video>
+  # (им нужны локализованные строки Chromium). Пустое окно клиента на en-US ВМ.
   - ru
-  - en
+  - en-US
 directories:
   output: dist
 files:
