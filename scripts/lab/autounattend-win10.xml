@@ -1,0 +1,204 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  T03: autounattend для enotdesk-win10-a1 (VMID 101, 198.51.100.11), Windows 10 Pro 22H2, EN-US носитель.
+  Доставка: win-vm.sh вливает файл в корень пересобранного установочного ISO и в
+  boot.wim (X:/Windows/Panther/unattend.xml). UI-язык en-US (в образе нет ru-RU ресурсов),
+  форматы/клавиатура ru-RU. Плейсхолдеры (scanner-safe, заполняются на хосте, значений в репо нет):
+    @@VAL1@@ — пароль локального админа enotadmin (/root/enot-lab-secrets/windows-vms.env)
+    @@VAL2@@ — публичный ключ агента (/root/enot-lab-keys/enot-lab-ed25519.pub)
+  TPM-обходы не нужны: Win10 не имеет требований TPM/SecureBoot (VM без TPM, SB выключен).
+-->
+<unattend xmlns="urn:schemas-microsoft-com:unattend">
+  <settings pass="windowsPE">
+    <component name="Microsoft-Windows-International-Core-WinPE" processorArchitecture="amd64" publicKeyToken="31bf3856ad364e35" language="neutral" versionScope="nonSxS" xmlns:wcm="http://schemas.microsoft.com/WMIConfig/2002/State">
+      <!-- носитель EN-US (CCCOMA_X64FRE_EN-US): ru-RU UI в образе физически нет — при UILanguage ru-RU
+           setup молча откатывается в интерактив (факт 2026-10-05). UI en-US, форматы/клавиатура ru-RU. -->
+      <SetupUILanguage>
+        <UILanguage>en-US</UILanguage>
+      </SetupUILanguage>
+      <InputLocale>0419:00000419;0409:00000409</InputLocale>
+      <SystemLocale>ru-RU</SystemLocale>
+      <UILanguage>en-US</UILanguage>
+      <UserLocale>ru-RU</UserLocale>
+    </component>
+    <component name="Microsoft-Windows-PnpCustomizationsWinPE" processorArchitecture="amd64" publicKeyToken="31bf3856ad364e35" language="neutral" versionScope="nonSxS" xmlns:wcm="http://schemas.microsoft.com/WMIConfig/2002/State">
+      <DriverPaths>
+        <!-- буквы CD зависят от перечисления носителей в WinPE: несуществующие пути Setup пропускает -->
+        <PathAndCredentials wcm:action="add" wcm:keyValue="1"><Path>D:\drivers</Path></PathAndCredentials>
+        <PathAndCredentials wcm:action="add" wcm:keyValue="2"><Path>E:\drivers</Path></PathAndCredentials>
+        <PathAndCredentials wcm:action="add" wcm:keyValue="3"><Path>F:\drivers</Path></PathAndCredentials>
+        <PathAndCredentials wcm:action="add" wcm:keyValue="4"><Path>G:\drivers</Path></PathAndCredentials>
+        <PathAndCredentials wcm:action="add" wcm:keyValue="5"><Path>H:\drivers</Path></PathAndCredentials>
+        <PathAndCredentials wcm:action="add" wcm:keyValue="6"><Path>I:\drivers</Path></PathAndCredentials>
+        <PathAndCredentials wcm:action="add" wcm:keyValue="7"><Path>J:\drivers</Path></PathAndCredentials>
+      </DriverPaths>
+    </component>
+    <component name="Microsoft-Windows-Setup" processorArchitecture="amd64" publicKeyToken="31bf3856ad364e35" language="neutral" versionScope="nonSxS" xmlns:wcm="http://schemas.microsoft.com/WMIConfig/2002/State">
+      <DiskConfiguration>
+        <Disk wcm:action="add">
+          <DiskID>0</DiskID>
+          <WillWipeDisk>true</WillWipeDisk>
+          <CreatePartitions>
+            <CreatePartition wcm:action="add">
+              <Order>1</Order>
+              <Type>EFI</Type>
+              <Size>300</Size>
+            </CreatePartition>
+            <CreatePartition wcm:action="add">
+              <Order>2</Order>
+              <Type>MSR</Type>
+              <Size>16</Size>
+            </CreatePartition>
+            <CreatePartition wcm:action="add">
+              <Order>3</Order>
+              <Type>Primary</Type>
+              <Extend>true</Extend>
+            </CreatePartition>
+          </CreatePartitions>
+          <ModifyPartitions>
+            <ModifyPartition wcm:action="add">
+              <Order>1</Order>
+              <PartitionID>1</PartitionID>
+              <Format>FAT32</Format>
+              <Label>System</Label>
+            </ModifyPartition>
+            <ModifyPartition wcm:action="add">
+              <Order>2</Order>
+              <PartitionID>2</PartitionID>
+            </ModifyPartition>
+            <ModifyPartition wcm:action="add">
+              <Order>3</Order>
+              <PartitionID>3</PartitionID>
+              <Format>NTFS</Format>
+              <Label>Windows</Label>
+              <Letter>C</Letter>
+            </ModifyPartition>
+          </ModifyPartitions>
+        </Disk>
+      </DiskConfiguration>
+      <ImageInstall>
+        <OSImage>
+          <InstallFrom>
+            <MetaData wcm:action="add">
+              <Key>/IMAGE/NAME</Key>
+              <Value>Windows 10 Pro</Value>
+            </MetaData>
+          </InstallFrom>
+          <InstallTo>
+            <DiskID>0</DiskID>
+            <PartitionID>3</PartitionID>
+          </InstallTo>
+        </OSImage>
+      </ImageInstall>
+      <UserData>
+        <AcceptEula>true</AcceptEula>
+        <FullName>EnotDesk Lab</FullName>
+        <Organization>EnotDesk</Organization>
+        <!-- публичный generic KMS-ключ Pro (docs.microsoft.com): multi-edition носитель
+             требует ProductKey в unattend; активации нет (нет KMS) — лаба, не прод -->
+        <ProductKey>
+          <Key>W269N-WFGWX-YVC9B-4J6C9-T83GX</Key>
+          <WillShowUI>OnError</WillShowUI>
+        </ProductKey>
+      </UserData>
+    </component>
+  </settings>
+  <settings pass="offlineServicing">
+    <!-- winPE DriverPaths живут только в WinPE (boot-critical vioscsi setup переносит в образ сам,
+         NetKVM — нет, факт 2026-10-05). Здесь драйверы ставятся в offline-образ. -->
+    <component name="Microsoft-Windows-PnpCustomizationsNonWINPE" processorArchitecture="amd64" publicKeyToken="31bf3856ad364e35" language="neutral" versionScope="nonSxS" xmlns:wcm="http://schemas.microsoft.com/WMIConfig/2002/State">
+      <DriverPaths>
+        <PathAndCredentials wcm:action="add" wcm:keyValue="1"><Path>D:\drivers</Path></PathAndCredentials>
+        <PathAndCredentials wcm:action="add" wcm:keyValue="2"><Path>E:\drivers</Path></PathAndCredentials>
+        <PathAndCredentials wcm:action="add" wcm:keyValue="3"><Path>F:\drivers</Path></PathAndCredentials>
+        <PathAndCredentials wcm:action="add" wcm:keyValue="4"><Path>G:\drivers</Path></PathAndCredentials>
+        <PathAndCredentials wcm:action="add" wcm:keyValue="5"><Path>H:\drivers</Path></PathAndCredentials>
+        <PathAndCredentials wcm:action="add" wcm:keyValue="6"><Path>I:\drivers</Path></PathAndCredentials>
+        <PathAndCredentials wcm:action="add" wcm:keyValue="7"><Path>J:\drivers</Path></PathAndCredentials>
+      </DriverPaths>
+    </component>
+  </settings>
+  <settings pass="specialize">
+    <component name="Microsoft-Windows-TCPIP" processorArchitecture="amd64" publicKeyToken="31bf3856ad364e35" language="neutral" versionScope="nonSxS" xmlns:wcm="http://schemas.microsoft.com/WMIConfig/2002/State">
+      <Interfaces>
+        <Interface wcm:action="add">
+          <Identifier>Ethernet</Identifier>
+          <Ipv4Settings>
+            <DhcpEnabled>false</DhcpEnabled>
+          </Ipv4Settings>
+          <UnicastIpAddresses>
+            <IpAddress wcm:action="add" wcm:keyValue="1">198.51.100.11/24</IpAddress>
+          </UnicastIpAddresses>
+          <Routes>
+            <Route wcm:action="add">
+              <Identifier>1</Identifier>
+              <NextHopAddress>198.51.100.1</NextHopAddress>
+              <Prefix>0.0.0.0/0</Prefix>
+              <Metric>1</Metric>
+            </Route>
+          </Routes>
+        </Interface>
+      </Interfaces>
+    </component>
+    <component name="Microsoft-Windows-DNS-Client" processorArchitecture="amd64" publicKeyToken="31bf3856ad364e35" language="neutral" versionScope="nonSxS" xmlns:wcm="http://schemas.microsoft.com/WMIConfig/2002/State">
+      <Interfaces>
+        <Interface wcm:action="add">
+          <Identifier>Ethernet</Identifier>
+          <DNSServerSearchOrder>
+            <IpAddress wcm:action="add" wcm:keyValue="1">1.1.1.1</IpAddress>
+          </DNSServerSearchOrder>
+        </Interface>
+      </Interfaces>
+    </component>
+  </settings>
+  <settings pass="oobeSystem">
+    <component name="Microsoft-Windows-International-Core" processorArchitecture="amd64" publicKeyToken="31bf3856ad364e35" language="neutral" versionScope="nonSxS" xmlns:wcm="http://schemas.microsoft.com/WMIConfig/2002/State">
+      <InputLocale>0419:00000419;0409:00000409</InputLocale>
+      <SystemLocale>ru-RU</SystemLocale>
+      <UILanguage>en-US</UILanguage>
+      <UserLocale>ru-RU</UserLocale>
+    </component>
+    <component name="Microsoft-Windows-Shell-Setup" processorArchitecture="amd64" publicKeyToken="31bf3856ad364e35" language="neutral" versionScope="nonSxS" xmlns:wcm="http://schemas.microsoft.com/WMIConfig/2002/State">
+      <OOBE>
+        <!-- HideEULARegistrationPage — настройка Win11: в Win10 22H2 её нет
+             (SMI: "Setting is not defined in this component", факт 2026-10-05) -->
+        <HideEULAPage>true</HideEULAPage>
+        <HideOnlineAccountScreens>true</HideOnlineAccountScreens>
+        <HideWirelessSetupInOOBE>true</HideWirelessSetupInOOBE>
+        <ProtectYourPC>3</ProtectYourPC>
+      </OOBE>
+      <UserAccounts>
+        <LocalAccounts>
+          <LocalAccount wcm:action="add">
+            <Name>enotadmin</Name>
+            <Group>Administrators</Group>
+            <DisplayName>EnotDesk Lab Admin</DisplayName>
+            <Description>EnotDesk lab agent account (T03)</Description>
+            <Password>
+              <Value>@@VAL1@@</Value>
+              <PlainText>true</PlainText>
+            </Password>
+          </LocalAccount>
+        </LocalAccounts>
+      </UserAccounts>
+      <AutoLogon>
+        <Enabled>true</Enabled>
+        <LogonCount>5</LogonCount>
+        <Username>enotadmin</Username>
+        <Domain>.</Domain>
+        <Password>
+          <Value>@@VAL1@@</Value>
+          <PlainText>true</PlainText>
+        </Password>
+      </AutoLogon>
+      <FirstLogonCommands>
+        <SynchronousCommand wcm:action="add">
+          <Order>1</Order>
+          <CommandLine>cmd /c for %d in (D E F G H I J K L M) do if exist %d:\provision-firstlogon.ps1 powershell.exe -NoProfile -ExecutionPolicy Bypass -File %d:\provision-firstlogon.ps1</CommandLine>
+          <Description>EnotDesk lab provisioning: OpenSSH Server, ключ агента, qemu-guest-agent, RDP</Description>
+        </SynchronousCommand>
+      </FirstLogonCommands>
+      <TimeZone>Russian Standard Time</TimeZone>
+    </component>
+  </settings>
+</unattend>
