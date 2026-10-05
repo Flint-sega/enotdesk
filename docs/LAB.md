@@ -32,10 +32,10 @@
 
 | VMID | Имя | IP | Роль | Спецификация |
 |---|---|---|---|---|
-| 100 | enotdesk-server | 198.51.100.10 | staging EnotDesk + coturn (TURN) | Debian 13, 2 vCPU / 2 ГБ / 32 ГБ, cloud-init |
+| 100 | enotdesk-server | 198.51.100.10 | staging EnotDesk + coturn (TURN) + hub + комбинированный фронт :8081 | Debian 13, 2 vCPU / 2 ГБ / 32 ГБ, cloud-init |
 | 101 | enotdesk-win10-a1 | 198.51.100.11 | клиент Win10 22H2, агент-служба | 4 vCPU / 6144 МБ (balloon min 2048) / 64 ГБ, UEFI, virtio |
 | 102 | enotdesk-win11-a1 | 198.51.100.12 | клиент Win11, агент-служба | 4 vCPU / 6144 МБ (balloon min 2048) / 64 ГБ, UEFI + vTPM 2.0 + Secure Boot |
-| 103 | enotdesk-linux-a1 (резерв, не создана) | 198.51.100.13 | Debian с десктопом (X11 + отдельный вход Wayland) — под приёмку L4/L5 | как клиенты: 4 vCPU / 6144 МБ (balloon min 2048) / 64 ГБ |
+| 103 | enotdesk-linux-a1 | 198.51.100.13 | Debian 13 + GNOME (X11-сессия autologin + отдельный вход Wayland), агент-служба — приёмка L1–L7 | как клиенты: 4 vCPU / 6144 МБ (balloon min 2048) / 64 ГБ |
 | 104 | enotdesk-win10-a2 (резерв, не создана) | 198.51.100.14 | Windows 10, конфигурация как win10-a1 | как клиенты |
 
 Все клиентские VM — «равные» (4 vCPU / 6144 МБ / balloon min 2048 / 64 ГБ); сервер — служебная роль.
@@ -239,15 +239,82 @@ powershell -NoProfile -ExecutionPolicy Bypass -File .\agent-setup.ps1
 
 ## Как добавить резервную VM
 
-- **103 enotdesk-linux-a1** (Debian десктоп): образ `debian-13-generic-amd64.qcow2`
-  уже на хосте (`/root/images/`); скопировать фабрику из `server-vm.sh` с правками
-  (VMID 103, 4 vCPU / 6144 МБ / balloon min 2048 / 64 ГБ, ipconfig0 .13), внутрь — десктоп (X11-сессия +
-  отдельный вход Wayland), `EDESK_AGENT=1`-агент как systemd-юнит по образцу
-  `enotdesk-server.service` (адрес staging из `SERVER_URL`). Зарегистрировать:
-  `POST /machines` → код → регистрация агента. Снапшот `clean` после проверки.
-- **104 enotdesk-win10-a2**: фабрика `win-vm.sh` + `autounattend-win10.xml`
+- **103 enotdesk-linux-a1 — СОЗДАНА 05.10.2026** (см. секцию ниже); фабрика — `scripts/lab/linux-vm.sh`.
+- **104 enotdesk-win10-a2** (не создана): фабрика `win-vm.sh` + `autounattend-win10.xml`
   с правками (VMID 104, IP .14); ISO Win10 уже на хосте
   (`/var/lib/vz/template/iso/`); далее агент — как у 101.
+
+## VM 103 enotdesk-linux-a1 (Linux-клиент, создана 05.10.2026)
+
+Фабрика `scripts/lab/linux-vm.sh` (на хосте; Debian 13 cloud-image, cloud-init
+`enotadmin`+ключ лабы, 4 vCPU/6144/balloon 2048/64G, thin). Внутри: gdm3+gnome-core+xorg,
+autologin `enotadmin` в **X11**-сессию (AccountsService `Session=gnome-xorg`);
+переключение на **Wayland**: `Session=gnome` в `/var/lib/AccountsService/users/enotadmin`
+→ `systemctl restart accounts-daemon && systemctl restart gdm3` (обратно — `gnome-xorg`).
+Пароль enotadmin — `/root/enot-lab-secrets/linux-vms.env` (0600).
+
+**Glue `enot-xauth-sync.sh`** (`scripts/lab/`, на госте `/usr/local/sbin/`; юнит
+`enot-xauth-sync.service` дергает на каждом ребуте): приводит `/etc/enotdesk-agent/agent.env`
+к типу активной консольной сессии — X11: DISPLAY + XAUTHORITY (cookie из `-auth` Xorg,
+display из /tmp/.X11-unix); Wayland: `XDG_SESSION_TYPE=wayland` (адаптер ввода честно
+отказывает) + DISPLAY от Xwayland + `ELECTRON_OZONE_PLATFORM_HINT`-независимый
+`--ozone-platform=x11` (см. drop-in ниже); нет сессии — дисплейные строки убираются.
+После ручной смены сессии перезапускать: `sudo /usr/local/sbin/enot-xauth-sync.sh [wait]`.
+Самоустановка свежей копии: положить скрипт в `/home/enotadmin/` и запустить оттуда.
+
+**Drop-ins юнита агента на 103** (лабовые, переживают reinstall? НЕТ — снимаются
+purge'ем, накладывать заново): `scripts/lab/vm103-unit-dropin.sh` (hardening →
+systemd-analyze 4.5 OK) и `scripts/lab/vm103-ozone-dropin.sh` (`--ozone-platform=x11`,
+т.к. Electron 44 игнорирует `ELECTRON_OZONE_PLATFORM_HINT` и падает на Wayland-сессии).
+
+**Сборка на 103** (`scripts/lab/vm103-build.sh`): node 24 tarball → `/opt/node24`,
+исходники — tar worktree в `/var/tmp/enotdesk/`, `npm ci` + `pack:linux` →
+`/var/tmp/enotdesk/EnotDesk-built.AppImage` (первый прогон Linux-сборки, 05.10.2026).
+
+## Хаб на staging + комбинированный origin :8081 (05.10.2026)
+
+- Юнит `enotdesk-hub.service` (VM 100): `node /opt/enotdesk/hub/main.mjs`, 0.0.0.0:8090,
+  `ENOTDESK_URL=http://127.0.0.1:8080`, `HUB_URL=http://198.51.100.10:8081`, свой `hub.db`
+  в /var/lib/enotdesk; health `http://192.0.2.50:8090/api/hub/health`.
+- **Комбинированный фронт :8081** (юнит `enot-combined-caddy`, caddy из apt,
+  конфиг `/etc/caddy/enot-combined.caddy` + `admin off`): `/api/hub|/hub|/widget.js|/w|/join|/ws/*`
+  → 8090 (хаб), остальное → 8080 (сервер). Нужен, потому что one-click (H-J2) требует
+  ОДИН origin для сервера и хаба (на проде их совмещает Caddy); NAT-форвард :8081 → .10.
+- Webhooks сервера → хаб настроены: `http://127.0.0.1:8090/hooks/enotdesk`,
+  события `session.started`/`session.ended`, секрет — из консоли хаба.
+- Консоль хаба с Mac: `http://192.0.2.50:8090/hub/` (SSO admin) или `:8081/hub/`.
+
+## TURN на staging (W-U13, 05.10.2026)
+
+- Сервер подключён к coturn: в `/opt/enotdesk/enotdesk.env` добавлены
+  `ENOT_TURN_URLS=turn:192.0.2.50:3478,turn:198.51.100.10:3478` и
+  `ENOT_TURN_SECRET` (= `TURN_SECRET` из `/root/enot-lab-secrets/enotdesk-server.env`);
+  **dual URL обязателен**: hairpin VM→192.0.2.50:3478 несимметричен (ответ coturn
+  идёт по L2 мимо conntrack) — агенты ходят на `.10`, операторы снаружи на `.50`.
+- coturn: `external-ip=192.0.2.50/198.51.100.10` (relay-кандидаты анонсятся как .50).
+- NAT хоста: DNAT 3478 tcp/udp + 49152–49252 udp → .10 (в `enot-lab-nat.sh`).
+- Рецепт W-U13 (принудительный релей): временно `iptables -A FORWARD -i vmbr0 -o
+  wlx-WIFI-IFACE -d <IP-оператора> -p udp ! -s 198.51.100.10 -j DROP` (режет прямые
+  пары, релей остаётся), потом снять. Доказательство релея: tcpdump на VM100
+  (оператор ↔ .10:49152+), `ss -ulnp` (relay-порты), coturn-журнал.
+
+## Autologin на Windows-машинах (05.10.2026)
+
+Winlogon-автологин `enotadmin` включён на 101 и 102 (HKLM `AutoAdminLogon=1`,
+`DefaultUserName/DefaultPassword`; пароль — из `windows-vms.env`; скрипт-паттерн в
+истории прогона). Нужно для видео/ввода консольной сессии (W-U13) и интерактивных
+триггеров (H-J2). Обратно: `AutoAdminLogon=0` + удалить `DefaultPassword`.
+
+## Известные проблемы лабы (не продукта)
+
+- **Рендерер упакованного клиента Electron на лабовых Win-VM не исполняет JS**
+  (пустое окно; `--lang=en-US` чинит только локаль-ресурсы; GPU-флаги не помогли) —
+  блокер H-J2 на лабе; на реальном Windows v0.6.x работает. Перепроверить на
+  реальной машине или недеблоатнутой VM.
+- Unattended-видео на win11-a1 = «pipe-error» (хелпер спавнится, пайп рвётся) —
+  на реальном железе v0.6 приёмка проходила; к W-U13 не относится.
+- /tmp на Debian 13 — tmpfs: всё, что тест кладёт в /tmp гостя, умирает с ребутом
+  (долгоиграющие артефакты — в /var/tmp).
 
 ## Известные ограничения / осознанные упрощения
 
