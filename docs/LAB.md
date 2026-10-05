@@ -33,12 +33,12 @@
 | VMID | Имя | IP | Роль | Спецификация |
 |---|---|---|---|---|
 | 100 | enotdesk-server | 198.51.100.10 | staging EnotDesk + coturn (TURN) | Debian 13, 2 vCPU / 2 ГБ / 32 ГБ, cloud-init |
-| 101 | enotdesk-win10-a1 | 198.51.100.11 | клиент Win10 22H2, агент-служба | 4 vCPU / 4 ГБ / 64 ГБ, UEFI, virtio |
-| 102 | enotdesk-win11-a1 | 198.51.100.12 | клиент Win11, агент-служба | 4 vCPU / 4 ГБ / 64 ГБ, UEFI + vTPM 2.0 + Secure Boot |
-| 103 | enotdesk-linux-a1 (резерв, не создана) | 198.51.100.13 | Debian с десктопом (X11 + отдельный вход Wayland) — под приёмку L4/L5 | как клиенты: 4 vCPU / 4 ГБ / 64 ГБ |
+| 101 | enotdesk-win10-a1 | 198.51.100.11 | клиент Win10 22H2, агент-служба | 4 vCPU / 6144 МБ (balloon min 2048) / 64 ГБ, UEFI, virtio |
+| 102 | enotdesk-win11-a1 | 198.51.100.12 | клиент Win11, агент-служба | 4 vCPU / 6144 МБ (balloon min 2048) / 64 ГБ, UEFI + vTPM 2.0 + Secure Boot |
+| 103 | enotdesk-linux-a1 (резерв, не создана) | 198.51.100.13 | Debian с десктопом (X11 + отдельный вход Wayland) — под приёмку L4/L5 | как клиенты: 4 vCPU / 6144 МБ (balloon min 2048) / 64 ГБ |
 | 104 | enotdesk-win10-a2 (резерв, не создана) | 198.51.100.14 | Windows 10, конфигурация как win10-a1 | как клиенты |
 
-Все клиентские VM — «равные» (4 vCPU / 4 ГБ / 64 ГБ); сервер — служебная роль.
+Все клиентские VM — «равные» (4 vCPU / 6144 МБ / balloon min 2048 / 64 ГБ); сервер — служебная роль.
 Onboot=1 у всех: после ребута хоста VM поднимаются сами.
 
 ## Секреты (имена файлов; значения нигде не печатаются)
@@ -156,7 +156,8 @@ EnotDeskAgent, SSH-сервер, профиль сети.
 (см. раздел выше). Откат самого деблоата снапшотом невозможен — `clean` уже содержит
 деблоат; полная перестройка — через `win-vm.sh`.
 
-BalloonService (`blnsvr.exe -i` из virtio-win: `Balloon/w10|w11/amd64`, на гостях
+BalloonService установлен до переснятия `clean` (G02), входит в чистое состояние —
+при откате панель показывает реальную память. BalloonService (`blnsvr.exe -i` из virtio-win: `Balloon/w10|w11/amd64`, на гостях
 `C:\Users\enotadmin\blnsvr.exe`, служба `BalloonService` AUTO_START) установлен,
 `qm set 101 --balloon 2048` (+102): панель показывает реальное потребление
 (`mem` ≈ 2,4/1,7 ГБ вместо RSS qemu ~6,3 ГБ), хост забирает неиспользуемое через
@@ -229,6 +230,8 @@ powershell -NoProfile -ExecutionPolicy Bypass -File .\agent-setup.ps1
 ## Резерв ёмкости (R04, числа на момент сдачи)
 
 - RAM хоста 24 ГБ: при работающих VM 100–102 доступно ~12,7 ГБ (порог 8 ГБ).
+- Клиенты 6144 МБ (balloon min 2048) после инцидента WU; резерв лабы =
+  free + balloon-reclaimable ≥ 8 ГБ (см. capacity-стадию).
 - LVM-thin `pve/data`: 157 ГБ (расширен на 16 ГБ vg_free), занято ~29%,
   свободно ~114 ГБ. Thin-том занимает место по мере записи: две новые клиентские
   VM (~25–30 ГБ после установки ОС каждая) помещаются. Диски VM — thin, создаётся
@@ -238,7 +241,7 @@ powershell -NoProfile -ExecutionPolicy Bypass -File .\agent-setup.ps1
 
 - **103 enotdesk-linux-a1** (Debian десктоп): образ `debian-13-generic-amd64.qcow2`
   уже на хосте (`/root/images/`); скопировать фабрику из `server-vm.sh` с правками
-  (VMID 103, 4 vCPU / 4 ГБ / 64 ГБ, ipconfig0 .13), внутрь — десктоп (X11-сессия +
+  (VMID 103, 4 vCPU / 6144 МБ / balloon min 2048 / 64 ГБ, ipconfig0 .13), внутрь — десктоп (X11-сессия +
   отдельный вход Wayland), `EDESK_AGENT=1`-агент как systemd-юнит по образцу
   `enotdesk-server.service` (адрес staging из `SERVER_URL`). Зарегистрировать:
   `POST /machines` → код → регистрация агента. Снапшот `clean` после проверки.

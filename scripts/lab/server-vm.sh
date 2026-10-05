@@ -14,7 +14,6 @@ CORES=2
 MEMMB=2048
 DISKGB=32
 IMAGE=/root/images/debian-13-generic-amd64.qcow2
-WLAN_IF=wlx-WIFI-IFACE  # исходящий Wi-Fi интерфейс хоста (существующий, не трогаем его конфиг)
 KEYS=/root/enot-lab-keys
 KEY_PUB=$KEYS/enot-lab-ed25519.pub
 KEY_PRIV=$KEYS/enot-lab-ed25519
@@ -354,14 +353,13 @@ cat > "$NATSH" <<NATSH_EOF
 #!/bin/sh
 # EnotDesk lab (T02): порт-форвард 192.0.2.50:8080 -> 198.51.100.10:8080 (staging).
 # Идемпотентно: добавляет правило только если его нет. Сеть хоста (/etc/network/interfaces, enot-wifi) не трогает.
+# MASQUERADE по --sport не нужен (F1): conntrack реверсирует DNAT-ответы сам.
 set -e
 add() { iptables -t "\$1" -C \$2 2>/dev/null || iptables -t "\$1" -A \$2; }
 # DNAT по адресу назначения — чтобы не перехватывать исходящий трафик VM на чужие :8080
 add nat "PREROUTING -d 192.0.2.50/32 -p tcp -m tcp --dport 8080 -j DNAT --to-destination $VMIP:8080"
 # тот же DNAT для локальных подключений самого хоста (OUTPUT, не проходит PREROUTING)
 add nat "OUTPUT -d 192.0.2.50/32 -p tcp -m tcp --dport 8080 -j DNAT --to-destination $VMIP:8080"
-# ответный путь из VM к LAN-клиентам (натим исходный адрес в .50)
-add nat "POSTROUTING -s $VMIP/32 -o $WLAN_IF -p tcp -m tcp --sport 8080 -j MASQUERADE"
 # явное разрешение форварда на staging (политика ACCEPT и так, правило — для ясности)
 add filter "FORWARD -d $VMIP/32 -p tcp -m tcp --dport 8080 -j ACCEPT"
 NATSH_EOF
@@ -403,8 +401,10 @@ systemctl is-enabled --quiet enot-lab-nat || die "enot-lab-nat не enabled"
 "${VMSSH[@]}" 'systemctl is-enabled --quiet enotdesk-server && systemctl is-active --quiet enotdesk-server' \
   || die "enotdesk-server внутри VM не enabled/active"
 
-# снапшот clean (Шов №5) — только после того как всё проверено
-if ! qm listsnapshot "$VMID" | awk '{for(i=1;i<=NF;i++) if($i ~ /->$/){print $(i+1); break}}' | grep -qx clean; then
+# снапшот clean (Шов №5) — только после того как всё проверено.
+# Наличие clean — по имени снимка (2-я колонка qm listsnapshot), не по стрелкам `->` (F1):
+# current стоит отдельной строкой, парсинг стрелок ненадёжен.
+if ! qm listsnapshot "$VMID" | awk '{print $2}' | grep -qx clean; then
   log "snapshot: clean"
   qm snapshot "$VMID" clean --description "T02: clean staging (Debian 13 + EnotDesk + bootstrap)"
 else

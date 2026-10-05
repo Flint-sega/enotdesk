@@ -10,7 +10,8 @@
 #      vioserial/Balloon для w10|w11), qemu-ga-x86_64.msi и provision-firstlogon.ps1 кладутся в КОРЕНЬ
 #      того же ISO — Setup читает ответ со своего носителя гарантированно. DriverPaths в xml перечисляет
 #      D:\drivers..J:\drivers — несуществующие пути Setup пропускает, поэтому буква CD не важна.
-#   3. Создаёт/сверяет VM (равная фабрика: 4 vCPU/4 ГБ/64 ГБ, q35, OVMF, virtio): Win10 — без TPM, SB off;
+#   3. Создаёт/сверяет VM (равная фабрика: 4 vCPU/6 ГБ/64 ГБ, balloon min 2 ГБ (D01),
+#      q35, OVMF, virtio): Win10 — без TPM, SB off;
 #      Win11 — vTPM 2.0 (swtpm) + SB on (efidisk0 pre-enrolled-keys=1). Загрузка scsi0;ide0: пустой диск → CD,
 #      после первого этапа установки ESP уже загрузочный → рестарты идут с диска, установки с CD не повторяется.
 #   4. Стартует обе, опрашивает TCP/22 циклом (установка 20–50+ мин/машину, идёт параллельно).
@@ -43,7 +44,8 @@ WORK=$LABDIR/win-iso-work
 GW=198.51.100.1
 DNS=1.1.1.1
 CORES=4
-MEMMB=4096
+MEMMB=6144
+BALLOON_MB=2048   # balloon floor клиентов (D01): память сверх него хост забирает балуном
 DISKGB=64
 ADMIN_USER=enotadmin
 WAIT_LOOPS=220          # x30 c = 110 мин на обе машины суммарно
@@ -76,8 +78,33 @@ command -v genisoimage >/dev/null || apt-get install -y -qq genisoimage >/dev/nu
 [ -f "$KEY_PRIV" ] || die "нет $KEY_PRIV — нужен хосту для ssh внутрь VM"
 [ -f "$LABDIR/autounattend-win10.xml" ] || die "нет $LABDIR/autounattend-win10.xml — scp из scripts/lab/"
 [ -f "$LABDIR/autounattend-win11.xml" ] || die "нет $LABDIR/autounattend-win11.xml — scp из scripts/lab/"
+# RAM: клиенты 6144 МБ с balloon-min 2048 (D01) — у уже запущенных клиентов память
+# сверх floor'а хост забирает балуном, поэтому считаем free + Σ(memory−balloon);
+# на голом хосте это честные 2×6144
+TOTAL_NEED_MB=$((MEMMB * 2))
+RECLAIM_MB=0
+NOBALLOON_VMS=""
+for vmid in 101 102; do
+  if qm status "$vmid" 2>/dev/null | grep -q '^status: running'; then
+    M=$(qm config "$vmid" | awk '/^memory:/{print $2}')
+    B=$(qm config "$vmid" | awk '/^balloon:/{print $2}')
+    [ -n "$M" ] || die "не смог прочитать memory VM $vmid"
+    # balloon отсутствует/0/не число — хосту нечего забрать балуном, честно reclaimable=0
+    case "$B" in
+      ''|0|*[!0-9]*) NOBALLOON_VMS="$NOBALLOON_VMS $vmid" ;;
+      *) RECLAIM_MB=$((RECLAIM_MB + M - B)) ;;
+    esac
+  fi
+done
 AVAIL_MB=$(free -m | awk '/^Mem:/{print $7}')
-[ "$AVAIL_MB" -ge 8500 ] || die "мало свободной RAM: ${AVAIL_MB}MB, нужно ≥8500MB (2×4ГБ VM)"
+EFFECTIVE_MB=$((AVAIL_MB + RECLAIM_MB))
+NOTE=""
+if [ -n "$NOBALLOON_VMS" ]; then
+  NOTE="; balloon не настроен у VM:$NOBALLOON_VMS — резерв по free"
+fi
+log "ram: free ${AVAIL_MB}МБ + balloon-reclaim ${RECLAIM_MB}МБ = ${EFFECTIVE_MB}МБ ≥ нужно ${TOTAL_NEED_MB}МБ${NOTE}"
+[ "$EFFECTIVE_MB" -ge "$TOTAL_NEED_MB" ] \
+  || die "мало RAM: free ${AVAIL_MB}МБ + balloon-reclaim ${RECLAIM_MB}МБ = ${EFFECTIVE_MB}МБ < нужно ${TOTAL_NEED_MB}МБ (2×${MEMMB}МБ)${NOTE}"
 ip -4 addr show vmbr0 | grep -q "$GW" || die "vmbr0 без $GW — сеть хоста не та (не трогаю)"
 dpkg -s swtpm >/dev/null 2>&1 || die "нет swtpm (нужен для vTPM VMID 102)"
 
@@ -302,7 +329,7 @@ build_install_iso win10
 build_install_iso win11
 
 # ================= VM =================
-# фабрика клиентов: 4 vCPU / 4 ГБ / 64 ГБ / q35 / OVMF / virtio-scsi / virtio-net vmbr0
+# фабрика клиентов: 4 vCPU / 6 ГБ (balloon min 2 ГБ, D01) / 64 ГБ / q35 / OVMF / virtio-scsi / virtio-net vmbr0
 ensure_vm() { # $1=vmid $2=name $3=flavor(win10|win11) $4=sbkeys(0|1) $5=tpm(0|1)
   local VMID=$1 NAME=$2 FLAVOR=$3 SBKEYS=$4 TPM=$5
   local OSTYPE WINISO
@@ -315,7 +342,7 @@ ensure_vm() { # $1=vmid $2=name $3=flavor(win10|win11) $4=sbkeys(0|1) $5=tpm(0|1
   if ! qm status "$VMID" >/dev/null 2>&1; then
     log "vm: создаю $NAME (VMID $VMID, $CORES vCPU/${MEMMB}MB/${DISKGB}G, q35/ovmf, sb=$SBKEYS, tpm=$TPM)"
     local CREATE_ARGS=(create "$VMID" --name "$NAME" --ostype "$OSTYPE" --machine q35 --bios ovmf
-      --cpu host --cores "$CORES" --memory "$MEMMB"
+      --cpu host --cores "$CORES" --memory "$MEMMB" --balloon "$BALLOON_MB"
       --net0 "virtio,bridge=vmbr0" --vga virtio --scsihw virtio-scsi-single
       --scsi0 "local-lvm:${DISKGB},iothread=1,discard=on"
       --efidisk0 "local-lvm:1,efitype=4m,pre-enrolled-keys=$SBKEYS"
@@ -331,6 +358,7 @@ ensure_vm() { # $1=vmid $2=name $3=flavor(win10|win11) $4=sbkeys(0|1) $5=tpm(0|1
     echo "$CFG" | grep -q "name: $NAME" || qm set "$VMID" --name "$NAME" >/dev/null
     echo "$CFG" | grep -q "^cores: $CORES" || qm set "$VMID" --cores "$CORES" >/dev/null
     echo "$CFG" | grep -q "^memory: $MEMMB" || qm set "$VMID" --memory "$MEMMB" >/dev/null
+    echo "$CFG" | grep -q "^balloon: $BALLOON_MB" || qm set "$VMID" --balloon "$BALLOON_MB" >/dev/null
     echo "$CFG" | grep '^net0:' | grep -q 'virtio=' || die "net0 у $VMID не virtio — чужой конфиг, не трогаю"
     qm config "$VMID" | grep '^net0:' | grep -q 'bridge=vmbr0' || die "net0 у $VMID не на vmbr0 — чужой конфиг"
     qm config "$VMID" | grep -q 'bios: ovmf' || die "$VMID не ovmf — чужой конфиг"
@@ -401,6 +429,7 @@ check_vm() { # $1=vmid $2=ip $3=name
   qm config "$VMID" | grep -q "name: $NAME" || die "$VMID: имя не $NAME"
   qm config "$VMID" | grep -q "^cores: $CORES" || die "$VMID: cores не $CORES"
   qm config "$VMID" | grep -q "^memory: $MEMMB" || die "$VMID: memory не $MEMMB"
+  qm config "$VMID" | grep -q "^balloon: $BALLOON_MB" || die "$VMID: balloon не $BALLOON_MB"
   qm config "$VMID" | grep -q "bios: ovmf" || die "$VMID: не ovmf"
   qm config "$VMID" | grep -Eq '^machine: (q35|pc-q35-[0-9.]+)' || die "$VMID: не q35"
   qm config "$VMID" | grep -q '^net0:.*virtio=.*bridge=vmbr0' || die "$VMID: net0 не virtio/vmbr0"
@@ -432,9 +461,10 @@ qm config 102 | grep -q 'efidisk0:.*pre-enrolled-keys=1' || die "102: efidisk0 �
 qm config 101 | grep -q '^tpmstate0:' && die "101: не должно быть TPM"
 log "check: 102 vTPM+SB ok, 101 без TPM ok"
 
-# снапшот clean (Шов №5) — после всех проверок
+# снапшот clean (Шов №5) — после всех проверок.
+# Наличие clean — по имени снимка (2-я колонка qm listsnapshot), не по стрелкам `->` (F1).
 snapshot_clean() { # $1=vmid
-  if ! qm listsnapshot "$1" | awk '{for(i=1;i<=NF;i++) if($i ~ /->$/){print $(i+1); break}}' | grep -qx clean; then
+  if ! qm listsnapshot "$1" | awk '{print $2}' | grep -qx clean; then
     qm snapshot "$1" clean --description "T03: clean install (без EnotDesk-агента)" >/dev/null
     log "snapshot: clean у VMID $1"
   else
