@@ -6,11 +6,11 @@
 # Прод (ruenot.site) не трогается.
 #
 # Использование:
-#   lab-finalize.sh                     # стадии: turn, agents, snapshots, capacity
+#   lab-finalize.sh                     # все стадии: turn agents snapshots rollback-test capacity reboot reboot-verify (по умолчанию — первые четыре)
 #   lab-finalize.sh --stage <stage>     # одна стадия:
 #       turn          coturn в VM 100 + ENOT_TURN_* серверу + проверка /rtc-config
 #       agents        onboarding-коды + agent-setup.ps1 на 101/102 + online-проверка
-#       snapshots     guest-agent VM 100 + переснятие clean у 100/101/102
+#       snapshots     guest-agent VM 100 + clean у 100/101/102 (существующий clean не переснимается)
 #       rollback-test откат qm rollback 101 clean и возврат машины online
 #       capacity      RAM/диск числами (R04)
 #       reboot        ПОСЛЕДНЯЯ стадия: systemctl reboot (скрипт умрёт вместе с хостом)
@@ -34,15 +34,28 @@ VMSSH_SERVER=(ssh -i "$KEY_PRIV" -o BatchMode=yes -o StrictHostKeyChecking=accep
 MACHINE_WIN10=enotdesk-win10-a1
 MACHINE_WIN11=enotdesk-win11-a1
 WLAN_IF=wlx-WIFI-IFACE   # исходящий Wi-Fi интерфейс (настроен до нас, не трогаем)
-RAM_MIN_FREE_MB=8192      # R04: свободная RAM при работающих VM 100-102
-
-STAGES="turn agents snapshots capacity"
-if [ "${1:-}" = "--stage" ] && [ -n "${2:-}" ]; then
-  STAGES="$2"
-fi
+RAM_MIN_FREE_MB=8192      # R04: резерв лабы (free + balloon-reclaim клиентов) при работающих VM 100-102
 
 log() { echo "[T04] $*"; }
 die() { echo "[T04] FAIL: $*" >&2; exit 1; }
+
+# --- выбор стадий (F1): без аргументов — дефолт; --stage <имена> — подмножество;
+# неизвестное имя — честный отказ со списком допустимых
+ALL_STAGES="turn agents snapshots rollback-test capacity reboot reboot-verify"
+STAGES="turn agents snapshots capacity"
+if [ $# -gt 0 ]; then
+  [ "$1" = "--stage" ] || die "неизвестный аргумент '$1' — usage: lab-finalize.sh [--stage <$ALL_STAGES>]"
+  [ -n "${2:-}" ] || die "--stage требует имя стадии. Допустимые: $ALL_STAGES"
+  for s in $2; do
+    # точное сравнение: case-паттерн трактовал бы glob в имени ('a*s' прошёл бы как agents)
+    MATCH=""
+    for a in $ALL_STAGES; do
+      [ "$s" = "$a" ] && MATCH=1 && break
+    done
+    [ -n "$MATCH" ] || die "неизвестная стадия '$s'. Допустимые: $ALL_STAGES"
+  done
+  STAGES="$2"
+fi
 has_stage() { case " $STAGES " in *" $1 "*) return 0;; *) return 1;; esac; }
 
 # --- предусловия (не нужны только стадии reboot — она умирает вместе с хостом) ---
@@ -304,7 +317,9 @@ STRIP_PAYLOAD
 fi
 
 # ================== СТАДИЯ: СНАПШОТЫ ==================
-snap_has_clean() { qm listsnapshot "$1" 2>/dev/null | grep -q -- '-> clean '; }
+# наличие clean — по имени снимка (2-я колонка qm listsnapshot), не по стрелкам `->`:
+# current стоит отдельной строкой, парсинг стрелок ненадёжен (F1)
+snap_has_clean() { qm listsnapshot "$1" 2>/dev/null | awk '{print $2}' | grep -qx clean; }
 if has_stage snapshots; then
   log "snapshots: guest-agent в VM $VMID_SERVER"
   "${VMSSH_SERVER[@]}" 'sudo -n systemctl enable --now qemu-guest-agent' || die "qemu-guest-agent не включился в VM $VMID_SERVER"
@@ -315,20 +330,21 @@ if has_stage snapshots; then
   done
   log "snapshots: guest-agent VM $VMID_SERVER виден хосту"
 
-  for vmid in "$VMID_SERVER" "$VMID_WIN10" "$VMID_WIN11"; do
+  # clean снимается только при отсутствии: существующий — уже проверенное состояние,
+  # повторный прогон его не переснимает и завершается успехом (F1)
+  snapshot_clean() { # snapshot_clean <vmid> <description>
+    local vmid=$1 desc=$2
     if snap_has_clean "$vmid"; then
-      qm delsnapshot "$vmid" clean >/dev/null || die "delsnapshot clean у VM $vmid"
-      log "snapshots: прежний clean у VM $vmid удалён"
+      log "snapshots: clean у VM $vmid уже есть — не переснимаю"
+    else
+      qm snapshot "$vmid" clean --description "$desc" >/dev/null
+      snap_has_clean "$vmid" || die "clean не появился у VM $vmid"
+      log "snapshots: clean у VM $vmid готов"
     fi
-  done
-  # снимаем после всех проверок: clean = проверенное рабочее состояние
-  qm snapshot "$VMID_SERVER" clean --description "T04: clean staging (EnotDesk + TURN + guest-agent)" >/dev/null
-  qm snapshot "$VMID_WIN10" clean --description "T04: clean install + EnotDesk agent (win10-a1)" >/dev/null
-  qm snapshot "$VMID_WIN11" clean --description "T04: clean install + EnotDesk agent (win11-a1)" >/dev/null
-  for vmid in "$VMID_SERVER" "$VMID_WIN10" "$VMID_WIN11"; do
-    snap_has_clean "$vmid" || die "clean не появился у VM $vmid"
-    log "snapshots: clean у VM $vmid готов"
-  done
+  }
+  snapshot_clean "$VMID_SERVER" "T04: clean staging (EnotDesk + TURN + guest-agent)"
+  snapshot_clean "$VMID_WIN10" "T04: clean install + EnotDesk agent (win10-a1)"
+  snapshot_clean "$VMID_WIN11" "T04: clean install + EnotDesk agent (win11-a1)"
   log "snapshots: PASS (clean у 100/101/102)"
 fi
 
@@ -361,15 +377,34 @@ fi
 
 # ================== СТАДИЯ: РЕЗЕРВ ЁМКОСТИ (числами, R04) ==================
 if has_stage capacity; then
+  # клиенты 6144 МБ с balloon-min 2048 (D01): память сверх floor'а хост забирает
+  # балуном при нехватке, поэтому резерв = free + Σ(memory − balloon) по клиентам
   AVAIL_MB=$(free -m | awk '/^Mem:/{print $7}')
-  [ "$AVAIL_MB" -ge "$RAM_MIN_FREE_MB" ] \
-    || die "свободная RAM ${AVAIL_MB}МБ < ${RAM_MIN_FREE_MB}МБ при работающих VM 100-102"
+  RECLAIM_MB=0
+  NOBALLOON_VMS=""
+  for vmid in "$VMID_WIN10" "$VMID_WIN11"; do
+    M=$(qm config "$vmid" | awk '/^memory:/{print $2}')
+    B=$(qm config "$vmid" | awk '/^balloon:/{print $2}')
+    [ -n "$M" ] || die "capacity: не смог прочитать memory VM $vmid"
+    # balloon отсутствует/0/не число — хосту нечего забрать балуном, честно reclaimable=0
+    case "$B" in
+      ''|0|*[!0-9]*) NOBALLOON_VMS="$NOBALLOON_VMS $vmid" ;;
+      *) RECLAIM_MB=$((RECLAIM_MB + M - B)) ;;
+    esac
+  done
+  RESERVE_MB=$((AVAIL_MB + RECLAIM_MB))
+  NOTE=""
+  if [ -n "$NOBALLOON_VMS" ]; then
+    NOTE="; balloon не настроен у VM:$NOBALLOON_VMS — резерв по free"
+  fi
+  [ "$RESERVE_MB" -ge "$RAM_MIN_FREE_MB" ] \
+    || die "резерв free ${AVAIL_MB}МБ + balloon-reclaim ${RECLAIM_MB}МБ = ${RESERVE_MB}МБ < ${RAM_MIN_FREE_MB}МБ при работающих VM 100-102"
   THIN_RAW=$(lvs --noheadings --units g --nosuffix --separator '|' -o lv_size,data_percent pve/data)
   THIN_SIZE_G=$(echo "$THIN_RAW" | awk -F'|' '{gsub(/ /,"",$1); printf "%d", $1}')
   THIN_USED_PCT=$(echo "$THIN_RAW" | awk -F'|' '{gsub(/ /,"",$2); printf "%d", $2}')
   THIN_FREE_G=$((THIN_SIZE_G - THIN_SIZE_G * THIN_USED_PCT / 100))
   VG_FREE_G=$(vgs --noheadings --units g --nosuffix -o vg_free pve | tr -d ' ')
-  log "capacity: RAM available ${AVAIL_MB}МБ (порог ${RAM_MIN_FREE_MB}МБ)"
+  log "capacity: резерв с учётом balloon-reclaim = free ${AVAIL_MB}МБ + reclaimable ${RECLAIM_MB}МБ = ${RESERVE_MB}МБ (порог ${RAM_MIN_FREE_MB}МБ)${NOTE}"
   log "capacity: thin pool pve/data ${THIN_SIZE_G}G, занято ${THIN_USED_PCT}%, свободно ~${THIN_FREE_G}G; vg_free ${VG_FREE_G}G (расширяемо)"
   log "capacity: thin — fresh 64G-том занимает место по мере записи; две новые VM (~25-30G после установки ОС каждая) помещаются"
   [ "$THIN_FREE_G" -lt 100 ] && die "thin pool free ${THIN_FREE_G}G < 100G — мало даже для двух свежих клиентских VM"
