@@ -69,7 +69,7 @@ test('отказ dispatch виден в warn — кроме throttled (норм�
   const quiet = [];
   const throttling = createAgentInputSink({
     nativeInput: { dispatch: () => ({ ok: false, reason: 'throttled' }) },
-    getBounds: () => null,
+    getBounds: () => ({ width: 1920, height: 1080 }), // move доходит до dispatch — там и сработает throttle
     log: { warn: (msg) => quiet.push(msg) },
   });
   const ch2 = fakeChannel();
@@ -86,4 +86,30 @@ test('getBounds не передан: dispatch получает null bounds — �
   ch.emit(JSON.stringify({ type: 'scroll', dx: 0, dy: 3 }));
   assert.equal(calls.length, 1);
   assert.equal(calls[0].bounds, null);
+});
+
+test('move без реальных границ — честный отказ no-bounds, НЕ молчаливый клик в (0,0) (ревизия 06.10)', () => {
+  const calls = [];
+  const warns = [];
+  const sink = createAgentInputSink({
+    nativeInput: spyInput(calls),
+    getBounds: () => null,
+    log: { warn: (msg) => warns.push(msg) },
+  });
+  const ch = fakeChannel();
+  sink.handleChannel(ch);
+  ch.emit(JSON.stringify({ type: 'move', x: 0.5, y: 0.75 }));
+  assert.deepEqual(calls, [], 'move без bounds не должен доходить до dispatch — тот отправил бы курсор в (0,0) с ok:true');
+  assert.equal(warns.length, 1);
+  assert.ok(warns[0].includes('no-bounds'));
+});
+
+test('button/scroll/key без границ проходят: кнопка жмёт в текущей позиции курсора (семантика pipeline)', () => {
+  const calls = [];
+  const sink = createAgentInputSink({ nativeInput: spyInput(calls), getBounds: () => null });
+  const ch = fakeChannel();
+  sink.handleChannel(ch);
+  ch.emit(JSON.stringify({ type: 'button', button: 'left', down: true }));
+  ch.emit(JSON.stringify({ type: 'key', key: 'a', down: true }));
+  assert.equal(calls.length, 2);
 });
