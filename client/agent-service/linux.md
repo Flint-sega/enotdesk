@@ -19,8 +19,9 @@ sudo SERVER_URL="https://enotdesk.example.com" \
 ```
 
 Скрипт: создаёт системного пользователя `enotdesk-agent` (home `/var/lib/enotdesk-agent`), пишет
-`settings.json` (адрес сервера) в профиль `~/.config/EnotDesk/agent` (0600), пишет
-`/etc/enotdesk-agent/agent.env` (0600: `EDESK_AGENT_NAME`, опционально `DISPLAY`/`XAUTHORITY`),
+`settings.json` (адрес сервера) в профиль `~/.config/enotdesk/agent` (0600; весь `.config`
+отдаётся агенту — Electron именует userData строчным именем пакета, регистр обязан совпадать),
+пишет `/etc/enotdesk-agent/agent.env` (0600: `EDESK_AGENT_NAME`, опционально `DISPLAY`/`XAUTHORITY`),
 копирует unit (подставляя ваш `APP_DIR`), делает `daemon-reload` + `enable --now`.
 
 ## Первый запуск с onboarding-кодом

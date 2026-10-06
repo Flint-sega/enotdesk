@@ -38,3 +38,41 @@ test('packaging: только полные теги локалей (ru, en-US), 
   assert.ok(langs.includes('en-US'), 'должен быть en-US (полный тег: голый «en» не матчится ни с одним pak)');
   assert.ok(!langs.includes('en'), 'голый «en» запрещён: pak называется en-US.pak, «en» молча выпадает из сборки');
 });
+
+// Профиль агента (приёмка 05.10, L1-б): Electron именует userData по name из
+// package.json (enotdesk, строчные) — установщик обязан писать именно туда,
+// иначе настройка службы молча не подхватывается; родители .config создаются
+// mkdir'ом и целиком отдаются агенту (install -d оставлял .config за root).
+const installSh = readFileSync(fileURLToPath(new URL('../agent-service/install-linux.sh', import.meta.url)), 'utf8');
+
+test('packaging: install-linux.sh пишет профиль в ~/.config/enotdesk/agent', () => {
+  assert.ok(installSh.includes('.config/enotdesk/agent'), 'путь профиля должен быть .config/enotdesk/agent (строчные)');
+  assert.ok(!installSh.includes('EnotDesk/agent'), 'путь «EnotDesk/agent» мёртв: userData агента — enotdesk (строчные)');
+});
+
+test('packaging: install-linux.sh отдаёт .config агенту целиком', () => {
+  assert.ok(/chown -R .*AGENT_USER.*AGENT_HOME\/\.config/.test(installSh), 'нужен chown -R на $AGENT_HOME/.config — install -d оставлял родителей за root');
+});
+
+// Юнит агента: hardening, проверенный в лабе на Debian 13 (05.10, drop-in
+// переносится в продукт). Строки-маркеры обязаны быть в поставляемом unit.
+const unit = readFileSync(fileURLToPath(new URL('../agent-service/enotdesk-agent.service', import.meta.url)), 'utf8');
+
+test('packaging: enotdesk-agent.service содержит лабовый hardening', () => {
+  for (const line of [
+    'NoNewPrivileges=true',
+    'UMask=0077',
+    'PrivateDevices=yes',
+    'ProtectKernelTunables=yes',
+    'ProtectKernelModules=yes',
+    'ProtectKernelLogs=yes',
+    'ProtectControlGroups=yes',
+    'ProtectClock=yes',
+    'ProtectHostname=yes',
+    'RestrictSUIDSGID=yes',
+    'CapabilityBoundingSet=',
+    'AmbientCapabilities=',
+  ]) {
+    assert.ok(unit.includes(line), `в unit нет строки ${line}`);
+  }
+});
