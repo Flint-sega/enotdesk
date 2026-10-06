@@ -76,3 +76,24 @@ test('packaging: enotdesk-agent.service содержит лабовый hardenin
     assert.ok(unit.includes(line), `в unit нет строки ${line}`);
   }
 });
+
+// main.mjs: проводка ozone-флага (Wayland-сессии, лаба 05.10) и always-on
+// boot-лога — контракт на уровне текста: регрессия «убрал флаг/лог» ловится здесь.
+const mainJs = readFileSync(fileURLToPath(new URL('../main.mjs', import.meta.url)), 'utf8');
+
+test('packaging: main.mjs форсирует --ozone-platform=x11 на linux', () => {
+  assert.match(mainJs, /process\.platform === 'linux' && !app\.commandLine\.hasSwitch\('ozone-platform'\)/, 'нужен гвард linux + уважение пользовательского флага');
+  assert.match(mainJs, /appendSwitch\('ozone-platform', 'x11'\)/);
+});
+
+test('packaging: boot-лог always-on и покрывает жизненные события окна', () => {
+  assert.match(mainJs, /createBootLog\(\{ userDataDir: app\.getPath\('userData'\) \}\)/, 'boot-лог создаётся на userData');
+  for (const marker of [
+    /render-process-gone[\s\S]{0,400}bootLog\.write\('win', `render-process-gone/,
+    /did-fail-load \$\{code\} \$\{desc\} \$\{url\}`\);\s*\n\s*bootLog\.write/,
+    /bootLog\.write\('main', 'app ready'\)/,
+    /bootLog\.write\('main', `pid=/,
+  ]) {
+    assert.ok(marker.test(mainJs), `нет проводки boot-лога: ${marker}`);
+  }
+});
