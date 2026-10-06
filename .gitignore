@@ -11,3 +11,8 @@ graphify-out/
 .autopilot/
 .zcode/
 AGENTS.md
+# Лаба: локальные материалы с реальными адресами стенда — в публичное репо не идут
+# (значения живут на хосте /root/enot-lab; ревизия 06.10 — защита от «git add -A»)
+report-*.html
+scripts/lab/usb2-enot-net-setup.sh
+scripts/lab/proxmox-install-cheatsheet.md
