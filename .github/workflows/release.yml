@@ -54,7 +54,11 @@ jobs:
         shell: bash
         run: |
           rustup target add x86_64-pc-windows-msvc
-          cargo build --release --manifest-path helper/video/Cargo.toml
+          # Статический CRT (этап 4, 06.10): с динамическим vcruntime140.dll хелпер
+          # на Windows без VC++ Redistributable умирает при загрузке молча
+          # (STATUS_DLL_NOT_FOUND 0xC0000135), пайп не создаётся — оператор видит
+          # только pipe-error. Требование: «работает на любой популярной Windows».
+          RUSTFLAGS="-C target-feature=+crt-static" cargo build --release --manifest-path helper/video/Cargo.toml
           mkdir -p helper/video/bin
           cp helper/video/target/release/enotdesk-video.exe helper/video/bin/enotdesk-video.exe
       - name: Pack (Windows — portable и установщик NSIS)

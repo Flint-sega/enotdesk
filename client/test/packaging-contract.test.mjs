@@ -113,3 +113,18 @@ test('packaging: auto-reload после краша рендерера на ме�
   const i3 = mainJs.indexOf('win.webContents.reload()');
   assert.ok(i1 !== -1 && i2 > i1 && i3 > i2, 'нужна цепочка rendererReloaded → автоперезапуск → reload()');
 });
+
+// Этап 4 (06.10): хелпер с динамическим CRT умирает на Windows без VC++
+// Redistributable (0xC0000135, молча) — сборка обязана быть со статическим CRT.
+const releaseYml = readFileSync(fileURLToPath(new URL('../../.github/workflows/release.yml', import.meta.url)), 'utf8');
+
+test('packaging: хелпер собирается со статическим CRT', () => {
+  assert.ok(releaseYml.includes('target-feature=+crt-static'), 'RUSTFLAGS crt-static обязателен в build-шаге хелпера');
+});
+
+// Этап 4 (06.10): portable-распаковка даёт exe хелпера SYSTEM-only ACL — спавн
+// от консольного пользователя невозможен. main.mjs обязан копировать хелпер
+// в ProgramData перед спавном.
+test('packaging: main.mjs копирует хелпер в ProgramData\\EnotDesk\\helper', () => {
+  assert.ok(mainJs.includes("'EnotDesk', 'helper'"), 'нужна копия хелпера в ProgramData (ACL портативной распаковки)');
+});
