@@ -33,7 +33,7 @@ VMSSH_SERVER=(ssh -i "$KEY_PRIV" -o BatchMode=yes -o StrictHostKeyChecking=accep
               -o UserKnownHostsFile="$KNOWN_HOSTS" -o ConnectTimeout=10 "enotadmin@$SERVER_IP")
 MACHINE_WIN10=enotdesk-win10-a1
 MACHINE_WIN11=enotdesk-win11-a1
-WLAN_IF=wlx-WIFI-IFACE   # исходящий Wi-Fi интерфейс (настроен до нас, не трогаем)
+WLAN_IF="${WLAN_IF:-$(ip -o route show default 2>/dev/null | head -1 | awk '{print $5}')}"
 RAM_MIN_FREE_MB=8192      # R04: резерв лабы (free + balloon-reclaim клиентов) при работающих VM 100-102
 
 log() { echo "[T04] $*"; }
