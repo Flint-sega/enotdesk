@@ -10,7 +10,7 @@
 #   EDESK_AGENT_NAME   machine name on staging (lab IP-plan name)
 # Optional env:
 #   EDESK_VERSION      release tag to download if the app is not installed
-#                      (default v0.6.3)
+#                      (default v0.6.4)
 #
 # Steps:
 #   1) locate (or silently install) EnotDesk.exe
@@ -36,7 +36,7 @@ function Fail([string]$msg) {
 $ServerUrl = $env:EDESK_SERVER_URL
 $AgentCode = $env:EDESK_AGENT_CODE
 $AgentName = $env:EDESK_AGENT_NAME
-$AppVersion = if ($env:EDESK_VERSION) { $env:EDESK_VERSION } else { 'v0.6.3' }
+$AppVersion = if ($env:EDESK_VERSION) { $env:EDESK_VERSION } else { 'v0.6.4' }
 
 if (-not $ServerUrl) { Fail 'EDESK_SERVER_URL is empty' }
 if (-not $AgentCode) { Fail 'EDESK_AGENT_CODE is empty' }
