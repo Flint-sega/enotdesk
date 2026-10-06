@@ -188,11 +188,15 @@ jobs:
 
             - **macOS**: правая кнопка по `EnotDesk.app` → «Открыть» → «Открыть» (или `xattr -cr /путь/EnotDesk.app`). При первом запуске разрешите «Запись экрана» и «Универсальный доступ».
             - **Windows**: SmartScreen → «Подробнее» → «Выполнить в любом случае».
+              - `EnotDesk-win-x64.exe` — **портативная** версия: один файл, без установки, запуск двойным кликом.
+              - `EnotDesk-win-x64-setup.exe` — **установщик**: ставит программу в систему (Program Files), создаёт ярлыки.
             - **Linux**: `chmod +x EnotDesk-linux-*.AppImage` и запустите двойным кликом.
 
             EN:
             - **macOS**: right-click `EnotDesk.app` → Open → Open (or `xattr -cr /path/EnotDesk.app`). Grant Screen Recording and Accessibility on first launch.
             - **Windows**: SmartScreen → More info → Run anyway.
+              - `EnotDesk-win-x64.exe` — **portable**: single file, no installation, just run it.
+              - `EnotDesk-win-x64-setup.exe` — **installer**: installs to the system (Program Files) with shortcuts.
             - **Linux**: `chmod +x EnotDesk-linux-*.AppImage` and run it.
 
             Целостность: `sha256sum -c checksums-sha256.txt`. Клиент проверяет обновление раз в сутки по фиду этого релиза (latest*.yml); Windows-сборка portable обновляется скачиванием новой версии со страницы релизов.
