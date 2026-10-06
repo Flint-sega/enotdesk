@@ -38,7 +38,7 @@ test('boot-log: ротация при переполнении (потолок 1
   assert.ok(statSync(log.logFile).size < 1024 * 1024);
 });
 
-test('boot-log: недоступный каталог — false, не throw', () => {
+test('boot-log: недоступный каталог — false, не throw', { skip: process.platform === 'win32' && 'на Windows chmod не ограничивает запись — POSIX-запрет невоспроизводим' }, () => {
   const dir = mkdtempSync(join(tmpdir(), 'enot-boot-ro-'));
   const sub = join(dir, 'locked');
   mkdirSync(sub);
