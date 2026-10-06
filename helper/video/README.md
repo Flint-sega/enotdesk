@@ -34,8 +34,10 @@ proven `spike/video-dxgi`).
    no stdin-based shutdown signal (no stdin at all).
 
 stdout carries **only ASCII JSON diagnostic lines**: one `start` event, one
-`tick` every 10 s (`{"ev":"tick","state":"waiting|live","fps":N,
-"displayOff":bool}`), and one `exit` event. Errors also go to `lastErr` in the
+`tick` every 10 s (`{"ev":"tick","state":"waiting|live","mode":"dxgi|gdi",
+"fps":N,"displayOff":bool,"dup":N,"err":"…"}`), one optional
+`{"ev":"capture","mode":"gdi","reason":…}` when the capture mode switches
+(see below), and one `exit` event. Errors also go to `lastErr` in the
 status document; nothing else is printed.
 
 ## Pipe protocol
@@ -57,9 +59,11 @@ Binary messages in both directions, byte-mode duplex named pipe
 Status document:
 
 ```json
-{"fps":24,"lastErr":"","uac":false,"locked":false,"displayOff":false}
+{"mode":"dxgi","fps":24,"lastErr":"","uac":false,"locked":false,"displayOff":false}
 ```
 
+- `mode` — active capture mode: `dxgi` (Desktop Duplication) or `gdi`
+  (BitBlt fallback), see "Capture modes" below.
 - `fps` — frames sent in the last 2 s window.
 - `lastErr` — last human-readable problem (ASCII), empty when healthy.
 - `uac` — `consent.exe` is running (Toolhelp snapshot, 2 s cadence): the UAC
@@ -93,6 +97,39 @@ Commands (JSON object with `"cmd"`):
   `KEYEVENTF_EXTENDEDKEY` so they do not type digits (numpad twins).
 - `jpegQ` clamps to 40..90, `maxFps` clamps to 1..=60.
 
+## Capture modes
+
+The helper starts in **DXGI Desktop Duplication** mode (`"mode":"dxgi"`) and
+can switch **once per process lifetime** to a **GDI/BitBlt** fallback
+(`"mode":"gdi"`) — for machines where DDA cannot start at all or delivers
+frames without content (Microsoft Basic Display Adapter VMs, exotic or broken
+GPU drivers). After the switch DXGI is never retried. The GDI capturer grabs
+the primary monitor via `CreateDIBSection` (32bpp top-down BGRA) +
+`BitBlt(SRCCOPY|CAPTUREBLT)` and exposes the same grab/size/buf contract as
+the DXGI path, so downscale, JPEG encoding and the pipe protocol are
+identical in both modes.
+
+Switch triggers (one-shot; never fire while privacy sleep is active — and in
+GDI mode nothing is grabbed while privacy sleep is active either):
+
+- `dup-fail` — at least 5 consecutive duplication-creation failures spanning
+  at least 5 seconds **and** the process has never delivered a frame
+  (`ever_framed` gate: the first successful frame delivery anywhere in the
+  process sets it). On a machine where DDA has already delivered frames, the
+  old ladder applies instead: 50 consecutive failures (~10 s) → exit code 2,
+  so a UAC prompt or lock screen never downgrades a working capture path.
+- `black-frames` — 10 consecutive delivered DDA frames that are all black:
+  every 16th sampled pixel has max(R,G,B) ≤ 8/255. A zero-frame idle desktop
+  is NORMAL (a static screen produces no DDA frames at all) and never
+  switches; the target disease is DDA that delivers real frames whose content
+  never reaches the composition.
+- `no-dxgi` — the D3D11/DXGI stack fails to initialize at startup: the helper
+  tries GDI with its own WIC factory before exiting; only if that also fails
+  is it the honest startup exit (code 1).
+
+Every switch emits exactly one log line
+`{"ev":"capture","mode":"gdi","reason":"dup-fail|black-frames|no-dxgi","err":"…"}`.
+
 ## Capture and recovery ladders
 
 - `AcquireNextFrame(100ms)` -> staging texture -> `Map` -> compact BGRA buffer;
@@ -103,18 +140,26 @@ Commands (JSON object with `"cmd"`):
   duplication; more than 3 recreations in 10 s -> exit code 2.
 - `DXGI_ERROR_WAIT_TIMEOUT` longer than 5 s -> wake the display
   (`WM_SYSCOMMAND`/`SC_MONITORPOWER -1` broadcast with a 2 s timeout cap),
-  attempts at most once per 5 s.
+  attempts at most once per 5 s. A zero-frame idle desktop is normal and never
+  switches the capture mode.
 - Display mode change (texture size differs) -> recreate duplication + staging.
-- Duplication creation failures and persistent capture errors beyond their
-  bounded retry streaks -> exit code 2.
+- Duplication creation failures -> GDI switch per `dup-fail` above; otherwise
+  50 consecutive failures (~10 s) -> exit code 2.
+- GDI mode: `BitBlt` has no timeout and no access-lost state, so the wake
+  watchdog and the access-lost ladder do not run (wake/sleep commands,
+  displayOff tracking and input are unchanged). Persistent GDI errors count on
+  the same ladder as DXGI capture errors: 50 x 100 ms backoff -> exit code 2.
+- Persistent capture errors beyond their bounded retry streaks -> exit code 2.
+  Exit code 2 therefore means "both capture paths failed to initialize, or
+  capture errors persist in the active mode".
 
 ## Exit codes
 
 | code | meaning                                          |
 |------|--------------------------------------------------|
 | 0    | clean shutdown (service kill — stdin contract removed in v0.6)                    |
-| 1    | startup failure (no/empty token, DXGI init, pipe)|
-| 2    | capture fatal (access-lost flood, dup/capture errors persist) |
+| 1    | startup failure (no/empty token, DXGI+GDI init, pipe)|
+| 2    | capture fatal (both DXGI and GDI failed to initialize, or capture errors persist in the active mode) |
 | 3    | hello token mismatch                             |
 
 ## v1 limitations (honest list)
@@ -126,7 +171,18 @@ Commands (JSON object with `"cmd"`):
 - Single client, single instance of the pipe.
 - Blocking writes: a slow reader stalls capture (that is the backpressure
   story); blocking reads are unblocked via `CancelIoEx` on teardown.
-- Primary display only (output whose desktop coordinates contain (0,0)).
+- Primary display only (output whose desktop coordinates contain (0,0); the
+  GDI fallback likewise captures SM_CXSCREEN/SM_CYSCREEN — the primary
+  monitor).
+- Neither capture path draws the cursor into the frame (DDA by default, GDI
+  BitBlt never composites it).
+- In GDI mode a locked console / secure desktop captures as a stream of black
+  frames (BitBlt returns no content there) — status `locked:true` says what is
+  happening.
+- A fullscreen pure-black animated screensaver on a healthy DDA machine can
+  benignly flip the helper to GDI (same black content; the cost is CPU only,
+  not correctness).
+- A zero-frame idle desktop never switches the capture mode.
 - Punctuation keys use US-layout OEM positions.
 - `sleep`/`wake` rely on the legacy `SC_MONITORPOWER` broadcast; on some
   modern systems (Modern Standby) it may be a no-op — status.displayOff
@@ -139,6 +195,20 @@ Windows machine (or CI on windows-latest):
 ```
 cargo build --release --target x86_64-pc-windows-msvc
 ```
+
+Lab cross-build (building on a non-Windows machine without MSVC; used for the
+07.10 standalone VM runs, not a release path — release CI stays msvc +
+crt-static):
+
+```
+rustup target add x86_64-pc-windows-gnu
+# mingw-w64 toolchain required (e.g. brew install mingw-w64)
+RUSTFLAGS="-C target-feature=+crt-static" \
+  cargo build --release --target x86_64-pc-windows-gnu
+```
+
+Produces a static PE32+ exe (~1.8 MB, no VC++ runtime needed) — proven
+07.10.2026 on VM 101.
 
 Nothing else in the repo depends on this crate yet; the service side (spawn +
 pipe client) lands with the v0.5 service work.
