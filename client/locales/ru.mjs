@@ -263,6 +263,8 @@ export default {
   "server.chip.noInstall": "Без установки",
   "server.mascotAlt": "Енот EnotDesk в наушниках и очках за ноутбуком",
   "server.downloadFor": "Скачать для вашей системы",
+  "server.kind.portable": "Портативная — без установки",
+  "server.kind.installer": "Установщик — ставит в систему",
   "server.notReady": "Сборка ещё не готова",
   "server.soon": "Скоро будет",
   "server.step1.title": "Получите ссылку",

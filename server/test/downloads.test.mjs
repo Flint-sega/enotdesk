@@ -51,6 +51,29 @@ test('/downloads: hero, чипы, шаги, карточки платформ и
   assert.match(html, /Скоро будет/);
 });
 
+test('/downloads: подписи типов сборок — портативная vs установщик (владелец, 06.10)', async (t) => {
+  const dir = tempDist(t);
+  fs.writeFileSync(path.join(dir, 'EnotDesk-1.2.3-win-x64.exe'), 'A');
+  fs.writeFileSync(path.join(dir, 'EnotDesk-1.2.3-win-x64-setup.exe'), 'B');
+  fs.writeFileSync(path.join(dir, 'EnotDesk-1.2.3-mac-arm64.zip'), 'C');
+  const { base } = await startServer(t, { version: '1.2.3' });
+  const res = await fetch(base + '/downloads');
+  const html = await res.text();
+  // одиночный exe и mac zip — портативные; слово setup в имени — установщик
+  const winRow = html.split('<article').find((a) => a.includes('win-x64.exe'));
+  assert.ok(winRow.includes('Портативная — без установки'), 'portable exe должен быть подписан «Портативная»');
+  assert.ok(winRow.includes('Установщик — ставит в систему'), 'setup exe должен быть подписан «Установщик»');
+  const macRow = html.split('<article').find((a) => a.includes('mac-arm64.zip'));
+  assert.ok(macRow.includes('Портативная — без установки'), 'mac zip тоже портативный');
+  assert.match(html, /class="kind kind-portable"/);
+  assert.match(html, /class="kind kind-installer"/);
+  // английский словарь на той же странице
+  const en = await fetch(base + '/downloads', { headers: { 'accept-language': 'en' } });
+  const enHtml = await en.text();
+  assert.match(enHtml, /Portable — no installation/);
+  assert.match(enHtml, /Installer — sets up on the system/);
+});
+
 test('/invite: тот же стиль, шапка и футер с версией', async (t) => {
   const { base } = await startServer(t, { version: '4.5.6' });
   const res = await fetch(base + '/invite');

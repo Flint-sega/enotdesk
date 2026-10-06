@@ -71,6 +71,9 @@ h1{font-size:clamp(46px,7.2vw,76px);font-weight:900;letter-spacing:-.025em;margi
 .file{margin:0;font-size:15px;word-break:break-all;color:var(--text)}
 .meta{margin:0;color:var(--muted);font-size:13.5px}
 .card .btn{margin-top:auto;width:100%}
+.kind{display:inline-block;margin-left:8px;padding:2px 10px;border-radius:999px;font-size:12px;font-weight:600;vertical-align:middle;white-space:nowrap}
+.kind-portable{border:1px solid rgba(53,224,196,.45);color:var(--accent)}
+.kind-installer{border:1px solid #2B3D5E;color:var(--muted)}
 .soon{display:block;text-align:center;margin-top:auto;padding:13px 16px;border:1px solid var(--line);border-radius:12px;color:var(--muted);font-size:15px;background:rgba(255,255,255,.015)}
 .steps{list-style:none;margin:0;padding:0;display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:18px}
 .step{background:var(--panel);border:1px solid var(--line);border-radius:14px;padding:24px}
@@ -197,6 +200,13 @@ function steps(locale) {
   }));
 }
 
+// Подпись типа сборки по имени файла (владелец, 06.10): на странице загрузок
+// видно, какой файл портативный, а какой — установщик. Файл без «setup» —
+// портативный (win-одиночка, mac zip, AppImage); слово «setup» — установщик.
+function fileKind(name) {
+  return /setup/i.test(String(name)) ? 'installer' : 'portable';
+}
+
 function platformCard(platform, files, locale) {
   const head = `<div class="card-head"><span class="os-icon">${icon(platform.icon)}</span><h3>${esc(platform.label)}</h3></div>`;
   if (!files.length) {
@@ -205,11 +215,12 @@ function platformCard(platform, files, locale) {
   // Все сборки платформы (portable и setup оба актуальны — ревью 04.10:
   // files[0] прятал портатив за setup-ом при совпадении имён в каталоге).
   // Свежей сборке — первый ряд: сортируем по mtime убыванию.
-  const rows = [...files].sort((a, b) => b.mtimeMs - a.mtimeMs).map((f, i) =>
-    `<p class="file">${esc(f.name)}</p>` +
-    `<p class="meta">${esc(formatSize(f.size, locale))} · ${esc(f.arch)}</p>` +
-    `<a class="btn${i > 0 ? ' btn-ghost' : ''}" href="${esc(f.url)}">${icon('download')}<span>${esc(t('server.download', {}, locale))}</span></a>`
-  ).join('');
+  const rows = [...files].sort((a, b) => b.mtimeMs - a.mtimeMs).map((f, i) => {
+    const kind = fileKind(f.name);
+    return `<p class="file">${esc(f.name)} <span class="kind kind-${kind}">${esc(t(`server.kind.${kind}`, {}, locale))}</span></p>` +
+      `<p class="meta">${esc(formatSize(f.size, locale))} · ${esc(f.arch)}</p>` +
+      `<a class="btn${i > 0 ? ' btn-ghost' : ''}" href="${esc(f.url)}">${icon('download')}<span>${esc(t('server.download', {}, locale))}</span></a>`;
+  }).join('');
   return `<article class="card active">${head}${rows}</article>`;
 }
 

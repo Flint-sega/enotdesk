@@ -263,6 +263,8 @@ export default {
   "server.chip.noInstall": "No installation",
   "server.mascotAlt": "EnotDesk raccoon in headphones and glasses at a laptop",
   "server.downloadFor": "Download for your system",
+  "server.kind.portable": "Portable — no installation",
+  "server.kind.installer": "Installer — sets up on the system",
   "server.notReady": "Build is not ready yet",
   "server.soon": "Coming soon",
   "server.step1.title": "Get the link",
