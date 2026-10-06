@@ -14,7 +14,16 @@ export function createAgentInputSink({ nativeInput, getBounds, log } = {}) {
         // Гашение дисплея — фича Windows-хелпера (sleep/wake); на Linux v1
         // честно не поддерживается — молча игнорируем, не эмулируем.
         if (ev?.display === 'off' || ev?.display === 'on') return;
-        const r = nativeInput.dispatch(ev, getBounds?.() ?? null);
+        const bounds = getBounds?.() ?? null;
+        // Как в attended-пайплайне (input-pipeline.mjs): move без реальных
+        // границ уехал бы в угол (0,0) с ответом ok:true — честный отказ вместо
+        // фейкового успеха (ревизия 06.10). button/scroll/key без границ идут —
+        // кнопка жмёт в текущей позиции курсора (та же семантика у pipeline).
+        if (ev?.type === 'move' && !(bounds?.width > 0 && bounds?.height > 0)) {
+          log?.warn?.('agent-input: no-bounds');
+          return;
+        }
+        const r = nativeInput.dispatch(ev, bounds);
         // throttle — норма движения мыши, не шумим; остальные отказы видимы.
         if (!r?.ok && r?.reason !== 'throttled') log?.warn?.('agent-input: ' + r.reason);
       };
