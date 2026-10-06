@@ -379,11 +379,11 @@ test('macAdapter: клик идёт в координаты цели (at, №18)
   assert.ok(posted.length >= 4, 'все события отправлены');
 });
 
-function buildX11Adapter(fakeKoffi) {
+// wayland-зонд читает реальный process.env: на машине разработчика с
+// WAYLAND_DISPLAY/сеансом wayland адаптер честно вернёт linux-wayland и тест
+// упадёт без всякой регрессии — изолируем env (ревью v0.4.6 доводка)
+function withX11Env(fn) {
   const realPlatform = process.platform;
-  // wayland-зонд читает реальный process.env: на машине разработчика с
-  // WAYLAND_DISPLAY/сеансом wayland адаптер честно вернёт linux-wayland и тест
-  // упадёт без всякой регрессии — изолируем env (ревью v0.4.6 доводка)
   const saved = {
     platform: realPlatform,
     WAYLAND_DISPLAY: process.env.WAYLAND_DISPLAY,
@@ -392,12 +392,16 @@ function buildX11Adapter(fakeKoffi) {
   delete process.env.WAYLAND_DISPLAY;
   delete process.env.XDG_SESSION_TYPE;
   Object.defineProperty(process, 'platform', { value: 'linux' });
-  try { return loadPlatformAdapter(fakeKoffi); }
+  try { return fn(); }
   finally {
     Object.defineProperty(process, 'platform', { value: saved.platform });
     if (saved.WAYLAND_DISPLAY !== undefined) process.env.WAYLAND_DISPLAY = saved.WAYLAND_DISPLAY;
     if (saved.XDG_SESSION_TYPE !== undefined) process.env.XDG_SESSION_TYPE = saved.XDG_SESSION_TYPE;
   }
+}
+
+function buildX11Adapter(fakeKoffi) {
+  return withX11Env(() => loadPlatformAdapter(fakeKoffi));
 }
 
 function x11Mock(state) {
@@ -411,6 +415,9 @@ function x11Mock(state) {
             if (/XFlush/.test(sig)) return () => { state.flushes += 1; return 1; };
             if (/XStringToKeysym/.test(sig)) return () => 0xffe1;
             if (/XKeysymToKeycode/.test(sig)) return () => 50;
+            if (/XDefaultScreen/.test(sig)) return () => 0;
+            if (/XDisplayWidth/.test(sig)) return () => 1920;
+            if (/XDisplayHeight/.test(sig)) return () => 1080;
             throw new Error('unexpected X11 sig: ' + sig);
           },
         };
@@ -444,4 +451,23 @@ test('x11Adapter: координаты цели (at, №18) и XFlush после
 
   assert.equal(ad.key('a', true), true, 'буква резолвится в keycode');
   assert.deepEqual(state.keys.at(-1), [50, 1]);
+});
+
+test('bounds (v0.6.4): размер дисплея агент-режима берётся из X-адаптера', () => {
+  const state = { motions: [], buttons: [], keys: [], flushes: 0 };
+  // адаптер резолвится лениво — load() делаем внутри изоляции env/platform
+  const input = withX11Env(() => {
+    const ni = createNativeInput({ koffi: x11Mock(state) });
+    ni.load();
+    return ni;
+  });
+  assert.equal(input.status().platform, 'linux-x11', 'адаптер собрался на моке');
+  assert.deepEqual(input.bounds(), { width: 1920, height: 1080 },
+    'bounds из XDisplayWidth/Height — Electron screen у агент-службы недоступен');
+});
+
+test('bounds: у адаптера без size() — честный null', () => {
+  const adapter = { available: true, platform: 'test', move() {}, button() {}, key() {}, scroll() {} };
+  const ni = createNativeInput({ adapter });
+  assert.equal(ni.bounds(), null);
 });
