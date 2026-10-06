@@ -24,6 +24,21 @@ ProtectSystem=strict
 ProtectHome=true
 # Единственный каталог, куда агент пишет (токен, настройки, кэш Electron).
 ReadWritePaths=/var/lib/enotdesk-agent
+# Проверено в лабе на Debian 13 (05.10): systemd-analyze security 8.3 -> 4.5.
+# X11 через абстрактный сокет работает и с PrivateTmp/PrivateDevices; JIT'у
+# Electron нужны W|X-страницы - поэтому БЕЗ MemoryDenyWriteExecute и
+# SystemCallFilter (осознанно).
+UMask=0077
+PrivateDevices=yes
+ProtectKernelTunables=yes
+ProtectKernelModules=yes
+ProtectKernelLogs=yes
+ProtectControlGroups=yes
+ProtectClock=yes
+ProtectHostname=yes
+RestrictSUIDSGID=yes
+CapabilityBoundingSet=
+AmbientCapabilities=
 # X11: инъекция ввода (XTest) в консольную сессию требует DISPLAY и XAUTHORITY.
 # Wayland в v1 не поддерживается для управления (адаптер честно сообщает wayland-unsupported-control).
 # При использовании X11 раскомментируйте и поправьте пути; ProtectHome=true скрывает /home -

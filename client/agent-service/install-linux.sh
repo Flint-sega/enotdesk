@@ -33,9 +33,16 @@ fi
 echo "==> пользователь $AGENT_USER (system, без логина)"
 id "$AGENT_USER" >/dev/null 2>&1 || useradd --system --home-dir "$AGENT_HOME" --create-home --shell /usr/sbin/nologin "$AGENT_USER"
 
-echo "==> профиль агента: $AGENT_HOME/.config/EnotDesk/agent (settings.json)"
-PROFILE="$AGENT_HOME/.config/EnotDesk/agent"
-install -d -m 0700 -o "$AGENT_USER" -g "$AGENT_USER" "$PROFILE"
+echo "==> профиль агента: $AGENT_HOME/.config/enotdesk/agent (settings.json)"
+# Electron именует userData по имени пакета (package.json name = enotdesk,
+# строчные) — путь обязан совпадать байт в байт; «EnotDesk» настройку службы
+# не подхватывал (приёмка 05.10, L1-б). Родителей создаём и целиком отдаём
+# агенту: install -d оставлял промежуточный .config в root-владении, и агент
+# не мог дописать в собственный профиль.
+PROFILE="$AGENT_HOME/.config/enotdesk/agent"
+mkdir -p "$PROFILE"
+chown -R "$AGENT_USER:$AGENT_USER" "$AGENT_HOME/.config"
+chmod 0700 "$PROFILE"
 printf '{"serverUrl": "%s"}\n' "$SERVER_URL" > "$PROFILE/settings.json"
 chown "$AGENT_USER:$AGENT_USER" "$PROFILE/settings.json"
 chmod 0600 "$PROFILE/settings.json"
