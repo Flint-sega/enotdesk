@@ -97,3 +97,19 @@ test('packaging: boot-лог always-on и покрывает жизненные 
     assert.ok(marker.test(mainJs), `нет проводки boot-лога: ${marker}`);
   }
 });
+
+// Ревизия 06.10: принудительный --lang=en-US до ready запрещён — getLocale()
+// до ready пустой У ВСЕХ, фолбэк срабатывал на каждом запуске и убивал ru.pak.
+// Честный механизм — полный состав pak'ов (electronLanguages) + собственный
+// фолбэк Chromium. Обратно не возвращать.
+test('packaging: в main.mjs нет принудительного --lang (только pak-состав решает локаль)', () => {
+  assert.ok(!mainJs.includes("appendSwitch('lang'"), 'appendSwitch(\'lang\', …) до ready — регрессия ревизии 06.10: getLocale() до ready всегда пустой');
+});
+
+// «Окно не молчит» (75a88d6): краш рендерера обязан иметь один автоперезапуск.
+test('packaging: auto-reload после краша рендерера на месте', () => {
+  const i1 = mainJs.indexOf('let rendererReloaded = false;');
+  const i2 = mainJs.indexOf('auto-reload после краша рендерера');
+  const i3 = mainJs.indexOf('win.webContents.reload()');
+  assert.ok(i1 !== -1 && i2 > i1 && i3 > i2, 'нужна цепочка rendererReloaded → автоперезапуск → reload()');
+});
