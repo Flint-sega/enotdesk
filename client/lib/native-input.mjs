@@ -274,6 +274,9 @@ function x11Adapter(koffi) {
   const XFlush = x11.func('int XFlush(void *)');
   const XStringToKeysym = x11.func('unsigned long XStringToKeysym(const char *)');
   const XKeysymToKeycode = x11.func('int XKeysymToKeycode(void *, unsigned long)');
+  const XDefaultScreen = x11.func('int XDefaultScreen(void *)');
+  const XDisplayWidth = x11.func('int XDisplayWidth(void *, int)');
+  const XDisplayHeight = x11.func('int XDisplayHeight(void *, int)');
   const XTestFakeButtonEvent = xtst.func('int XTestFakeButtonEvent(void *, unsigned int, int, unsigned long)');
   const XTestFakeKeyEvent = xtst.func('int XTestFakeKeyEvent(void *, unsigned int, int, unsigned long)');
   const XTestFakeMotionEvent = xtst.func('int XTestFakeMotionEvent(void *, int, int, int, unsigned long)');
@@ -313,6 +316,14 @@ function x11Adapter(koffi) {
       const hclicks = linesToClicks(dx);
       for (let i = 0; i < hclicks; i++) { XTestFakeButtonEvent(dpy, dx > 0 ? 7 : 6, 1, 0); XTestFakeButtonEvent(dpy, dx > 0 ? 7 : 6, 0, 0); }
       flush();
+    },
+    // Размер дисплея нужен агент-режиму (v0.6.4): масштабирование нормализованных
+    // координат оператора идёт по нему — attended-сеанс берёт bounds из Electron
+    // screen, у службы его нет.
+    size() {
+      try {
+        return { width: XDisplayWidth(dpy, XDefaultScreen(dpy)), height: XDisplayHeight(dpy, XDefaultScreen(dpy)) };
+      } catch { return null; } // дисплей мог закрыться
     },
     close() { XCloseDisplay(dpy); },
   };
@@ -407,6 +418,14 @@ export function createNativeInput({ adapter, koffi = null, getAdapter = null, ma
     // а потом пользователь нажал «Разрешить доступ» — следующий сеанс пробует снова,
     // вместо навсегда закэшированного инертного режима.
     resetAdapter() { ad = null; },
+    // Размер дисплея для масштабирования координат (агент-режим v0.6.4): attended
+    // берёт bounds из Electron screen, у службы его нет — агент берёт их из самого
+    // адаптера (X11). null — адаптера/size нет или запрос не удался.
+    bounds() {
+      resolveAdapter();
+      if (!ad || typeof ad.size !== 'function') return null;
+      try { return ad.size(); } catch { return null; }
+    },
     // Прямоугольник окна по HWND (win-only; null — не удалось/платформа другая).
     // Для координат ввода при окне-источнике (дефект №5).
     windowRect(hwnd) {

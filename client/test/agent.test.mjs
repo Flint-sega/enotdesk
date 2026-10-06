@@ -672,3 +672,97 @@ test('machine-сеанс W-U6: каналы chat/file уходят в services, 
     await sleep(10);
   }
 });
+
+// ---- ввод machine-сеанса (v0.6.4): Windows — хелпер, Linux — inputSink ----
+
+function fakeTermHost() {
+  return { handleChannel() {}, isActive: () => false, close() {} };
+}
+
+function fakePcFactory() {
+  let lastPc = null;
+  const factory = () => {
+    lastPc = {
+      onicecandidate: null,
+      ondatachannel: null,
+      async setRemoteDescription() {},
+      async createAnswer() { return { type: 'answer', sdp: 'v=0-a' }; },
+      async setLocalDescription() {},
+      async addIceCandidate() {},
+      close() {},
+    };
+    return lastPc;
+  };
+  factory.current = () => lastPc;
+  return factory;
+}
+
+test('machine-сеанс v0.6.4: канал input уходит в inputSink (нативный пайплайн Linux)', async () => {
+  const { api } = fakeApi({
+    session: () => ({ status: 200, body: { sessionId: 92, state: 'pending-consent', claimId: 'cl-11', operator: { id: 'u1', name: 'Оператор' } } }),
+  });
+  const store = memoryStore();
+  store.save('tok-input');
+  const sig = fakeSignalFactory();
+  const sinkChannels = [];
+  const rtcFactory = fakePcFactory();
+  const agent = createAgent({
+    api,
+    signal: sig.factory,
+    native: createNativeInput({ adapter: inertAdapter() }),
+    policy: { name: 'mk-input', os: 'test', version: '9.9', tokenStore: store, heartbeatMs: 5, backoffBaseMs: 10, backoffMaxMs: 40 },
+    termHost: fakeTermHost(),
+    rtc: rtcFactory,
+    inputSink: { handleChannel: (ch) => { sinkChannels.push(ch); } },
+  });
+  try {
+    assert.equal(agent.start({}).ok, true);
+    await sleep(30);
+    const client = sig.clients[0];
+    client.emit({ type: 'approved' }); // openTermRtc по approved
+    await sleep(10);
+    rtcFactory.current().ondatachannel({ channel: { label: 'input', close() {} } });
+    assert.equal(sinkChannels.length, 1, 'канал input отдан inputSink, а не видео-хелперу');
+  } finally {
+    agent.stop();
+    await sleep(10);
+  }
+});
+
+test('machine-сеанс v0.6.4: без inputSink (Windows) канал input уходит видео-хелперу', async () => {
+  const { api } = fakeApi({
+    session: () => ({ status: 200, body: { sessionId: 93, state: 'pending-consent', claimId: 'cl-12', operator: { id: 'u1', name: 'Оператор' } } }),
+  });
+  const store = memoryStore();
+  store.save('tok-input-win');
+  const sig = fakeSignalFactory();
+  const videoChannels = [];
+  const rtcFactory = fakePcFactory();
+  const agent = createAgent({
+    api,
+    signal: sig.factory,
+    native: createNativeInput({ adapter: inertAdapter() }),
+    policy: { name: 'mk-input-win', os: 'test', version: '9.9', tokenStore: store, heartbeatMs: 5, backoffBaseMs: 10, backoffMaxMs: 40 },
+    termHost: fakeTermHost(),
+    rtc: rtcFactory,
+    video: {
+      bind() {},
+      start() {},
+      stop() {},
+      onStatus() {},
+      handleInputChannel: (ch) => { videoChannels.push(ch); },
+    },
+  });
+  try {
+    assert.equal(agent.start({}).ok, true);
+    await sleep(30);
+    const client = sig.clients[0];
+    client.emit({ type: 'approved' });
+    await sleep(10);
+    rtcFactory.current().ondatachannel({ channel: { label: 'input', close() {} } });
+    assert.equal(videoChannels.length, 1, 'путь Windows не изменился: хелпер получает канал');
+  } finally {
+    agent.stop();
+    await sleep(10);
+  }
+});

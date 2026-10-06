@@ -87,7 +87,7 @@ export function createIceServersFetcher({ api, tokenLoad, timeoutMs = 5000 }) {
   };
 }
 
-export function createAgent({ api, signal, native, policy, termHost, rtc, notify, services, video }) {
+export function createAgent({ api, signal, native, policy, termHost, rtc, notify, services, video, inputSink }) {
   const missing = !api || typeof api.register !== 'function' || typeof api.session !== 'function'
     || typeof api.heartbeat !== 'function' || typeof api.decision !== 'function' ? 'api (register/session/heartbeat/decision)'
     : typeof signal !== 'function' ? 'signal (фабрика сигнальных клиентов)'
@@ -291,9 +291,14 @@ export function createAgent({ api, signal, native, policy, termHost, rtc, notify
         const ch = e?.channel;
         if (!ch) return;
         if (ch.label === 'term') { term.handleChannel(ch); return; } // открытие — только approved-сеанс: мы уже в нём
-        // v0.6 (ADR 0027): ввод оператора в machine-сеансе → хелперу
-        // (SendInput в консольном сеансе). Гейт — approved: мы уже в нём.
-        if (ch.label === 'input') { video?.handleInputChannel?.(ch); return; }
+        // v0.6.4: ввод machine-сеанса — Windows: хелпер (SendInput в консольном
+        // сеансе), Linux: нативный пайплайн (inputSink, XTest). Гейт — approved:
+        // мы уже в нём.
+        if (ch.label === 'input') {
+          if (inputSink) { inputSink.handleChannel(ch); return; }
+          video?.handleInputChannel?.(ch);
+          return;
+        }
         // W-U6 (v0.5): чат/файлы machine-сеанса — обработка в main (тост/запись
         // файла); нет services — как раньше, неизвестные каналы закрываются.
         if (services?.handleChannel?.(ch.label, ch)) return;
