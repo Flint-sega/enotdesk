@@ -89,9 +89,13 @@ test('relay: auth-отказы — без токена 401, лишний раз�
   const noAuth = await fetch(base + '/api/v1/relay', { method: 'POST', body: Buffer.from('x') });
   assert.equal(noAuth.status, 401);
 
+  // Проверка 413 — от админ-токена: путь авторизации оператора не зависит от
+  // состояния сеанса. Хост-токен здесь флейкал на медленном CI: между claim и
+  // запросом сервер успевал завершить сеанс без heartbeat'а (lease-логика) —
+  // тест не обязан держать сеанс живым, чтобы проверить лимит размера.
   const tooBig = await fetch(base + '/api/v1/relay', {
     method: 'POST',
-    headers: { authorization: `Bearer ${hostToken}`, 'content-length': String(big.length) },
+    headers: { authorization: `Bearer ${admin.token}`, 'content-length': String(big.length) },
     body: big,
   });
   assert.equal(tooBig.status, 413);
