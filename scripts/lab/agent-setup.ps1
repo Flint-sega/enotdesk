@@ -36,7 +36,7 @@ function Fail([string]$msg) {
 $ServerUrl = $env:EDESK_SERVER_URL
 $AgentCode = $env:EDESK_AGENT_CODE
 $AgentName = $env:EDESK_AGENT_NAME
-$AppVersion = if ($env:EDESK_VERSION) { $env:EDESK_VERSION } else { 'v0.6.4' }
+$AppVersion = if ($env:EDESK_VERSION) { $env:EDESK_VERSION } else { 'v0.6.5' }
 
 if (-not $ServerUrl) { Fail 'EDESK_SERVER_URL is empty' }
 if (-not $AgentCode) { Fail 'EDESK_AGENT_CODE is empty' }
