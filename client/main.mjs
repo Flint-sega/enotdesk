@@ -47,28 +47,24 @@ const svcDiag = createSvcDiag();
 // (контракт svc-diag: секреты не пишутся, ревью v0.4.4)
 svcDiag.write('main', `pid=${process.pid} exec="${process.execPath}" argv=${maskJoinTokens(JSON.stringify(process.argv))} env[${envDiagSlice()}]`);
 
-// Локале-независимый первый запуск (лаба 05.10): на Windows с пустой/нечитаемой
-// системной локалью Chromium не находит подходящий pak — ResourceBundle пуст
-// («locale resources are not loaded»), а элементы с локализованными строками
-// Chromium (file input, details, video) падают Access Violation в рендерере.
-// Пустой/мусорный locale → явный en-US (pak входит в пакет, см.
-// build/electron-builder.yml electronLanguages). До ready — это ещё можно
-// переключить; корень (состав pak'ов) чинится в конфиге сборки.
-try {
-  const osLocale = app.getLocale?.() ?? '';
-  if (!/^[a-z]{2,3}([-_][A-Za-z0-9]{2,8})*$/.test(osLocale)) {
-    app.commandLine.appendSwitch('lang', 'en-US');
-    svcDiag.write('main', `locale "${osLocale}" не распознан → --lang=en-US`);
-  }
-} catch { /* getLocale недоступен до ready на каких-то платформах — живём как есть */ }
+// Локаль (лаба 05.10 + ревизия 06.10): принудительный --lang=en-US здесь
+// ЗАПРЕЩЁН. app.getLocale() до ready возвращает пустую строку у ВСЕХ (проба на
+// пинненном Electron 44.3.0), фолбэк «пустой locale → en-US» срабатывал на
+// каждом запуске и убивал ru.pak. Настоящий корень краша был в составе pak'ов
+// ([ru, en] без en-US.pak — см. build/electron-builder.yml): с полным набором
+// pak'ов Chromium сам выбирает локаль системы и фолбэчит в en-US.
 
+// Решения, принятые до создания boot-лога (setPath userData ниже): попадут
+// в boot-лог сразу после его создания — svc-diag вне Windows глухой, а эти
+// решения обязаны оставлять след на Linux (философия «окно не молчит»).
+const earlyNotes = [];
 // Wayland-сессии (лаба 05.10): Electron 44 переменную ELECTRON_OZONE_PLATFORM_HINT
 // игнорирует и без флага падает при старте на Wayland. Явно ведём клиент через
 // Xwayland (на X11-сессиях флаг no-op). Пользовательский --ozone-platform не перекрываем.
 try {
   if (process.platform === 'linux' && !app.commandLine.hasSwitch('ozone-platform')) {
     app.commandLine.appendSwitch('ozone-platform', 'x11');
-    svcDiag.write('main', 'linux: --ozone-platform=x11 (без флага Electron 44 падает на Wayland-сессиях)');
+    earlyNotes.push('linux: --ozone-platform=x11 (без флага Electron 44 падает на Wayland-сессиях)');
   }
 } catch { /* commandLine недоступен до ready — живём как есть */ }
 
@@ -133,6 +129,7 @@ const pkg = (() => {
 // Создаётся после финального setPath userData: агент/смоук живут в своих профилях.
 const bootLog = createBootLog({ userDataDir: app.getPath('userData') });
 bootLog.write('main', `pid=${process.pid} platform=${process.platform} version=${app.isPackaged ? app.getVersion() : (pkg.version ?? '?')} argv=${maskJoinTokens(JSON.stringify(process.argv))}`);
+for (const note of earlyNotes.splice(0)) bootLog.write('main', note);
 
 // Вшитый при сборке адрес сервера (R03): electron-builder extraMetadata кладёт
 // ключ в package.json внутри app.asar (build/electron-builder.yml), dev-прогон
@@ -1327,12 +1324,14 @@ function startAgentMode() {
 
   // v0.6.4: на Linux хелпера нет — ввод machine-сеанса идёт нативному адаптеру
   // (X11/XTest); размер дисплея берётся из самого адаптера, Electron screen у
-  // службы отсутствует. На Windows путь прежний (inputSink = null).
-  const inputSink = process.platform === 'win32' ? null : createAgentInputSink({
+  // службы отсутствует. Только linux: у macOS-адаптера size() нет — sink давал
+  // бы молчаливые клики в угол экрана (ревизия 06.10); macOS machine-ввод
+  // честно не заявляется. Windows — прежний путь через хелпер.
+  const inputSink = process.platform === 'linux' ? createAgentInputSink({
     nativeInput,
     getBounds: () => nativeInput.bounds(),
     log: { warn: (...a) => { console.warn(...a); svcDiag.write('input', a.map(String).join(' ')); } },
-  });
+  }) : null;
 
   const agent = createAgent({
     api: agentApi,
