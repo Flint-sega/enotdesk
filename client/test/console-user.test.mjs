@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { resolveConsoleUser } from '../lib/console-user.mjs';
+import { resolveConsoleUser, noNewPrivs } from '../lib/console-user.mjs';
 import { spawnShellFor } from '../lib/term.mjs';
 
 // SEC-001: агент-служба на Linux работает от root; без резолва консольного
@@ -65,4 +65,20 @@ test('win32 и прочие платформы — null (контекст SYSTEM
   assert.equal(resolveConsoleUser({ platform: 'win32', spawnSync: loud }), null);
   assert.equal(resolveConsoleUser({ platform: 'freebsd', spawnSync: loud }), null);
   assert.equal(spawnShellFor('win32').context, 'SYSTEM');
+});
+
+test('noNewPrivs: NoNewPrivs: 1 в /proc/self/status — true; 0 — false', () => {
+  assert.equal(noNewPrivs({ platform: 'linux', readFile: () => 'Name:\tbash\nUmask:\t0022\nNoNewPrivs:\t1\n' }), true);
+  assert.equal(noNewPrivs({ platform: 'linux', readFile: () => 'Name:\tbash\nNoNewPrivs:\t0\n' }), false);
+});
+
+test('noNewPrivs: не-linux — false; /proc недоступен — false, не throw', () => {
+  assert.equal(noNewPrivs({ platform: 'darwin', readFile: () => 'NoNewPrivs:\t1\n' }), false);
+  assert.equal(noNewPrivs({ platform: 'linux', readFile: () => { throw new Error('no procfs'); } }), false);
+});
+
+test('noNewPrivs: шов с терминалом — null-пользователь даёт честный контекст service', () => {
+  const consoleUser = noNewPrivs({ platform: 'linux', readFile: () => 'NoNewPrivs:\t1\n' }) ? null : { user: 'ivan', uid: 1000 };
+  const shell = spawnShellFor('linux', { consoleUser: consoleUser?.user });
+  assert.equal(shell.context, 'service');
 });

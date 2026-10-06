@@ -21,6 +21,7 @@ import { resolveServerUrl, DEFAULT_SERVER_URL } from './lib/first-run.mjs';
 import { parseJoinLink, reportJoin } from './lib/join.mjs';
 import { parseInviteLink } from './lib/invite-link.mjs';
 import { createAgent, createAgentApi, createIceServersFetcher } from './lib/agent.mjs';
+import { createAgentInputSink } from './lib/agent-input.mjs';
 import { createBridgeRelay, BRIDGE_IPC } from './agent-bridge/relay.mjs';
 import { createTermHost } from './lib/term.mjs';
 import { showToast } from './lib/notify.mjs';
@@ -29,12 +30,13 @@ import { onIncoming as chatWidgetOnIncoming, shouldNotify as chatWidgetShouldNot
 import { createSessionSpawner } from './lib/session-spawn.mjs';
 import { createVideoHost } from './lib/video-host.mjs';
 import { inputEventToCommands } from './lib/input-translate.mjs';
-import { resolveConsoleUser } from './lib/console-user.mjs';
+import { resolveConsoleUser, noNewPrivs } from './lib/console-user.mjs';
 import { UPDATE_REPO, updateFeedUrl, platformFeedName, updateDecision, updateInstallDecision } from './lib/updater.mjs';
 import { isNewerVersion } from './lib/version-check.mjs';
 import { t, setLocale } from './lib/i18n.mjs';
 import { createSvcDiag, envDiagSlice, maskJoinTokens } from './lib/svc-diag.mjs';
 import { createKeepAwake } from './lib/keep-awake.mjs';
+import { createBootLog } from './lib/boot-log.mjs';
 
 // Диагностика Windows-службы (W-U2): первый маркер каждого запуска процесса —
 // ДО ветки службы. Если svc-ветка НЕ вошла, а эта строка в логе есть —
@@ -59,6 +61,16 @@ try {
     svcDiag.write('main', `locale "${osLocale}" не распознан → --lang=en-US`);
   }
 } catch { /* getLocale недоступен до ready на каких-то платформах — живём как есть */ }
+
+// Wayland-сессии (лаба 05.10): Electron 44 переменную ELECTRON_OZONE_PLATFORM_HINT
+// игнорирует и без флага падает при старте на Wayland. Явно ведём клиент через
+// Xwayland (на X11-сессиях флаг no-op). Пользовательский --ozone-platform не перекрываем.
+try {
+  if (process.platform === 'linux' && !app.commandLine.hasSwitch('ozone-platform')) {
+    app.commandLine.appendSwitch('ozone-platform', 'x11');
+    svcDiag.write('main', 'linux: --ozone-platform=x11 (без флага Electron 44 падает на Wayland-сессиях)');
+  }
+} catch { /* commandLine недоступен до ready — живём как есть */ }
 
 // Родительский режим Windows-службы (EDESK_AGENT_SVC=1, дефект №4): процесс
 // запущен SCM'ом как службу — Electron не инициализируем, работаем тонкой
@@ -114,6 +126,13 @@ const pkg = (() => {
     return {};
   }
 })();
+
+// Boot-лог окна (v0.6.4, приём RustDesk): always-on файловый журнал жизни
+// окна/приложения — «окно не молчит» не должно требовать маркера или живого
+// stdout. svc-diag остаётся расширенной Windows-диагностикой по маркеру.
+// Создаётся после финального setPath userData: агент/смоук живут в своих профилях.
+const bootLog = createBootLog({ userDataDir: app.getPath('userData') });
+bootLog.write('main', `pid=${process.pid} platform=${process.platform} version=${app.isPackaged ? app.getVersion() : (pkg.version ?? '?')} argv=${maskJoinTokens(JSON.stringify(process.argv))}`);
 
 // Вшитый при сборке адрес сервера (R03): electron-builder extraMetadata кладёт
 // ключ в package.json внутри app.asar (build/electron-builder.yml), dev-прогон
@@ -337,18 +356,21 @@ function loadSettings() {
     if (/^\d{9}$/.test(raw.hostId ?? '')) settings.hostId = raw.hostId;
   } catch {
     // первый запуск — файл настроек ещё не существует
+    bootLog.write('config', `settings.json не читается (${settingsPath}) — продолжаем с дефолтами`);
   }
   // Порядок резолва (spec §первый запуск): сохранённый → enotdesk-server.txt
   // рядом с exe → вшитый при сборке → дефолт. saved и provisioned-источники
   // проходят normalizeServerUrl при каждом старте (SEC-006/SEC-007): невалидный
   // адрес честно отбрасывается до дефолта; галочка allowInsecureHttp из настроек
   // распространяется только на saved.
-  settings.serverUrl = resolveServerUrl({
+  const resolvedServer = resolveServerUrl({
     saved: savedUrl,
     savedAllowInsecureHttp: settings.allowInsecureHttp,
     execPath: process.execPath,
     baked: BAKED_SERVER_URL,
-  }).url;
+  });
+  settings.serverUrl = resolvedServer.url;
+  bootLog.write('config', `serverUrl=${resolvedServer.url} (источник: ${resolvedServer.source})`);
   setLocale(settings.locale); // строки main-процесса — тоже из словаря (null оставляет ru по умолчанию)
   // Закреплённый ID ПК: один раз генерируется и сразу сохраняется — далее
   // меняется только сносом профиля/переустановкой (просьба владельца, 02.10).
@@ -977,6 +999,7 @@ function registerIpc() {
 }
 
 function createWindow() {
+  bootLog.write('win', 'создаётся главное окно');
   win = new BrowserWindow({
     width: 1120,
     height: 760,
@@ -1082,28 +1105,33 @@ function createWindow() {
   let rendererReloaded = false;
   win.webContents.on('render-process-gone', (e, details) => {
     svcDiag.write('win', `render-process-gone ${JSON.stringify(details)}`);
+    bootLog.write('win', `render-process-gone ${JSON.stringify(details)}`);
     console.error('render-process-gone:', JSON.stringify(details));
     if (!rendererReloaded && !win.isDestroyed()) {
       rendererReloaded = true;
       svcDiag.write('win', 'auto-reload после краша рендерера');
+      bootLog.write('win', 'auto-reload после краша рендерера');
       win.webContents.reload();
     }
   });
   win.webContents.on('did-fail-load', (e, code, desc, url, isMain) => {
     if (!isMain) return; // ошибки подресурсов не убивают страницу
     svcDiag.write('win', `did-fail-load ${code} ${desc} ${url}`);
+    bootLog.write('win', `did-fail-load ${code} ${desc} ${url}`);
     console.error('did-fail-load:', code, desc, url);
   });
   win.webContents.on('preload-error', (e, p, err) => {
     svcDiag.write('win', `preload-error ${p} ${err}`);
+    bootLog.write('win', `preload-error ${p} ${err}`);
     console.error('preload-error:', p, err);
   });
-  win.webContents.on('unresponsive', () => { svcDiag.write('win', 'unresponsive'); });
-  win.webContents.on('responsive', () => { svcDiag.write('win', 'responsive'); });
+  win.webContents.on('unresponsive', () => { svcDiag.write('win', 'unresponsive'); bootLog.write('win', 'unresponsive'); });
+  win.webContents.on('responsive', () => { svcDiag.write('win', 'responsive'); bootLog.write('win', 'responsive'); });
   // Join-ссылка, пришедшая до загрузки страницы, уходит рендереру, когда
   // слушатели (client-view) уже установлены (R04)
   win.webContents.on('did-finish-load', () => {
     winLoaded = true;
+    bootLog.write('win', 'страница загружена');
     flushPendingJoin();
     // Тестовая сборка (ENOT_AUTO_SESSION): сеанс создаётся сам при старте —
     // ID/пароль стабильны, пока процесс жив (рендерер гвардит двойной старт),
@@ -1144,8 +1172,10 @@ function createAgentRtc({ fetchIceServers, videoForward = null } = {}) {
       });
     } catch (e) {
       console.error(`[enotdesk-agent] мост RTC недоступен: ${e.message}`);
+      bootLog.write('bridge', `мост RTC недоступен: ${e.message}`);
       return null;
     }
+    bootLog.write('bridge', 'мост RTC создан (скрытое окно)');
     win.on('closed', () => { win = null; });
     // Тот же контур, что у главного окна (SEC-003): мост не открывает окна
     // и не навигируется — страница фиксированная (client/agent-bridge/page.html).
@@ -1173,6 +1203,7 @@ function createAgentRtc({ fetchIceServers, videoForward = null } = {}) {
     win.webContents.on('did-finish-load', () => relay.markReady()); // мост готов получать offer
     win.webContents.on('render-process-gone', () => {
       console.warn('[enotdesk-agent] мост RTC упал — терминал честно закрывается');
+      bootLog.write('bridge', 'мост RTC упал (render-process-gone)');
       relay.destroy();
     });
     win.loadFile(path.join(import.meta.dirname, 'agent-bridge', 'page.html')).catch((e) => {
@@ -1294,6 +1325,15 @@ function startAgentMode() {
     onStatus: (cb) => { videoStatusCb.fn = cb; },
   };
 
+  // v0.6.4: на Linux хелпера нет — ввод machine-сеанса идёт нативному адаптеру
+  // (X11/XTest); размер дисплея берётся из самого адаптера, Electron screen у
+  // службы отсутствует. На Windows путь прежний (inputSink = null).
+  const inputSink = process.platform === 'win32' ? null : createAgentInputSink({
+    nativeInput,
+    getBounds: () => nativeInput.bounds(),
+    log: { warn: (...a) => { console.warn(...a); svcDiag.write('input', a.map(String).join(' ')); } },
+  });
+
   const agent = createAgent({
     api: agentApi,
     signal: () => createSignalClient({ url: new URL('/signal', settings.serverUrl).toString().replace(/^http/, 'ws') }),
@@ -1303,7 +1343,10 @@ function startAgentMode() {
     // Консольного пользователя нет (экран входа/чистый сервис) — spawnShellFor
     // честно пометит контекст 'service'.
     termHost: (() => {
-      const consoleUser = resolveConsoleUser({ platform: process.platform });
+      // NoNewPrivileges юнита запрещает setuid — sudo -u консольному пользователю
+      // невозможно в принципе (приёмка 05.10): не назначаем его вовсе,
+      // spawnShellFor честно пометит контекст 'service'.
+      const consoleUser = noNewPrivs() ? null : resolveConsoleUser({ platform: process.platform });
       return createTermHost({
         platform: process.platform,
         ...(consoleUser ? { consoleUser: consoleUser.user, uid: consoleUser.uid } : {}),
@@ -1330,6 +1373,8 @@ function startAgentMode() {
     }),
     // v0.6 (ADR 0027): видео+ввод в консольном сеансе через хелпер.
     video,
+    // v0.6.4: ввод machine-сеанса на Linux — нативный пайплайн (на Windows null).
+    inputSink,
     policy: {
       name: process.env.EDESK_AGENT_NAME || os.hostname(),
       os: process.platform,
@@ -1363,6 +1408,7 @@ function startAgentMode() {
 
 // Закрытие окна = реальный выход, без фонового процесса (R16.1)
 function cleanupAndQuit() {
+  bootLog.write('main', 'выход: окно закрыто');
   keepAwake.release();
   // Best-effort revoke: не ждём сервер дольше ~1с, локальное завершение от него не зависит
   if (api.hostSessionId && api.hostToken) {
@@ -1401,6 +1447,7 @@ app.on('window-all-closed', () => {
 });
 
 app.whenReady().then(() => {
+  bootLog.write('main', 'app ready');
   if (!gotLock) return; // второй экземпляр уже уходит через app.quit()
   if (SMOKE) {
     // Скриншот главного экрана: не first-run, иначе модалки закрывают окно.

@@ -8,6 +8,7 @@
 // spawnSync инъекцией — юнит-тесты идут на моках.
 
 import { spawnSync as nodeSpawnSync } from 'node:child_process';
+import { readFileSync as nodeReadFile } from 'node:fs';
 
 function linuxConsole(spawnSync) {
   try {
@@ -42,4 +43,17 @@ export function resolveConsoleUser({ platform = process.platform, spawnSync = no
     if (platform === 'darwin') return darwinConsole(spawnSync);
   } catch { /* сбой резолва не роняет старт агента */ }
   return null;
+}
+
+// Флаг ядра NoNewPrivs: юнит агента стартует с NoNewPrivileges=true — в таком
+// режиме sudo -u консольному пользователю невозможно (setuid запрещён ядром),
+// и терминал падал на спавне (приёмка 05.10). Служба видит флаг у себя в
+// /proc/self/status и не назначает консольного пользователя: spawnShellFor
+// честно помечает контекст 'service'. Не-Linux и сбой чтения — false:
+// решение остаётся за resolveConsoleUser, фейкового сервиса не объявляем.
+export function noNewPrivs({ platform = process.platform, readFile = nodeReadFile } = {}) {
+  if (platform !== 'linux') return false;
+  try {
+    return /^NoNewPrivs:\s+1$/m.test(String(readFile('/proc/self/status', 'utf8')));
+  } catch { return false; }
 }
