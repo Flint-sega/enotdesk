@@ -1277,6 +1277,26 @@ function startAgentMode() {
   let spawnKoffi;
   try { spawnKoffi = createRequire(import.meta.url)('koffi'); } catch { spawnKoffi = null; } // честный spawn-koffi-unavailable
   const videoHostToken = crypto.randomBytes(16).toString('hex'); // hello-токен хелпера (argv + первый кадр pipe)
+  // Портативная сборка самораспаковывается в %TEMP%\<случай>\ с SYSTEM-only ACL
+  // на файлах: CreateProcessAsUserW от консольного пользователя не может даже
+  // прочитать exe хелпера (этап 4, 06.10 — «Access is denied» воспроизведён).
+  // Копируем хелпер в ProgramData (Users получают RX по наследованию) и спавним
+  // оттуда. При установке NSIS (Program Files) путь уже доступен — копия не
+  // нужна. Копия не удалась — честно отдаём исходный путь: спавн отчитает отказ.
+  let helperExe = app.isPackaged ? path.join(process.resourcesPath, 'enotdesk-video.exe') : '';
+  if (process.platform === 'win32' && helperExe) {
+    try {
+      const helperDir = path.join(process.env.PROGRAMDATA || 'C:\\ProgramData', 'EnotDesk', 'helper');
+      fs.mkdirSync(helperDir, { recursive: true });
+      const dst = path.join(helperDir, 'enotdesk-video.exe');
+      const same = (() => { try { return fs.statSync(dst).size === fs.statSync(helperExe).size; } catch { return false; } })();
+      if (!same) fs.copyFileSync(helperExe, dst);
+      helperExe = dst;
+      svcDiag.write('video', `helper path: ${dst}`);
+    } catch (e) {
+      svcDiag.write('video', `helper copy failed (${e.message}) — пробуем исходный путь`);
+    }
+  }
   const videoHost = createVideoHost({
     token: videoHostToken,
     spawner: createSessionSpawner({
@@ -1285,13 +1305,11 @@ function startAgentMode() {
     }),
     netFactory: (p) => net.connect(p),
     killer: (pid) => { nodeSpawn('taskkill', ['/PID', String(pid), '/T', '/F'], { windowsHide: true }); },
-    exePath: app.isPackaged ? path.join(process.resourcesPath, 'enotdesk-video.exe') : '',
+    exePath: helperExe,
     // v0.6 fix (ревью GLM-5.3): токен дублируется в argv — DETACHED-спавн не
     // имеет stdin; командная строка видна только в пределах того же домена
     // доверия, что и дефолтный ACL пайпа (тот же сеанс/пользователь).
-    commandLine: app.isPackaged
-      ? `"${path.join(process.resourcesPath, 'enotdesk-video.exe')}" --token ${videoHostToken}`
-      : '',
+    commandLine: helperExe ? `"${helperExe}" --token ${videoHostToken}` : '',
     log: { warn: (...a) => { console.warn(...a); svcDiag.write('video', a.map(String).join(' ')); } },
     onFrame: (jpeg) => videoForward.relay?.(BRIDGE_IPC.VIDEO_FRAME, jpeg),
     onStatus: (s) => videoStatusCb.fn?.(s),
