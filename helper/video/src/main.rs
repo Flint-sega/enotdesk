@@ -34,12 +34,23 @@ const MAX_CMD_PAYLOAD: usize = 4096;
 const FRAME_TARGET_W: u32 = 1280; // downscale target width (no upscale below it)
 const ACQUIRE_TIMEOUT_MS: u32 = 100; // AcquireNextFrame poll window
 
-// Recovery ladders (RustDesk mechanics, ADR 0027).
+// Recovery ladders (RustDesk mechanics, ADR 0027). GDI switch triggers
+// (spec revision 2): (а) dup-fail and (б-v2) black-frames, both one-time per
+// process. A zero-frame idle desktop is NORMAL (a static screen produces no
+// DDA frames at all, ADR 0027) and NEVER switches -- the target disease of
+// (б-v2) is BLACK DDA (Basic Display Adapter VMs deliver real, solid-black
+// frames and wake restores nothing). DDA that worked with visible content
+// keeps its existing DXGI ladders verbatim (dup-fail -> Fatal at 50, timeout
+// wake watchdog), so a lock screen / UAC / dark panel on a healthy machine
+// never downgrades to GDI stale-framebuffer video.
 const ACCESS_LOST_WINDOW: Duration = Duration::from_secs(10);
 const ACCESS_LOST_MAX: usize = 3; // more recreations than this in the window -> honest exit
 const TIMEOUT_WAKE_AFTER: Duration = Duration::from_secs(5); // consecutive timeouts -> wake display
 const WAKE_THROTTLE: Duration = Duration::from_secs(5); // wake attempts at least this far apart
-const DUP_FAIL_GIVE_UP: u32 = 50; // ~10 s of 200 ms retries -> honest exit
+const DUP_FAIL_GIVE_UP: u32 = 50; // ~10 s of 200 ms retries -> honest exit (the ever-framed path)
+const DUP_FAIL_GDI_SWITCH: u32 = 5; // never-framed only: consecutive make_dup failures
+const DUP_FAIL_SWITCH_MIN: Duration = Duration::from_secs(5); // never-framed only: streak must span this long since the first failure
+const BLACK_STREAK_SWITCH: u32 = 10; // б-v2: consecutive delivered DDA frames that are all black -> switch
 const OTHER_ERR_GIVE_UP: u32 = 50; // ~5 s of 100 ms backoffs -> honest exit
 
 // Periods.
@@ -49,6 +60,8 @@ const TICK_PERIOD: Duration = Duration::from_secs(10);
 // Exit codes (documented in README.md).
 const EXIT_OK: i32 = 0;
 const EXIT_STARTUP: i32 = 1;
+// Capture fatal: since the GDI fallback exists, this means both DXGI and GDI
+// failed to initialize, or capture errors persist in the active mode.
 const EXIT_CAPTURE_FATAL: i32 = 2;
 const EXIT_AUTH: i32 = 3;
 
@@ -65,7 +78,15 @@ struct Shared {
     broken: AtomicBool,    // pipe connection is gone
     auth_fail: AtomicBool, // hello token mismatch -> hard exit
     stop: AtomicBool,
-    state: Mutex<String>, // "waiting" | "live" (stdout tick)
+    state: Mutex<String>,  // "waiting" | "live" (stdout tick)
+    mode: Mutex<&'static str>, // "dxgi" | "gdi" (status doc + stdout tick)
+    // Any frame ever delivered to the pipe in this process (both capture
+    // modes, black frames included -- delivery, not content). Gates the
+    // dup-fail GDI switch trigger (а) only: once true, DDA demonstrably
+    // produced frames and its old 50-failure ladder applies; the black-frames
+    // trigger (б-v2) deliberately does NOT depend on it (delivered black
+    // frames are exactly the disease it detects).
+    ever_framed: AtomicBool,
 }
 
 impl Shared {
@@ -80,12 +101,22 @@ impl Shared {
             auth_fail: AtomicBool::new(false),
             stop: AtomicBool::new(false),
             state: Mutex::new("starting".into()),
+            mode: Mutex::new("dxgi"),
+            ever_framed: AtomicBool::new(false),
         }
     }
 }
 
 fn set_state(shared: &Shared, s: &str) {
     *shared.state.lock().unwrap_or_else(|p| p.into_inner()) = s.to_string();
+}
+
+fn set_mode(shared: &Shared, m: &'static str) {
+    *shared.mode.lock().unwrap_or_else(|p| p.into_inner()) = m;
+}
+
+fn mode(shared: &Shared) -> &'static str {
+    *shared.mode.lock().unwrap_or_else(|p| p.into_inner())
 }
 
 fn set_last_err(shared: &Shared, msg: &str) {
@@ -195,11 +226,17 @@ fn run() -> Result<i32, String> {
         win::current_session_id()
     ));
 
-    // One-time DXGI/WIC setup: COM, factory, primary output, D3D11 device,
-    // WIC factory. Duplication handles come and go; this stays.
-    let cap = win::Capture::new().map_err(|e| format!("capture init: {e}"))?;
+    // One-time capture-mode selection (spec §2): DXGI first (the proven
+    // path); when the D3D11/DXGI stack cannot start at all, trigger (в) --
+    // GDI-only capture with its own WIC factory. Both failing is the honest
+    // startup exit (1). privacy_sleep is false by construction here (no pipe
+    // commands have been processed yet).
+    let mut capturer = match win::Capture::new() {
+        Ok(cap) => Capturer::Dxgi { cap, dup: None },
+        Err(e) => switch_to_gdi(&shared, "no-dxgi", &e, None)
+            .map_err(|ge| format!("capture init: {e}; gdi fallback: {ge}"))?,
+    };
 
-    let mut dup: Option<win::Dup> = None;
     let mut access_lost_times: Vec<Instant> = Vec::new();
 
     loop {
@@ -257,8 +294,7 @@ fn run() -> Result<i32, String> {
         }
 
         let end = capture_session(
-            &cap,
-            &mut dup,
+            &mut capturer,
             &mut access_lost_times,
             &shared,
             &io,
@@ -539,13 +575,53 @@ fn execute_job(shared: &Shared, privacy_sleep: &AtomicBool, job: InputJob) {
 }
 
 // ---------------------------------------------------------------------------
+// Capture mode (spec §2): DXGI first; at most ONE switch to GDI per process
+// lifetime, then DXGI is never retried again. The enum owns whatever the
+// active mode needs; a switch replaces the whole value, so no DXGI handles
+// outlive the mode they belonged to.
+// ---------------------------------------------------------------------------
+
+enum Capturer {
+    Dxgi {
+        cap: win::Capture,
+        dup: Option<win::Dup>,
+    },
+    Gdi {
+        gdi: win::Gdi,
+        wic: win::Wic,
+    },
+}
+
+/// Build the GDI capturer and flip Shared mode. `reuse_wic` borrows the WIC
+/// factory of the still-alive DXGI Capture (switches а/б); None builds a
+/// standalone factory (startup path, where no Capture exists -- switch в).
+/// Nothing is logged and no mode is published until the GDI capturer is
+/// actually up: a failed GDI init leaves the reporting to the caller.
+fn switch_to_gdi(
+    shared: &Shared,
+    reason: &str,
+    trigger_err: &str,
+    reuse_wic: Option<&win::Wic>,
+) -> Result<Capturer, String> {
+    let gdi = win::Gdi::new()?;
+    let wic = match reuse_wic {
+        Some(w) => w.clone(),
+        None => win::Wic::new()?,
+    };
+    set_mode(shared, "gdi");
+    log_line(&format!(
+        "{{\"ev\":\"capture\",\"mode\":\"gdi\",\"reason\":\"{reason}\",\"err\":\"{}\"}}",
+        proto::jstr(&ascii(trigger_err))
+    ));
+    Ok(Capturer::Gdi { gdi, wic })
+}
+
+// ---------------------------------------------------------------------------
 // Capture loop (runs while a client is connected)
 // ---------------------------------------------------------------------------
 
-#[allow(clippy::too_many_arguments)]
 fn capture_session(
-    cap: &win::Capture,
-    dup_slot: &mut Option<win::Dup>,
+    capturer: &mut Capturer,
     access_lost_times: &mut Vec<Instant>,
     shared: &Shared,
     io: &File,
@@ -559,6 +635,15 @@ fn capture_session(
     let mut timeout_since: Option<Instant> = None;
     let mut last_wake: Option<Instant> = None;
     let mut dup_fail_streak: u32 = 0;
+    // Start of the current make_dup failure streak; reset on any success. The
+    // GDI switch requires the streak to span DUP_FAIL_SWITCH_MIN so a machine
+    // that unlocks within seconds keeps DXGI.
+    let mut first_dup_fail: Option<Instant> = None;
+    // Trigger (б-v2): consecutive delivered DDA frames whose sampled pixels
+    // are all black (spec revision 2). Reset on any visible frame, on
+    // privacy-sleep frames, and per connection (a local of this function,
+    // which runs once per pipe connection).
+    let mut black_streak: u32 = 0;
     let mut other_err_streak: u32 = 0;
 
     loop {
@@ -597,124 +682,307 @@ fn capture_session(
             last_status = Instant::now();
         }
 
-        // Duplication handle: (re)create lazily with a bounded retry streak.
-        if dup_slot.is_none() {
-            match cap.make_dup() {
-                Ok(d) => {
-                    dup_fail_streak = 0;
-                    *dup_slot = Some(d);
-                }
-                Err(e) => {
-                    dup_fail_streak += 1;
-                    set_last_err(shared, &format!("duplication: {e}"));
-                    if dup_fail_streak >= DUP_FAIL_GIVE_UP {
-                        return SessionEnd::Fatal(format!(
-                            "duplication create failed repeatedly: {e}"
-                        ));
+        // Capture step, per mode. A pending GDI switch is parked in
+        // switch_req and handled after the match, where the capturer borrow
+        // has ended (the switch replaces the whole enum value).
+        let mut switch_req: Option<(&'static str, String)> = None;
+
+        match capturer {
+            Capturer::Dxgi { cap, dup } => {
+                // Duplication handle: (re)create lazily. The GDI switch
+                // (trigger а) is only for a process where DDA never delivered
+                // a frame; DDA that worked before keeps the old ladder -- 50
+                // consecutive failures -> Fatal, lock-screen/UAC failures
+                // never silently downgrade the capture path.
+                if dup.is_none() {
+                    match cap.make_dup() {
+                        Ok(d) => {
+                            dup_fail_streak = 0;
+                            first_dup_fail = None;
+                            *dup = Some(d);
+                        }
+                        Err(e) => {
+                            if first_dup_fail.is_none() {
+                                first_dup_fail = Some(Instant::now());
+                            }
+                            dup_fail_streak += 1;
+                            set_last_err(shared, &format!("duplication: {e}"));
+                            if dup_fail_streak >= DUP_FAIL_GDI_SWITCH
+                                && !shared.ever_framed.load(Ordering::Relaxed)
+                                && first_dup_fail
+                                    .map_or(false, |t| t.elapsed() >= DUP_FAIL_SWITCH_MIN)
+                            {
+                                switch_req = Some(("dup-fail", format!("duplication: {e}")));
+                            } else if dup_fail_streak >= DUP_FAIL_GIVE_UP {
+                                return SessionEnd::Fatal(format!(
+                                    "duplication create failed repeatedly: {e}"
+                                ));
+                            } else {
+                                std::thread::sleep(Duration::from_millis(200));
+                                continue;
+                            }
+                        }
                     }
-                    std::thread::sleep(Duration::from_millis(200));
+                }
+                if switch_req.is_none() {
+                    let grab = match dup.as_mut() {
+                        Some(d) => d.grab(ACQUIRE_TIMEOUT_MS),
+                        None => continue, // switch is pending below; next pass runs GDI
+                    };
+
+                    match grab {
+                        win::Grab::Frame => {
+                            timeout_since = None;
+                            shared.display_off.store(false, Ordering::Relaxed);
+                            other_err_streak = 0;
+
+                            // Frame pacing: skip encode/send while inside the max_fps
+                            // interval. The desktop texture is already consumed (released
+                            // inside grab), so a skipped frame is just a dropped one.
+                            let max_fps = *shared.max_fps.lock().unwrap_or_else(|p| p.into_inner());
+                            let interval = Duration::from_secs_f64(1.0 / (max_fps.max(1)) as f64);
+                            let due = last_encode.map_or(true, |t| t.elapsed() >= interval);
+                            if due {
+                                let (sw, sh, buf) = match dup.as_ref() {
+                                    Some(d) => {
+                                        let (w, h) = d.size();
+                                        (w, h, d.buf())
+                                    }
+                                    None => continue,
+                                };
+                                let (px, pw, ph) = downscale(buf, sw, sh, FRAME_TARGET_W);
+
+                                // Trigger (б-v2), DXGI arm only (spec revision 2): in
+                                // GDI mode the switch has already happened and BitBlt
+                                // returns the real framebuffer. Runs only on frames
+                                // about to be encoded/sent, so an idle-static desktop
+                                // (no frames at all) never reaches it. The streak can
+                                // only grow while privacy_sleep is false (a dark-panel
+                                // frame kills it instead); the switch handler below
+                                // re-checks privacy before switching.
+                                if privacy_sleep.load(Ordering::Relaxed) {
+                                    black_streak = 0;
+                                } else if frame_is_black(&px, pw, ph) {
+                                    black_streak += 1;
+                                    if black_streak >= BLACK_STREAK_SWITCH
+                                        && !privacy_sleep.load(Ordering::Relaxed)
+                                    {
+                                        switch_req = Some((
+                                            "black-frames",
+                                            format!("{black_streak} black DDA frames in a row"),
+                                        ));
+                                    }
+                                } else {
+                                    black_streak = 0;
+                                }
+
+                                if !encode_and_send(
+                                    &cap.wic,
+                                    &px,
+                                    pw,
+                                    ph,
+                                    shared,
+                                    io,
+                                    pipe_lock,
+                                    &mut frames_window,
+                                    &mut last_encode,
+                                ) {
+                                    return SessionEnd::Broken;
+                                }
+                            }
+                        }
+                        win::Grab::Timeout => {
+                            // Consecutive timeouts mean a still screen OR a powered-off
+                            // display (ADR 0027: DPMS-off yields zero frames). After 5 s
+                            // of silence we poke the display, but at most once per 5 s.
+                            // Zero-frame idle is NORMAL and never switches (revision 2):
+                            // the wake watchdog is the whole story here.
+                            let since = match timeout_since {
+                                Some(t) => t,
+                                None => {
+                                    let n = Instant::now();
+                                    timeout_since = Some(n);
+                                    n
+                                }
+                            };
+                            if since.elapsed() >= TIMEOUT_WAKE_AFTER
+                                && last_wake.map_or(true, |t| t.elapsed() >= WAKE_THROTTLE)
+                            {
+                                last_wake = Some(Instant::now());
+                                timeout_since = Some(Instant::now()); // restart the 5 s window
+                                // v0.6 fix (review): operator-requested privacy sleep must
+                                // NOT be undone by the stuck-display watchdog — zero frames
+                                // is exactly what privacy looks like. Wake only when the
+                                // silence was not our own "sleep" command.
+                                if !privacy_sleep.load(Ordering::Relaxed) {
+                                    win::monitor_power(true);
+                                    set_last_err(shared, "capture: long timeout, display wake attempted");
+                                }
+                                shared.display_off.store(true, Ordering::Relaxed);
+                            }
+                        }
+                        win::Grab::AccessLost => {
+                            // Secure-desktop switches (UAC, lock screen) invalidate the
+                            // duplication. Recreate, but if this floods, exit honestly.
+                            timeout_since = None;
+                            let now = Instant::now();
+                            access_lost_times.retain(|t| now.duration_since(*t) <= ACCESS_LOST_WINDOW);
+                            access_lost_times.push(now);
+                            if access_lost_times.len() > ACCESS_LOST_MAX {
+                                return SessionEnd::Fatal(
+                                    "access-lost restart flood: more than 3 recreations in 10 s".into(),
+                                );
+                            }
+                            *dup = None; // recreated on the next loop pass
+                        }
+                        win::Grab::ModeChanged => {
+                            // Display mode change: recreate duplication + staging for the
+                            // new size; the out-of-date frame is dropped.
+                            timeout_since = None;
+                            *dup = None;
+                        }
+                        win::Grab::Err(e) => {
+                            timeout_since = None;
+                            other_err_streak += 1;
+                            set_last_err(shared, &format!("capture: {e}"));
+                            if other_err_streak >= OTHER_ERR_GIVE_UP {
+                                return SessionEnd::Fatal(format!("capture errors persist: {e}"));
+                            }
+                            std::thread::sleep(Duration::from_millis(100));
+                        }
+                    }
+                }
+            }
+            Capturer::Gdi { gdi, wic } => {
+                // Privacy blackout (spec §4): the operator asked for a dark
+                // panel, and a BitBlt of a DPMS-off display can return the
+                // last framebuffer content -- grab, and therefore send,
+                // nothing while privacy_sleep is on.
+                if privacy_sleep.load(Ordering::Relaxed) {
+                    std::thread::sleep(Duration::from_millis(100));
                     continue;
+                }
+                // Gdi::grab paces itself to the max_fps interval, so no
+                // encode due-check here: the loop period is already >= the
+                // interval, every frame is due.
+                let max_fps = *shared.max_fps.lock().unwrap_or_else(|p| p.into_inner());
+                let interval_ms = (1000u32 / max_fps.max(1)).max(1);
+                match gdi.grab(interval_ms) {
+                    win::Grab::Frame => {
+                        shared.display_off.store(false, Ordering::Relaxed);
+                        other_err_streak = 0;
+                        let (sw, sh, buf) = {
+                            let (w, h) = gdi.size();
+                            (w, h, gdi.buf())
+                        };
+                        let (px, pw, ph) = downscale(buf, sw, sh, FRAME_TARGET_W);
+                        // No black detection here (revision 2): the switch has
+                        // already happened and BitBlt returns the real
+                        // framebuffer, black or not.
+                        if !encode_and_send(
+                            wic,
+                            &px,
+                            pw,
+                            ph,
+                            shared,
+                            io,
+                            pipe_lock,
+                            &mut frames_window,
+                            &mut last_encode,
+                        ) {
+                            return SessionEnd::Broken;
+                        }
+                    }
+                    win::Grab::ModeChanged => {
+                        // The DIB was already rebuilt inside Gdi; the first
+                        // frame for the new size arrives on the next pass.
+                        shared.display_off.store(false, Ordering::Relaxed);
+                    }
+                    // Not produced in GDI mode: there is no AcquireNextFrame
+                    // timeout and no duplication to lose. No-op by design.
+                    win::Grab::Timeout | win::Grab::AccessLost => {}
+                    win::Grab::Err(e) => {
+                        other_err_streak += 1;
+                        set_last_err(shared, &format!("capture: {e}"));
+                        if other_err_streak >= OTHER_ERR_GIVE_UP {
+                            return SessionEnd::Fatal(format!("capture errors persist: {e}"));
+                        }
+                        std::thread::sleep(Duration::from_millis(100));
+                    }
                 }
             }
         }
-        let grab = match dup_slot.as_mut() {
-            Some(d) => d.grab(ACQUIRE_TIMEOUT_MS),
-            None => continue, // create failed just above; next pass retries
-        };
 
-        match grab {
-            win::Grab::Frame => {
-                timeout_since = None;
-                shared.display_off.store(false, Ordering::Relaxed);
-                other_err_streak = 0;
+        // One-time switch to GDI (trigger а: make_dup refused >= 5 times over
+        // >= 5 s in a never-framed process; trigger б-v2: >= BLACK_STREAK_SWITCH
+        // delivered DDA frames in a row are all black). Trigger (а) is gated on
+        // ever_framed == false ("DDA never produced a frame in this process");
+        // (б-v2) is not -- delivered black frames are exactly its target
+        // disease. Zero-frame idle desktops never get here. Never while the
+        // operator holds the panel dark (spec §4: a BitBlt of a dark panel can
+        // return stale content) -- postpone instead; the streaks keep growing
+        // and the switch happens on a later pass after wake.
+        if let Some((reason, err)) = switch_req {
+            if privacy_sleep.load(Ordering::Relaxed) {
+                std::thread::sleep(Duration::from_millis(200));
+                continue;
+            }
+            let wic = match capturer {
+                Capturer::Dxgi { cap, .. } => cap.wic.clone(),
+                Capturer::Gdi { .. } => continue, // already GDI: nothing to switch
+            };
+            match switch_to_gdi(shared, reason, &err, Some(&wic)) {
+                Ok(g) => *capturer = g,
+                Err(ge) => {
+                    // GDI itself cannot initialize: honest capture-fatal exit
+                    // (exit 2 now covers "both DXGI and GDI failed").
+                    return SessionEnd::Fatal(format!(
+                        "gdi fallback failed: {ge} (trigger: {err})"
+                    ));
+                }
+            }
+        }
+    }
+}
 
-                // Frame pacing: skip encode/send while inside the max_fps
-                // interval. The desktop texture is already consumed (released
-                // inside grab), so a skipped frame is just a dropped one.
-                let max_fps = *shared.max_fps.lock().unwrap_or_else(|p| p.into_inner());
-                let interval = Duration::from_secs_f64(1.0 / (max_fps.max(1)) as f64);
-                let due = last_encode.map_or(true, |t| t.elapsed() >= interval);
-                if due {
-                    let (sw, sh, buf) = match dup_slot.as_ref() {
-                        Some(d) => {
-                            let (w, h) = d.size();
-                            (w, h, d.buf())
-                        }
-                        None => continue,
-                    };
-                    let (px, pw, ph) = downscale(buf, sw, sh, FRAME_TARGET_W);
-                    let q = *shared.jpeg_q.lock().unwrap_or_else(|p| p.into_inner()) / 100.0;
-                    match cap.wic.encode(pw, ph, &px, q) {
-                        Ok(jpeg) => {
-                            if let Err(e) = send_msg(io, pipe_lock, proto::T_FRAME, &jpeg) {
-                                set_last_err(shared, &format!("send frame: {e}"));
-                                shared.broken.store(true, Ordering::SeqCst);
-                                return SessionEnd::Broken;
-                            }
-                            frames_window += 1;
-                            last_encode = Some(Instant::now());
-                        }
-                        Err(e) => set_last_err(shared, &format!("jpeg: {e}")),
-                    }
-                }
+/// Encode one already-downscaled frame and push it down the pipe. The caller
+/// owns the downscale step (the DXGI arm runs the black-capture probe on its
+/// output between the two). Returns false when the pipe is gone (session must
+/// end); a JPEG failure is reported via lastErr and the next grab retries, as
+/// before.
+#[allow(clippy::too_many_arguments)]
+fn encode_and_send(
+    wic: &win::Wic,
+    px: &[u8],
+    pw: u32,
+    ph: u32,
+    shared: &Shared,
+    io: &File,
+    pipe_lock: &Mutex<()>,
+    frames_window: &mut u64,
+    last_encode: &mut Option<Instant>,
+) -> bool {
+    let q = *shared.jpeg_q.lock().unwrap_or_else(|p| p.into_inner()) / 100.0;
+    match wic.encode(pw, ph, px, q) {
+        Ok(jpeg) => {
+            if let Err(e) = send_msg(io, pipe_lock, proto::T_FRAME, &jpeg) {
+                // The ticker carries this text: a dying pipe must name its
+                // error, not just flip to waiting (v0.6.0 приёмка).
+                set_last_err(shared, &format!("send frame: {e}"));
+                shared.broken.store(true, Ordering::SeqCst);
+                return false;
             }
-            win::Grab::Timeout => {
-                // Consecutive timeouts mean a still screen OR a powered-off
-                // display (ADR 0027: DPMS-off yields zero frames). After 5 s
-                // of silence we poke the display, but at most once per 5 s.
-                let since = match timeout_since {
-                    Some(t) => t,
-                    None => {
-                        let n = Instant::now();
-                        timeout_since = Some(n);
-                        n
-                    }
-                };
-                if since.elapsed() >= TIMEOUT_WAKE_AFTER
-                    && last_wake.map_or(true, |t| t.elapsed() >= WAKE_THROTTLE)
-                {
-                    last_wake = Some(Instant::now());
-                    timeout_since = Some(Instant::now()); // restart the 5 s window
-                    // v0.6 fix (review): operator-requested privacy sleep must
-                    // NOT be undone by the stuck-display watchdog — zero frames
-                    // is exactly what privacy looks like. Wake only when the
-                    // silence was not our own "sleep" command.
-                    if !privacy_sleep.load(Ordering::Relaxed) {
-                        win::monitor_power(true);
-                        set_last_err(shared, "capture: long timeout, display wake attempted");
-                    }
-                    shared.display_off.store(true, Ordering::Relaxed);
-                }
-            }
-            win::Grab::AccessLost => {
-                // Secure-desktop switches (UAC, lock screen) invalidate the
-                // duplication. Recreate, but if this floods, exit honestly.
-                timeout_since = None;
-                let now = Instant::now();
-                access_lost_times.retain(|t| now.duration_since(*t) <= ACCESS_LOST_WINDOW);
-                access_lost_times.push(now);
-                if access_lost_times.len() > ACCESS_LOST_MAX {
-                    return SessionEnd::Fatal(
-                        "access-lost restart flood: more than 3 recreations in 10 s".into(),
-                    );
-                }
-                *dup_slot = None; // recreated on the next loop pass
-            }
-            win::Grab::ModeChanged => {
-                // Display mode change: recreate duplication + staging for the
-                // new size; the out-of-date frame is dropped.
-                timeout_since = None;
-                *dup_slot = None;
-            }
-            win::Grab::Err(e) => {
-                timeout_since = None;
-                other_err_streak += 1;
-                set_last_err(shared, &format!("capture: {e}"));
-                if other_err_streak >= OTHER_ERR_GIVE_UP {
-                    return SessionEnd::Fatal(format!("capture errors persist: {e}"));
-                }
-                std::thread::sleep(Duration::from_millis(100));
-            }
+            *frames_window += 1;
+            *last_encode = Some(Instant::now());
+            // First successful delivery in the process: from here on the GDI
+            // switch triggers are out (DDA demonstrably worked); applies to
+            // both capture modes.
+            shared.ever_framed.store(true, Ordering::Relaxed);
+            true
+        }
+        Err(e) => {
+            set_last_err(shared, &format!("jpeg: {e}"));
+            true
         }
     }
 }
@@ -726,7 +994,8 @@ fn status_json(shared: &Shared, fps: u64) -> String {
         .unwrap_or_else(|p| p.into_inner())
         .clone();
     format!(
-        "{{\"fps\":{},\"lastErr\":\"{}\",\"uac\":{},\"locked\":{},\"displayOff\":{}}}",
+        "{{\"mode\":\"{}\",\"fps\":{},\"lastErr\":\"{}\",\"uac\":{},\"locked\":{},\"displayOff\":{}}}",
+        mode(shared),
         fps,
         proto::jstr(&ascii(&last_err)),
         win::consent_running(),
@@ -798,6 +1067,34 @@ fn downscale(src: &[u8], w: u32, h: u32, target_w: u32) -> (Vec<u8>, u32, u32) {
 }
 
 // ---------------------------------------------------------------------------
+// Black-capture probe (spec revision 2, trigger б-v2): a DDA that composites
+// no content (Basic Display Adapter VMs) delivers real frames that are solid
+// black; wake never restores them. Runs only on frames about to be
+// encoded/sent, so idle-static desktops (no frames at all) never pay for it.
+// ---------------------------------------------------------------------------
+
+/// True when every 16th pixel of the compact BGRA frame has max(R,G,B) <= 8.
+/// Linear stride-16 raster walk: ~64k 3-byte samples at 1280x800, allocation-
+/// free. Indexing is in-bounds by construction: the upfront length check
+/// guarantees `need <= px.len()` and the loop steps strictly inside `need`.
+fn frame_is_black(px: &[u8], w: u32, h: u32) -> bool {
+    let need = w as usize * h as usize * 4;
+    if w == 0 || h == 0 || px.len() < need {
+        return true; // nothing to see counts as black (never trips the probe)
+    }
+    for p in (0..need).step_by(16 * 4) {
+        // BGRA layout: [p]=B, [p+1]=G, [p+2]=R.
+        let b = px[p] as u32;
+        let g = px[p + 1] as u32;
+        let r = px[p + 2] as u32;
+        if r.max(g).max(b) > 8 {
+            return false;
+        }
+    }
+    true
+}
+
+// ---------------------------------------------------------------------------
 // Background threads: stdout tick + stdin lifecycle
 // ---------------------------------------------------------------------------
 
@@ -831,8 +1128,9 @@ fn spawn_ticker(shared: Arc<Shared>) {
                 .unwrap_or_else(|p| p.into_inner())
                 .clone();
             log_line(&format!(
-                "{{\"ev\":\"tick\",\"state\":\"{}\",\"fps\":{},\"displayOff\":{},\"dup\":{},\"err\":\"{}\"}}",
+                "{{\"ev\":\"tick\",\"state\":\"{}\",\"mode\":\"{}\",\"fps\":{},\"displayOff\":{},\"dup\":{},\"err\":\"{}\"}}",
                 proto::jstr(&state),
+                mode(&shared),
                 fps,
                 display_off(&shared),
                 win::last_dup_op(),

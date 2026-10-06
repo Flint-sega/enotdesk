@@ -20,6 +20,11 @@ use windows::Win32::Graphics::Dxgi::{
     IDXGIOutputDuplication, IDXGIResource, DXGI_ERROR_ACCESS_LOST, DXGI_ERROR_NOT_FOUND,
     DXGI_ERROR_WAIT_TIMEOUT, DXGI_OUTDUPL_FRAME_INFO,
 };
+use windows::Win32::Graphics::Gdi::{
+    BitBlt, CreateCompatibleDC, CreateDIBSection, DeleteDC, DeleteObject, GetDC, ReleaseDC,
+    SelectObject, BI_RGB, BITMAPINFO, BITMAPINFOHEADER, CAPTUREBLT, DIB_RGB_COLORS, HBITMAP,
+    HGDIOBJ, HDC, RGBQUAD, SRCCOPY,
+};
 use windows::Win32::Graphics::Imaging::{
     CLSID_WICImagingFactory, GUID_ContainerFormatJpeg, GUID_WICPixelFormat32bppBGRA, IWICBitmap,
     IWICBitmapEncoder, IWICBitmapFrameEncode, IWICBitmapSource, IWICImagingFactory,
@@ -56,14 +61,15 @@ use windows::Win32::UI::Input::KeyboardAndMouse::{
 };
 use windows::Win32::UI::WindowsAndMessaging::{
     FindWindowW, GetCursorPos, GetSystemMetrics, SendMessageTimeoutW, SetCursorPos, HWND_BROADCAST,
-    SMTO_ABORTIFHUNG, SM_CXVIRTUALSCREEN, SM_CYVIRTUALSCREEN, SM_XVIRTUALSCREEN, SM_YVIRTUALSCREEN,
-    WM_SYSCOMMAND,
+    SMTO_ABORTIFHUNG, SM_CXSCREEN, SM_CXVIRTUALSCREEN, SM_CYSCREEN, SM_CYVIRTUALSCREEN,
+    SM_XVIRTUALSCREEN, SM_YVIRTUALSCREEN, WM_SYSCOMMAND,
 };
 
 // Progress marker of the last DXGI call inside make_dup() (see make_dup for
 // the encoding). Read by the stdout ticker: if a call wedges, the tick keeps
 // flowing (separate thread) and names the exact stuck call.
 use std::sync::atomic::{AtomicU8, Ordering};
+use std::time::{Duration, Instant};
 static DUP_OP: AtomicU8 = AtomicU8::new(0);
 pub fn last_dup_op() -> u8 {
     DUP_OP.load(Ordering::Relaxed)
@@ -316,17 +322,11 @@ impl Capture {
             let device = device.ok_or("D3D11CreateDevice: no device returned")?;
             let ctx = ctx.ok_or("D3D11CreateDevice: no context returned")?;
 
-            let wic_factory: IWICImagingFactory =
-                CoCreateInstance(&CLSID_WICImagingFactory, None, CLSCTX_INPROC_SERVER)
-                    .map_err(|e| format!("WIC factory: {e}"))?;
-
             Ok(Capture {
                 device,
                 ctx,
                 output,
-                wic: Wic {
-                    factory: wic_factory,
-                },
+                wic: Wic::new()?,
             })
         }
     }
@@ -464,14 +464,267 @@ impl Dup {
 }
 
 // ---------------------------------------------------------------------------
+// GDI capture -- the fallback for machines where Desktop Duplication cannot
+// start or stays silent forever (Microsoft Basic Display Adapter VMs, exotic
+// GPUs). Same contract as Dup: grab/size/buf, compact BGRA rows with stride
+// w*4. Spike numbers (ADR 0027): BitBlt ~23 ms/frame at 1280x720 -- good
+// enough as a fallback, rejected as a primary path.
+// ---------------------------------------------------------------------------
+
+pub struct Gdi {
+    screen_dc: HDC, // GetDC(None), released in Drop
+    mem_dc: HDC,    // CreateCompatibleDC, deleted in Drop
+    // None while a DIB (re)build failed; grab then reports Err until a later
+    // rebuild succeeds -- blitting into a missing bitmap would fabricate
+    // frames out of stale memory.
+    dib: Option<DibSection>,
+    buf: Vec<u8>, // compact BGRA rows, stride = w*4 (same contract as Dup::buf)
+}
+
+struct DibSection {
+    bm: HBITMAP,
+    // What our DIB replaced in mem_dc. DeleteObject on a bitmap that is still
+    // selected silently fails, so `prev` must be selected back first.
+    prev: HGDIOBJ,
+    bits: *mut u8, // DIB pixel memory, valid while `bm` is alive
+    w: u32,
+    h: u32,
+}
+
+impl DibSection {
+    fn create(mem_dc: HDC, w: u32, h: u32) -> Result<DibSection, String> {
+        unsafe {
+            // Negative biHeight = top-down rows: row 0 is the top of the
+            // screen, exactly what the downscale/WIC pipeline consumes (no
+            // flip step). 32bpp BI_RGB rows are exactly w*4 bytes by
+            // definition, matching Dup::buf bit for bit.
+            let bi = BITMAPINFO {
+                bmiHeader: BITMAPINFOHEADER {
+                    biSize: std::mem::size_of::<BITMAPINFOHEADER>() as u32,
+                    biWidth: w as i32,
+                    biHeight: -(h as i32),
+                    biPlanes: 1,
+                    biBitCount: 32,
+                    biCompression: BI_RGB.0,
+                    biSizeImage: 0,
+                    biXPelsPerMeter: 0,
+                    biYPelsPerMeter: 0,
+                    biClrUsed: 0,
+                    biClrImportant: 0,
+                },
+                bmiColors: [RGBQUAD::default()],
+            };
+            let mut bits: *mut core::ffi::c_void = std::ptr::null_mut();
+            let hbitmap = CreateDIBSection(
+                mem_dc,
+                &bi,
+                DIB_RGB_COLORS,
+                &mut bits,
+                HANDLE::default(), // no section object: GDI owns the pixel memory
+                0,
+            )
+            .map_err(|e| format!("CreateDIBSection: {e}"))?;
+            if bits.is_null() {
+                let _ = DeleteObject(hbitmap);
+                return Err("CreateDIBSection: null bits pointer".into());
+            }
+            let prev = SelectObject(mem_dc, hbitmap);
+            if prev.is_invalid() {
+                let _ = DeleteObject(hbitmap);
+                return Err(format!("SelectObject: err={:?}", GetLastError()));
+            }
+            Ok(DibSection {
+                bm: hbitmap,
+                prev,
+                bits: bits.cast(),
+                w,
+                h,
+            })
+        }
+    }
+}
+
+/// Primary monitor size (SM_CXSCREEN/SM_CYSCREEN, origin 0,0) -- the same
+/// output DXGI duplication captures (primary output). Zero on failure, which
+/// every caller treats as an error.
+fn primary_screen_size() -> (u32, u32) {
+    unsafe {
+        let w = GetSystemMetrics(SM_CXSCREEN);
+        let h = GetSystemMetrics(SM_CYSCREEN);
+        (w.max(0) as u32, h.max(0) as u32)
+    }
+}
+
+impl Gdi {
+    pub fn new() -> Result<Gdi, String> {
+        unsafe {
+            let screen_dc = GetDC(None);
+            if screen_dc.is_invalid() {
+                return Err("GetDC: failed".into());
+            }
+            let mem_dc = CreateCompatibleDC(screen_dc);
+            if mem_dc.is_invalid() {
+                let _ = ReleaseDC(None, screen_dc);
+                return Err("CreateCompatibleDC: failed".into());
+            }
+            let (w, h) = primary_screen_size();
+            if w == 0 || h == 0 {
+                let _ = DeleteDC(mem_dc);
+                let _ = ReleaseDC(None, screen_dc);
+                return Err("GetSystemMetrics: zero screen size".into());
+            }
+            let dib = match DibSection::create(mem_dc, w, h) {
+                Ok(d) => d,
+                Err(e) => {
+                    let _ = DeleteDC(mem_dc);
+                    let _ = ReleaseDC(None, screen_dc);
+                    return Err(e);
+                }
+            };
+            Ok(Gdi {
+                screen_dc,
+                mem_dc,
+                dib: Some(dib),
+                buf: Vec::new(),
+            })
+        }
+    }
+
+    pub fn size(&self) -> (u32, u32) {
+        match &self.dib {
+            Some(d) => (d.w, d.h),
+            None => (0, 0),
+        }
+    }
+
+    /// BGRA pixels of the last grabbed frame (stride exactly w*4).
+    pub fn buf(&self) -> &[u8] {
+        &self.buf
+    }
+
+    /// One capture cycle paced to `interval_ms` (1000/max_fps, set by the
+    /// caller). The trailing sleep makes total grab time ~= interval only at
+    /// small sizes: BitBlt is ~23 ms at 1280x720 but ~30-40 ms at >=1080p,
+    /// which already exceeds the interval at typical max_fps values -- there
+    /// the sleep is a no-op and the loop cadence is max(BitBlt, interval),
+    /// i.e. the interval is an upper bound, not a guarantee. (No
+    /// StretchBlt/downscaled blits in v1.)
+    pub fn grab(&mut self, interval_ms: u32) -> Grab {
+        let started = Instant::now();
+        let out = self.grab_once();
+        // Upper-bound pacing (see doc above); Grab::Err is left unpaced
+        // because the error ladder on the caller side already backs off.
+        if !matches!(out, Grab::Err(_)) {
+            let interval = Duration::from_millis(interval_ms.max(1) as u64);
+            if started.elapsed() < interval {
+                std::thread::sleep(interval - started.elapsed());
+            }
+        }
+        out
+    }
+
+    fn grab_once(&mut self) -> Grab {
+        let (w, h) = primary_screen_size();
+        if w == 0 || h == 0 {
+            return Grab::Err("GetSystemMetrics: zero screen size".into());
+        }
+        // Display mode change: rebuild the DIB and report ModeChanged like
+        // Dup does -- the first frame for the new size is grabbed on the next
+        // pass, the out-of-date one is dropped. A previous failed rebuild
+        // (dib == None) retries here on every pass.
+        let rebuild = match &self.dib {
+            Some(d) => d.w != w || d.h != h,
+            None => true,
+        };
+        if rebuild {
+            self.drop_dib();
+            match DibSection::create(self.mem_dc, w, h) {
+                Ok(d) => self.dib = Some(d),
+                Err(e) => return Grab::Err(format!("gdi dib: {e}")),
+            }
+            return Grab::ModeChanged;
+        }
+        let d = match self.dib.as_ref() {
+            Some(d) => d,
+            None => return Grab::Err("gdi: no DIB section".into()),
+        };
+        unsafe {
+            // CAPTUREBLT: include layered windows; the spike timing above was
+            // measured with exactly this raster-op pair.
+            if let Err(e) = BitBlt(
+                self.mem_dc,
+                0,
+                0,
+                w as i32,
+                h as i32,
+                self.screen_dc,
+                0,
+                0,
+                SRCCOPY | CAPTUREBLT,
+            ) {
+                return Grab::Err(format!("BitBlt: {e}"));
+            }
+            // Copy into the compact buffer instead of handing out the DIB
+            // memory: keeps buf() a plain safe slice of owned bytes with the
+            // exact Dup::buf contract, for ~1 ms of memcpy per frame.
+            let stride = w as usize * 4;
+            let src = std::slice::from_raw_parts(d.bits, stride * h as usize);
+            if self.buf.len() != src.len() {
+                self.buf.resize(src.len(), 0);
+            }
+            self.buf.copy_from_slice(src);
+        }
+        Grab::Frame
+    }
+
+    /// Select the old bitmap back, then delete our DIB.
+    fn drop_dib(&mut self) {
+        if let Some(d) = self.dib.take() {
+            unsafe {
+                let _ = SelectObject(self.mem_dc, d.prev);
+                let _ = DeleteObject(d.bm);
+            }
+        }
+    }
+}
+
+impl Drop for Gdi {
+    fn drop(&mut self) {
+        self.drop_dib();
+        unsafe {
+            let _ = DeleteDC(self.mem_dc);
+            let _ = ReleaseDC(None, self.screen_dc);
+        }
+    }
+}
+
+// ---------------------------------------------------------------------------
 // WIC JPEG encode (spike-derived, plus the quality property bag)
 // ---------------------------------------------------------------------------
 
+#[derive(Clone)]
 pub struct Wic {
     factory: IWICImagingFactory,
 }
 
 impl Wic {
+    /// Standalone WIC factory (COM init + CoCreateInstance): the GDI-only path
+    /// uses this when Capture::new -- which owns its own factory -- never ran.
+    /// CoInitializeEx after a caller's own init returns S_FALSE, which is a
+    /// success code and passes through.
+    pub fn new() -> Result<Wic, String> {
+        unsafe {
+            let hr = CoInitializeEx(None, COINIT_MULTITHREADED);
+            if hr.is_err() {
+                return Err(format!("CoInitializeEx: {hr:?}"));
+            }
+            let factory: IWICImagingFactory =
+                CoCreateInstance(&CLSID_WICImagingFactory, None, CLSCTX_INPROC_SERVER)
+                    .map_err(|e| format!("WIC factory: {e}"))?;
+            Ok(Wic { factory })
+        }
+    }
+
     /// Encode compact BGRA rows as JPEG. `q01` is quality 0.0..1.0.
     pub fn encode(&self, w: u32, h: u32, bgra: &[u8], q01: f32) -> Result<Vec<u8>, String> {
         let stride = w as usize * 4;
