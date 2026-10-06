@@ -63,6 +63,15 @@ jobs:
         run: |
           npx electron-builder --config build/electron-builder.yml -c.publish.provider=generic -c.publish.url="$ENOT_FEED_URL" --win portable --publish never
           npx electron-builder --config build/electron-builder.yml -c.publish.provider=generic -c.publish.url="$ENOT_FEED_URL" --win nsis --publish never
+      # Гейт артефакта (лаба 05.10 + ревизия 06.10): «пустое окно» на не-русских
+      # Windows = в сборке нет ни одного подходящего pak. Контракт на yml не
+      # видит реальную сборку — проверяем unpacked-каталог, иначе job падает.
+      - name: Gate: locales en-US.pak + ru.pak в сборке
+        if: runner.os == 'Windows'
+        shell: bash
+        run: |
+          test -f dist/win-unpacked/locales/en-US.pak
+          test -f dist/win-unpacked/locales/ru.pak
       - name: Pack (Linux, AppImage)
         if: runner.os == 'Linux'
         shell: bash
