@@ -746,7 +746,11 @@ fn execute_job(
             if !moved {
                 set_last_err(
                     shared,
-                    &format!("cmd mouse x={x:.2} y={y:.2} cursor-set failed {mgle}"),
+                    &format!(
+                        "cmd mouse x={x:.2} y={y:.2} cursor-set failed {mgle} sess={}/{}",
+                        win::current_session_id(),
+                        win::active_console_session_id(),
+                    ),
                 );
             }
             // Сна и трассы успеха больше нет: 120 мс на каждый job при темпе
@@ -771,7 +775,11 @@ fn execute_job(
                 if !sent {
                     set_last_err(
                         shared,
-                        &format!("cmd key {name} down={down} sent=false {gle}"),
+                        &format!(
+                            "cmd key {name} down={down} sent=false {gle} sess={}/{}",
+                            win::current_session_id(),
+                            win::active_console_session_id(),
+                        ),
                     );
                 }
             }
