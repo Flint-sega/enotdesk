@@ -248,6 +248,12 @@ pub struct Dup {
 /// Outcome of one AcquireNextFrame cycle.
 pub enum Grab {
     Frame,
+    /// Successful acquisition that presented no desktop pixels
+    /// (DXGI_OUTDUPL_FRAME_INFO: LastPresentTime == 0 or AccumulatedFrames
+    /// == 0 — a pointer-only metadata update). Dup::buf is deliberately NOT
+    /// touched: its previous contents must never be encoded as a "new"
+    /// frame (D1, plan rev 3).
+    Empty,
     Timeout,
     AccessLost,
     ModeChanged,
@@ -408,6 +414,17 @@ impl Dup {
             let mut res: Option<IDXGIResource> = None;
             match self.dup.AcquireNextFrame(timeout_ms, &mut info, &mut res) {
                 Ok(()) => {
+                    // D1 (plan rev 3): a successful acquisition with no
+                    // presentation carried only pointer metadata — no new
+                    // pixels exist. Release the frame and report Empty
+                    // WITHOUT the staging readback: copying it would refresh
+                    // buf with unchanged pixels that the caller must never
+                    // encode as a "new" frame. Real presents keep the exact
+                    // grab_frame path.
+                    if info.LastPresentTime == 0 || info.AccumulatedFrames == 0 {
+                        let _ = self.dup.ReleaseFrame();
+                        return Grab::Empty;
+                    }
                     let out = self.grab_frame(res);
                     // Release no matter what happened: a held frame blocks the
                     // desktop composition from reusing it.
@@ -1107,4 +1124,12 @@ pub fn set_cursor_pos_probe(x: i32, y: i32) -> String {
             format!("err={:?}", GetLastError())
         }
     }
+}
+
+/// Direct cursor set, boolean result — plumbing for the input probe
+/// (main.rs, D4). The probe needs the plain outcome plus before/after
+/// positions; set_cursor_pos_probe above keeps the GetLastError text for
+/// manual diagnostics and stays.
+pub fn set_cursor_pos_xy(x: i32, y: i32) -> bool {
+    unsafe { SetCursorPos(x, y).is_ok() }
 }

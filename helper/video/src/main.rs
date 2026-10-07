@@ -57,6 +57,19 @@ const OTHER_ERR_GIVE_UP: u32 = 50; // ~5 s of 100 ms backoffs -> honest exit
 const STATUS_PERIOD: Duration = Duration::from_secs(2);
 const TICK_PERIOD: Duration = Duration::from_secs(10);
 
+// Input probe (D4, spec rev 3): stdout log throttle for {"ev":"probe"}
+// lines. Probes are manual in this revision, but a burst of them must not
+// flood the log.
+const PROBE_LOG_THROTTLE: Duration = Duration::from_secs(3);
+
+// X3 step 0 (spec rev 3): the unconditional cmd-mouse success trace returns
+// ONLY behind this env flag. Unconditional, it accumulated input latency at
+// operator cadence and was removed in 0b419b3; the W-U7 diagnostic signature
+// ("SendInput TRUE, cursor does not move") is invisible without it. Default
+// (flag unset): silent, exactly as shipped since 0b419b3. Read once at
+// startup.
+static VIDEO_TRACE: AtomicBool = AtomicBool::new(false);
+
 // Exit codes (documented in README.md).
 const EXIT_OK: i32 = 0;
 const EXIT_STARTUP: i32 = 1;
@@ -87,6 +100,21 @@ struct Shared {
     // trigger (б-v2) deliberately does NOT depend on it (delivered black
     // frames are exactly the disease it detects).
     ever_framed: AtomicBool,
+    // Input probe (D4/D6, spec rev 3). probe_last is the outcome of the last
+    // probe ("-" = never run, "ok" = verified move, "frozen" = position did
+    // not follow the nudge); it persists across status windows. probe_window
+    // counts verified probes in the CURRENT status window; the capture
+    // thread resets it at each STATUS write alongside frames_window.
+    probe_last: Mutex<&'static str>,
+    probe_window: AtomicU64,
+    // Window snapshots for the stdout ticker (a separate thread that cannot
+    // see capture_session locals): published at each STATUS write together
+    // with shared.fps. pr = frames encoded in the window (both capture
+    // modes), empty = DXGI empty acquisitions (stays 0 in GDI mode),
+    // vp = verified probes in the window.
+    pr_pub: AtomicU64,
+    empty_pub: AtomicU64,
+    vp_pub: AtomicU64,
 }
 
 impl Shared {
@@ -103,6 +131,11 @@ impl Shared {
             state: Mutex::new("starting".into()),
             mode: Mutex::new("dxgi"),
             ever_framed: AtomicBool::new(false),
+            probe_last: Mutex::new("-"),
+            probe_window: AtomicU64::new(0),
+            pr_pub: AtomicU64::new(0),
+            empty_pub: AtomicU64::new(0),
+            vp_pub: AtomicU64::new(0),
         }
     }
 }
@@ -199,6 +232,12 @@ fn run() -> Result<i32, String> {
     }
 
     let shared = Arc::new(Shared::new());
+    // X3 step 0 (spec rev 3): the diagnostic mouse trace is opt-in via the
+    // environment. Read once, before any thread that could log it.
+    VIDEO_TRACE.store(
+        std::env::var("ENOT_VIDEO_TRACE").map_or(false, |v| !v.is_empty()),
+        Ordering::Relaxed,
+    );
     // v0.6 fix (review): operator-requested privacy sleep must survive the
     // stuck-display watchdog (which wakes the panel after 5 s of silence).
     let privacy_sleep = Arc::new(AtomicBool::new(false));
@@ -217,6 +256,31 @@ fn run() -> Result<i32, String> {
             .name("input".into())
             .spawn(move || input_thread(&shared, &privacy_sleep, input_rx))
             .map_err(|e| format!("input thread: {e}"))?;
+    }
+
+    // LAB DIAGNOSTIC (spec rev 3): ENOT_VIDEO_AUTOPROBE_SECS=<N>, N >= 1
+    // (u64), makes the helper enqueue one InputJob::Probe every N seconds
+    // with NO operator command -- the product UI has no probe path, this env
+    // is how the lab measures the service-spawned context (machine-wide env
+    // propagates: session-spawn passes Environment=null, the helper inherits
+    // the service environment). Default (unset / unparsable / N=0): OFF --
+    // no probes without a command. The thread dies with the process; if the
+    // input side is gone the loop exits silently.
+    if let Some(secs) = std::env::var("ENOT_VIDEO_AUTOPROBE_SECS")
+        .ok()
+        .and_then(|v| v.trim().parse::<u64>().ok())
+        .filter(|n| *n >= 1)
+    {
+        let probe_tx = input_tx.clone();
+        std::thread::Builder::new()
+            .name("autoprobe".into())
+            .spawn(move || loop {
+                std::thread::sleep(Duration::from_secs(secs));
+                if probe_tx.send(InputJob::Probe).is_err() {
+                    return; // input thread is gone: nothing left to probe
+                }
+            })
+            .map_err(|e| format!("auto-probe thread: {e}"))?;
     }
 
     log_line(&format!(
@@ -461,6 +525,10 @@ fn handle_command(
         }
         "wake" => enqueue(input_tx, InputJob::Wake, shared),
         "sleep" => enqueue(input_tx, InputJob::Sleep, shared),
+        // D4 (spec rev 3): manual-only input probe, lab diagnostics (X3).
+        // No auto cadence here -- deliberately out of scope until the lab
+        // calibration matrix is done.
+        "probe" => enqueue(input_tx, InputJob::Probe, shared),
         "quality" => {
             if let Some(q) = doc.get("jpegQ").and_then(Json::as_num) {
                 *shared.jpeg_q.lock().unwrap_or_else(|p| p.into_inner()) =
@@ -488,6 +556,10 @@ enum InputJob {
     Wheel { dy: f64 },
     Wake,
     Sleep,
+    // D4 (spec rev 3): one input probe (manual {"cmd":"probe"} in this
+    // revision). Executed on the input thread -- the only thread that owns
+    // the attached input desktop.
+    Probe,
 }
 
 fn enqueue(tx: &std::sync::mpsc::Sender<InputJob>, job: InputJob, shared: &Shared) {
@@ -510,6 +582,9 @@ fn input_thread(shared: &Shared, privacy_sleep: &AtomicBool, rx: std::sync::mpsc
     // Выходим только по stop процесса. По broken НЕ выходим (ревью GLM-5.3:
     // процесс переживает обрыв и ждёт следующего клиента — умерший здесь поток
     // не респавнится, ввод следующей сессии был бы мёртв до рестарта хелпера).
+    // Throttle clock for {"ev":"probe"} lines (D4): one line per probe, at
+    // most one per PROBE_LOG_THROTTLE under a burst.
+    let mut probe_log_at: Option<Instant> = None;
     for job in rx {
         if shared.stop.load(Ordering::SeqCst) {
             break;
@@ -523,11 +598,16 @@ fn input_thread(shared: &Shared, privacy_sleep: &AtomicBool, rx: std::sync::mpsc
                 Err(e) => set_last_err(shared, &format!("input desktop: {e}")),
             }
         }
-        execute_job(shared, privacy_sleep, job);
+        execute_job(shared, privacy_sleep, &mut probe_log_at, job);
     }
 }
 
-fn execute_job(shared: &Shared, privacy_sleep: &AtomicBool, job: InputJob) {
+fn execute_job(
+    shared: &Shared,
+    privacy_sleep: &AtomicBool,
+    probe_log_at: &mut Option<Instant>,
+    job: InputJob,
+) {
     match job {
         InputJob::Mouse { x, y, buttons, button } => {
             let sent = win::mouse_move_abs(x, y);
@@ -541,6 +621,17 @@ fn execute_job(shared: &Shared, privacy_sleep: &AtomicBool, job: InputJob) {
             // Сна и трассы успеха больше нет: 120 мс на каждый job при темпе
             // оператора ~40 соб/с копили неограниченную задержку ввода (ревью
             // GLM-5.3, high). Ошибка — честно в last_err, успех не шумит.
+            // ИСКЛЮЧЕНИЕ (X3 step 0, spec rev 3): безусловная трасса успеха
+            // возвращена ТОЛЬКО за флагом окружения ENOT_VIDEO_TRACE (лаба) —
+            // без неё сигнатура W-U7 «SendInput TRUE, эффекта нет» в логе
+            // невидима. Прод: флаг не задан — молчание ровно как с 0b419b3.
+            if VIDEO_TRACE.load(Ordering::Relaxed) {
+                let cur = win::cursor_pos();
+                log_line(&format!(
+                    "{{\"ev\":\"cmd-mouse\",\"sent\":{},\"x\":{x:.2},\"y\":{y:.2},\"cursor\":\"({},{})\"}}",
+                    sent, cur.0, cur.1,
+                ));
+            }
             if !sent {
                 let cur = win::cursor_pos();
                 set_last_err(
@@ -570,6 +661,42 @@ fn execute_job(shared: &Shared, privacy_sleep: &AtomicBool, job: InputJob) {
             // v0.6 fix (review): privacy sleep — the stuck-display watchdog
             // must not silently turn the screen back on after 5 s of silence.
             privacy_sleep.store(true, Ordering::Relaxed);
+        }
+        InputJob::Probe => {
+            // D4 (spec rev 3): read the cursor, nudge +2 px by X (SetCursorPos
+            // bypasses the input queue), wait, read again, nudge back to the
+            // ORIGINAL position. Verified ok iff the position demonstrably
+            // followed the nudge direction -- this rejects both a frozen
+            // position and a local user moving the cursor against the probe
+            // (single test criterion, plan D4). Triggered manually
+            // ({"cmd":"probe"}) or by the lab-only autoprobe env above.
+            let before = win::cursor_pos();
+            win::set_cursor_pos_xy(before.0 + 2, before.1);
+            std::thread::sleep(Duration::from_millis(15));
+            let after = win::cursor_pos();
+            win::set_cursor_pos_xy(before.0, before.1);
+            let ok = after.0 >= before.0 + 2;
+            *shared.probe_last.lock().unwrap_or_else(|p| p.into_inner()) =
+                if ok { "ok" } else { "frozen" };
+            if ok {
+                shared.probe_window.fetch_add(1, Ordering::Relaxed);
+            }
+            // One line per probe with a 3 s throttle: probes are
+            // operator/lab-triggered in this revision, a burst must not flood
+            // the log. Desktop names are read HERE, on the input thread:
+            // "thread=" is the actual desktop of the thread that just ran the
+            // probe -- the G2 discriminator (a silently stale desktop object
+            // shows up at the failure moment). The string holds '=' and
+            // spaces, both valid inside a JSON string value; routed through
+            // ascii()/jstr() like every other dynamic log field.
+            if probe_log_at.map_or(true, |t| t.elapsed() >= PROBE_LOG_THROTTLE) {
+                *probe_log_at = Some(Instant::now());
+                log_line(&format!(
+                    "{{\"ev\":\"probe\",\"thread\":\"{}\",\"before\":\"({},{})\",\"after\":\"({},{})\",\"ok\":{}}}",
+                    proto::jstr(&ascii(&win::thread_desktop_name())),
+                    before.0, before.1, after.0, after.1, ok,
+                ));
+            }
         }
     }
 }
@@ -632,6 +759,11 @@ fn capture_session(
     let mut last_encode: Option<Instant> = None;
     let mut window_start = Instant::now();
     let mut frames_window: u64 = 0;
+    // D1/D6 (spec rev 3): DXGI acquisitions that presented no pixels. Not a
+    // frame (never encoded, never in frames_window/pr); reset at each STATUS
+    // write alongside frames_window. Stays 0 in GDI mode (no "empty
+    // acquisition" concept in BitBlt).
+    let mut empty_window: u64 = 0;
     let mut timeout_since: Option<Instant> = None;
     let mut last_wake: Option<Instant> = None;
     let mut dup_fail_streak: u32 = 0;
@@ -667,7 +799,14 @@ fn capture_session(
                 0
             };
             shared.fps.store(fps, Ordering::Relaxed);
-            let body = status_json(shared, fps);
+            // D6 (spec rev 3): snapshot the window counters for the stdout
+            // ticker BEFORE they reset -- the ticker thread cannot see these
+            // locals. probe_window is shared state read at the same moment.
+            shared.pr_pub.store(frames_window, Ordering::Relaxed);
+            shared.empty_pub.store(empty_window, Ordering::Relaxed);
+            let vp = shared.probe_window.load(Ordering::Relaxed);
+            shared.vp_pub.store(vp, Ordering::Relaxed);
+            let body = status_json(shared, fps, frames_window, empty_window, vp);
             win::mark_dup_op(7);
             if let Err(e) = send_msg(io, pipe_lock, proto::T_STATUS, body.as_bytes()) {
                 // The ticker carries this text: a dying pipe must name its
@@ -678,6 +817,8 @@ fn capture_session(
             }
             win::mark_dup_op(0);
             frames_window = 0;
+            empty_window = 0;
+            shared.probe_window.store(0, Ordering::Relaxed);
             window_start = Instant::now();
             last_status = Instant::now();
         }
@@ -791,6 +932,24 @@ fn capture_session(
                                 }
                             }
                         }
+                        win::Grab::Empty => {
+                            // D1 (spec rev 3): a successful acquisition with
+                            // no presentation (pointer-only metadata, no new
+                            // pixels). Deliberately NOT: encoded, counted in
+                            // frames_window/pr, display_off (either
+                            // direction), black_streak (an empty acquisition
+                            // is not a black frame). What it DOES prove is
+                            // that the duplication is alive -- reset the wake
+                            // ladder exactly like a real frame; otherwise
+                            // mouse-over-static-content on a healthy machine
+                            // (pointer updates arrive as Empty, plan Q7)
+                            // would flip displayOff and poke monitor_power
+                            // every 5 s. On a genuinely dark display there
+                            // are no acquisitions at all (WAIT_TIMEOUT), so
+                            // the ladder there is untouched.
+                            timeout_since = None;
+                            empty_window += 1;
+                        }
                         win::Grab::Timeout => {
                             // Consecutive timeouts mean a still screen OR a powered-off
                             // display (ADR 0027: DPMS-off yields zero frames). After 5 s
@@ -899,8 +1058,10 @@ fn capture_session(
                         shared.display_off.store(false, Ordering::Relaxed);
                     }
                     // Not produced in GDI mode: there is no AcquireNextFrame
-                    // timeout and no duplication to lose. No-op by design.
-                    win::Grab::Timeout | win::Grab::AccessLost => {}
+                    // timeout, no duplication to lose, and BitBlt has no
+                    // "empty acquisition" concept (it always returns real
+                    // framebuffer bytes). No-op by design.
+                    win::Grab::Timeout | win::Grab::AccessLost | win::Grab::Empty => {}
                     win::Grab::Err(e) => {
                         other_err_streak += 1;
                         set_last_err(shared, &format!("capture: {e}"));
@@ -987,16 +1148,25 @@ fn encode_and_send(
     }
 }
 
-fn status_json(shared: &Shared, fps: u64) -> String {
+fn status_json(shared: &Shared, fps: u64, pr: u64, empty: u64, vp: u64) -> String {
     let last_err = shared
         .last_err
         .lock()
         .unwrap_or_else(|p| p.into_inner())
         .clone();
+    // D6 (spec rev 3), additive: pr = frames encoded in the window (real
+    // presents after the D1 empty filter, both capture modes), empty = DXGI
+    // empty acquisitions in the window, vp = verified probes in the window,
+    // probe = last probe outcome (persists across windows, "-" = none yet).
+    let probe_last = *shared.probe_last.lock().unwrap_or_else(|p| p.into_inner());
     format!(
-        "{{\"mode\":\"{}\",\"fps\":{},\"lastErr\":\"{}\",\"uac\":{},\"locked\":{},\"displayOff\":{}}}",
+        "{{\"mode\":\"{}\",\"fps\":{},\"pr\":{},\"empty\":{},\"vp\":{},\"probe\":\"{}\",\"lastErr\":\"{}\",\"uac\":{},\"locked\":{},\"displayOff\":{}}}",
         mode(shared),
         fps,
+        pr,
+        empty,
+        vp,
+        probe_last,
         proto::jstr(&ascii(&last_err)),
         win::consent_running(),
         win::input_desktop_locked(),
@@ -1128,10 +1298,16 @@ fn spawn_ticker(shared: Arc<Shared>) {
                 .unwrap_or_else(|p| p.into_inner())
                 .clone();
             log_line(&format!(
-                "{{\"ev\":\"tick\",\"state\":\"{}\",\"mode\":\"{}\",\"fps\":{},\"displayOff\":{},\"dup\":{},\"err\":\"{}\"}}",
+                "{{\"ev\":\"tick\",\"state\":\"{}\",\"mode\":\"{}\",\"fps\":{},\"pr\":{},\"empty\":{},\"vp\":{},\"probe\":\"{}\",\"displayOff\":{},\"dup\":{},\"err\":\"{}\"}}",
                 proto::jstr(&state),
                 mode(&shared),
                 fps,
+                // D6 (spec rev 3): snapshots of the last status window,
+                // published by the capture thread at each STATUS write.
+                shared.pr_pub.load(Ordering::Relaxed),
+                shared.empty_pub.load(Ordering::Relaxed),
+                shared.vp_pub.load(Ordering::Relaxed),
+                *shared.probe_last.lock().unwrap_or_else(|p| p.into_inner()),
                 display_off(&shared),
                 win::last_dup_op(),
                 proto::jstr(&ascii(&err)),
