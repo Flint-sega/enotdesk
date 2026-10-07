@@ -30,6 +30,8 @@ windows = { version = "0.58", features = [
   "Win32_System_Com_StructuredStorage",
   # Toolhelp process snapshot for the UAC (consent.exe) indicator.
   "Win32_System_Diagnostics_ToolHelp",
+  # FormatMessageW: LastError text for the rev-3b injection diagnostics.
+  "Win32_System_Diagnostics_Debug",
   # CancelIoEx / OVERLAPPED live in System::IO.
   "Win32_System_IO",
   # ProcessIdToSessionId (helper self-report for diagnostics).

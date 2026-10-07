@@ -4,7 +4,7 @@
 // signatures in this file are verified against windows 0.58.0 on crates.io by
 // `cargo check --target x86_64-pc-windows-msvc`. Target: Windows only.
 
-use windows::core::{Interface, PCWSTR};
+use windows::core::{Interface, PCWSTR, PWSTR};
 use windows::Win32::Foundation::{
     CloseHandle, GetLastError, GENERIC_READ, HANDLE, HGLOBAL, HMODULE, LPARAM, POINT, WPARAM,
 };
@@ -37,6 +37,9 @@ use windows::Win32::System::Com::{
     STREAM_SEEK,
 };
 use windows::Win32::System::Com::StructuredStorage::CreateStreamOnHGlobal;
+use windows::Win32::System::Diagnostics::Debug::{
+    FormatMessageW, FORMAT_MESSAGE_FROM_SYSTEM, FORMAT_MESSAGE_IGNORE_INSERTS,
+};
 use windows::Win32::System::Diagnostics::ToolHelp::{
     CreateToolhelp32Snapshot, Process32FirstW, Process32NextW, PROCESSENTRY32W, TH32CS_SNAPPROCESS,
 };
@@ -53,11 +56,11 @@ use windows::Win32::System::StationsAndDesktops::{
 use windows::Win32::System::Threading::{GetCurrentProcessId, GetCurrentThreadId};
 use windows::Win32::System::IO::CancelIoEx;
 use windows::Win32::UI::Input::KeyboardAndMouse::{
-    SendInput, INPUT, INPUT_0, INPUT_KEYBOARD, INPUT_MOUSE, KEYBDINPUT, KEYBD_EVENT_FLAGS,
-    KEYEVENTF_EXTENDEDKEY, KEYEVENTF_KEYUP, MOUSEEVENTF_ABSOLUTE, MOUSEEVENTF_LEFTDOWN,
-    MOUSEEVENTF_LEFTUP, MOUSEEVENTF_MIDDLEDOWN, MOUSEEVENTF_MIDDLEUP, MOUSEEVENTF_MOVE,
-    MOUSEEVENTF_RIGHTDOWN, MOUSEEVENTF_RIGHTUP, MOUSEEVENTF_VIRTUALDESK, MOUSEEVENTF_WHEEL,
-    MOUSEINPUT, VIRTUAL_KEY,
+    mouse_event, SendInput, INPUT, INPUT_0, INPUT_KEYBOARD, INPUT_MOUSE, KEYBDINPUT,
+    KEYBD_EVENT_FLAGS, KEYEVENTF_EXTENDEDKEY, KEYEVENTF_KEYUP, MOUSEEVENTF_ABSOLUTE,
+    MOUSEEVENTF_LEFTDOWN, MOUSEEVENTF_LEFTUP, MOUSEEVENTF_MIDDLEDOWN, MOUSEEVENTF_MIDDLEUP,
+    MOUSEEVENTF_MOVE, MOUSEEVENTF_RIGHTDOWN, MOUSEEVENTF_RIGHTUP, MOUSEEVENTF_VIRTUALDESK,
+    MOUSEEVENTF_WHEEL, MOUSEINPUT, VIRTUAL_KEY,
 };
 use windows::Win32::UI::WindowsAndMessaging::{
     FindWindowW, GetCursorPos, GetSystemMetrics, SendMessageTimeoutW, SetCursorPos, HWND_BROADCAST,
@@ -847,7 +850,45 @@ fn enc_step(step: &str) {
 
 type MouseEventFlags = windows::Win32::UI::Input::KeyboardAndMouse::MOUSE_EVENT_FLAGS;
 
-fn mouse_input(dx: i32, dy: i32, flags: MouseEventFlags, data: u32) -> bool {
+/// Outcome of one injection call: (accepted, gle) — gle is "" on success and
+/// "N (message)" on failure. GetLastError must be read IMMEDIATELY after the
+/// failing call, before anything else runs on the thread. Honest caveat,
+/// rev-3b: SendInput is NOT documented to set LastError (it returns the
+/// number of injected events), so "0 (not set)" is a valid observation and
+/// the log records whatever the system says — no more.
+fn gle_text() -> String {
+    unsafe {
+        let e = GetLastError();
+        if e.0 == 0 {
+            return "0 (not set)".to_string();
+        }
+        let mut buf = [0u16; 256];
+        // FormatMessageW: length 0 means no message text; the trailing CR/LF
+        // is trimmed so the log line stays one line.
+        let n = FormatMessageW(
+            FORMAT_MESSAGE_FROM_SYSTEM | FORMAT_MESSAGE_IGNORE_INSERTS,
+            None,
+            e.0,
+            0, // neutral language
+            PWSTR(buf.as_mut_ptr()),
+            buf.len() as u32,
+            None,
+        );
+        let msg = if n > 0 {
+            let s = String::from_utf16_lossy(&buf[..n as usize]);
+            s.trim_end_matches(['\r', '\n']).trim().to_string()
+        } else {
+            String::new()
+        };
+        if msg.is_empty() {
+            format!("gle={}", e.0)
+        } else {
+            format!("gle={} ({})", e.0, msg)
+        }
+    }
+}
+
+fn send_input_mouse(dx: i32, dy: i32, flags: MouseEventFlags, data: u32) -> (bool, String) {
     let mi = MOUSEINPUT {
         dx,
         dy,
@@ -862,12 +903,17 @@ fn mouse_input(dx: i32, dy: i32, flags: MouseEventFlags, data: u32) -> bool {
     };
     let arr = [input];
     // SendInput returns the number of events injected; 0 means blocked
-    // (e.g. by a UAC elevation prompt on the secure desktop) -- report and let
-    // the next operator event retry.
-    unsafe { SendInput(&arr, std::mem::size_of::<INPUT>() as i32) == 1 }
+    // (e.g. by a UAC elevation prompt on the secure desktop) -- report with
+    // the captured LastError and let the next operator event retry.
+    let n = unsafe { SendInput(&arr, std::mem::size_of::<INPUT>() as i32) };
+    if n == 1 {
+        (true, String::new())
+    } else {
+        (false, gle_text())
+    }
 }
 
-fn key_input(vk: VIRTUAL_KEY, flags: KEYBD_EVENT_FLAGS) -> bool {
+fn key_input(vk: VIRTUAL_KEY, flags: KEYBD_EVENT_FLAGS) -> (bool, String) {
     let ki = KEYBDINPUT {
         wVk: vk,
         wScan: 0,
@@ -880,24 +926,51 @@ fn key_input(vk: VIRTUAL_KEY, flags: KEYBD_EVENT_FLAGS) -> bool {
         Anonymous: INPUT_0 { ki },
     };
     let arr = [input];
-    unsafe { SendInput(&arr, std::mem::size_of::<INPUT>() as i32) == 1 }
+    let n = unsafe { SendInput(&arr, std::mem::size_of::<INPUT>() as i32) };
+    if n == 1 {
+        (true, String::new())
+    } else {
+        (false, gle_text())
+    }
 }
 
-/// Normalized virtual-desktop coordinate (0..1) -> absolute mouse position.
-/// Per the documented MOUSEEVENTF_ABSOLUTE|VIRTUALDESK normalization:
-///   abs = (x_virtual_px - SM_XVIRTUALSCREEN) * 65535 / SM_CXVIRTUALSCREEN
-/// which algebraically collapses to x01 * 65535, but is written through the
-/// metrics so the formula stays auditable against the docs.
-pub fn mouse_move_abs(x01: f64, y01: f64) -> bool {
+/// Product positioning path (rev-3b, X-series fact): the absolute move goes
+/// through SetCursorPos in virtual-desktop pixels. SendInput absolute moves
+/// are REJECTED by the system (return 0) on Basic Display Adapter VMs in both
+/// spawn contexts, while SetCursorPos on the same attached thread demonstrably
+/// moves the cursor. Buttons, wheel and keys stay on SendInput until the
+/// rev-3b matrix says otherwise.
+pub fn mouse_move_cursor(x01: f64, y01: f64) -> (bool, String) {
     let (vx, vy, cx, cy) = virtual_desktop_metrics();
     if cx == 0 || cy == 0 {
-        return false;
+        return (false, "zero virtual desktop metrics".into());
     }
-    let x_px = vx as f64 + x01 * cx as f64;
-    let y_px = vy as f64 + y01 * cy as f64;
-    let ax = ((x_px - vx as f64) * 65535.0 / cx as f64).round() as i32;
-    let ay = ((y_px - vy as f64) * 65535.0 / cy as f64).round() as i32;
-    mouse_input(
+    let x_px = vx as f64 + (x01 * cx as f64).round();
+    let y_px = vy as f64 + (y01 * cy as f64).round();
+    unsafe {
+        match SetCursorPos(x_px as i32, y_px as i32) {
+            Ok(()) => (true, String::new()),
+            Err(_) => (false, gle_text()),
+        }
+    }
+}
+
+/// rev-3b matrix variant: SendInput RELATIVE move (pointer acceleration may
+/// change the effective delta -- the caller judges by GetCursorPos, not by dx).
+pub fn mouse_move_rel(dx: i32, dy: i32) -> (bool, String) {
+    send_input_mouse(dx, dy, MOUSEEVENTF_MOVE, 0)
+}
+
+/// rev-3b matrix variant: SendInput ABSOLUTE move in virtual-desktop pixels
+/// (px -> the documented 0..65535 ABSOLUTE|VIRTUALDESK normalization).
+pub fn mouse_move_abs_px(x_px: i32, y_px: i32) -> (bool, String) {
+    let (vx, vy, cx, cy) = virtual_desktop_metrics();
+    if cx == 0 || cy == 0 {
+        return (false, "zero virtual desktop metrics".into());
+    }
+    let ax = ((x_px - vx) as f64 * 65535.0 / cx as f64).round() as i32;
+    let ay = ((y_px - vy) as f64 * 65535.0 / cy as f64).round() as i32;
+    send_input_mouse(
         ax,
         ay,
         MOUSEEVENTF_ABSOLUTE | MOUSEEVENTF_VIRTUALDESK | MOUSEEVENTF_MOVE,
@@ -905,25 +978,32 @@ pub fn mouse_move_abs(x01: f64, y01: f64) -> bool {
     )
 }
 
+/// rev-3b matrix variant: the deprecated mouse_event entry point (same
+/// MOUSEEVENTF_* input stack, different API). Returns nothing by design --
+/// the verdict is read from the cursor position by the caller.
+pub fn mouse_event_legacy(dx: i32, dy: i32) {
+    unsafe { mouse_event(MOUSEEVENTF_MOVE, dx, dy, 0, 0) }
+}
+
 /// Button press/release at the current position; the service always sends an
 /// absolute move first when the operator's click carries coordinates.
-pub fn mouse_button(name: &str, down: bool) -> bool {
+pub fn mouse_button(name: &str, down: bool) -> (bool, String) {
     let (down_flag, up_flag) = match name {
         "right" => (MOUSEEVENTF_RIGHTDOWN, MOUSEEVENTF_RIGHTUP),
         "middle" => (MOUSEEVENTF_MIDDLEDOWN, MOUSEEVENTF_MIDDLEUP),
         _ => (MOUSEEVENTF_LEFTDOWN, MOUSEEVENTF_LEFTUP),
     };
-    mouse_input(0, 0, if down { down_flag } else { up_flag }, 0)
+    send_input_mouse(0, 0, if down { down_flag } else { up_flag }, 0)
 }
 
 /// Vertical wheel delta in wheel units; passed through as mouseData unchanged
 /// (scaling decisions stay on the service side, mirroring the host input path).
-pub fn wheel(dy: i32) -> bool {
-    mouse_input(0, 0, MOUSEEVENTF_WHEEL, dy as u32)
+pub fn wheel(dy: i32) -> (bool, String) {
+    send_input_mouse(0, 0, MOUSEEVENTF_WHEEL, dy as u32)
 }
 
 /// One keyboard event. `extended` must match on down AND up (see keys.rs).
-pub fn key_event(vk: u8, extended: bool, down: bool) -> bool {
+pub fn key_event(vk: u8, extended: bool, down: bool) -> (bool, String) {
     let mut flags = KEYBD_EVENT_FLAGS(0);
     if extended {
         flags |= KEYEVENTF_EXTENDEDKEY;
@@ -931,6 +1011,18 @@ pub fn key_event(vk: u8, extended: bool, down: bool) -> bool {
     if !down {
         flags |= KEYEVENTF_KEYUP;
     }
+    key_input(VIRTUAL_KEY(vk as u16), flags)
+}
+
+/// rev-3b matrix variant: raw VK keyboard event (down/up) with the SendInput
+/// verdict + LastError. Lab choice VK_F15 (0x7E): a key no normal keyboard
+/// has and nothing is bound to -- injecting it is side-effect-free.
+pub fn key_vk_probe(vk: u8, down: bool) -> (bool, String) {
+    let flags = if down {
+        KEYBD_EVENT_FLAGS(0)
+    } else {
+        KEYEVENTF_KEYUP
+    };
     key_input(VIRTUAL_KEY(vk as u16), flags)
 }
 

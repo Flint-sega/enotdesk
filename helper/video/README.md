@@ -35,7 +35,8 @@ proven `spike/video-dxgi`).
 
 stdout carries **only ASCII JSON diagnostic lines**: one `start` event, one
 `tick` every 10 s (`{"ev":"tick","state":"waiting|live","mode":"dxgi|gdi",
-"fps":N,"displayOff":bool,"dup":N,"err":"…"}`), one optional
+"fps":N,"pr":N,"empty":N,"vp":N,"probe":"-","displayOff":bool,"dup":N,
+"err":"…"}`), one optional
 `{"ev":"capture","mode":"gdi","reason":…}` when the capture mode switches
 (see below), and one `exit` event. Errors also go to `lastErr` in the
 status document; nothing else is printed.
@@ -59,12 +60,19 @@ Binary messages in both directions, byte-mode duplex named pipe
 Status document:
 
 ```json
-{"mode":"dxgi","fps":24,"lastErr":"","uac":false,"locked":false,"displayOff":false}
+{"mode":"dxgi","fps":24,"pr":3,"empty":0,"vp":1,"probe":"ok","lastErr":"","uac":false,"locked":false,"displayOff":false}
 ```
 
 - `mode` — active capture mode: `dxgi` (Desktop Duplication) or `gdi`
   (BitBlt fallback), see "Capture modes" below.
 - `fps` — frames sent in the last 2 s window.
+- `pr` — frames encoded in the last window (real presents after the D1
+  empty-acquisition filter).
+- `empty` — DXGI acquisitions in the window that carried no presentation
+  (pointer-only metadata; never encoded; stays 0 in GDI mode).
+- `vp` — verified input probes in the window (see "Input injection").
+- `probe` — last probe outcome: `"ok"` (cursor followed the nudge), `"frozen"`
+  (position did not move) or `"-"` (no probe yet).
 - `lastErr` — last human-readable problem (ASCII), empty when healthy.
 - `uac` — `consent.exe` is running (Toolhelp snapshot, 2 s cadence): the UAC
   secure-desktop prompt is up. Input is typically blocked while true.
@@ -83,19 +91,58 @@ Commands (JSON object with `"cmd"`):
 {"cmd":"wake"}
 {"cmd":"sleep"}
 {"cmd":"quality","jpegQ":70,"maxFps":24}
+{"cmd":"probe"}
+{"cmd":"probe3"}
 ```
 
-- `x`/`y` are normalized 0..1 over the **virtual desktop** (all monitors);
-  converted with the documented `MOUSEEVENTF_ABSOLUTE|VIRTUALDESK` formula
-  `abs = (x_virtual_px - SM_XVIRTUALSCREEN) * 65535 / SM_CXVIRTUALSCREEN`.
+- `x`/`y` are normalized 0..1 over the **virtual desktop** (all monitors).
+  Positioning (rev-3b) goes through **`SetCursorPos`** in virtual-desktop
+  pixels: the X-series (2026-10-07) proved `SendInput` absolute moves are
+  REJECTED by the system (return 0) on Basic Display Adapter VMs in both spawn
+  contexts, while `SetCursorPos` on the same attached input thread moves the
+  cursor. Buttons and wheel stay on `SendInput` at the positioned point.
 - `button` is `left|right|middle`; `buttons` is the action `down|up|move`.
-  A click that carries coordinates is sent as absolute move, then down/up.
+  A click that carries coordinates is sent as a `SetCursorPos` move, then
+  down/up.
 - `key` names are exactly the `INPUT_KEYS` allowlist from
   `client/lib/protocol.mjs` (letters, digits, `space enter tab escape
   backspace delete`, arrows, `home end pageup pagedown`, `shift control alt
   meta`, and the punctuation set). Navigation keys are injected with
   `KEYEVENTF_EXTENDEDKEY` so they do not type digits (numpad twins).
 - `jpegQ` clamps to 40..90, `maxFps` clamps to 1..=60.
+- `probe` (lab diagnostics): one input probe — read the cursor, nudge it
+  +2 px by X with `SetCursorPos`, read again, nudge back. Verified `ok` iff
+  the position demonstrably followed the nudge.
+- `probe3` (lab diagnostics, rev-3b): one pass of the FULL injection matrix
+  in a fixed order — SetCursorPos reference, `SendInput` absolute (+2 px),
+  `SendInput` relative (+40 px), legacy `mouse_event` (+40 px), `SendInput`
+  key F15 down/up (side-effect-free VK). The SendInput/key variants report
+  accepted + LastError text; legacy `mouse_event` has no return value and is
+  judged by the cursor position; cursor-affecting variants report before/after
+  positions in one `{"ev":"probe3",…}` log line. Log-only: `probe3` does NOT
+  update the status `probe`/`vp` counters (those are driven by `probe`).
+  No product caller.
+
+## Input injection and lab diagnostics (rev-3b)
+
+- All injection runs on a dedicated input thread attached to the input desktop
+  with write access (`attach_input_desktop`) — an inherited desktop handle can
+  lack `DESKTOP_WRITEOBJECTS`, silently eating input.
+- A rejected `SendInput` records the captured LastError text (via
+  `FormatMessageW`) in `lastErr`. Honest caveat: `SendInput` is not documented
+  to set LastError, so `gle=0 (not set)` is a valid observation.
+- `ENOT_VIDEO_TRACE=<any>` (env, read once at startup, lab-only) returns the
+  unconditional per-command mouse trace:
+  `{"ev":"cmd-mouse","via":"cursor","sent":bool,…}` — without it success is
+  silent (the unconditional trace accumulated input latency and was removed
+  in 0b419b3).
+- `ENOT_VIDEO_AUTOPROBE_SECS=<N>` with `N >= 1` (env, lab-only): the helper
+  enqueues one `probe3` matrix pass every N seconds with no operator command.
+  The env is inherited by the service-spawned helper (session-spawn passes
+  Environment=null), which is how the lab measures the service context.
+  Default: off.
+- The stdout `tick` line carries the window counters: `pr`, `empty`, `vp`,
+  `probe` (same meaning as in the status document).
 
 ## Capture modes
 
