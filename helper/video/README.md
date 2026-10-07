@@ -144,6 +144,30 @@ Commands (JSON object with `"cmd"`):
 - The stdout `tick` line carries the window counters: `pr`, `empty`, `vp`,
   `probe` (same meaning as in the status document).
 
+## Product auto-nudge and desktop recheck (rev-3c, ADR 0027 addendum-2)
+
+- **D10.1 auto-nudge (owner-approved)**: while a client is connected AND the
+  operator actually sent input (mouse/key/wheel) within the last 10 s, the
+  helper nudges the cursor by +2 px at most once per 4 s and restores the
+  position (the existing `probe`). This is the "does synthetic input reach the
+  screen" sensor for the future `input-dead-video` trigger; its result feeds
+  the status `probe`/`vp` fields. In an idle session the helper stays silent —
+  the user of the machine sees nothing. Gated on: connected, `mode=dxgi`,
+  display on, no privacy sleep, no UAC, no lock screen (uac/locked come from
+  the status-cycle cache — the nudge thread makes no Win32 calls of its own).
+- **D9 kill switch**: env `ENOT_VIDEO_UNRESPONSIVE=0` disables the whole
+  unresponsive-detection machinery (auto-nudges today; the trigger when it
+  lands). Unset or any other value = on. The env propagates: session-spawn
+  passes Environment=null, so the helper inherits the service environment.
+- **D3 desktop recheck**: at most once per second (only while attached) the
+  input thread compares its thread-desktop name with the session's input
+  desktop name; a mismatch (lock screen / UAC / wake swapped the desktop under
+  a still-attached thread) re-attaches and logs
+  `{"ev":"desktop","check":"mismatch","reattach":"ok|failed"}` (throttled 3 s).
+- **D2 fresh-dup grace**: black-frame counting for the one-shot GDI switch
+  starts only after the current duplication has lived for 2 s — recreation
+  noise (access-lost / display mode change) can no longer trip the switch.
+
 ## Capture modes
 
 The helper starts in **DXGI Desktop Duplication** mode (`"mode":"dxgi"`) and

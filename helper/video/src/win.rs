@@ -246,6 +246,11 @@ pub struct Dup {
     w: u32,
     h: u32,
     buf: Vec<u8>, // compact BGRA rows, stride = w*4
+    // Creation moment of THIS duplication (D2): black frames in the first
+    // seconds of a fresh dup are recreation noise; the caller compares the
+    // age against its grace constant. Lives on the Dup so the grace survives
+    // a pipe reconnect (the capturer does, the session locals do not).
+    since: Instant,
 }
 
 /// Outcome of one AcquireNextFrame cycle.
@@ -395,6 +400,7 @@ impl Capture {
                 w,
                 h,
                 buf: Vec::new(),
+                since: Instant::now(),
             })
         }
     }
@@ -403,6 +409,11 @@ impl Capture {
 impl Dup {
     pub fn size(&self) -> (u32, u32) {
         (self.w, self.h)
+    }
+
+    /// Creation moment of this duplication (D2 grace, see the struct doc).
+    pub fn since(&self) -> Instant {
+        self.since
     }
 
     /// BGRA pixels of the last grabbed frame (stride exactly w*4).
@@ -1116,6 +1127,44 @@ pub fn input_desktop_locked() -> bool {
                     false
                 }
             }
+        }
+    }
+}
+
+/// D3 (ADR 0027 addendum-2): does the calling thread's desktop equal the
+/// session's input desktop by NAME? The input desktop can swap silently UNDER
+/// a still-attached thread (lock screen / UAC / wake transitions) — SendInput
+/// then "succeeds" into a desktop nobody displays. Errors mean "cannot tell":
+/// conservatively true (no re-attach storm); the locked/secure case is
+/// reported by input_desktop_locked() elsewhere.
+pub fn input_desktop_name_matches() -> bool {
+    unsafe {
+        let thread_desk = match GetThreadDesktop(GetCurrentThreadId()) {
+            Ok(h) => h,
+            Err(_) => return true,
+        };
+        let input_desk = match OpenInputDesktop(DESKTOP_CONTROL_FLAGS(0), false, DESKTOP_ACCESS_FLAGS(0))
+        {
+            Ok(h) => h,
+            Err(_) => return true,
+        };
+        let name = |h: HANDLE| -> Option<String> {
+            let mut buf = [0u16; 96];
+            let mut needed = 0u32;
+            if GetUserObjectInformationW(h, UOI_NAME, Some(buf.as_mut_ptr().cast()), 192, Some(&mut needed))
+                .is_ok()
+            {
+                let len = buf.iter().position(|c| *c == 0).unwrap_or(0);
+                Some(String::from_utf16_lossy(&buf[..len]))
+            } else {
+                None
+            }
+        };
+        let (a, b) = (name(HANDLE(thread_desk.0)), name(HANDLE(input_desk.0)));
+        let _ = CloseDesktop(input_desk);
+        match (a, b) {
+            (Some(a), Some(b)) => a == b,
+            _ => true,
         }
     }
 }
