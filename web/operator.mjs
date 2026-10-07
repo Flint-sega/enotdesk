@@ -284,6 +284,9 @@ function stopMedia() {
   videoNote = null; // статус видео не протекает в следующий сеанс (v0.6)
   privacyDimmed = false;
   hide($('btn-privacy')); // privacy-кнопка не переживает сеанс
+  const qp = $('quality-preset'); // пресет качества тоже не переживает сеанс
+  if (qp) qp.value = '';
+  hide(qp);
   resetKeyboardMode(); // индикатор клавиш не переживает сеанс
   stopTimers();
 }
@@ -486,6 +489,7 @@ async function machineOffer() {
     privacyDimmed = false;
     text($('btn-privacy'), t('web.privacy.off'));
     show($('btn-privacy'));
+    show($('quality-preset')); // пресет качества — только в machine-сеансе
     state.dcs = { term: termCh, chat: chatCh, file: fileCh, input: inputCh };
     pc.ontrack = (e) => {
       // ADR 0027: агент отвечает replaceTrack'ом на transceiver без трека —
@@ -897,7 +901,9 @@ const PIN_MIN = 4;
 const PIN_MAX = 128;
 // Действия строки машины: и значения data-action, и хвосты словарных ключей
 // web.machines.action.* — контракт-тест проверяет, что каждое обработано.
-const MACHINE_ACTIONS = ['toast', 'wol', 'terminal', 'pin', 'revoke', 'deleteAction'];
+// favorite (W1) — звезда «избранное»: подпись зависит от состояния машины,
+// поэтому её кнопка собирается отдельно в machineActionButton.
+const MACHINE_ACTIONS = ['favorite', 'toast', 'wol', 'terminal', 'pin', 'revoke', 'deleteAction'];
 let machinesOffset = 0;
 let machinesTotal = 0;
 let machinesCache = []; // текущая страница: данные строк для действий по data-id
@@ -943,13 +949,20 @@ function machineActionButton(m, action) {
   // (PIN/отзыв/удаление) помечены как опасные. Тост и терминал требуют живого
   // зарегистрированного агента; «Разбудить» — только у офлайн-машины с MAC
   // в инвентаре (будить живую нечего, без MAC — нечем).
-  const danger = action !== 'terminal' && action !== 'toast' && action !== 'wol';
+  const danger = action !== 'terminal' && action !== 'toast' && action !== 'wol' && action !== 'favorite';
   const btn = document.createElement('button');
   btn.type = 'button';
   btn.className = `btn ghost sm${danger ? ' danger' : ''}`;
   btn.dataset.action = action;
   btn.dataset.id = m.id;
-  btn.textContent = t(`web.machines.action.${action}`);
+  if (action === 'favorite') {
+    // W1: звезда «избранное» — глиф вместо слова, состояние в data-fav
+    btn.textContent = m.favorite ? '★' : '☆';
+    btn.dataset.fav = m.favorite ? '1' : '0';
+    btn.title = t('web.machines.favTitle');
+  } else {
+    btn.textContent = t(`web.machines.action.${action}`);
+  }
   if (action === 'terminal' || action === 'toast' || action === 'wol') btn.disabled = Boolean(m.revokedAt) || !m.registered;
   if (action === 'revoke') btn.disabled = Boolean(m.revokedAt);
   if (action === 'wol') {
@@ -998,7 +1011,7 @@ function renderMachineRows(items) {
 }
 
 async function renderMachines() {
-  const res = await api('GET', `/machines?limit=${MACHINES_PAGE}&offset=${machinesOffset}`);
+  const res = await api('GET', `/machines?limit=${MACHINES_PAGE}&offset=${machinesOffset}&sort=recent`);
   if (res.status !== 200) {
     // отказ сервера честен: не-admin получит свой 403, остальные — свой текст
     text($('machines-error'), res.body?.error?.message ?? t('common.serverError'));
@@ -1044,6 +1057,13 @@ async function machineRevoke(m) {
 async function machineDelete(m) {
   if (!window.confirm(t('web.machines.deleteConfirm', { name: m.name }))) return;
   const res = await api('DELETE', `/machines/${encodeURIComponent(m.id)}`);
+  if (res.status !== 200) machineActionError(res);
+  await renderMachines();
+}
+
+// W1: звезда «избранное» per-оператора — POST/DELETE /machines/:id/favorite.
+async function machineFavorite(m) {
+  const res = await api(m.favorite ? 'DELETE' : 'POST', `/machines/${encodeURIComponent(m.id)}/favorite`);
   if (res.status !== 200) machineActionError(res);
   await renderMachines();
 }
@@ -1210,6 +1230,17 @@ function wire() {
     text($('btn-privacy'), t(privacyDimmed ? 'web.privacy.on' : 'web.privacy.off'));
   });
 
+  // W2: пресет качества — {quality:'high|medium|low'} по input-каналу, хост
+  // маппит в параметры хелпера ({cmd:'quality',jpegQ,maxFps}). Пустое «Качество»
+  // — сброс вида, команду не шлём (параметры остаются до конца сеанса).
+  $('quality-preset')?.addEventListener('change', () => {
+    const inputCh = state.dcs?.input;
+    if (!inputCh || inputCh.readyState !== 'open') return;
+    const value = $('quality-preset').value;
+    if (!value) return;
+    try { inputCh.send(JSON.stringify({ quality: value })); } catch { /* канал закрывается */ }
+  });
+
   $('btn-reconnect')?.addEventListener('click', () => {
     if (!state.connect) return;
     // Отсчёт грейса НЕ сбрасываем (ревью 28.09): ручная попытка — не продление
@@ -1261,6 +1292,7 @@ function wire() {
     const action = btn.dataset.action;
     if (action === 'toast') void machineToast(m);
     else if (action === 'wol') void machineWol(m);
+    else if (action === 'favorite') void machineFavorite(m);
     else if (action === 'terminal') openMachineClaim(m);
     else if (action === 'pin') void machinePin(m);
     else if (action === 'revoke') void machineRevoke(m);

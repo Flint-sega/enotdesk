@@ -83,6 +83,9 @@ export function createMachinesStore(db, { nowMs = Date.now, onlineWindowMs = ONL
       registered: row.agent_token_hash != null,
       revokedAt: row.revoked_at,
       lastSeenAt: row.last_seen_at,
+      // W1: последний claim оператора (для сортировки «недавние сверху»);
+      // id автора наружу не отдаём — не нужен клиенту
+      lastClaimAt: row.last_claim_at ?? null,
       // инвентарь целиком (включая массивы macs/localIps из R10): в БД попадает
       // только прошедший sanitizeInventory объект, здесь он просто читается
       inventory: storedInventory(row.inventory),
@@ -104,6 +107,30 @@ export function createMachinesStore(db, { nowMs = Date.now, onlineWindowMs = ONL
       ).all(limit, offset).map(out);
       const total = db.prepare('SELECT count(*) c FROM machines').get().c;
       return { items, total };
+    },
+
+    // W1: успешный claim — водяной знак «недавние сверху» (панель машин).
+    markClaimed(id, userId) {
+      db.prepare('UPDATE machines SET last_claim_at=?, last_claim_by=? WHERE id=?')
+        .run(nowIso(), userId, id);
+    },
+
+    // W1: избранные машины per-оператора (звезда в панели машин).
+    favorite(userId, machineId, on) {
+      if (on) {
+        db.prepare('INSERT OR IGNORE INTO machine_favorites (user_id, machine_id, created_at) VALUES (?,?,?)')
+          .run(userId, machineId, nowIso());
+      } else {
+        db.prepare('DELETE FROM machine_favorites WHERE user_id=? AND machine_id=?')
+          .run(userId, machineId);
+      }
+    },
+
+    favoritesOf(userId) {
+      return new Set(
+        db.prepare('SELECT machine_id FROM machine_favorites WHERE user_id=?')
+          .all(userId).map((r) => r.machine_id),
+      );
     },
 
     // Одноразовый onboarding-код: открытый текст возвращается один раз,

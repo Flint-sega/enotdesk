@@ -457,6 +457,12 @@ export default {
   "web.machines.claimPin": "Machine PIN",
   "web.machines.claimSubmit": "Connect",
   "web.machines.claimBusy": "Connecting…",
+  // W1: favorite star; W2: quality presets
+  "web.machines.favTitle": "Favorite",
+  "web.quality.label": "Quality",
+  "web.quality.high": "High",
+  "web.quality.medium": "Medium",
+  "web.quality.low": "Low",
   "web.machines.action.toast": "Message",
   "web.machines.toastPrompt": "Message to {name} (up to 500 characters)",
   "web.machines.toastDelivered": "Message shown on the machine",

@@ -991,3 +991,80 @@ test('wol API: лимитер — исчерпанные попытки опер
   const second = await api(base, 'POST', `/machines/${target}/wol`, { token: operator.token });
   assert.equal(second.status, 429, 'вторая в том же окне — порог исчерпан');
 });
+
+// ---- W1 (0.6.8): «недавние сверху» + избранные per-оператора ----
+
+test('миграция v9: last_claim_at/last_claim_by у машин, таблица machine_favorites', () => {
+  const db = openDb(':memory:');
+  const cols = db.prepare("PRAGMA table_info(machines)").all().map((c) => c.name);
+  assert.ok(cols.includes('last_claim_at'), 'колонка last_claim_at добавлена');
+  assert.ok(cols.includes('last_claim_by'), 'колонка last_claim_by добавлена');
+  const favs = db.prepare("SELECT name FROM sqlite_master WHERE type='table' AND name='machine_favorites'").get();
+  assert.ok(favs, 'таблица machine_favorites создана');
+  db.close();
+});
+
+test('store: markClaimed ставит водяной знак, favorite тумблерится и изолирован по оператору', () => {
+  const db = openDb(':memory:');
+  const store = createMachinesStore(db);
+  const { machine } = store.createOnboarding({ name: 'Касса-9' });
+  assert.equal(machine.lastClaimAt, null);
+  store.markClaimed(machine.id, 'op-1');
+  const after = store.get(machine.id);
+  assert.ok(after.last_claim_at, 'watermark записан');
+  assert.equal(after.last_claim_by, 'op-1');
+  assert.equal(store.out(after).lastClaimAt, after.last_claim_at);
+  // избранное — per-оператор: op-1 добавил, op-2 не видит
+  store.favorite('op-1', machine.id, true);
+  assert.ok(store.favoritesOf('op-1').has(machine.id));
+  assert.ok(!store.favoritesOf('op-2').has(machine.id));
+  store.favorite('op-1', machine.id, false);
+  assert.ok(!store.favoritesOf('op-1').has(machine.id));
+  // повторный remove и повторный add не падают (INSERT OR IGNORE / DELETE)
+  store.favorite('op-1', machine.id, false);
+  store.favorite('op-1', machine.id, true);
+  store.favorite('op-1', machine.id, true);
+  assert.ok(store.favoritesOf('op-1').has(machine.id));
+  db.close();
+});
+
+test('machines API: favorite POST/DELETE за RBAC; claim ставит lastClaimAt; sort=recent — избранные и недавние сверху', async (t) => {
+  const { base, admin } = await setup(t);
+  const operator = await makeUser(base, admin, 'operator', 'op-w1');
+  const auditor = await makeUser(base, admin, 'auditor', 'aud-w1');
+  const a = await onboardAndRegister(base, admin, { name: 'Машина-А' });
+  const b = await onboardAndRegister(base, admin, { name: 'Машина-Б' });
+
+  // избранные: оператор может, аудитор — нет (403), аноним — нет (401)
+  const favA = await api(base, 'POST', `/machines/${a.created.machine.id}/favorite`, { token: operator.token });
+  assert.equal(favA.status, 200);
+  assert.equal(favA.json.favorite, true);
+  const favAnon = await api(base, 'POST', `/machines/${a.created.machine.id}/favorite`, { body: {} });
+  assert.equal(favAnon.status, 401);
+  const favAud = await api(base, 'POST', `/machines/${a.created.machine.id}/favorite`, { token: auditor.token });
+  assert.equal(favAud.status, 403);
+
+  // claim машины Б оператором (причина обязательна) — это и есть markClaimed
+  const claim = await api(base, 'POST', `/machines/${b.created.machine.id}/claim`, {
+    token: operator.token, body: { reason: 'W1: приёмка сортировки' },
+  });
+  assert.equal(claim.status, 201);
+
+  // sort=recent: Б (свежий claim, не-избранная) после А? нет — А избранная, значит первой
+  const list = await api(base, 'GET', '/machines?sort=recent&limit=10', { token: operator.token });
+  assert.equal(list.status, 200);
+  const items = list.json.items;
+  assert.equal(items[0].id, a.created.machine.id, 'избранная машина первая');
+  assert.equal(items[0].favorite, true);
+  assert.equal(items[1].id, b.created.machine.id, 'недавно claim'нутая — вторая');
+  assert.ok(items[1].lastClaimAt, 'у Б заполнен lastClaimAt');
+  assert.equal(items[1].favorite, false);
+
+  // снятие звезды DELETE — флаг уходит
+  const unfav = await api(base, 'DELETE', `/machines/${a.created.machine.id}/favorite`, { token: operator.token });
+  assert.equal(unfav.status, 200);
+  assert.equal(unfav.json.favorite, false);
+  const list2 = await api(base, 'GET', '/machines?sort=recent&limit=10', { token: operator.token });
+  assert.equal(list2.json.items[0].id, b.created.machine.id, 'без звезды первой становится недавно claim'нутая');
+  assert.equal(list2.json.items[0].favorite, false);
+});

@@ -1315,6 +1315,14 @@ function startAgentMode() {
     onStatus: (s) => videoStatusCb.fn?.(s),
   });
   // Контракт для agent.mjs (deps.video): жизненный цикл, ввод, статусы.
+  // W2 (0.6.8): пресеты качества — оператор шлёт {quality:'high|medium|low'}
+  // по input-каналу, хост маппит в параметры хелпера (хелпер сам клампит
+  // jpegQ 40..90, maxFps 1..60; параметры живут до конца сеанса хелпера).
+  const QUALITY_PRESETS = {
+    high: { jpegQ: 90, maxFps: 24 },
+    medium: { jpegQ: 70, maxFps: 15 },
+    low: { jpegQ: 45, maxFps: 8 },
+  };
   const video = {
     bind: () => {}, // relay привязывается в createAgentRtc (videoForward.setRelay)
     start: () => videoHost.start(),
@@ -1330,6 +1338,11 @@ function startAgentMode() {
         // privacy MVP: управление дисплеем через тот же канал (v0.6)
         if (ev?.display === 'off' || ev?.display === 'on') {
           videoHost.sendCommand({ cmd: ev.display === 'off' ? 'sleep' : 'wake' });
+          return;
+        }
+        // W2: пресет качества — тем же каналом, тем же доверием
+        if (typeof ev?.quality === 'string' && QUALITY_PRESETS[ev.quality]) {
+          videoHost.sendCommand({ cmd: 'quality', ...QUALITY_PRESETS[ev.quality] });
           return;
         }
         // v0.6 fix (ревью GLM-5.3): протокольное событие → словарь команд
