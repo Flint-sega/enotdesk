@@ -51,7 +51,16 @@ const DUP_FAIL_GIVE_UP: u32 = 50; // ~10 s of 200 ms retries -> honest exit (the
 const DUP_FAIL_GDI_SWITCH: u32 = 5; // never-framed only: consecutive make_dup failures
 const DUP_FAIL_SWITCH_MIN: Duration = Duration::from_secs(5); // never-framed only: streak must span this long since the first failure
 const BLACK_STREAK_SWITCH: u32 = 10; // б-v2: consecutive delivered DDA frames that are all black -> switch
+const BLACK_GRACE_AFTER_DUP: Duration = Duration::from_secs(2); // D2: fresh-dup grace before black frames count (recreation noise)
 const OTHER_ERR_GIVE_UP: u32 = 50; // ~5 s of 100 ms backoffs -> honest exit
+
+// D10.1: an operator input command within INPUT_ACTIVE_WINDOW marks the
+// session as actively driven; auto-nudges fire at most once per
+// AUTONUDGE_CADENCE while that holds (ADR 0027 addendum-2, owner-approved).
+const INPUT_ACTIVE_WINDOW: Duration = Duration::from_secs(10);
+const AUTONUDGE_CADENCE: Duration = Duration::from_secs(4);
+// D3: период пер-событийной перепроверки имён десктопов (не чаще 1/с).
+const DESKTOP_RECHECK_PERIOD: Duration = Duration::from_secs(1);
 
 // Periods.
 const STATUS_PERIOD: Duration = Duration::from_secs(2);
@@ -69,6 +78,11 @@ const PROBE_LOG_THROTTLE: Duration = Duration::from_secs(3);
 // (flag unset): silent, exactly as shipped since 0b419b3. Read once at
 // startup.
 static VIDEO_TRACE: AtomicBool = AtomicBool::new(false);
+
+// D9 (ADR 0027 addendum-2): master switch of the unresponsive-detection
+// machinery — product auto-nudges now, the input-dead-video trigger when it
+// lands. Env ENOT_VIDEO_UNRESPONSIVE=0 turns it OFF; unset/anything else = ON.
+static UNRESPONSIVE: AtomicBool = AtomicBool::new(true);
 
 // Exit codes (documented in README.md).
 const EXIT_OK: i32 = 0;
@@ -115,6 +129,13 @@ struct Shared {
     pr_pub: AtomicU64,
     empty_pub: AtomicU64,
     vp_pub: AtomicU64,
+    // D10.1: watermark of the last operator input command (mouse/key/wheel) —
+    // the auto-nudge thread fires only while this is fresh. uac/locked are
+    // snapshots published by the status cycle, so the nudge thread performs no
+    // Win32 calls of its own (plan D4 discipline).
+    input_at: Mutex<Option<Instant>>,
+    uac: AtomicBool,
+    locked: AtomicBool,
 }
 
 impl Shared {
@@ -136,6 +157,9 @@ impl Shared {
             pr_pub: AtomicU64::new(0),
             empty_pub: AtomicU64::new(0),
             vp_pub: AtomicU64::new(0),
+            input_at: Mutex::new(None),
+            uac: AtomicBool::new(false),
+            locked: AtomicBool::new(false),
         }
     }
 }
@@ -238,6 +262,12 @@ fn run() -> Result<i32, String> {
         std::env::var("ENOT_VIDEO_TRACE").map_or(false, |v| !v.is_empty()),
         Ordering::Relaxed,
     );
+    // D9: "0" выключает всю машинерию unresponsive-детекции (авто-нуджи
+    // сейчас; триггер input-dead-video, когда приземлится). Дефолт — включено.
+    UNRESPONSIVE.store(
+        std::env::var("ENOT_VIDEO_UNRESPONSIVE").map_or(true, |v| v.trim() != "0"),
+        Ordering::Relaxed,
+    );
     // v0.6 fix (review): operator-requested privacy sleep must survive the
     // stuck-display watchdog (which wakes the panel after 5 s of silence).
     let privacy_sleep = Arc::new(AtomicBool::new(false));
@@ -283,6 +313,51 @@ fn run() -> Result<i32, String> {
                 }
             })
             .map_err(|e| format!("auto-probe thread: {e}"))?;
+    }
+
+    // D10.1 (ADR 0027 addendum-2, решение владельца): продуктовый авто-нудж.
+    // Пока клиент подключён И оператор реально вводил в последние
+    // INPUT_ACTIVE_WINDOW — InputJob::Probe не чаще AUTONUDGE_CADENCE (проба
+    // шевелит курсор на +2px и возвращает). В холостом сеансе тишина:
+    // пользователь машины ничего не видит. Условия — по кэшу статус-цикла
+    // (uac/locked в Shared), Win32-вызовов на этом потоке нет. Выключатель —
+    // D9 (ENOT_VIDEO_UNRESPONSIVE=0).
+    if UNRESPONSIVE.load(Ordering::Relaxed) {
+        let probe_tx = input_tx.clone();
+        let nudge_shared = shared.clone();
+        let nudge_privacy = privacy_sleep.clone();
+        std::thread::Builder::new()
+            .name("autonudge".into())
+            .spawn(move || {
+                let mut last_probe: Option<Instant> = None;
+                loop {
+                    std::thread::sleep(Duration::from_millis(500));
+                    let due = nudge_shared
+                        .state
+                        .lock()
+                        .unwrap_or_else(|p| p.into_inner())
+                        .as_str()
+                        == "live"
+                        && mode(&nudge_shared) == "dxgi"
+                        && !nudge_shared.display_off.load(Ordering::Relaxed)
+                        && !nudge_privacy.load(Ordering::Relaxed)
+                        && !nudge_shared.uac.load(Ordering::Relaxed)
+                        && !nudge_shared.locked.load(Ordering::Relaxed)
+                        && nudge_shared
+                            .input_at
+                            .lock()
+                            .unwrap_or_else(|p| p.into_inner())
+                            .map_or(false, |t| t.elapsed() <= INPUT_ACTIVE_WINDOW)
+                        && last_probe.map_or(true, |t| t.elapsed() >= AUTONUDGE_CADENCE);
+                    if due {
+                        last_probe = Some(Instant::now());
+                        if probe_tx.send(InputJob::Probe).is_err() {
+                            return; // input thread is gone
+                        }
+                    }
+                }
+            })
+            .map_err(|e| format!("auto-nudge thread: {e}"))?;
     }
 
     log_line(&format!(
@@ -595,6 +670,11 @@ fn input_thread(shared: &Shared, privacy_sleep: &AtomicBool, rx: std::sync::mpsc
     // Throttle clock for {"ev":"probe"} lines (D4): one line per probe, at
     // most one per PROBE_LOG_THROTTLE under a burst.
     let mut probe_log_at: Option<Instant> = None;
+    // D3 (ADR 0027 addendum-2): пер-событийная перепроверка «не сменился ли
+    // десктоп под прицепленным потоком» — не чаще 1 раза в секунду; лог
+    // расхождения с троттлом 3 с.
+    let mut desktop_check_at: Option<Instant> = None;
+    let mut desktop_log_at: Option<Instant> = None;
     for job in rx {
         if shared.stop.load(Ordering::SeqCst) {
             break;
@@ -606,6 +686,26 @@ fn input_thread(shared: &Shared, privacy_sleep: &AtomicBool, rx: std::sync::mpsc
             match win::attach_input_desktop() {
                 Ok(()) => attached = true,
                 Err(e) => set_last_err(shared, &format!("input desktop: {e}")),
+            }
+        }
+        if attached && desktop_check_at.map_or(true, |t| t.elapsed() >= DESKTOP_RECHECK_PERIOD) {
+            desktop_check_at = Some(Instant::now());
+            if !win::input_desktop_name_matches() {
+                // RustDesk-механика (R4 плана): имена разошлись под живым
+                // потоком — переприцепляемся; ошибка ретрая возвращает поток
+                // в состояние «не прицеплен» (ветка выше добьёт на след. job).
+                let reattach = win::attach_input_desktop();
+                if reattach.is_err() {
+                    attached = false;
+                    set_last_err(shared, "input desktop: re-attach after mismatch failed");
+                }
+                if desktop_log_at.map_or(true, |t| t.elapsed() >= PROBE_LOG_THROTTLE) {
+                    desktop_log_at = Some(Instant::now());
+                    log_line(&format!(
+                        "{{\"ev\":\"desktop\",\"check\":\"mismatch\",\"reattach\":\"{}\"}}",
+                        if reattach.is_ok() { "ok" } else { "failed" },
+                    ));
+                }
             }
         }
         execute_job(shared, privacy_sleep, &mut probe_log_at, job);
@@ -626,6 +726,9 @@ fn execute_job(
             // спавна, а SetCursorPos на том же прицепленном потоке двигает
             // курсор. Кнопки/колесо/клава остаются на SendInput до итогов
             // матрицы rev-3b (X-серия-2).
+            // D10.1: любая команда оператора освежает водяной знак активности,
+            // по которому авто-нудж решает, идёт ли сейчас живой ввод.
+            *shared.input_at.lock().unwrap_or_else(|p| p.into_inner()) = Some(Instant::now());
             let (moved, mgle) = win::mouse_move_cursor(x, y);
             match buttons.as_str() {
                 "down" | "up" => {
@@ -663,6 +766,7 @@ fn execute_job(
         }
         InputJob::Key { name, down } => match keys::key_vk(&name) {
             Some((vk, ext)) => {
+                *shared.input_at.lock().unwrap_or_else(|p| p.into_inner()) = Some(Instant::now());
                 let (sent, gle) = win::key_event(vk, ext, down);
                 if !sent {
                     set_last_err(
@@ -674,6 +778,7 @@ fn execute_job(
             None => set_last_err(shared, "cmd: key not in EnotDesk allowlist"),
         },
         InputJob::Wheel { dy } => {
+            *shared.input_at.lock().unwrap_or_else(|p| p.into_inner()) = Some(Instant::now());
             // f64 -> i32 saturates (Rust guarantee), no panic on huge values.
             let (sent, gle) = win::wheel(dy as i32);
             if !sent {
@@ -883,6 +988,13 @@ fn capture_session(
             // both are blocking calls on this thread, invisible to the STATUS
             // channel itself — the ticker names them (v0.6.0 приёмка: wedge).
             win::mark_dup_op(6);
+            // D4-дисциплина: uac/locked считаются ОДИН РАЗ здесь, на capture-
+            // потоке, и публикуются в Shared — авто-нудж читает кэш, своих
+            // Win32-вызовов у него нет.
+            let uac = win::consent_running();
+            let locked = win::input_desktop_locked();
+            shared.uac.store(uac, Ordering::Relaxed);
+            shared.locked.store(locked, Ordering::Relaxed);
             let secs = window_start.elapsed().as_secs_f64();
             let fps = if secs > 0.0 {
                 (frames_window as f64 / secs).round() as u64
@@ -897,7 +1009,7 @@ fn capture_session(
             shared.empty_pub.store(empty_window, Ordering::Relaxed);
             let vp = shared.probe_window.load(Ordering::Relaxed);
             shared.vp_pub.store(vp, Ordering::Relaxed);
-            let body = status_json(shared, fps, frames_window, empty_window, vp);
+            let body = status_json(shared, fps, frames_window, empty_window, vp, uac, locked);
             win::mark_dup_op(7);
             if let Err(e) = send_msg(io, pipe_lock, proto::T_STATUS, body.as_bytes()) {
                 // The ticker carries this text: a dying pipe must name its
@@ -995,14 +1107,25 @@ fn capture_session(
                                 if privacy_sleep.load(Ordering::Relaxed) {
                                     black_streak = 0;
                                 } else if frame_is_black(&px, pw, ph) {
-                                    black_streak += 1;
-                                    if black_streak >= BLACK_STREAK_SWITCH
-                                        && !privacy_sleep.load(Ordering::Relaxed)
+                                    // D2: grace свежей дубликации — чёрные кадры
+                                    // считаются только когда текущий dup живёт
+                                    // дольше BLACK_GRACE_AFTER_DUP (момент
+                                    // создания несёт сам Dup, поэтому grace
+                                    // переживает переподключение пайпа); шум
+                                    // пересоздания не жжёт one-shot.
+                                    if dup
+                                        .as_ref()
+                                        .map_or(true, |d| d.since().elapsed() >= BLACK_GRACE_AFTER_DUP)
                                     {
-                                        switch_req = Some((
-                                            "black-frames",
-                                            format!("{black_streak} black DDA frames in a row"),
-                                        ));
+                                        black_streak += 1;
+                                        if black_streak >= BLACK_STREAK_SWITCH
+                                            && !privacy_sleep.load(Ordering::Relaxed)
+                                        {
+                                            switch_req = Some((
+                                                "black-frames",
+                                                format!("{black_streak} black DDA frames in a row"),
+                                            ));
+                                        }
                                     }
                                 } else {
                                     black_streak = 0;
@@ -1239,7 +1362,7 @@ fn encode_and_send(
     }
 }
 
-fn status_json(shared: &Shared, fps: u64, pr: u64, empty: u64, vp: u64) -> String {
+fn status_json(shared: &Shared, fps: u64, pr: u64, empty: u64, vp: u64, uac: bool, locked: bool) -> String {
     let last_err = shared
         .last_err
         .lock()
@@ -1259,8 +1382,8 @@ fn status_json(shared: &Shared, fps: u64, pr: u64, empty: u64, vp: u64) -> Strin
         vp,
         probe_last,
         proto::jstr(&ascii(&last_err)),
-        win::consent_running(),
-        win::input_desktop_locked(),
+        uac,
+        locked,
         display_off(shared),
     )
 }
