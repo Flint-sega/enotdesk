@@ -215,6 +215,12 @@ video.fit-cover{object-fit:cover}
         <button id="btn-fullscreen" class="btn ghost" type="button" data-i18n="web.session.fullscreen">Во весь экран</button>
         <button id="btn-fit" class="btn ghost" type="button" data-i18n="web.session.fitFill">Заполнить</button>
         <button id="btn-privacy" class="btn ghost hidden" type="button" data-i18n="web.privacy.off">Погасить экран</button>
+        <select id="quality-preset" class="btn ghost hidden" aria-label="Качество">
+          <option value="" data-i18n="web.quality.label">Качество</option>
+          <option value="high" data-i18n="web.quality.high">Высокое</option>
+          <option value="medium" data-i18n="web.quality.medium">Среднее</option>
+          <option value="low" data-i18n="web.quality.low">Низкое</option>
+        </select>
         <span class="status" id="remote-status" aria-live="polite"></span>
         <span class="status" id="kb-indicator" aria-live="off"></span>
         <span class="status hidden" id="op-idle-note" role="alert"></span>

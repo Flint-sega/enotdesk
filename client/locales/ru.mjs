@@ -457,6 +457,12 @@ export default {
   "web.machines.claimPin": "PIN машины",
   "web.machines.claimSubmit": "Подключиться",
   "web.machines.claimBusy": "Подключаемся…",
+  // W1: звезда «избранное»; W2: пресеты качества
+  "web.machines.favTitle": "В избранное",
+  "web.quality.label": "Качество",
+  "web.quality.high": "Высокое",
+  "web.quality.medium": "Среднее",
+  "web.quality.low": "Низкое",
   "web.machines.action.toast": "Сообщение",
   "web.machines.toastPrompt": "Сообщение для {name} (до 500 символов)",
   "web.machines.toastDelivered": "Сообщение показано на машине",

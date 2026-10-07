@@ -1,7 +1,7 @@
 import { DatabaseSync } from 'node:sqlite';
 
 // Последняя версия схемы; растёт с каждым версионированным шагом (A01 и далее).
-export const SCHEMA_VERSION = 8;
+export const SCHEMA_VERSION = 9;
 
 // Версионированные шаги схемы (A01): каждая база — старая или новая — проходит
 // недостающие шаги по порядку, версия хранится в таблице schema_version.
@@ -185,6 +185,21 @@ const MIGRATIONS = [
     up: (db) => {
       db.exec('ALTER TABLE sessions ADD COLUMN host_id TEXT');
       db.exec('CREATE INDEX IF NOT EXISTS idx_sessions_host_id ON sessions (host_id)');
+    },
+  },
+  {
+    // v9 (0.6.8, W1): «недавние сверху» — момент и автор последнего claim'а
+    // машины для сортировки панели машин, и избранные per-оператора (звезда).
+    version: 9,
+    up: (db) => {
+      db.exec('ALTER TABLE machines ADD COLUMN last_claim_at TEXT');
+      db.exec('ALTER TABLE machines ADD COLUMN last_claim_by TEXT');
+      db.exec(`CREATE TABLE IF NOT EXISTS machine_favorites (
+                 user_id TEXT NOT NULL,
+                 machine_id TEXT NOT NULL,
+                 created_at TEXT NOT NULL,
+                 PRIMARY KEY (user_id, machine_id)
+               )`);
     },
   },
 ];

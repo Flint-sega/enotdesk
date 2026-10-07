@@ -1386,7 +1386,19 @@ export function createServer(opts = {}) {
       if (!user) return err(res, 401, 'unauthorized', 'Требуется авторизация');
       if (!['admin', 'operator'].includes(user.role)) return err(res, 403, 'forbidden', 'Недостаточно прав');
       const { limit, offset } = listParams(url);
-      return ok(res, 200, machinesStore.list({ limit, offset }));
+      const body = machinesStore.list({ limit, offset });
+      // W1: звезда «избранное» per-оператора; sort=recent — избранные первыми,
+      // затем по моменту последнего claim'а (без него — в хвост, порядок
+      // регистрации внутри групп сохраняется). Без sort — прежний порядок.
+      const favs = machinesStore.favoritesOf(user.id);
+      const items = body.items.map((m) => ({ ...m, favorite: favs.has(m.id) }));
+      if (url.searchParams.get('sort') === 'recent') {
+        const stamp = (m) => m.lastClaimAt ?? '';
+        items.sort((a, b) => (Number(b.favorite) - Number(a.favorite))
+          || stamp(b).localeCompare(stamp(a))
+          || (a.createdAt < b.createdAt ? -1 : a.createdAt > b.createdAt ? 1 : 0));
+      }
+      return ok(res, 200, { items, total: body.total });
     }
     if (p === '/machines' && req.method === 'POST') {
       if (!user) return err(res, 401, 'unauthorized', 'Требуется авторизация');
@@ -1452,11 +1464,24 @@ export function createServer(opts = {}) {
         .run(sessionId, hashPassword(sessionPassword(8)), machine.agent_token_hash, 'pending-consent',
              user.id, claimId, machine.id, nowIso, nowIso, lease);
       auditLog(db, machine.id, 'machine.claim', sessionId, { unattended: true, reason, operatorId: user.id });
+      // W1: водяной знак «недавние сверху» для панели машин оператора
+      machinesStore.markClaimed(machine.id, user.id);
       return ok(res, 201, {
         sessionId, claimId, machineId: machine.id,
         operator: { id: user.id, name: user.name },
         state: 'pending-consent',
       });
+    }
+    // W1: звезда «избранное» per-оператора. POST — добавить, DELETE — убрать.
+    m = p.match(/^\/machines\/([^/]+)\/favorite$/);
+    if (m && (req.method === 'POST' || req.method === 'DELETE')) {
+      if (!user) return err(res, 401, 'unauthorized', 'Требуется авторизация');
+      if (!['admin', 'operator'].includes(user.role)) return err(res, 403, 'forbidden', 'Недостаточно прав');
+      if (!machinesStore.get(m[1])) {
+        return err(res, 404, 'not_found', t('machines.notFound', {}, pickLocale(req.headers['accept-language'])));
+      }
+      machinesStore.favorite(user.id, m[1], req.method === 'POST');
+      return ok(res, 200, { ok: true, favorite: req.method === 'POST' });
     }
     m = p.match(/^\/machines\/([^/]+)\/pin$/);
     if (m && req.method === 'POST') {
