@@ -242,6 +242,30 @@ TURN (coturn в VM 100): `use-auth-secret` + `static-auth-secret` из TURN_SECR
 `ENOT_TURN_USERNAME/PASSWORD` не используются при заданном секрете).
 Порты: 3478 udp/tcp, релей 49152–49252.
 
+### Грабля: install-server.sh --update поверх лабового staging (инцидент 08.10)
+
+Лабовый staging VM100 живёт на КАСТОМНОМ юните `enotdesk-server.service`
+(лаб-поставка: БД /var/lib/enotdesk/, ENOT_HUB, фронт enot-combined-caddy :8081).
+`install-server.sh --update` этот юнит НЕ распознаёт: ставит/запускает
+стандартный `enotdesk.service`, который занимает порт 8080.
+
+Симптомы (выглядят как «продукт сломался», а это инфраструктура):
+- лабовый `enotdesk-server.service` падает каждые ~2-3 с с EADDRINUSE :8080
+  (restart counter улетает за 900);
+- его endLiveSessions при каждом старте рвёт ВСЕ живые сеансы в общей БД:
+  любой свежий claim умирает с end_reason='server-restart' за 2-3 с —
+  «машина не подключается к сеансу»;
+- /agent/session, машины, health живы (обслуживает чужой enotdesk.service с той
+  же БД по дефолтному пути) — это маскирует поломку.
+
+Лечение: `sudo systemctl stop enotdesk && sudo systemctl disable enotdesk &&
+sudo systemctl start enotdesk-server`.
+
+Профилактика: обновлять staging вручную под кастомный юнит — заменить каталог
+релиза (/opt/enotdesk/releases/<stamp> + симлинк current) и
+`sudo systemctl restart enotdesk-server`, БЕЗ install-server.sh. Флаг
+`--unit-name` в установщике — отдельное решение.
+
 ## Агенты на Windows-VM (установка/переустановка)
 
 Канон — `scripts/lab/lab-finalize.sh --stage agents` (на хосте) + `scripts/lab/agent-setup.ps1`
