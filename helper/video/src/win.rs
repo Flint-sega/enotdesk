@@ -47,7 +47,9 @@ use windows::Win32::System::Pipes::{
     ConnectNamedPipe, CreateNamedPipeW, DisconnectNamedPipe, PeekNamedPipe, PIPE_READMODE_BYTE,
     PIPE_TYPE_BYTE,
 };
-use windows::Win32::System::RemoteDesktop::ProcessIdToSessionId;
+use windows::Win32::System::RemoteDesktop::{
+    ProcessIdToSessionId, WTSGetActiveConsoleSessionId,
+};
 use windows::Win32::System::StationsAndDesktops::{
     CloseDesktop, GetUserObjectInformationW, GetThreadDesktop, OpenInputDesktop, SetThreadDesktop,
     DESKTOP_ACCESS_FLAGS, DESKTOP_CONTROL_FLAGS, DESKTOP_READOBJECTS, DESKTOP_SWITCHDESKTOP,
@@ -1215,6 +1217,14 @@ pub fn current_session_id() -> u32 {
         let _ = ProcessIdToSessionId(GetCurrentProcessId(), &mut sid);
         sid
     }
+}
+
+/// rev-3b diagnostics: the ACTIVE console session (WTSGetActiveConsoleSessionId)
+/// vs THIS process's session (current_session_id). A mismatch (or a disconnected
+/// console) is the publicly documented cause of SendInput ERROR_ACCESS_DENIED on
+/// headless VMs — log both at the failure moment, compare on the analysis side.
+pub fn active_console_session_id() -> u32 {
+    unsafe { WTSGetActiveConsoleSessionId() }
 }
 
 /// Attach the CALLING thread to the session's input desktop with write access.
