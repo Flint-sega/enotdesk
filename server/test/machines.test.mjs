@@ -1056,7 +1056,7 @@ test('machines API: favorite POST/DELETE за RBAC; claim ставит lastClaim
   const items = list.json.items;
   assert.equal(items[0].id, a.created.machine.id, 'избранная машина первая');
   assert.equal(items[0].favorite, true);
-  assert.equal(items[1].id, b.created.machine.id, 'недавно claim'нутая — вторая');
+  assert.equal(items[1].id, b.created.machine.id, 'недавно подключённая — вторая');
   assert.ok(items[1].lastClaimAt, 'у Б заполнен lastClaimAt');
   assert.equal(items[1].favorite, false);
 
@@ -1065,6 +1065,6 @@ test('machines API: favorite POST/DELETE за RBAC; claim ставит lastClaim
   assert.equal(unfav.status, 200);
   assert.equal(unfav.json.favorite, false);
   const list2 = await api(base, 'GET', '/machines?sort=recent&limit=10', { token: operator.token });
-  assert.equal(list2.json.items[0].id, b.created.machine.id, 'без звезды первой становится недавно claim'нутая');
+  assert.equal(list2.json.items[0].id, b.created.machine.id, 'без звезды первой становится недавно подключённая');
   assert.equal(list2.json.items[0].favorite, false);
 });
