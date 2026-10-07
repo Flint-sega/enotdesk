@@ -1,0 +1,59 @@
+# Пре-релизная сборка БЕЗ публикации (workflow_dispatch): те же шаги сборки,
+# что в release.yml, но только Windows и только upload-artifact — никакого
+# GitHub Release, никакого фида latest*.yml, клиентские автообновления не
+# затрагиваются. Назначение: живая приёмка продукта на тестовой лабе до тега
+# (0.6.7-pre: GDI-fallback видео-хелпера, ADR 0027 addendum 07.10).
+# Запуск: Actions → build-pre → Run workflow (version, например 0.6.7-pre.1);
+# либо API POST /actions/workflows/build-pre.yml/dispatches.
+
+name: build-pre
+
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: 'Версия артефактов (semver, например 0.6.7-pre.1)'
+        required: true
+        default: '0.6.7-pre.1'
+
+permissions:
+  contents: read
+
+jobs:
+  build-win:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: npm
+      - run: npm ci
+      - run: npm run lint
+      - run: npm test
+      - name: Set version
+        shell: bash
+        run: npm version "${{ github.event.inputs.version }}" --no-git-tag-version --allow-same-version
+      - name: Build video helper (Windows, ADR 0027)
+        shell: bash
+        run: |
+          rustup target add x86_64-pc-windows-msvc
+          RUSTFLAGS="-C target-feature=+crt-static" cargo build --release --manifest-path helper/video/Cargo.toml
+          mkdir -p helper/video/bin
+          cp helper/video/target/release/enotdesk-video.exe helper/video/bin/enotdesk-video.exe
+      - name: Pack (Windows — portable и установщик NSIS)
+        shell: bash
+        run: |
+          npx electron-builder --config build/electron-builder.yml --win portable --publish never
+          npx electron-builder --config build/electron-builder.yml --win nsis --publish never
+      - name: "Gate: locales en-US.pak + ru.pak в сборке"
+        shell: bash
+        run: |
+          test -f dist/win-unpacked/locales/en-US.pak
+          test -f dist/win-unpacked/locales/ru.pak
+      - uses: actions/upload-artifact@v4
+        with:
+          name: dist-pre-win
+          if-no-files-found: error
+          path: |
+            dist/EnotDesk-*
