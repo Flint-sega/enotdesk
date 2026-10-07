@@ -259,11 +259,13 @@ fn run() -> Result<i32, String> {
     }
 
     // LAB DIAGNOSTIC (spec rev 3): ENOT_VIDEO_AUTOPROBE_SECS=<N>, N >= 1
-    // (u64), makes the helper enqueue one InputJob::Probe every N seconds
+    // (u64), makes the helper enqueue one InputJob::Probe3 every N seconds
     // with NO operator command -- the product UI has no probe path, this env
     // is how the lab measures the service-spawned context (machine-wide env
     // propagates: session-spawn passes Environment=null, the helper inherits
-    // the service environment). Default (unset / unparsable / N=0): OFF --
+    // the service environment). Probe3 (rev-3b) replaced Probe here: the
+    // service-context run needs the full matrix, not only the SetCursorPos
+    // reference. Default (unset / unparsable / N=0): OFF --
     // no probes without a command. The thread dies with the process; if the
     // input side is gone the loop exits silently.
     if let Some(secs) = std::env::var("ENOT_VIDEO_AUTOPROBE_SECS")
@@ -276,7 +278,7 @@ fn run() -> Result<i32, String> {
             .name("autoprobe".into())
             .spawn(move || loop {
                 std::thread::sleep(Duration::from_secs(secs));
-                if probe_tx.send(InputJob::Probe).is_err() {
+                if probe_tx.send(InputJob::Probe3).is_err() {
                     return; // input thread is gone: nothing left to probe
                 }
             })
@@ -529,6 +531,9 @@ fn handle_command(
         // No auto cadence here -- deliberately out of scope until the lab
         // calibration matrix is done.
         "probe" => enqueue(input_tx, InputJob::Probe, shared),
+        // rev-3b (X-series-2): the full injection matrix in one pass, lab
+        // diagnostics. No product caller.
+        "probe3" => enqueue(input_tx, InputJob::Probe3, shared),
         "quality" => {
             if let Some(q) = doc.get("jpegQ").and_then(Json::as_num) {
                 *shared.jpeg_q.lock().unwrap_or_else(|p| p.into_inner()) =
@@ -560,6 +565,11 @@ enum InputJob {
     // revision). Executed on the input thread -- the only thread that owns
     // the attached input desktop.
     Probe,
+    // rev-3b (X-series-2): one pass of the FULL injection matrix (SetCursorPos
+    // reference, SendInput absolute, SendInput relative, legacy mouse_event,
+    // SendInput key F15 down/up). Lab-only: reached via {"cmd":"probe3"} and
+    // the ENOT_VIDEO_AUTOPROBE_SECS autoprobe; the product has no caller.
+    Probe3,
 }
 
 fn enqueue(tx: &std::sync::mpsc::Sender<InputJob>, job: InputJob, shared: &Shared) {
@@ -610,45 +620,65 @@ fn execute_job(
 ) {
     match job {
         InputJob::Mouse { x, y, buttons, button } => {
-            let sent = win::mouse_move_abs(x, y);
+            // Продуктовое позиционирование — SetCursorPos (rev-3b): X-серия
+            // показала, что SendInput absolute отклоняется системой (возврат
+            // 0, sent=false) на ВМ с Basic Display Adapter в ОБОИХ контекстах
+            // спавна, а SetCursorPos на том же прицепленном потоке двигает
+            // курсор. Кнопки/колесо/клава остаются на SendInput до итогов
+            // матрицы rev-3b (X-серия-2).
+            let (moved, mgle) = win::mouse_move_cursor(x, y);
             match buttons.as_str() {
                 "down" | "up" => {
-                    win::mouse_button(&button, buttons == "down");
+                    let (bsent, bgle) = win::mouse_button(&button, buttons == "down");
+                    if !bsent {
+                        set_last_err(
+                            shared,
+                            &format!("cmd mouse button {button} {buttons} sent=false {bgle}"),
+                        );
+                    }
                 }
-                // "move": абсолютный сдвиг выше — вся команда
+                // "move": позиционирование выше — вся команда
                 _ => {}
+            }
+            if !moved {
+                set_last_err(
+                    shared,
+                    &format!("cmd mouse x={x:.2} y={y:.2} cursor-set failed {mgle}"),
+                );
             }
             // Сна и трассы успеха больше нет: 120 мс на каждый job при темпе
             // оператора ~40 соб/с копили неограниченную задержку ввода (ревью
             // GLM-5.3, high). Ошибка — честно в last_err, успех не шумит.
             // ИСКЛЮЧЕНИЕ (X3 step 0, spec rev 3): безусловная трасса успеха
-            // возвращена ТОЛЬКО за флагом окружения ENOT_VIDEO_TRACE (лаба) —
-            // без неё сигнатура W-U7 «SendInput TRUE, эффекта нет» в логе
-            // невидима. Прод: флаг не задан — молчание ровно как с 0b419b3.
+            // возвращена ТОЛЬКО за флагом окружения ENOT_VIDEO_TRACE (лаба).
+            // С rev-3b sent = результат SetCursorPos (via:"cursor") — путь
+            // продуктового позиционирования сменился, поле отмечает это.
             if VIDEO_TRACE.load(Ordering::Relaxed) {
                 let cur = win::cursor_pos();
                 log_line(&format!(
-                    "{{\"ev\":\"cmd-mouse\",\"sent\":{},\"x\":{x:.2},\"y\":{y:.2},\"cursor\":\"({},{})\"}}",
-                    sent, cur.0, cur.1,
+                    "{{\"ev\":\"cmd-mouse\",\"via\":\"cursor\",\"sent\":{},\"x\":{x:.2},\"y\":{y:.2},\"cursor\":\"({},{})\"}}",
+                    moved, cur.0, cur.1,
                 ));
-            }
-            if !sent {
-                let cur = win::cursor_pos();
-                set_last_err(
-                    shared,
-                    &format!("cmd mouse x={x:.2} y={y:.2} sent=false cursor=({},{})", cur.0, cur.1),
-                );
             }
         }
         InputJob::Key { name, down } => match keys::key_vk(&name) {
             Some((vk, ext)) => {
-                win::key_event(vk, ext, down);
+                let (sent, gle) = win::key_event(vk, ext, down);
+                if !sent {
+                    set_last_err(
+                        shared,
+                        &format!("cmd key {name} down={down} sent=false {gle}"),
+                    );
+                }
             }
             None => set_last_err(shared, "cmd: key not in EnotDesk allowlist"),
         },
         InputJob::Wheel { dy } => {
             // f64 -> i32 saturates (Rust guarantee), no panic on huge values.
-            win::wheel(dy as i32);
+            let (sent, gle) = win::wheel(dy as i32);
+            if !sent {
+                set_last_err(shared, &format!("cmd wheel dy={dy} sent=false {gle}"));
+            }
         }
         InputJob::Wake => {
             win::monitor_power(true);
@@ -697,6 +727,67 @@ fn execute_job(
                     before.0, before.1, after.0, after.1, ok,
                 ));
             }
+        }
+        InputJob::Probe3 => {
+            // rev-3b (X-серия-2): одна проба мерит ВСЕ варианты инъекции в
+            // фиксированном порядке, на том же прицепленном input-потоке.
+            // Двигающие варианты проверяются по GetCursorPos до/после; позиция
+            // между вариантами возвращается SetCursorPos'ом (доказанно
+            // рабочий путь). Только лаба: продуктовых вызовов probe3 нет.
+            // Порядок: эталон SetCursorPos -> SendInput absolute -> SendInput
+            // relative -> legacy mouse_event -> SendInput key F15 (безвредно).
+            let thread = win::thread_desktop_name();
+            let p0 = win::cursor_pos();
+            // 1) SetCursorPos +2px — эталон; gle честно от API.
+            let c_gle = win::set_cursor_pos_probe(p0.0 + 2, p0.1);
+            std::thread::sleep(Duration::from_millis(15));
+            let p1 = win::cursor_pos();
+            win::set_cursor_pos_xy(p0.0, p0.1);
+            // 2) SendInput absolute (+2px в пикселях виртуального стола).
+            //    Базлайн перечитывается: если возврат позиции после эталона
+            //    провалился, устаревший p0 дал бы ложный abs.moved (ревью).
+            let pa = win::cursor_pos();
+            let (a_sent, a_gle) = win::mouse_move_abs_px(pa.0 + 2, pa.1);
+            std::thread::sleep(Duration::from_millis(15));
+            let p2 = win::cursor_pos();
+            win::set_cursor_pos_xy(p0.0, p0.1);
+            // 3) SendInput relative (+40px): ускорение указателя может
+            //    изменить эффективную дельту, критерий «сдвинулся вправо
+            //    >=10px», сырые позиции — в логе.
+            let p3 = win::cursor_pos();
+            let (r_sent, r_gle) = win::mouse_move_rel(40, 0);
+            std::thread::sleep(Duration::from_millis(15));
+            let p4 = win::cursor_pos();
+            win::set_cursor_pos_xy(p0.0, p0.1);
+            // 4) legacy mouse_event (+40px): возврата у API нет по дизайну,
+            //    вердикт — по позиции курсора.
+            let p5 = win::cursor_pos();
+            win::mouse_event_legacy(40, 0);
+            std::thread::sleep(Duration::from_millis(15));
+            let p6 = win::cursor_pos();
+            win::set_cursor_pos_xy(p0.0, p0.1);
+            // 5) SendInput key F15 (0x7E) down/up: VK, которого нет на
+            //    обычных клавиатурах и ни к чему не привязан.
+            let (kd, kd_gle) = win::key_vk_probe(0x7E, true);
+            std::thread::sleep(Duration::from_millis(5));
+            let (ku, ku_gle) = win::key_vk_probe(0x7E, false);
+            let moved = |from: (i32, i32), to: (i32, i32), min: i32| to.0 >= from.0 + min;
+            // Одна строка на пробу: проба лабовая и ручная/автопроберная,
+            // размножения через автопробер недостаточно часты, чтобы
+            // завести отдельный троттл (каденс задаёт сам env).
+            log_line(&format!(
+                "{{\"ev\":\"probe3\",\"thread\":\"{}\",\"cursor\":{{\"gle\":\"{}\",\"moved\":{},\"from\":\"({},{})\",\"to\":\"({},{})\"}},\"abs\":{{\"sent\":{},\"gle\":\"{}\",\"moved\":{},\"from\":\"({},{})\",\"to\":\"({},{})\"}},\"rel\":{{\"sent\":{},\"gle\":\"{}\",\"moved\":{},\"from\":\"({},{})\",\"to\":\"({},{})\"}},\"legacy\":{{\"moved\":{},\"from\":\"({},{})\",\"to\":\"({},{})\"}},\"key\":{{\"down\":{{\"sent\":{},\"gle\":\"{}\"}},\"up\":{{\"sent\":{},\"gle\":\"{}\"}}}}}}",
+                proto::jstr(&ascii(&thread)),
+                proto::jstr(&ascii(&c_gle)),
+                moved(p0, p1, 2), p0.0, p0.1, p1.0, p1.1,
+                a_sent, proto::jstr(&ascii(&a_gle)),
+                moved(pa, p2, 2), pa.0, pa.1, p2.0, p2.1,
+                r_sent, proto::jstr(&ascii(&r_gle)),
+                moved(p3, p4, 10), p3.0, p3.1, p4.0, p4.1,
+                moved(p5, p6, 10), p5.0, p5.1, p6.0, p6.1,
+                kd, proto::jstr(&ascii(&kd_gle)),
+                ku, proto::jstr(&ascii(&ku_gle)),
+            ));
         }
     }
 }

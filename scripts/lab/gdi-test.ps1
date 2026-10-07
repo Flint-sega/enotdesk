@@ -12,7 +12,8 @@ param(
   [int]$Seconds = 45,
   [string]$OutJpeg = "$env:TEMP\gdi-frame.jpg",
   [int]$MouseSweeps = 0,   # X1/X3: отправить N команд мыши {"cmd":"mouse"} по центру
-  [int]$Probes = 0         # X3: отправить N команд {"cmd":"probe"} (rev-3)
+  [int]$Probes = 0,        # X3: отправить N команд {"cmd":"probe"} (rev-3)
+  [int]$Probe3 = 0         # rev-3b: отправить N команд {"cmd":"probe3"} (полная матрица инъекции)
 )
 $ErrorActionPreference = 'Stop'
 $MAGIC = [uint32]0x454E4F54 # 'ENOT' little-endian
@@ -43,8 +44,8 @@ $pipe.Write($tok, 0, $tok.Length)
 $pipe.Flush()
 Write-Output "HELLO-SENT"
 
-# Фаза команд (X1/X3): мышь по центру + probe-команды (rev-3), с паузами.
-if ($MouseSweeps -gt 0 -or $Probes -gt 0) {
+# Фаза команд (X1/X3): мышь по центру + probe-команды (rev-3, rev-3b), с паузами.
+if ($MouseSweeps -gt 0 -or $Probes -gt 0 -or $Probe3 -gt 0) {
   Start-Sleep -Milliseconds 800
   for ($i = 0; $i -lt $MouseSweeps; $i++) {
     $x = 0.4 + 0.2 * ($i % 2)   # 0.4 <-> 0.6 — зигзаг по центру
@@ -58,6 +59,11 @@ if ($MouseSweeps -gt 0 -or $Probes -gt 0) {
     Send-Cmd $pipe '{"cmd":"probe"}'
     Write-Output "PROBE-CMD"
     Start-Sleep -Milliseconds 1500
+  }
+  for ($i = 0; $i -lt $Probe3; $i++) {
+    Send-Cmd $pipe '{"cmd":"probe3"}'
+    Write-Output "PROBE3-CMD"
+    Start-Sleep -Milliseconds 2000
   }
 }
 

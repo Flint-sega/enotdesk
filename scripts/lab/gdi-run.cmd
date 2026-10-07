@@ -9,7 +9,10 @@ rem stdout of the helper is captured to stdout.log (ticks show "mode").
 set DIR=C:\Users\enotadmin\gditest
 set TOKEN=%~1
 if "%TOKEN%"=="" if exist %DIR%\token.txt set /p TOKEN=<%DIR%\token.txt
-if "%TOKEN%"=="" ( echo usage: gdi-run.cmd ^<hex-token^> or %DIR%\token.txt & exit /b 2 )
+if "%TOKEN%"=="" ( echo usage: gdi-run.cmd ^<hex-token^> [probe3-count] or %DIR%\token.txt & exit /b 2 )
+rem rev-3b: второй аргумент — число probe3-команд (полная матрица инъекции), 0 = как раньше
+set PROBE3=0
+if not "%~2"=="" set PROBE3=%~2
 
 schtasks /Create /TN EnotGdiTest /TR "cmd /c %DIR%\enotdesk-video.exe --token %TOKEN% > %DIR%\stdout.log 2>&1" /SC ONCE /ST 23:59 /F /IT
 if errorlevel 1 ( echo TASK-CREATE-FAIL & exit /b 2 )
@@ -17,7 +20,7 @@ schtasks /Run /TN EnotGdiTest
 if errorlevel 1 ( echo TASK-RUN-FAIL & schtasks /Delete /TN EnotGdiTest /F & exit /b 2 )
 echo HELPER-LAUNCHED
 
-powershell -NoProfile -ExecutionPolicy Bypass -File %DIR%\gdi-test.ps1 -Token %TOKEN% -Seconds 60 -OutJpeg %DIR%\frame.jpg
+powershell -NoProfile -ExecutionPolicy Bypass -File %DIR%\gdi-test.ps1 -Token %TOKEN% -Seconds 60 -OutJpeg %DIR%\frame.jpg -Probe3 %PROBE3%
 set RC=%ERRORLEVEL%
 
 taskkill /F /IM enotdesk-video.exe /T >nul 2>&1
