@@ -4,6 +4,7 @@
 export default {
   "app.tabHelp": "Помощь",
   "app.tabOperator": "Оператор",
+  "app.codename": "Кроха",
   "app.aria.workMode": "Режим работы",
   "app.aria.settings": "Настройки",
   "app.aria.getHelp": "Получить помощь",
