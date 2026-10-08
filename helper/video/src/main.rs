@@ -654,15 +654,29 @@ fn enqueue(tx: &std::sync::mpsc::Sender<InputJob>, job: InputJob, shared: &Share
 }
 
 fn input_thread(shared: &Shared, privacy_sleep: &AtomicBool, rx: std::sync::mpsc::Receiver<InputJob>) {
-    let mut attached = true;
-    if let Err(e) = win::attach_input_desktop() {
-        attached = false;
-        set_last_err(shared, &format!("input desktop: {e}"));
+    // X4-диагностика 08.10 (лаба, BDA-ВМ): поток с attach получает честный
+    // Access Denied на ВЕСЬ SendInput, при этом инъекция без attach из того же
+    // сеанса работает (пробник P0v2: schtasks-процесс, sent=1, курсор реально
+    // ходит). На реальных машинах картина обратная (приёмка 02.10: без attach
+    // инъекция молча глотается) — поэтому стратегия за env, дефолт прежний:
+    //   ENOT_VIDEO_ATTACH=off — не прицепляться (инъекция с lpDesktop-десктопа);
+    //   on / не задан — текущее поведение (attach + ретраи + D3).
+    // Дефолт пересматривается после калибровки C2–C4 (гейт D5).
+    let attach_wanted = std::env::var("ENOT_VIDEO_ATTACH")
+        .map(|v| v.trim().to_ascii_lowercase() != "off")
+        .unwrap_or(true);
+    let mut attached = false;
+    if attach_wanted {
+        if let Err(e) = win::attach_input_desktop() {
+            set_last_err(shared, &format!("input desktop: {e}"));
+        } else {
+            attached = true;
+        }
     }
     log_line(&format!(
         "{{\"ev\":\"input\",\"desktop\":\"{}\",\"attach\":\"{}\"}}",
         proto::jstr(&ascii(&win::thread_desktop_name())),
-        if attached { "ok" } else { "failed" },
+        if attached { "ok" } else if attach_wanted { "failed" } else { "off" },
     ));
     // Выходим только по stop процесса. По broken НЕ выходим (ревью GLM-5.3:
     // процесс переживает обрыв и ждёт следующего клиента — умерший здесь поток
@@ -681,8 +695,9 @@ fn input_thread(shared: &Shared, privacy_sleep: &AtomicBool, rx: std::sync::mpsc
         }
         // Ретрай attach: на старте мог быть активен lock-screen/UAC (OpenInputDesktop
         // без WRITEOBJECTS падает) — повторяем на каждом job, пока не прицепимся,
-        // иначе ввод молча мёртв до конца сессии (ревью GLM-5.3).
-        if !attached {
+        // иначе ввод молча мёртв до конца сессии (ревью GLM-5.3). При
+        // ENOT_VIDEO_ATTACH=off стратегии attach нет вовсе.
+        if attach_wanted && !attached {
             match win::attach_input_desktop() {
                 Ok(()) => attached = true,
                 Err(e) => set_last_err(shared, &format!("input desktop: {e}")),
