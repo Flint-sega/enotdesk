@@ -266,6 +266,18 @@ sudo systemctl start enotdesk-server`.
 `sudo systemctl restart enotdesk-server`, БЕЗ install-server.sh. Флаг
 `--unit-name` в установщике — отдельное решение.
 
+**Нюанс (проверен живым апдейтом 08.10):** лабовый юнит исполняет код
+ТОП-ЛЕВЕЛА — `ExecStart=/usr/local/bin/node /opt/enotdesk/server/main.mjs`,
+симлинк `current` он НЕ использует (декоративен). «Замена каталога релиза» на
+практике = замена кода в `/opt/enotdesk` (стоп юнита → бэкапы → `rm -rf server
+hub assets web client/{lib,renderer,locales}` → распаковка тарбалла из рецепта
+`deploy-server.sh` → старт). node_modules НЕ трогать (пины зависимостей не
+менялись; imapflow/nodemailer уже стоят). Бэкапы перед заменой:
+`tar -czf /var/tmp/enotdesk-code-<stamp>.tgz …` + копия БД (юнит остановлен) в
+`/var/tmp/enotdesk-db-<stamp>/`; верхний уровень обратимости — снапшот ВМ
+(`qm snapshot 100 pre-w1w2`). После апдейта 08.10: schema_version=9,
+маршруты W1 живы (favorite POST/DELETE 200, sort=recent).
+
 ## Агенты на Windows-VM (установка/переустановка)
 
 Канон — `scripts/lab/lab-finalize.sh --stage agents` (на хосте) + `scripts/lab/agent-setup.ps1`
