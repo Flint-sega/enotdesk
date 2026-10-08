@@ -4,6 +4,7 @@
 export default {
   "app.tabHelp": "Get help",
   "app.tabOperator": "Operator",
+  "app.codename": "Crumb",
   "app.aria.workMode": "Working mode",
   "app.aria.settings": "Settings",
   "app.aria.getHelp": "Get help",
