@@ -635,3 +635,33 @@ machine env снят — нуджи продуктовые.
 
 Гигиена: сеанс закрыт кнопкой «Завершить» (1:33); стенды 102 удалены, креды
 стёрты (хост/102/Мак), таски удалены. 101 = 0.6.7-pre.4 online.
+
+## 08.10.2026 (ночь) — pre.6 sess-диагностика: «helper не в активной консоли» ОПРОВЕРГНУТ
+
+Сборка: **0.6.7-pre.6** (build-pre run 37705958089; первый запуск упал на
+тайминговом флейке `npm test` №13b (lifecycle, WS-wait 5.7 с) на Windows-раннере
+— перезапуск зелёный, код не менялся). Внутри — sess-диагностика 7f6df74:
+`sess=<ProcessIdToSessionId>/<WTSGetActiveConsoleSessionId>` в last_err
+(покрыты key- и cursor-set-пути; мышиные кнопки и колесо — пока без sess=).
+Деплой ВМ101: net stop → замена portable exe → net start; агент скопировал
+новый хелпер в ProgramData (findstr `sess=` в бинарнике — есть).
+
+| ID | Проверка | Результат |
+|----|----------|-----------|
+| S1 | Базлайн на прежнем хелпере (тот же стенд): свип + 6 кликов + клавиши | Видео LIVE «0% потерь», 2 мс; отказ = `cmd mouse button left up sent=false gle=5 (Access is denied.)` БЕЗ sess= — «до»-картина зафиксирована |
+| S2 | pre.6 прогон, тот же сценарий | Свип (SetCursorPos) ok; клики = gle=5; клавиши = `cmd key arrowdown down=false sent=false gle=5 (Access is denied.) sess=1/1` |
+
+**Вердикт S2:** `sess=1/1` — процесс хелпера находится В активной консольной
+сессии (ProcessIdToSessionId = WTSGetActiveConsoleSessionId). Публичная теория
+«helper не в той консоли» (SO 77413115, headless-ВМ) для нашей ВМ НЕ
+подтвердилась. Совокупно с ранее установленным (десктоп верный: attach
+READ|WRITE|SWITCH + D3-сверка имён + tray=yes; IL Medium/High не влияет;
+VIDEOIDLE=0 — дисплей не при чём) дешёвые объяснения исчерпаны: тот же сеанс,
+тот же десктоп — и SendInput честно Access Denied, тогда как SetCursorPos
+работает. Оставшийся кандидат — брокер ввода с токеном winlogon + пер-событийный
+desktop-switch (RustDesk/AnyDesk-схема, X4): security-постура, решение
+владельца.
+
+Гигиена: сеанс закрыт «Завершить»; одноразовый оператор удалён из staging;
+Edge-стенд ВМ102 остановлен; временные файлы убраны (ВМ101/хост/Мак).
+101 = 0.6.7-pre.6 online.
