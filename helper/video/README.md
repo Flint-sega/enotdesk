@@ -141,6 +141,17 @@ Commands (JSON object with `"cmd"`):
   The env is inherited by the service-spawned helper (session-spawn passes
   Environment=null), which is how the lab measures the service context.
   Default: off.
+- `ENOT_VIDEO_ATTACH=off` (env, X4): skip the input-desktop attach entirely —
+  the input thread injects from the `lpDesktop` desktop CreateProcessAsUserW
+  started it on. Reason it exists: on the lab BDA/QEMU VM the attached thread
+  gets an honest `ERROR_ACCESS_DENIED` on ALL `SendInput` (session/desktop
+  verified correct, `sess=1/1`), while the same-session injection without the
+  attach works (listener-verified clicks and keys). Real machines showed the
+  opposite (02.10: unattached injection is silently swallowed), so the default
+  stays `on` (attach + per-job retry + D3 recheck); the D3 recheck and the
+  retry block are skipped while the attach strategy is off. Revisit the
+  default after the C2–C4 calibration matrix. The input log line reports the
+  strategy: `"attach":"ok|failed|off"`.
 - The stdout `tick` line carries the window counters: `pr`, `empty`, `vp`,
   `probe` (same meaning as in the status document).
 
