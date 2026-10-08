@@ -162,6 +162,9 @@ function addrTrusted(addr, entry) {
 const HUB_ASSETS = {
   'app.mjs': { file: './web/app.mjs', type: 'text/javascript' },
   'card-url.mjs': { file: './web/card-url.mjs', type: 'text/javascript' },
+  // общая дизайн-система веб-поверхностей (сайт/оператор/консоль); шрифты
+  // при этом идут с серверного /brand/ — то же происхождение за Caddy
+  'theme.css': { file: '../web/theme.css', type: 'text/css' },
   'widget/w.mjs': { file: './widget/w.mjs', type: 'text/javascript' },
   'lib/i18n.mjs': { file: '../client/lib/i18n.mjs', type: 'text/javascript' },
   'locales/ru.mjs': { file: '../client/locales/ru.mjs', type: 'text/javascript' },
@@ -1014,10 +1017,10 @@ export function createHub(opts = {}) {
 
   function sendConsole(res, status, locale, state) {
     // CSP консоли — как у браузерного оператора: никакого inline-кода,
-    // свои ES-модули и same-origin fetch
+    // свои ES-модули и same-origin fetch; стили — theme.css + инлайн-блок
     res.writeHead(status, {
       'Content-Type': 'text/html; charset=utf-8',
-      'Content-Security-Policy': "default-src 'none'; script-src 'self'; style-src 'unsafe-inline'; img-src 'self'; connect-src 'self'",
+      'Content-Security-Policy': "default-src 'none'; script-src 'self'; style-src 'self' 'unsafe-inline'; font-src 'self'; img-src 'self'; connect-src 'self'",
       'X-Content-Type-Options': 'nosniff',
       'X-Frame-Options': 'DENY',
       'Cache-Control': 'no-store',

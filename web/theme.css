@@ -1,0 +1,252 @@
+/* ============================================================
+   EnotDesk · дизайн-система веб-поверхностей («Aurora»)
+   Одна на три страницы: сайт (/downloads, /invite), оператор
+   (/operator), консоль хаба (/hub). Токены + шрифты + базовые
+   примитивы; раскладка каждой страницы — в её собственном <style>.
+   Шрифты самохостятся с /brand/ (CSP font-src 'self'), кириллица
+   + латиница, переменные оси.
+   Hallmark · macrostructure: preserved-IA redesign · tone: атмосферная
+   тёмная консоль · anchor hue: mint 175 (бренд) · theme: custom Aurora
+   * axes: dark paper / rounded-sans display / cool accent
+   ============================================================ */
+
+/* ---- шрифты (self-hosted, font-display swap) ---- */
+@font-face {
+  font-family: 'Unbounded';
+  font-style: normal;
+  font-weight: 200 900;
+  font-display: swap;
+  src: url('/brand/unbounded-cyrillic.woff2') format('woff2');
+  unicode-range: U+0301, U+0400-045F, U+0490-0491, U+04B0-04B1, U+2116;
+}
+@font-face {
+  font-family: 'Unbounded';
+  font-style: normal;
+  font-weight: 200 900;
+  font-display: swap;
+  src: url('/brand/unbounded-latin.woff2') format('woff2');
+  unicode-range: U+0000-00FF, U+0131, U+0152-0153, U+02BB-02BC, U+02C6, U+02DA, U+02DC, U+2000-206F, U+20AC, U+2122, U+2212, U+FEFF, U+FFFD;
+}
+@font-face {
+  font-family: 'Inter';
+  font-style: normal;
+  font-weight: 100 900;
+  font-display: swap;
+  src: url('/brand/inter-cyrillic.woff2') format('woff2');
+  unicode-range: U+0301, U+0400-045F, U+0490-0491, U+04B0-04B1, U+2116;
+}
+@font-face {
+  font-family: 'Inter';
+  font-style: normal;
+  font-weight: 100 900;
+  font-display: swap;
+  src: url('/brand/inter-latin.woff2') format('woff2');
+  unicode-range: U+0000-00FF, U+0131, U+0152-0153, U+02BB-02BC, U+02C6, U+02DA, U+02DC, U+2000-206F, U+20AC, U+2122, U+2212, U+FEFF, U+FFFD;
+}
+@font-face {
+  font-family: 'JetBrains Mono';
+  font-style: normal;
+  font-weight: 100 800;
+  font-display: swap;
+  src: url('/brand/jetbrains-mono-cyrillic.woff2') format('woff2');
+  unicode-range: U+0301, U+0400-045F, U+0490-0491, U+04B0-04B1, U+2116;
+}
+@font-face {
+  font-family: 'JetBrains Mono';
+  font-style: normal;
+  font-weight: 100 800;
+  font-display: swap;
+  src: url('/brand/jetbrains-mono-latin.woff2') format('woff2');
+  unicode-range: U+0000-00FF, U+0131, U+0152-0153, U+02BB-02BC, U+02C6, U+02DA, U+02DC, U+2000-206F, U+20AC, U+2122, U+2212, U+FEFF, U+FFFD;
+}
+
+/* ---- токены ---- */
+:root {
+  color-scheme: dark;
+
+  /* поверхности */
+  --bg0: #050A13;            /* фон страницы */
+  --bg1: #0B1424;            /* карточка/панель */
+  --bg2: #0F1B30;            /* приподнятое (hover, вложенное) */
+  --bg-inset: #070F1D;       /* утопленное (поля ввода, логи) */
+
+  /* линии */
+  --line: rgba(154, 182, 220, .13);
+  --line-strong: rgba(154, 182, 220, .24);
+
+  /* текст */
+  --text: #E9F1FD;
+  --text-2: #A9BBD6;
+  --text-3: #6D81A6;
+
+  /* акцент бренда + служебные */
+  --accent: #35E0C4;
+  --accent-strong: #55F0D8;
+  --accent-ink: #04271F;
+  --accent-dim: rgba(53, 224, 196, .12);
+  --accent-line: rgba(53, 224, 196, .42);
+  --info: #7CB9FF;
+  --info-dim: rgba(124, 185, 255, .12);
+  --warn: #F2C94C;
+  --warn-dim: rgba(242, 201, 76, .12);
+  --danger: #FF8080;
+  --danger-dim: rgba(255, 128, 128, .1);
+
+  /* тени/свечения */
+  --shadow-card: 0 18px 50px rgba(2, 6, 14, .45);
+  --glow-accent: 0 0 0 1px rgba(53, 224, 196, .28), 0 10px 44px rgba(53, 224, 196, .14);
+  --highlight-top: inset 0 1px 0 rgba(255, 255, 255, .045);
+
+  /* шрифты */
+  --font-display: 'Unbounded', 'Inter', -apple-system, 'Segoe UI', sans-serif;
+  --font-body: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+  --font-mono: 'JetBrains Mono', ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+
+  /* 4pt-шкала */
+  --s1: 4px; --s2: 8px; --s3: 12px; --s4: 16px;
+  --s5: 24px; --s6: 32px; --s7: 48px; --s8: 72px;
+
+  /* радиусы */
+  --r-sm: 10px; --r-md: 14px; --r-lg: 20px;
+
+  /* движение */
+  --t-fast: 140ms;
+  --t-med: 240ms;
+  --ease: cubic-bezier(.22, .9, .3, 1);
+}
+
+/* ---- база ---- */
+* { box-sizing: border-box; }
+html { -webkit-text-size-adjust: 100%; }
+body {
+  margin: 0;
+  min-height: 100vh;
+  background: var(--bg0);
+  color: var(--text);
+  font: 16px/1.6 var(--font-body);
+  -webkit-font-smoothing: antialiased;
+}
+h1, h2, h3 { margin: 0; line-height: 1.2; font-weight: 700; }
+p { margin: 0; }
+img, svg { max-width: 100%; }
+a { color: var(--accent); }
+a:focus-visible, button:focus-visible, input:focus-visible, select:focus-visible, textarea:focus-visible, [tabindex]:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+  border-radius: 6px;
+}
+::selection { background: rgba(53, 224, 196, .28); }
+.hidden { display: none !important; }
+
+/* ---- атмосферный фон (тёплое свечение по углам, без узоров) ---- */
+.aurora-bg { position: relative; }
+.aurora-bg::before {
+  content: "";
+  position: fixed;
+  inset: 0;
+  pointer-events: none;
+  z-index: 0;
+  background:
+    radial-gradient(880px 520px at 8% -12%, rgba(53, 224, 196, .075), transparent 62%),
+    radial-gradient(820px 540px at 106% 112%, rgba(124, 155, 255, .065), transparent 62%);
+}
+.aurora-bg > * { position: relative; z-index: 1; }
+
+/* ---- типографические примитивы ---- */
+.display {
+  font-family: var(--font-display);
+  font-weight: 600;
+  letter-spacing: -.01em;
+}
+.mono { font-family: var(--font-mono); }
+.lead { color: var(--text-2); }
+
+/* ---- кнопки ---- */
+.btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: var(--s2);
+  background: var(--accent);
+  border: 1px solid transparent;
+  color: var(--accent-ink);
+  font: 600 15px/1.2 var(--font-body);
+  text-decoration: none;
+  padding: 12px 22px;
+  border-radius: 12px;
+  cursor: pointer;
+  transition: background var(--t-fast) var(--ease), transform var(--t-fast) var(--ease),
+    box-shadow var(--t-med) var(--ease), border-color var(--t-fast) var(--ease), color var(--t-fast) var(--ease);
+}
+.btn svg { width: 18px; height: 18px; flex: none; }
+.btn:hover { background: var(--accent-strong); transform: translateY(-1px); box-shadow: var(--glow-accent); }
+.btn:active { transform: translateY(0); box-shadow: none; }
+.btn:disabled { opacity: .5; cursor: default; transform: none; box-shadow: none; }
+.btn.ghost {
+  background: transparent;
+  color: var(--text);
+  border-color: var(--line-strong);
+}
+.btn.ghost:hover { border-color: var(--accent-line); color: var(--accent); background: var(--accent-dim); box-shadow: none; }
+.btn.danger { background: transparent; color: var(--danger); border-color: rgba(255, 128, 128, .5); }
+.btn.danger:hover { background: var(--danger-dim); border-color: var(--danger); box-shadow: none; }
+.btn.sm { padding: 7px 13px; font-size: 13.5px; border-radius: 10px; }
+
+/* ---- поля ввода ---- */
+input, select, textarea {
+  background: var(--bg-inset);
+  border: 1px solid var(--line);
+  border-radius: var(--r-sm);
+  color: var(--text);
+  font: 15px/1.4 var(--font-body);
+  padding: 11px 13px;
+  transition: border-color var(--t-fast) var(--ease), box-shadow var(--t-fast) var(--ease);
+}
+input::placeholder, textarea::placeholder { color: var(--text-3); }
+input:focus, select:focus, textarea:focus {
+  outline: none;
+  border-color: var(--accent-line);
+  box-shadow: 0 0 0 3px var(--accent-dim);
+}
+label { color: var(--text-2); font-size: 13.5px; }
+
+/* ---- карточки ---- */
+.card {
+  background: var(--bg1);
+  border: 1px solid var(--line);
+  border-radius: var(--r-md);
+  box-shadow: var(--highlight-top);
+}
+
+/* ---- чипы/бейджи (моно, с точкой статуса по модификатору) ---- */
+.chip, .badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  padding: 3px 11px;
+  color: var(--text-2);
+  font: 500 12.5px/1.4 var(--font-mono);
+  letter-spacing: .02em;
+  white-space: nowrap;
+}
+.chip.on, .badge.on { color: var(--accent); border-color: var(--accent-line); }
+.chip.off, .badge.off { color: var(--danger); border-color: rgba(255, 128, 128, .45); }
+.chip.warn { color: var(--warn); border-color: rgba(242, 201, 76, .45); }
+.chip.info { color: var(--info); border-color: rgba(124, 185, 255, .45); }
+
+/* ---- появление (мягкое, с уважением к reduced-motion) ---- */
+@media (prefers-reduced-motion: no-preference) {
+  .rise { animation: rise var(--t-med) var(--ease) backwards; }
+  .rise:nth-child(2) { animation-delay: 60ms; }
+  .rise:nth-child(3) { animation-delay: 120ms; }
+  .rise:nth-child(4) { animation-delay: 180ms; }
+}
+@keyframes rise {
+  from { opacity: 0; transform: translateY(8px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after { transition-duration: 1ms !important; animation-duration: 1ms !important; }
+}

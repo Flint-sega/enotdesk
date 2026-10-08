@@ -14,6 +14,14 @@ Main window — the client side with the one-time ID/password for the operator (
 
 ![Main window of EnotDesk](docs/screenshot-main.png)
 
+## Architecture
+
+How the project fits together — operator, server, hub, TURN relay, and the agent stack on the client machine (unattended sessions, video/input helper, RTC bridge):
+
+![EnotDesk architecture diagram](site/assets/architecture.png)
+
+An interactive version of this diagram (pan, path and lens views) is published on [GitHub Pages](https://flint-sega.github.io/enotdesk/architecture.html), next to the [project landing page](https://flint-sega.github.io/enotdesk/). The source of truth for the map is the code itself: `server/` (REST + signaling), `hub/` (tickets/chat widget), `client/` (Electron app and agent service), `helper/video/` (unattended video/input helper for Windows).
+
 ## How it works
 
 - **Client (receives help):** runs the portable app → “Get help” → shares the one-time ID and password with the operator via their own chat → approves the specific operator’s connection → chats, can hide the screen with one button (pause streaming) and switch the shared screen on the fly → closes the window when done. Access exists only while the app is open.
