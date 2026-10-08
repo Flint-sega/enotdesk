@@ -122,6 +122,14 @@ const BRAND_FILES = {
   'icon.png': 'image/png',
   'mascot-site.png': 'image/png',
   'mascot-app.png': 'image/png',
+  // веб-шрифты (self-hosted, кириллица+латиница, переменные оси) — CSP
+  // страниц разрешает шрифты только со своего происхождения (font-src 'self')
+  'unbounded-cyrillic.woff2': 'font/woff2',
+  'unbounded-latin.woff2': 'font/woff2',
+  'inter-cyrillic.woff2': 'font/woff2',
+  'inter-latin.woff2': 'font/woff2',
+  'jetbrains-mono-cyrillic.woff2': 'font/woff2',
+  'jetbrains-mono-latin.woff2': 'font/woff2',
 };
 
 // Статика браузерного оператора: только разрешённые имена из каталогов репозитория —
@@ -133,6 +141,7 @@ const OPERATOR_ASSETS = {
     files: {
       'operator.mjs': 'text/javascript', 'input-source.mjs': 'text/javascript',
       'team.js': 'text/javascript', 'invite.js': 'text/javascript',
+      'theme.css': 'text/css',
     },
   },
   'client/lib': {

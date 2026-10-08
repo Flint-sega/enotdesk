@@ -33,7 +33,7 @@ test('/downloads: hero, чипы, шаги, карточки платформ и
   assert.match(res.headers.get('content-type'), /^text\/html/);
   const html = await res.text();
 
-  assert.match(html, /<h1[^>]*>EnotDesk<\/h1>/);
+  assert.match(html, /<h1[^>]*>Enot<span class="grad">Desk<\/span><\/h1>/);
   assert.match(html, /Удалённая поддержка/);
   assert.match(html, /href="#download"/);
   assert.match(html, /href="#how"/);
@@ -42,7 +42,7 @@ test('/downloads: hero, чипы, шаги, карточки платформ и
   for (const chip of ['Безопасное соединение', 'Быстрое подключение', 'Без установки']) {
     assert.ok(html.includes(chip), `нет чипа «${chip}»`);
   }
-  assert.equal((html.match(/class="step"/g) || []).length, 4);
+  assert.equal((html.match(/class="step rise"/g) || []).length, 4);
   assert.match(html, /Скачать для вашей системы/);
   assert.match(html, /EnotDesk-3\.2\.1-mac-arm64\.zip/);
   assert.match(html, /href="\/api\/v1\/downloads-files\/EnotDesk-3\.2\.1-mac-arm64\.zip"/);
