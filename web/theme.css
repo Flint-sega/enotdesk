@@ -76,7 +76,10 @@
   --bg2: #0F1B30;            /* приподнятое (hover, вложенное) */
   --bg-inset: #0A1526;       /* утопленное (логи, история чата) */
   --field-bg: #0F1D36;       /* поле ввода: явно светлее фона страницы */
-  --field-line: rgba(154, 182, 220, .34);
+  --field-line: rgba(73, 205, 187, .35);  /* мятный подтон рамки — не серый */
+  --field-glow: 0 0 0 1px rgba(53, 208, 186, .14), 0 0 18px rgba(53, 208, 186, .10);
+  --field-glow-hover: 0 0 0 1px rgba(53, 208, 186, .24), 0 0 24px rgba(53, 208, 186, .17);
+  --field-glow-focus: 0 0 0 3px rgba(53, 208, 186, .18), 0 0 28px rgba(53, 208, 186, .32);
   --card: rgba(15, 27, 48, .55);   /* витринное стекло */
   --panel: rgba(13, 23, 41, .72);  /* рабочее стекло: плотнее — читаемость инструментов */
   --inset-glass: rgba(7, 15, 29, .5);
@@ -264,10 +267,12 @@ a:focus-visible, button:focus-visible, input:focus-visible, select:focus-visible
   .btn.sm { min-height: 44px; padding: 9px 14px; }
 }
 
-/* ---- поля ввода: светлые плиты с мятным свечением (владелец: поля не должны
-   сливаться с фоном — видно всегда, свечение усиливается на фокусе) ---- */
+/* ---- поля ввода: светлые плиты, светящиеся всегда (владелец: «современно» —
+   Linear/Raycast): покой/hover/focus — три уровня одного мятного гало,
+   а не включение только по фокусу. Тонкая мятная кромка + мягкое внешнее
+   свечение в покое; hover усиливает; focus — яркое гало + рамка акцента. ---- */
 input, select, textarea {
-  background: var(--field-bg);
+  background: linear-gradient(180deg, rgba(53, 208, 186, .05), rgba(53, 208, 186, 0) 58%), var(--field-bg);
   border: 1px solid var(--field-line);
   border-radius: var(--r-sm);
   color: var(--text);
@@ -275,25 +280,31 @@ input, select, textarea {
   min-height: 44px;
   padding: 11px 13px;
   box-shadow: inset 0 1px 0 rgba(255, 255, 255, .05),
-    0 0 16px rgba(53, 208, 186, .07),
+    var(--field-glow),
     0 4px 14px rgba(2, 6, 14, .35);
-  transition: border-color var(--t-fast) var(--ease), box-shadow var(--t-fast) var(--ease);
+  transition: border-color var(--t-fast) var(--ease), box-shadow var(--t-med) var(--ease);
 }
 input[type="checkbox"] {
   min-height: 0;
   width: 16px;
   height: 16px;
   padding: 0;
+  background: none;
   box-shadow: none;
   accent-color: var(--accent);
 }
-input::placeholder, textarea::placeholder { color: #7E92B5; }
-input:hover, select:hover, textarea:hover { border-color: rgba(154, 182, 220, .5); }
+input::placeholder, textarea::placeholder { color: #8CA0C2; }
+input:hover, select:hover, textarea:hover {
+  border-color: var(--accent-line);
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, .06),
+    var(--field-glow-hover),
+    0 4px 14px rgba(2, 6, 14, .35);
+}
 input:focus, select:focus, textarea:focus {
   outline: none;
   border-color: var(--accent-bright);
-  box-shadow: 0 0 0 3px rgba(53, 208, 186, .16), 0 0 26px rgba(53, 208, 186, .24),
-    inset 0 1px 0 rgba(255, 255, 255, .05);
+  background: linear-gradient(180deg, rgba(53, 208, 186, .08), rgba(53, 208, 186, 0) 58%), var(--field-bg);
+  box-shadow: var(--field-glow-focus), inset 0 1px 0 rgba(255, 255, 255, .06);
 }
 label { color: #C9D6EC; font-size: 13.5px; font-weight: 600; }
 

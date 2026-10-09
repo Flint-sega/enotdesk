@@ -213,7 +213,7 @@ h2{font:600 clamp(22px,2.6vw,30px)/1.2 var(--font-display);letter-spacing:-.01em
       </p>
     </div>
     <div class="hero-art">
-      <img src="assets/mascot-site.png" alt="Енот-помощник EnotDesk" width="736" height="372" data-i18n-alt="img.mascot.alt">
+      <img id="hero-mascot" src="assets/mascot-site.webp" alt="Енот-помощник EnotDesk" width="736" height="372" data-i18n-alt="img.mascot.alt">
     </div>
   </section>
 
@@ -265,7 +265,7 @@ h2{font:600 clamp(22px,2.6vw,30px)/1.2 var(--font-display);letter-spacing:-.01em
       <p class="sec-lead" data-i18n="how.lead">Схема ниже — живая карта проекта: сервер, хаб, службы агентов на трёх ОС, видео-хелпер и путь медиа между машинами.</p>
     </div>
     <figure class="shot rise">
-      <img src="assets/architecture.png" alt="Схема устройства EnotDesk: оператор, Caddy, сервер, хаб, TURN, машина клиента" loading="lazy" data-i18n-alt="img.arch.alt">
+      <img src="assets/architecture.webp" alt="Схема устройства EnotDesk: оператор, Caddy, сервер, хаб, TURN, машина клиента" loading="lazy" data-i18n-alt="img.arch.alt">
       <figcaption class="shot-note">
         <p data-i18n="how.cap">Полная схема: сигналинг, WebRTC-медиа, DataChannel-каналы (видео, ввод, чат, файлы, терминал) и службы на машине клиента.</p>
         <a class="btn ghost" href="architecture.html" data-i18n="how.btn">Открыть интерактивную схему</a>
@@ -402,6 +402,8 @@ h2{font:600 clamp(22px,2.6vw,30px)/1.2 var(--font-display);letter-spacing:-.01em
     document.title=dict["meta.title"];
     var meta=document.getElementById("meta-desc");
     if(meta)meta.setAttribute("content",dict["meta.desc"]);
+    var masc=document.getElementById("hero-mascot");
+    if(masc)masc.src=(lang==="en")?"assets/mascot-site-en.webp":"assets/mascot-site.webp";
     var btns=document.querySelectorAll(".lang-btn");
     for(var m=0;m<btns.length;m++){
       var on=btns[m].getAttribute("data-lang")===lang;

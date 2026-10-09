@@ -121,6 +121,7 @@ const BRAND_FILES = {
   'enot-icon.svg': 'image/svg+xml',
   'icon.png': 'image/png',
   'mascot-site.png': 'image/png',
+  'mascot-site.webp': 'image/webp',
   'mascot-app.png': 'image/png',
   // веб-шрифты (self-hosted, кириллица+латиница, переменные оси) — CSP
   // страниц разрешает шрифты только со своего происхождения (font-src 'self')
