@@ -74,7 +74,9 @@
   --bg0: #050A13;            /* фон страницы */
   --bg1: #0B1424;            /* панель */
   --bg2: #0F1B30;            /* приподнятое (hover, вложенное) */
-  --bg-inset: #070F1D;       /* утопленное (поля ввода, логи) */
+  --bg-inset: #0A1526;       /* утопленное (логи, история чата) */
+  --field-bg: #0F1D36;       /* поле ввода: явно светлее фона страницы */
+  --field-line: rgba(154, 182, 220, .34);
   --card: rgba(15, 27, 48, .55);   /* витринное стекло */
   --panel: rgba(13, 23, 41, .72);  /* рабочее стекло: плотнее — читаемость инструментов */
   --inset-glass: rgba(7, 15, 29, .5);
@@ -228,10 +230,10 @@ a:focus-visible, button:focus-visible, input:focus-visible, select:focus-visible
 .btn:active { transform: translateY(0); filter: none; box-shadow: var(--btn-shadow-active); }
 .btn:disabled { opacity: .5; cursor: default; transform: none; filter: none; box-shadow: none; }
 .btn.ghost {
-  background: transparent;
+  background: rgba(11, 20, 36, .6);
   color: var(--text);
-  border-color: var(--line-strong);
-  box-shadow: none;
+  border-color: rgba(154, 182, 220, .32);
+  box-shadow: var(--top-hl);
 }
 .btn.ghost:hover {
   border-color: var(--accent-line);
@@ -262,15 +264,19 @@ a:focus-visible, button:focus-visible, input:focus-visible, select:focus-visible
   .btn.sm { min-height: 44px; padding: 9px 14px; }
 }
 
-/* ---- поля ввода: утопленные плиты с мятным фокус-кольцом ---- */
+/* ---- поля ввода: светлые плиты с мятным свечением (владелец: поля не должны
+   сливаться с фоном — видно всегда, свечение усиливается на фокусе) ---- */
 input, select, textarea {
-  background: var(--bg-inset);
-  border: 1px solid var(--line);
+  background: var(--field-bg);
+  border: 1px solid var(--field-line);
   border-radius: var(--r-sm);
   color: var(--text);
   font: 15px/1.4 var(--font-body);
   min-height: 44px;
   padding: 11px 13px;
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, .05),
+    0 0 16px rgba(53, 208, 186, .07),
+    0 4px 14px rgba(2, 6, 14, .35);
   transition: border-color var(--t-fast) var(--ease), box-shadow var(--t-fast) var(--ease);
 }
 input[type="checkbox"] {
@@ -278,15 +284,18 @@ input[type="checkbox"] {
   width: 16px;
   height: 16px;
   padding: 0;
+  box-shadow: none;
   accent-color: var(--accent);
 }
-input::placeholder, textarea::placeholder { color: var(--text-3); }
+input::placeholder, textarea::placeholder { color: #7E92B5; }
+input:hover, select:hover, textarea:hover { border-color: rgba(154, 182, 220, .5); }
 input:focus, select:focus, textarea:focus {
   outline: none;
-  border-color: var(--accent-line);
-  box-shadow: 0 0 0 3px var(--accent-dim);
+  border-color: var(--accent-bright);
+  box-shadow: 0 0 0 3px rgba(53, 208, 186, .16), 0 0 26px rgba(53, 208, 186, .24),
+    inset 0 1px 0 rgba(255, 255, 255, .05);
 }
-label { color: var(--text-2); font-size: 13.5px; }
+label { color: #C9D6EC; font-size: 13.5px; font-weight: 600; }
 
 /* ---- карточка: стекло с верхней подсветкой и глубиной ---- */
 .card {
