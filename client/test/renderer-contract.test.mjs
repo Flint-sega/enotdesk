@@ -264,7 +264,21 @@ test('main: автоустановка при выходе только посл
   assert.match(mainJs, /updateInstallDecision/);
   assert.match(mainJs, /dialog\.showMessageBox/, 'подтверждение — dialog-баннер');
   assert.match(mainJs, /autoInstallOnAppQuit = false/, 'по умолчанию установка выключена');
-  assert.ok(!/autoInstallOnAppQuit = true\b/.test(mainJs), 'жёсткого включения установки быть не должно');
+  // U-4 (живая приёмка 09.10): electron-updater регистрирует quit-хук синхронно
+  // сразу после emit 'update-downloaded' и читает флаг именно в этот момент —
+  // true обязан стоять ДО первого await диалога, иначе подтверждение опаздывает
+  // и установка не происходит никогда. Отказ после диалога возвращает false
+  // (флаг перечитывается в quit-колбэке) — «без явного согласия ничего не
+  // ставим» сохранён.
+  const handler = /autoUpdater\.on\('update-downloaded',[\s\S]*?\n {2}\}\);/.exec(mainJs)?.[0] ?? '';
+  assert.ok(handler, 'обработчик update-downloaded найден');
+  const earlyTrue = handler.search(/autoInstallOnAppQuit = true/);
+  const dialogAsk = handler.search(/await dialog\.showMessageBox/);
+  const consentGate = handler.search(/autoInstallOnAppQuit = decision\.autoInstallOnAppQuit/);
+  assert.ok(earlyTrue >= 0, 'включение флага до await — иначе quit-хук не зарегистрируется');
+  assert.ok(dialogAsk >= 0, 'подтверждение — dialog-баннер внутри обработчика');
+  assert.ok(consentGate >= 0, 'после диалога флагом управляет решение человека');
+  assert.ok(earlyTrue < dialogAsk && dialogAsk < consentGate, 'порядок: true (регистрация) → await диалога → гейт согласием');
 });
 
 // ---- SEC-002 (desktop): входящий буфер оператора не пишется автоматически ----
