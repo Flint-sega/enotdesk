@@ -38,7 +38,7 @@ test('/downloads: hero, чипы, шаги, карточки платформ и
   assert.match(html, /href="#download"/);
   assert.match(html, /href="#how"/);
   assert.match(html, /href="\/invite"/);
-  assert.match(html, /\/brand\/mascot-site\.png/);
+  assert.match(html, /\/brand\/mascot-site\.webp/);
   for (const chip of ['Безопасное соединение', 'Быстрое подключение', 'Без установки']) {
     assert.ok(html.includes(chip), `нет чипа «${chip}»`);
   }
