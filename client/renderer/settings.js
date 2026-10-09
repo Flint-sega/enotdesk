@@ -1,5 +1,6 @@
 // Настройки: язык, адрес сервера, допуск HTTP, честный отчёт о разрешениях платформы.
 // Здесь же — статус сервера: чип на главном экране и экран первого запуска (B3).
+// И установка машины (службы агента) из клиента — только Windows (ADR 0029).
 
 import { $, enot, text, show, hide, setBusy, applyI18n } from './dom.js';
 import { t, setLocale, getLocale } from '../lib/i18n.mjs';
@@ -7,6 +8,47 @@ import { isNewerVersion, latestVersionFrom } from '../lib/version-check.mjs';
 
 $('btn-settings').addEventListener('click', openSettings);
 $('btn-settings-close').addEventListener('click', () => hide($('settings-overlay')));
+
+// ---------- машина (постоянный доступ): установка службы из клиента ----------
+
+// Секция только для Windows: на других платформах остаётся скрытой.
+enot.permissions().then((perms) => {
+  if (perms?.platform === 'win32') show($('agent-install-box'));
+}).catch(() => { /* платформа неизвестна — секция скрыта, это честно */ });
+
+// Причина отказа main -> ключ словаря; install-failed раскрывается хвостом журнала.
+const AGENT_FAIL_REASONS = {
+  'bad-code': 'settings.agent.badCode',
+  unsupported: 'settings.agent.unsupported',
+  'no-log': 'settings.agent.noLog',
+  'setup-verify': 'settings.agent.setupVerify',
+};
+
+$('btn-agent-install').addEventListener('click', async () => {
+  const btn = $('btn-agent-install');
+  const code = String($('agent-code').value ?? '').trim();
+  text($('agent-install-status'), '');
+  if (!code) {
+    text($('agent-install-status'), t('settings.agent.needCode'));
+    return;
+  }
+  setBusy(btn, true, t('settings.agent.installing'));
+  try {
+    const r = await enot.installAgentService(code);
+    if (r?.ok) {
+      text($('agent-install-status'), t('settings.agent.done'));
+      $('agent-code').value = '';
+    } else {
+      const key = AGENT_FAIL_REASONS[r?.reason] ?? 'settings.agent.fail';
+      const tail = String(r?.log ?? '').trim().split(/\r?\n/).filter(Boolean).pop() ?? String(r?.reason ?? '');
+      text($('agent-install-status'), t(key, { reason: tail.slice(-140) }));
+    }
+  } catch (err) {
+    text($('agent-install-status'), t('settings.agent.fail', { reason: err.message }));
+  } finally {
+    setBusy(btn, false);
+  }
+});
 
 function setChip(cls, key, vars) {
   const chip = $('server-chip');

@@ -48,13 +48,17 @@ export function updateDecision({ current, feedText }) {
   };
 }
 
-// Политика установки (SEC-010): mac/linux умеют автоустановку при выходе, но
-// включается она только после явного подтверждения человеком (dialog-баннер в
-// main); по умолчанию — только уведомление. Windows-сборка v1 — portable .exe,
-// самообновление такой формат не поддерживает: только уведомление со ссылкой
-// на релизы. askConfirm — показать ли диалог подтверждения на update-downloaded.
-export function updateInstallDecision({ platform = process.platform, confirmed = false } = {}) {
-  if (platform === 'win32') {
+// Политика установки (SEC-010): автоустановка при выходе включается только
+// после явного подтверждения человеком (dialog-баннер в main); по умолчанию —
+// только уведомление. Windows portable .exe самообновление не поддерживает
+// (запущенный самораспаковщик нельзя заменить) — только уведомление со
+// ссылкой на релизы; установленная сборка (NSIS в Program Files) обновляется
+// как mac/linux — electron-updater поднимает установщик при выходе
+// (ADR 0029). winInstalled решает вызывающий (main: отсутствие
+// PORTABLE_EXECUTABLE_FILE у упакованного win32-exe). askConfirm — показать
+// ли диалог подтверждения на update-downloaded.
+export function updateInstallDecision({ platform = process.platform, confirmed = false, winInstalled = false } = {}) {
+  if (platform === 'win32' && !winInstalled) {
     return { autoDownload: false, autoInstallOnAppQuit: false, askConfirm: false };
   }
   return {

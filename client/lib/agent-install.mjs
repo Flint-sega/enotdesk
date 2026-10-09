@@ -1,0 +1,217 @@
+// Установка машины (службы агента) прямо из работающего клиента — Windows
+// (ADR 0029). Чистые функции без Electron: генератор install-скрипта, строгая
+// валидация входа и выбор источника установки. Весь IO (скачивание setup.exe,
+// запуск с UAC, чтение журнала) живёт в main.mjs — здесь только
+// детерминированный текст, шов для юнит-тестов.
+//
+// Контракт действий скрипта зеркалит client/agent-service/windows-install.bat:
+// настройки агента — в профиль LocalSystem без BOM (JSON.parse падает на BOM),
+// права по well-known SID (имена групп локализованы), sc.exe create/config
+// идемпотентно, Environment+AppEnvironment (SCM читает только Environment),
+// failure actions 5/10/30 с. Отличия от bat: start= delayed-auto — холодная
+// загрузка не роняет старт службы (таймаут старта SCM failure-действиями не
+// лечится, ADR 0026/0029), и одноразовый код регистрации кладётся во
+// Environment только до сохранения токена — после чего обязан быть стёрт
+// (одноразовый секрет в реестре хранить нельзя).
+
+import { UPDATE_REPO, updateFeedUrl } from './updater.mjs';
+
+export const SVC_NAME = 'EnotDeskAgent';
+
+// Приложение, которое ставит NSIS-setup (electron-builder perMachine).
+export const APP_EXE_STANDARD = '%ProgramFiles%\\EnotDesk\\EnotDesk.exe';
+
+export const RESULT_OK = 'ENOT_INSTALL_RESULT=OK';
+
+// --- Валидация входа. Всё, что попадает в текст .cmd, проходит строгий
+// --- белый список символов: подстановки без проверки не существует.
+
+export function safeCode(code) {
+  const s = String(code ?? '').trim();
+  return /^[A-Za-z0-9_-]{8,300}$/.test(s) ? s : null;
+}
+
+export function safeServerUrl(url) {
+  const s = String(url ?? '').trim();
+  return /^https?:\/\/[A-Za-z0-9._-]+(:\d{1,5})?([/?][A-Za-z0-9._~=/-]*)?$/.test(s) ? s : null;
+}
+
+export function safeName(name) {
+  const s = String(name ?? '').trim();
+  return /^[A-Za-z0-9 ._-]{1,60}$/.test(s) ? s : null;
+}
+
+// --- Источник файлов установки.
+// Портативная сборка (electron-builder portable) сообщает о себе переменной
+// PORTABLE_EXECUTABLE_FILE. Саму портативку службой делать нельзя: она
+// самораспаковывается на каждый старт (медленный старт службы — класс 7009 на
+// холодной загрузке). Берём полноценный setup.exe из релиз-фида. Установленная
+// (NSIS в Program Files) — используем как есть.
+export function setupFeedUrl(repo = UPDATE_REPO) {
+  const base = updateFeedUrl(repo);
+  return base ? `${base}EnotDesk-win-x64-setup.exe` : null;
+}
+
+export function resolveInstallSource({ execPath = '', portableFile = process.env.PORTABLE_EXECUTABLE_FILE ?? '' } = {}) {
+  if (portableFile) {
+    const setupUrl = setupFeedUrl();
+    return setupUrl ? { mode: 'download', setupUrl } : null;
+  }
+  const p = String(execPath ?? '').toLowerCase().replace(/\//g, '\\');
+  if (p.includes('\\program files\\')) return { mode: 'local', appExe: String(execPath) };
+  return null;
+}
+
+// --- Генератор install-скрипта (.cmd). Запускается с правами администратора
+// --- (UAC-запрос показывает Windows), вывод уводится в журнал обёрткой.
+// Требует: serverUrl (валидный), code (валидный, обязателен — регистрация
+// машины на сервере), agentName (валидный), и ровно один источник: setupExe
+// (тихая установка setup /S, потом стандартный путь) или appExe (уже
+// установленное приложение).
+export function buildInstallScript({ serverUrl, code, agentName, appExe = '', setupExe = '', svcName = SVC_NAME } = {}) {
+  const url = safeServerUrl(serverUrl);
+  if (!url) throw new Error('invalid-server-url');
+  const safe = safeCode(code);
+  if (!safe) throw new Error('invalid-code');
+  if (!/^[A-Za-z0-9_-]{1,60}$/.test(String(svcName))) throw new Error('invalid-svc-name');
+  const name = safeName(agentName) ?? 'PC';
+  const setup = String(setupExe ?? '').trim();
+  const app = String(appExe ?? '').trim();
+  if (!setup && !app) throw new Error('invalid-source');
+  if (setup && app) throw new Error('invalid-source');
+  for (const [k, v] of [['setupExe', setup], ['appExe', app]]) {
+    if (v && !/^[A-Za-z]:\\[A-Za-z0-9._\- \\]+$/.test(v)) throw new Error(`invalid-${k}`);
+  }
+
+  const APP = setup ? APP_EXE_STANDARD : app;
+  const ENV_BASE = 'EDESK_AGENT=1\\0EDESK_AGENT_NAME=%AGENT_NAME%\\0EDESK_AGENT_SVC=1';
+  const svcKey = `HKLM\\SYSTEM\\CurrentControlSet\\Services\\${svcName}`;
+
+  const setupBlock = setup
+    ? [
+        'if "%SETUP_EXE%"=="" goto :have-app',
+        'if exist "%APP_EXE%" goto :have-app',
+    'echo Installing application (setup /S)...',
+    '"%SETUP_EXE%" /S',
+    'if errorlevel 1 (',
+    '  echo ENOT_INSTALL_RESULT=FAIL setup',
+    '  exit /b 1',
+    ')',
+    'set /a TRIES=0',
+        ':wait-setup',
+        'if exist "%APP_EXE%" goto :have-app',
+        'powershell.exe -NoProfile -Command "Start-Sleep -Seconds 2"',
+        'set /a TRIES=%TRIES%+1',
+        'if %TRIES% lss 90 goto :wait-setup',
+        'echo ENOT_INSTALL_RESULT=FAIL setup-timeout',
+        'exit /b 1',
+      ]
+    : [];
+
+  return [
+    '@echo off',
+    'setlocal EnableExtensions',
+    'REM Generated by EnotDesk client (ADR 0029). ASCII only: the result marker',
+    'REM is parsed by the main process, keep marker lines pure ASCII.',
+    `set "APP_EXE=${APP}"`,
+    `set "SETUP_EXE=${setup}"`,
+    `set "SERVER_URL=${url}"`,
+    `set "AGENT_NAME=${name}"`,
+    `set "AGENT_CODE=${safe}"`,
+    `set "SVC_NAME=${svcName}"`,
+    'set "AGENT_PROFILE=%SystemRoot%\\System32\\config\\systemprofile\\AppData\\Roaming\\EnotDesk\\agent"',
+    'set "ENV_BASE=' + ENV_BASE + '"',
+    '',
+    ...setupBlock,
+    ':have-app',
+    'if not exist "%APP_EXE%" (',
+    '  echo ENOT_INSTALL_RESULT=FAIL no-app-exe',
+    '  exit /b 1',
+    ')',
+    '',
+    'REM Settings for the LocalSystem profile (the service does not run as the',
+    'REM admin). WriteAllText = UTF-8 WITHOUT BOM; rights by well-known SIDs',
+    'REM (group names are localized).',
+    'powershell.exe -NoProfile -Command "$d=\'%AGENT_PROFILE%\'; New-Item -ItemType Directory -Force -Path $d | Out-Null; [System.IO.File]::WriteAllText((Join-Path $d \'settings.json\'), (@{serverUrl=\'%SERVER_URL%\'} | ConvertTo-Json) + [Environment]::NewLine); icacls $d /inheritance:r /grant \'*S-1-5-18:(OI)(CI)F\' /grant \'*S-1-5-32-544:(OI)(CI)F\' | Out-Null; exit $LASTEXITCODE"',
+    'if errorlevel 1 (',
+    '  echo ENOT_INSTALL_RESULT=FAIL settings',
+    '  exit /b 1',
+    ')',
+    '',
+    'REM Idempotent create-or-update; delayed start survives cold boots (a start',
+    'REM timeout is not a failure for SCM recovery actions, ADR 0026/0029).',
+    'sc.exe query "%SVC_NAME%" >nul 2>&1',
+    'if errorlevel 1 (',
+    '  sc.exe create "%SVC_NAME%" binPath= "\\"%APP_EXE%\\"" start= delayed-auto obj= LocalSystem DisplayName= "EnotDesk Agent"',
+    '  if errorlevel 1 goto :fail',
+    ') else (',
+    '  sc.exe config "%SVC_NAME%" binPath= "\\"%APP_EXE%\\"" start= delayed-auto obj= LocalSystem DisplayName= "EnotDesk Agent"',
+    '  if errorlevel 1 goto :fail',
+    ')',
+    `sc.exe description "%SVC_NAME%" "EnotDesk: unattended agent. Auto-registers on the EnotDesk server, waits for operator claims. No window by design; managed via this service (see docs/AGENT.md)."`,
+    'if errorlevel 1 goto :fail',
+    '',
+    'REM Service process env. SCM reads Environment only; AppEnvironment is kept',
+    'REM in sync for wrapper compatibility. The one-time code goes in temporarily',
+    'REM and MUST be rewritten away after the token is saved (one-time secret).',
+    'set "ENV_SET=%ENV_BASE%"',
+    'if not "%AGENT_CODE%"=="" set "ENV_SET=%ENV_BASE%\\0EDESK_AGENT_CODE=%AGENT_CODE%"',
+    `reg add "${svcKey}" /v Environment /t REG_MULTI_SZ /d "%ENV_SET%" /f`,
+    'if errorlevel 1 goto :fail',
+    `reg add "${svcKey}" /v AppEnvironment /t REG_MULTI_SZ /d "%ENV_SET%" /f`,
+    'if errorlevel 1 goto :fail',
+    'sc.exe failure "%SVC_NAME%" reset= 86400 actions= restart/5000/restart/10000/restart/30000',
+    'if errorlevel 1 goto :fail',
+    '',
+    'REM Restart if running (locale-independent status via PowerShell), then start.',
+    'powershell.exe -NoProfile -Command "if ((Get-Service -Name \'%SVC_NAME%\' -ErrorAction SilentlyContinue).Status -eq \'Running\') { exit 0 } else { exit 1 }"',
+    'if errorlevel 1 goto :ensure-started',
+    'sc.exe stop "%SVC_NAME%" >nul 2>&1',
+    'set /a WAITN=0',
+    ':wait-stop',
+    'powershell.exe -NoProfile -Command "Start-Sleep -Seconds 2"',
+    'powershell.exe -NoProfile -Command "if ((Get-Service -Name \'%SVC_NAME%\' -ErrorAction SilentlyContinue).Status -eq \'Running\') { exit 0 } else { exit 1 }"',
+    'if errorlevel 1 goto :ensure-started',
+    'set /a WAITN=%WAITN%+1',
+    'if %WAITN% lss 10 goto :wait-stop',
+    ':ensure-started',
+    'sc.exe start "%SVC_NAME%" >nul 2>&1',
+    'set /a WAITN=0',
+    ':wait-run',
+    'powershell.exe -NoProfile -Command "Start-Sleep -Seconds 2"',
+    'powershell.exe -NoProfile -Command "if ((Get-Service -Name \'%SVC_NAME%\' -ErrorAction SilentlyContinue).Status -eq \'Running\') { exit 0 } else { exit 1 }"',
+    'if errorlevel 1 (',
+    '  set /a WAITN=%WAITN%+1',
+    '  if %WAITN% lss 10 goto :wait-run',
+    '  echo ENOT_INSTALL_RESULT=FAIL start',
+    '  exit /b 1',
+    ')',
+    '',
+    'REM One-time registration: wait for the token in the LocalSystem profile.',
+    'set "TOKEN_OK=0"',
+    'if "%AGENT_CODE%"=="" set "TOKEN_OK=1"',
+    'set /a TRIES=0',
+    ':wait-token',
+    'if exist "%AGENT_PROFILE%\\agent-token.json" set "TOKEN_OK=1"',
+    'if "%TOKEN_OK%"=="1" goto :cleanup-env',
+    'powershell.exe -NoProfile -Command "Start-Sleep -Seconds 3"',
+    'set /a TRIES=%TRIES%+1',
+    'if %TRIES% lss 40 goto :wait-token',
+    ':cleanup-env',
+    'REM Rewrite the env WITHOUT the one-time code (always, success or not).',
+    `reg add "${svcKey}" /v Environment /t REG_MULTI_SZ /d "%ENV_BASE%" /f >nul`,
+    `reg add "${svcKey}" /v AppEnvironment /t REG_MULTI_SZ /d "%ENV_BASE%" /f >nul`,
+    'if "%TOKEN_OK%"=="1" goto :report-ok',
+    'echo ENOT_INSTALL_RESULT=FAIL register-timeout',
+    'exit /b 1',
+    ':report-ok',
+    'echo ENOT_INSTALL_RESULT=OK',
+    'exit /b 0',
+    ':fail',
+    'echo ENOT_INSTALL_RESULT=FAIL sc',
+    'exit /b 1',
+    '',
+    // CRLF обязателен: cmd-переходы по меткам ненадёжны с LF-файлами
+    // (goto пропускает метки, ревью ADR 0029).
+  ].join('\r\n');
+}

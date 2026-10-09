@@ -18,6 +18,7 @@ import { createInputPipeline } from './lib/input-pipeline.mjs';
 import { INPUT_KEYS } from './lib/protocol.mjs';
 import { normalizeServerUrl } from './lib/server-url.mjs';
 import { resolveServerUrl, DEFAULT_SERVER_URL } from './lib/first-run.mjs';
+import { safeCode, resolveInstallSource, buildInstallScript } from './lib/agent-install.mjs';
 import { parseJoinLink, reportJoin } from './lib/join.mjs';
 import { parseInviteLink } from './lib/invite-link.mjs';
 import { createAgent, createAgentApi, createIceServersFetcher } from './lib/agent.mjs';
@@ -105,6 +106,11 @@ const SMOKE = process.env.EDESK_SMOKE === '1';
 // служба и обычный клиент работают на одной машине одновременно.
 const AGENT = process.env.EDESK_AGENT === '1';
 if (AGENT) app.setPath('userData', path.join(app.getPath('userData'), 'agent'));
+// Установленная (NSIS в Program Files) Windows-сборка против портативной:
+// electron-builder portable выставляет PORTABLE_EXECUTABLE_FILE, установочная —
+// нет. Решает политику автообновления (ADR 0029: установленная обновляется
+// сама после подтверждения, портативная — только уведомление).
+const WIN_INSTALLED = process.platform === 'win32' && !process.env.PORTABLE_EXECUTABLE_FILE;
 // EDESK_SMOKE_FIRSTRUN=1 (вместе с EDESK_SMOKE=1): изолированный профиль без
 // settings.json — честный прогон и скриншот первого запуска, данные не трогаем.
 if (SMOKE && process.env.EDESK_SMOKE_FIRSTRUN === '1') {
@@ -397,8 +403,8 @@ function sendToRenderer(channel, payload) {
 // electron-updater на GitHub Releases (latest*.yml к релизу прикладывает release.yml).
 // electron-updater — мягкая зависимость: если пакета нет, честно логируем и остаёмся
 // на уведомлениях по фиду (fetch + чистый парсер updater.mjs), установку не подменяем.
-// Windows-сборка v1 — portable .exe: автоустановку такой формат не поддерживает,
-// поэтому только уведомление со ссылкой на страницу релизов (update.manualBanner).
+// Windows: установленная сборка (NSIS) обновляется как mac/linux; портативный .exe —
+// только уведомление со ссылкой на страницу релизов (update.manualBanner), ADR 0029.
 const UPDATE_CHECK_MS = 24 * 60 * 60 * 1000;
 
 function startUpdater() {
@@ -420,10 +426,12 @@ function startUpdater() {
     setInterval(check, UPDATE_CHECK_MS);
     return;
   }
-  // SEC-010: Windows portable не умеет автоустановку (только уведомление);
-  // mac/linux качают заранее, но «применить при выходе» — только после явного
-  // подтверждения человеком (диалог на update-downloaded ниже). Дефолт — не ставить.
-  const installPolicy = updateInstallDecision({ platform: process.platform });
+  // SEC-010: mac/linux и установленная Windows-сборка качают заранее, но
+  // «применить при выходе» — только после явного подтверждения человеком
+  // (диалог на update-downloaded ниже). Дефолт — не ставить. Портативный
+  // .exe Windows самоустановку не поддерживает (запущенный самораспаковщик
+  // не заменить) — только уведомление.
+  const installPolicy = updateInstallDecision({ platform: process.platform, winInstalled: WIN_INSTALLED });
   autoUpdater.autoDownload = installPolicy.autoDownload;
   autoUpdater.autoInstallOnAppQuit = false;
   try {
@@ -870,6 +878,80 @@ function registerIpc() {
     const saved = saveSettings();
     api = makeApi();
     return { ...saved, serverUrl: settings.serverUrl };
+  });
+
+  // Установка машины (службы агента) из работающего клиента (ADR 0029).
+  // Привилегированную часть выполняет сам человек в окне UAC (Start-Process
+  // -Verb RunAs): main только скачивает setup.exe для портативки, генерирует
+  // install-скрипт (чистый генератор — client/lib/agent-install.mjs, тесты
+  // agent-install.test.mjs), ждёт и разбирает журнал. Только упакованное
+  // приложение, только Windows.
+  ipcMain.handle('enot:installAgentService', async (e, payload = {}) => {
+    guard(e);
+    if (process.platform !== 'win32' || !app.isPackaged) return { ok: false, reason: 'unsupported' };
+    const code = safeCode(payload?.code);
+    if (!code) return { ok: false, reason: 'bad-code' };
+    const src = resolveInstallSource({ execPath: process.execPath, portableFile: process.env.PORTABLE_EXECUTABLE_FILE ?? '' });
+    if (!src) return { ok: false, reason: 'unsupported' };
+    // Отдельный временный каталог: предсказуемые имена в общем %TEMP% —
+    // конфликт двух установок и окно TOCTOU (ревью ADR 0029 P2-1).
+    const work = fs.mkdtempSync(path.join(app.getPath('temp'), 'enot-install-'));
+    const scriptPath = path.join(work, 'install.cmd');
+    const runPath = path.join(work, 'run.cmd');
+    const logPath = path.join(work, 'install.log');
+    try {
+      let setupExe = '';
+      if (src.mode === 'download') {
+        if (!src.setupUrl) return { ok: false, reason: 'unsupported' };
+        // Установщик пойдёт под UAC — сверяем sha256 с checksums того же фида
+        // (ревью ADR 0029 P2-2: без проверки 'latest' позволяет и подмену, и даунгрейд).
+        const sumsUrl = src.setupUrl.replace(/EnotDesk-win-x64-setup\.exe$/, 'checksums-sha256.txt');
+        const sums = await (await fetch(sumsUrl, { redirect: 'follow' })).text();
+        const expect = /([a-f0-9]{64})\s+\*?EnotDesk-win-x64-setup\.exe/i.exec(sums)?.[1]?.toLowerCase();
+        if (!expect) return { ok: false, reason: 'setup-verify' };
+        const res = await fetch(src.setupUrl, { redirect: 'follow' });
+        if (!res.ok) throw new Error(`setup HTTP ${res.status}`);
+        const len = Number(res.headers.get('content-length') ?? 0);
+        if (len > 600_000_000) throw new Error('setup too big');
+        const buf = Buffer.from(await res.arrayBuffer());
+        if (buf.length < 1_000_000) throw new Error('setup too small');
+        if (crypto.createHash('sha256').update(buf).digest('hex') !== expect) return { ok: false, reason: 'setup-verify' };
+        setupExe = path.join(work, 'EnotDesk-win-x64-setup.exe');
+        fs.writeFileSync(setupExe, buf);
+      }
+      const script = buildInstallScript({
+        serverUrl: settings.serverUrl,
+        code,
+        agentName: os.hostname(),
+        appExe: src.appExe ?? '',
+        setupExe,
+      });
+      // Обёртка уводит вывод elevated-скрипта в журнал: у cmd редирект живёт
+      // внутри call, поэтому PowerShell-команда остаётся без вложенных кавычек.
+      fs.writeFileSync(scriptPath, script);
+      fs.writeFileSync(runPath, `@echo off\r\ncall "${scriptPath}" > "${logPath}" 2>&1\r\n`);
+      const ps = `Start-Process -FilePath '${runPath.replace(/'/g, "''")}' -Verb RunAs -Wait`;
+      let psExit = null;
+      await new Promise((resolve) => {
+        // 900 с: бюджет скрипта ~180 с (setup-ожидание) + установка + 20 с
+        // (рестарт службы) + 120 с (регистрация) + запас на медленный диск;
+        // таймаут убивает powershell, но не elevated-cmd — см. ADR 0029.
+        const child = nodeSpawn('powershell.exe', ['-NoProfile', '-ExecutionPolicy', 'Bypass', '-Command', ps], { windowsHide: true, timeout: 900_000 });
+        child.on('close', (c) => { psExit = c; resolve(); });
+        child.on('error', () => resolve());
+      });
+      const log = fs.existsSync(logPath) ? fs.readFileSync(logPath, 'utf8').slice(-4000) : '';
+      // Пустой журнал — установщик не дошёл до редиректа: отказ в UAC или
+      // системная ошибка запуска (честно отличаем от провала самой установки,
+      // ревью ADR 0029 P1-3); код выхода обёртки прикладываем для диагностики.
+      if (!log) return { ok: false, reason: 'no-log', log: `powershell exit ${psExit ?? '?'}` };
+      if (/ENOT_INSTALL_RESULT=OK\r?\n?$/.test(log.trimEnd())) return { ok: true };
+      return { ok: false, reason: 'install-failed', log };
+    } catch (err) {
+      return { ok: false, reason: 'install-failed', log: String(err?.message ?? err) };
+    } finally {
+      try { fs.rmSync(work, { recursive: true, force: true }); } catch { /* уже нет */ }
+    }
   });
 
   ipcMain.handle('enot:request', async (e, operation, payload) => {

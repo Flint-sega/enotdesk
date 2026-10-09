@@ -8,7 +8,7 @@
 1. Пишет `settings.json` (адрес сервера) в профиль агента. Служба работает от `LocalSystem`,
    поэтому профиль — `%SystemRoot%\System32\config\systemprofile\AppData\Roaming\EnotDesk\agent`
    (не `%APPDATA%` администратора, запускающего скрипт).
-2. `sc.exe create ... start= auto obj= LocalSystem DisplayName= "EnotDesk Agent"` — автостарт при загрузке.
+2. `sc.exe create ... start= delayed-auto obj= LocalSystem DisplayName= "EnotDesk Agent"` — автостарт при загрузке.
 3. `sc.exe description ...` — описание службы.
 4. Переменные процесса службы через `reg add ...\Services\EnotDeskAgent` (REG_MULTI_SZ):
    `EDESK_AGENT=1` (headless-режим), `EDESK_AGENT_SVC=1` (родительский SCM-режим — процесс сам

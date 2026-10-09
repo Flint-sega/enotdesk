@@ -522,6 +522,15 @@
           <label for="settings-insecure"><input type="checkbox" id="settings-insecure"> <span data-i18n="settings.allowHttp">Разрешить HTTP без шифрования (только для тестового сервера)</span></label>
           <p class="note" data-i18n="settings.allowHttpNote">Трафик без шифрования — подходит только для тестового сервера, не для интернета.</p>
         </div>
+        <div class="field hidden" id="agent-install-box">
+          <label for="agent-code" data-i18n="settings.agent.title">Машина (постоянный доступ)</label>
+          <p class="note" data-i18n="settings.agent.hint">Установить службу агента, чтобы подключаться к этому компьютеру без участия человека. Нужны права администратора и одноразовый код машины от администратора сервера.</p>
+          <input id="agent-code" type="password" placeholder="Одноразовый код машины" data-i18n-placeholder="settings.agent.codePlaceholder">
+          <div class="row gap">
+            <button id="btn-agent-install" class="btn" data-i18n="settings.agent.install">Установить службу</button>
+          </div>
+          <p id="agent-install-status" class="note" role="status"></p>
+        </div>
         <p id="settings-status" class="note" role="status"></p>
         <p id="settings-error" class="err-text" role="alert"></p>
         <div class="row gap">

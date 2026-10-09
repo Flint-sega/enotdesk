@@ -92,6 +92,22 @@ test('SEC-010: win32 portable — никогда не качает и не ст�
   );
 });
 
+test('SEC-010: win32 установленная (NSIS) — обновляется как mac/linux, ставит только после подтверждения', () => {
+  assert.deepEqual(
+    updateInstallDecision({ platform: 'win32', winInstalled: true }),
+    { autoDownload: true, autoInstallOnAppQuit: false, askConfirm: true },
+  );
+  assert.deepEqual(
+    updateInstallDecision({ platform: 'win32', winInstalled: true, confirmed: true }),
+    { autoDownload: true, autoInstallOnAppQuit: true, askConfirm: false },
+  );
+  // флаг без win32 ничего не меняет (другие платформы и так авто)
+  assert.deepEqual(
+    updateInstallDecision({ platform: 'linux', winInstalled: true }),
+    { autoDownload: true, autoInstallOnAppQuit: false, askConfirm: true },
+  );
+});
+
 test('SEC-010: подтверждение принимается только явным true', () => {
   assert.equal(updateInstallDecision({ platform: 'darwin', confirmed: 'yes' }).autoInstallOnAppQuit, false);
   assert.equal(updateInstallDecision({ platform: 'darwin', confirmed: 1 }).autoInstallOnAppQuit, false);
