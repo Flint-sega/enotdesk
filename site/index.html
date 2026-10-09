@@ -31,7 +31,7 @@
   --top-hl:inset 0 1px 0 rgba(255,255,255,.05);
   --head-bg:rgba(5,10,19,.72);--inset-glass:rgba(7,15,29,.5);--dot:rgba(157,190,224,.16);
   --bg-glows:radial-gradient(1000px 620px at 12% -10%,rgba(53,208,186,.1),transparent 60%),radial-gradient(900px 600px at 108% 110%,rgba(124,155,255,.08),transparent 60%);
-  --hero-glow:radial-gradient(60% 60% at 50% 55%,rgba(53,208,186,.18),transparent 70%);
+  --hero-glow:radial-gradient(60% 62% at 50% 52%,rgba(53,208,186,.16),transparent 72%);
   --tile-tint:radial-gradient(460px 220px at 14% 0%,rgba(53,208,186,.09),transparent 70%);
   --glow-soft:0 0 90px rgba(53,208,186,.06);
   --btn-shadow:inset 0 1px 0 rgba(255,255,255,.25),0 10px 30px rgba(53,208,186,.26);
@@ -86,16 +86,17 @@ h1{font:600 clamp(46px,6.4vw,78px)/1.04 var(--font-display);letter-spacing:-.015
 .btn:active{transform:translateY(0);box-shadow:var(--btn-shadow-active)}
 .btn.ghost{background:transparent;color:var(--text);border-color:var(--line-strong);box-shadow:none}
 .btn.ghost:hover{border-color:var(--accent-line);color:var(--accent);background:var(--accent-dim);box-shadow:none;filter:none}
-/* маскот: оформленная арт-панель — ореол свечения под ней, кайма в тон акцента,
-   внутреннее виньетирование по нижнему краю (никаких «вырезанных» краёв) */
+/* маскот: как на проде (server/pages.mjs .mascot) — картинка растворяется в фон
+   фейд-маской по краям; ::before — мягкий амбиент-ореол, приподнимающий тон
+   страницы под артом, чтобы переход фона был невидим; снизу — drop-shadow */
 .hero-art{position:relative;justify-self:end;width:100%;max-width:600px}
-.hero-art::before{content:"";position:absolute;inset:12% 2%;background:var(--hero-glow);filter:blur(46px);z-index:0}
-.hero-art img{position:relative;display:block;width:100%;height:auto;z-index:1;border-radius:22px;
-  border:1px solid rgba(53,208,186,.22);
-  box-shadow:0 0 0 1px rgba(5,10,19,.55),0 26px 70px rgba(2,6,14,.5),0 0 70px rgba(53,208,186,.13)}
-.hero-art::after{content:"";position:absolute;inset:0;z-index:2;border-radius:22px;pointer-events:none;
-  box-shadow:inset 0 0 0 1px rgba(255,255,255,.05),inset 0 -46px 90px rgba(5,10,19,.5);
-  background:linear-gradient(180deg,rgba(5,10,19,.06),rgba(5,10,19,0) 26%,rgba(5,10,19,0) 68%,rgba(5,10,19,.3))}
+.hero-art::before{content:"";position:absolute;inset:-8% -6%;background:var(--hero-glow);filter:blur(60px);z-index:0}
+.hero-art img{position:relative;display:block;width:100%;height:auto;z-index:1;
+  filter:drop-shadow(0 24px 70px rgba(53,208,186,.16));
+  -webkit-mask-image:linear-gradient(90deg,transparent,#000 7%,#000 93%,transparent),linear-gradient(180deg,transparent,#000 9%,#000 96%,transparent);
+  -webkit-mask-composite:source-in;
+  mask-image:linear-gradient(90deg,transparent,#000 7%,#000 93%,transparent),linear-gradient(180deg,transparent,#000 9%,#000 96%,transparent);
+  mask-composite:intersect}
 /* ---- секции ---- */
 .section{padding-block:64px}
 #features,#how,#download{scroll-margin-top:86px}
@@ -215,7 +216,7 @@ h2{font:600 clamp(22px,2.6vw,30px)/1.2 var(--font-display);letter-spacing:-.01em
       <p class="hero-sub"><span data-i18n="hero.h1a">Удалённая помощь</span> — <span class="grad" data-i18n="hero.h1b">без установки</span></p>
       <p class="lead" data-i18n="hero.lead">Специалист помогает клиенту за пару минут: тот открывает один файл, называет одноразовые ID и пароль — и доступ появляется. Закрыл окно — доступ исчез. Сервер — ваш собственный.</p>
       <p class="cta">
-        <a class="btn" href="#download" data-i18n="hero.cta1">Скачать бесплатно</a>
+        <a class="btn" href="#download" data-i18n="hero.cta1">Скачать</a>
         <a class="btn ghost" href="#how" data-i18n="hero.cta2">Как это работает</a>
       </p>
     </div>
@@ -334,7 +335,7 @@ h2{font:600 clamp(22px,2.6vw,30px)/1.2 var(--font-display);letter-spacing:-.01em
       "lang.aria":"Язык интерфейса",
       "hero.h1a":"Удалённая помощь","hero.h1b":"без установки",
       "hero.lead":"Специалист помогает клиенту за пару минут: тот открывает один файл, называет одноразовые ID и пароль — и доступ появляется. Закрыл окно — доступ исчез. Сервер — ваш собственный.",
-      "hero.cta1":"Скачать бесплатно","hero.cta2":"Как это работает",
+      "hero.cta1":"Скачать","hero.cta2":"Как это работает",
       "feat.eyebrow":"Возможности","feat.h2":"Всё, что нужно помощи на расстоянии",
       "feat.lead":"Один инструмент для разовых подключений и постоянного обслуживания машин — без облаков третьих сторон.",
       "f1.t":"Запуск без установки","f1.p":"Клиент — один файл для Windows, macOS и Linux. Никаких инсталляторов и прав администратора: открыл, подключился, закрыл.",
@@ -364,7 +365,7 @@ h2{font:600 clamp(22px,2.6vw,30px)/1.2 var(--font-display);letter-spacing:-.01em
       "lang.aria":"Interface language",
       "hero.h1a":"Remote support","hero.h1b":"with zero install",
       "hero.lead":"Help arrives in minutes: the client opens a single file, reads out one-time ID and password — and access is there. Close the window, and it's gone. The server is your own.",
-      "hero.cta1":"Download free","hero.cta2":"How it works",
+      "hero.cta1":"Download","hero.cta2":"How it works",
       "feat.eyebrow":"Features","feat.h2":"Everything remote support needs",
       "feat.lead":"One tool for one-off connections and ongoing machine care — no third-party clouds.",
       "f1.t":"Runs without installation","f1.p":"The client is a single file for Windows, macOS and Linux. No installers, no admin rights: open, connect, close.",
