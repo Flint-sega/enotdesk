@@ -1,13 +1,19 @@
 /* ============================================================
-   EnotDesk · дизайн-система веб-поверхностей («Aurora»)
-   Одна на три страницы: сайт (/downloads, /invite), оператор
+   EnotDesk · дизайн-система веб-поверхностей «Deep Mint»
+   Один файл на три страницы: сайт (/downloads, /invite), оператор
    (/operator), консоль хаба (/hub). Токены + шрифты + базовые
-   примитивы; раскладка каждой страницы — в её собственном <style>.
-   Шрифты самохостятся с /brand/ (CSP font-src 'self'), кириллица
-   + латиница, переменные оси.
-   Hallmark · macrostructure: preserved-IA redesign · tone: атмосферная
-   тёмная консоль · anchor hue: mint 175 (бренд) · theme: custom Aurora
-   * axes: dark paper / rounded-sans display / cool accent
+   примитивы (.btn/.card/.chip/.badge, поля, .aurora-bg); раскладка
+   каждой поверхности — в её собственном <style>.
+   Язык референса — лендинг site/index.html: тёмная база #050A13,
+   мятный акцент #35D0BA, амбиент-фон в три слоя (свечения + точечная
+   сетка + зерно), стеклянные панели, свечение по иерархии, моно-метки.
+   Шрифты самохостятся с /brand/ (CSP font-src 'self', кириллица +
+   латиница, переменные оси). Onest в стеке дисплея — предпочтение из
+   референса: пока файла нет в assets, поверхности честно рендерят
+   Inter (тот же геометрический голос: вес 600–700, плотный трекинг).
+   Hallmark · macrostructure: preserved-IA · tone: atmospheric-technical
+   * anchor hue: mint 168 (brand #35D0BA) · axes: dark paper / rounded-sans display / cool accent
+   * depth: layered glow bg + dot grid + grain + glass + glow hierarchy
    ============================================================ */
 
 /* ---- шрифты (self-hosted, font-display swap) ---- */
@@ -66,9 +72,13 @@
 
   /* поверхности */
   --bg0: #050A13;            /* фон страницы */
-  --bg1: #0B1424;            /* карточка/панель */
+  --bg1: #0B1424;            /* панель */
   --bg2: #0F1B30;            /* приподнятое (hover, вложенное) */
   --bg-inset: #070F1D;       /* утопленное (поля ввода, логи) */
+  --card: rgba(15, 27, 48, .55);   /* витринное стекло */
+  --panel: rgba(13, 23, 41, .72);  /* рабочее стекло: плотнее — читаемость инструментов */
+  --inset-glass: rgba(7, 15, 29, .5);
+  --head-bg: rgba(5, 10, 19, .72);
 
   /* линии */
   --line: rgba(154, 182, 220, .13);
@@ -80,11 +90,13 @@
   --text-3: #6D81A6;
 
   /* акцент бренда + служебные */
-  --accent: #35E0C4;
-  --accent-strong: #55F0D8;
-  --accent-ink: #04271F;
-  --accent-dim: rgba(53, 224, 196, .12);
-  --accent-line: rgba(53, 224, 196, .42);
+  --accent: #35D0BA;
+  --accent-bright: #41EBCF;
+  --accent-2: #2BB8D4;
+  --accent-ink: #05231D;
+  --accent-dim: rgba(53, 208, 186, .12);
+  --accent-line: rgba(53, 208, 186, .42);
+  --accent-strong: var(--accent-bright); /* старое имя — совместимость */
   --info: #7CB9FF;
   --info-dim: rgba(124, 185, 255, .12);
   --warn: #F2C94C;
@@ -92,13 +104,31 @@
   --danger: #FF8080;
   --danger-dim: rgba(255, 128, 128, .1);
 
-  /* тени/свечения */
+  /* фирменные градиенты */
+  --btn-grad: linear-gradient(135deg, var(--accent-bright), var(--accent) 46%, var(--accent-2));
+  --grad-text: linear-gradient(96deg, var(--accent-bright) 8%, var(--info) 88%);
+
+  /* свечение по иерархии: панель → hover → герой */
   --shadow-card: 0 18px 50px rgba(2, 6, 14, .45);
-  --glow-accent: 0 0 0 1px rgba(53, 224, 196, .28), 0 10px 44px rgba(53, 224, 196, .14);
-  --highlight-top: inset 0 1px 0 rgba(255, 255, 255, .045);
+  --glow: 0 0 0 1px rgba(53, 208, 186, .2), 0 14px 44px rgba(53, 208, 186, .14);
+  --glow-soft: 0 0 90px rgba(53, 208, 186, .06);
+  --top-hl: inset 0 1px 0 rgba(255, 255, 255, .05);
+  --btn-shadow: inset 0 1px 0 rgba(255, 255, 255, .25), 0 10px 30px rgba(53, 208, 186, .26);
+  --btn-shadow-hover: inset 0 1px 0 rgba(255, 255, 255, .25), 0 14px 40px rgba(53, 208, 186, .36);
+  --btn-shadow-active: inset 0 1px 0 rgba(255, 255, 255, .2);
+  /* старые имена — совместимость */
+  --glow-accent: var(--glow);
+  --highlight-top: var(--top-hl);
+
+  /* амбиент: свечения + точечная сетка + зерно */
+  --dot: rgba(157, 190, 224, .16);
+  --bg-glows:
+    radial-gradient(1000px 620px at 12% -10%, rgba(53, 208, 186, .1), transparent 60%),
+    radial-gradient(900px 600px at 108% 110%, rgba(124, 155, 255, .08), transparent 60%);
+  --grain: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='180' height='180'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.8' numOctaves='2' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)' opacity='0.05'/%3E%3C/svg%3E");
 
   /* шрифты */
-  --font-display: 'Unbounded', 'Inter', -apple-system, 'Segoe UI', sans-serif;
+  --font-display: 'Onest', 'Inter', -apple-system, 'Segoe UI', sans-serif;
   --font-body: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
   --font-mono: 'JetBrains Mono', ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
 
@@ -107,7 +137,7 @@
   --s5: 24px; --s6: 32px; --s7: 48px; --s8: 72px;
 
   /* радиусы */
-  --r-sm: 10px; --r-md: 14px; --r-lg: 20px;
+  --r-sm: 10px; --r-md: 14px; --r-lg: 18px;
 
   /* движение */
   --t-fast: 140ms;
@@ -126,7 +156,7 @@ body {
   font: 16px/1.6 var(--font-body);
   -webkit-font-smoothing: antialiased;
 }
-h1, h2, h3 { margin: 0; line-height: 1.2; font-weight: 700; }
+h1, h2, h3 { margin: 0; line-height: 1.15; font-weight: 700; overflow-wrap: anywhere; min-width: 0; }
 p { margin: 0; }
 img, svg { max-width: 100%; }
 a { color: var(--accent); }
@@ -135,20 +165,31 @@ a:focus-visible, button:focus-visible, input:focus-visible, select:focus-visible
   outline-offset: 2px;
   border-radius: 6px;
 }
-::selection { background: rgba(53, 224, 196, .28); }
+::selection { background: rgba(53, 208, 186, .28); }
 .hidden { display: none !important; }
 
-/* ---- атмосферный фон (тёплое свечение по углам, без узоров) ---- */
+/* ---- амбиентный фон: три слоя глубины ----
+   ::before — свечения по углам + зерно (плёнка .05, запечена в svg);
+   ::after  — точечная сетка, тающая к низу вьюпорта. */
 .aurora-bg { position: relative; }
 .aurora-bg::before {
   content: "";
   position: fixed;
   inset: 0;
-  pointer-events: none;
   z-index: 0;
-  background:
-    radial-gradient(880px 520px at 8% -12%, rgba(53, 224, 196, .075), transparent 62%),
-    radial-gradient(820px 540px at 106% 112%, rgba(124, 155, 255, .065), transparent 62%);
+  pointer-events: none;
+  background: var(--bg-glows), var(--grain);
+}
+.aurora-bg::after {
+  content: "";
+  position: fixed;
+  inset: 0;
+  z-index: 0;
+  pointer-events: none;
+  background-image: radial-gradient(var(--dot) 1px, transparent 1.4px);
+  background-size: 28px 28px;
+  -webkit-mask-image: linear-gradient(to bottom, #000, transparent 72%);
+  mask-image: linear-gradient(to bottom, #000, transparent 72%);
 }
 .aurora-bg > * { position: relative; z-index: 1; }
 
@@ -161,46 +202,83 @@ a:focus-visible, button:focus-visible, input:focus-visible, select:focus-visible
 .mono { font-family: var(--font-mono); }
 .lead { color: var(--text-2); }
 
-/* ---- кнопки ---- */
+/* ---- кнопки: градиентный примитив с верхней подсветкой и свечением ---- */
 .btn {
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  gap: var(--s2);
-  background: var(--accent);
-  border: 1px solid transparent;
+  gap: 10px;
+  white-space: nowrap;
+  background: var(--btn-grad);
   color: var(--accent-ink);
+  border: 1px solid transparent;
   font: 600 15px/1.2 var(--font-body);
   text-decoration: none;
+  min-height: 44px;
   padding: 12px 22px;
-  border-radius: 12px;
+  border-radius: 13px;
   cursor: pointer;
-  transition: background var(--t-fast) var(--ease), transform var(--t-fast) var(--ease),
-    box-shadow var(--t-med) var(--ease), border-color var(--t-fast) var(--ease), color var(--t-fast) var(--ease);
+  box-shadow: var(--btn-shadow);
+  transition: transform var(--t-fast) var(--ease), box-shadow var(--t-med) var(--ease),
+    filter var(--t-fast) var(--ease), border-color var(--t-fast) var(--ease),
+    color var(--t-fast) var(--ease), background var(--t-fast) var(--ease);
 }
 .btn svg { width: 18px; height: 18px; flex: none; }
-.btn:hover { background: var(--accent-strong); transform: translateY(-1px); box-shadow: var(--glow-accent); }
-.btn:active { transform: translateY(0); box-shadow: none; }
-.btn:disabled { opacity: .5; cursor: default; transform: none; box-shadow: none; }
+.btn:hover { transform: translateY(-1px); filter: brightness(1.06); box-shadow: var(--btn-shadow-hover); }
+.btn:active { transform: translateY(0); filter: none; box-shadow: var(--btn-shadow-active); }
+.btn:disabled { opacity: .5; cursor: default; transform: none; filter: none; box-shadow: none; }
 .btn.ghost {
   background: transparent;
   color: var(--text);
   border-color: var(--line-strong);
+  box-shadow: none;
 }
-.btn.ghost:hover { border-color: var(--accent-line); color: var(--accent); background: var(--accent-dim); box-shadow: none; }
-.btn.danger { background: transparent; color: var(--danger); border-color: rgba(255, 128, 128, .5); }
-.btn.danger:hover { background: var(--danger-dim); border-color: var(--danger); box-shadow: none; }
-.btn.sm { padding: 7px 13px; font-size: 13.5px; border-radius: 10px; }
+.btn.ghost:hover {
+  border-color: var(--accent-line);
+  color: var(--accent);
+  background: var(--accent-dim);
+  box-shadow: none;
+  transform: none;
+  filter: none;
+}
+.btn.danger {
+  background: transparent;
+  color: var(--danger);
+  border-color: rgba(255, 128, 128, .5);
+  box-shadow: none;
+}
+.btn.danger:hover {
+  background: var(--danger-dim);
+  border-color: var(--danger);
+  box-shadow: none;
+  transform: none;
+  filter: none;
+}
+.btn.sm { min-height: 36px; padding: 7px 14px; font-size: 13.5px; border-radius: 10px; }
+.btn.wide { width: 100%; }
 
-/* ---- поля ввода ---- */
+/* тач-цели: на coarse-указателях даже компактные кнопки ≥44 */
+@media (pointer: coarse) {
+  .btn.sm { min-height: 44px; padding: 9px 14px; }
+}
+
+/* ---- поля ввода: утопленные плиты с мятным фокус-кольцом ---- */
 input, select, textarea {
   background: var(--bg-inset);
   border: 1px solid var(--line);
   border-radius: var(--r-sm);
   color: var(--text);
   font: 15px/1.4 var(--font-body);
+  min-height: 44px;
   padding: 11px 13px;
   transition: border-color var(--t-fast) var(--ease), box-shadow var(--t-fast) var(--ease);
+}
+input[type="checkbox"] {
+  min-height: 0;
+  width: 16px;
+  height: 16px;
+  padding: 0;
+  accent-color: var(--accent);
 }
 input::placeholder, textarea::placeholder { color: var(--text-3); }
 input:focus, select:focus, textarea:focus {
@@ -210,15 +288,17 @@ input:focus, select:focus, textarea:focus {
 }
 label { color: var(--text-2); font-size: 13.5px; }
 
-/* ---- карточки ---- */
+/* ---- карточка: стекло с верхней подсветкой и глубиной ---- */
 .card {
-  background: var(--bg1);
+  background: var(--card);
   border: 1px solid var(--line);
-  border-radius: var(--r-md);
-  box-shadow: var(--highlight-top);
+  border-radius: var(--r-lg);
+  box-shadow: var(--top-hl), var(--shadow-card);
+  -webkit-backdrop-filter: blur(12px);
+  backdrop-filter: blur(12px);
 }
 
-/* ---- чипы/бейджи (моно, с точкой статуса по модификатору) ---- */
+/* ---- чипы/бейджи (моно-метки, статус — модификатором) ---- */
 .chip, .badge {
   display: inline-flex;
   align-items: center;
@@ -230,8 +310,9 @@ label { color: var(--text-2); font-size: 13.5px; }
   font: 500 12.5px/1.4 var(--font-mono);
   letter-spacing: .02em;
   white-space: nowrap;
+  background: var(--inset-glass);
 }
-.chip.on, .badge.on { color: var(--accent); border-color: var(--accent-line); }
+.chip.on, .badge.on { color: var(--accent); border-color: var(--accent-line); background: var(--accent-dim); }
 .chip.off, .badge.off { color: var(--danger); border-color: rgba(255, 128, 128, .45); }
 .chip.warn { color: var(--warn); border-color: rgba(242, 201, 76, .45); }
 .chip.info { color: var(--info); border-color: rgba(124, 185, 255, .45); }
@@ -248,5 +329,6 @@ label { color: var(--text-2); font-size: 13.5px; }
   to { opacity: 1; transform: translateY(0); }
 }
 @media (prefers-reduced-motion: reduce) {
-  *, *::before, *::after { transition-duration: 1ms !important; animation-duration: 1ms !important; }
+  *, *::before, *::after { animation: none !important; transition: none !important; }
+  .btn:hover, .btn:active { transform: none; }
 }
