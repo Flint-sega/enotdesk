@@ -4,93 +4,136 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>EnotDesk — удалённая помощь без установки</title>
-<meta name="description" content="Open-source удалённая помощь: приложение запускается без установки, одноразовые ID и пароль, браузерный оператор, self-hosted сервер. AGPL-3.0.">
+<meta name="description" id="meta-desc" content="Open-source удалённая помощь: приложение запускается без установки, одноразовые ID и пароль, браузерный оператор, self-hosted сервер. AGPL-3.0.">
+<meta name="theme-color" content="#050A13">
 <link rel="icon" href="assets/enot-icon.svg" type="image/svg+xml">
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-<link href="https://fonts.googleapis.com/css2?family=Unbounded:wght@300;500;600&family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500;600&display=swap" rel="stylesheet">
-<!-- Hallmark · macrostructure: Marquee Hero · theme: Aurora (custom, бренд EnotDesk)
-     * axes: dark paper / rounded-sans display / cool mint accent · enrichment: реальные ассеты (маскот, схема) -->
+<link href="https://fonts.googleapis.com/css2?family=Onest:wght@500;600;700&family=Inter:wght@400;500;600&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
 <style>
+/* Hallmark · macrostructure: Bento Grid · tone: atmospheric-technical · anchor hue: mint 168° (brand #35D0BA)
+   theme: custom "Deep Mint" (бренд EnotDesk) · axes: dark paper (kept — маскот/схема тёмные) / display Onest (was Unbounded) / cool mint (kept)
+   nav: N1b glass · footer: Ft5 statement · enrichment: real assets (маскот, схема) · depth: layered glow bg + dot grid + grain + glass + gradient type
+   pre-emit critique: P4 H5 E4 S5 R4 V4 */
 :root{
   color-scheme:dark;
   --bg0:#050A13;--bg1:#0B1424;--bg2:#0F1B30;--bg-inset:#070F1D;
+  --card:rgba(15,27,48,.55);
   --line:rgba(154,182,220,.13);--line-strong:rgba(154,182,220,.24);
   --text:#E9F1FD;--text-2:#A9BBD6;--text-3:#6D81A6;
-  --accent:#35E0C4;--accent-strong:#55F0D8;--accent-ink:#04271F;--accent-dim:rgba(53,224,196,.12);--accent-line:rgba(53,224,196,.42);
+  --accent:#35D0BA;--accent-bright:#41EBCF;--accent-2:#2BB8D4;--accent-ink:#05231D;
+  --accent-dim:rgba(53,208,186,.12);--accent-line:rgba(53,208,186,.42);
   --info:#7CB9FF;--info-dim:rgba(124,185,255,.12);
+  --btn-grad:linear-gradient(135deg,var(--accent-bright),var(--accent) 46%,var(--accent-2));
+  --grad-text:linear-gradient(96deg,var(--accent-bright) 8%,var(--info) 88%);
   --shadow-card:0 18px 50px rgba(2,6,14,.45);
-  --glow:0 0 0 1px rgba(53,224,196,.28),0 10px 44px rgba(53,224,196,.14);
-  --top-hl:inset 0 1px 0 rgba(255,255,255,.045);
-  --font-display:'Unbounded',sans-serif;--font-body:'Inter',sans-serif;--font-mono:'JetBrains Mono',monospace;
+  --glow:0 0 0 1px rgba(53,208,186,.2),0 14px 44px rgba(53,208,186,.14);
+  --top-hl:inset 0 1px 0 rgba(255,255,255,.05);
+  --head-bg:rgba(5,10,19,.72);--inset-glass:rgba(7,15,29,.5);--dot:rgba(157,190,224,.16);
+  --bg-glows:radial-gradient(1000px 620px at 12% -10%,rgba(53,208,186,.1),transparent 60%),radial-gradient(900px 600px at 108% 110%,rgba(124,155,255,.08),transparent 60%);
+  --hero-glow:radial-gradient(60% 60% at 50% 55%,rgba(53,208,186,.18),transparent 70%);
+  --tile-tint:radial-gradient(460px 220px at 14% 0%,rgba(53,208,186,.09),transparent 70%);
+  --glow-soft:0 0 90px rgba(53,208,186,.06);
+  --btn-shadow:inset 0 1px 0 rgba(255,255,255,.25),0 10px 30px rgba(53,208,186,.26);
+  --btn-shadow-hover:inset 0 1px 0 rgba(255,255,255,.25),0 14px 40px rgba(53,208,186,.36);
+  --btn-shadow-active:inset 0 1px 0 rgba(255,255,255,.2);--mascot-shadow:0 24px 60px rgba(3,10,20,.55);
+  --font-display:'Onest',sans-serif;--font-body:'Inter',sans-serif;--font-mono:'JetBrains Mono',monospace;
   --t-fast:140ms;--t-med:240ms;--ease:cubic-bezier(.22,.9,.3,1);
 }
 *{box-sizing:border-box}
 html,body{overflow-x:clip}
 body{margin:0;background:var(--bg0);color:var(--text);font:16px/1.65 var(--font-body);-webkit-font-smoothing:antialiased}
-body::before{content:"";position:fixed;inset:0;pointer-events:none;z-index:0;background:
-  radial-gradient(900px 540px at 10% -12%,rgba(53,224,196,.08),transparent 62%),
-  radial-gradient(860px 560px at 104% 108%,rgba(124,155,255,.07),transparent 62%)}
+/* ---- фон: три слоя глубины (свечения + точечная сетка + зерно) ---- */
+.bg{position:fixed;inset:0;z-index:0;pointer-events:none;background:var(--bg-glows)}
+.bg::before{content:"";position:absolute;inset:0;background-image:radial-gradient(var(--dot) 1px,transparent 1.4px);background-size:28px 28px;
+  -webkit-mask-image:linear-gradient(to bottom,#000,transparent 72%);mask-image:linear-gradient(to bottom,#000,transparent 72%)}
+.bg::after{content:"";position:absolute;inset:0;opacity:.05;background-image:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='180' height='180'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.8' numOctaves='2' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)'/%3E%3C/svg%3E")}
 body>*{position:relative;z-index:1}
-h1,h2,h3{margin:0;font-weight:700;line-height:1.15}
+h1,h2,h3{margin:0;font-weight:700;line-height:1.15;overflow-wrap:anywhere;min-width:0}
 p{margin:0}
 a{color:var(--accent)}
 a:focus-visible,button:focus-visible{outline:2px solid var(--accent);outline-offset:2px;border-radius:8px}
 .wrap{max-width:1140px;margin:0 auto;padding:0 24px}
-/* ---- шапка ---- */
-.head{position:sticky;top:0;z-index:30;border-bottom:1px solid var(--line);background:rgba(5,10,19,.72);-webkit-backdrop-filter:blur(14px);backdrop-filter:blur(14px)}
+/* ---- шапка: стекло ---- */
+.head{position:sticky;top:0;z-index:30;border-bottom:1px solid var(--line);background:var(--head-bg);-webkit-backdrop-filter:blur(14px);backdrop-filter:blur(14px)}
 .head-in{display:flex;align-items:center;justify-content:space-between;gap:16px;min-height:70px}
 .brand{display:flex;align-items:center;gap:11px;color:var(--text);text-decoration:none}
 .brand img{width:36px;height:36px;padding:5px;border-radius:10px;background:var(--accent-dim);border:1px solid var(--accent-line)}
-.brand b{font:600 16px/1 var(--font-display);letter-spacing:.01em;font-weight:600}
-.nav{display:flex;gap:8px;flex-wrap:wrap}
-.nav a{display:inline-flex;align-items:center;padding:9px 15px;border:1px solid transparent;border-radius:10px;color:var(--text-2);text-decoration:none;font-size:14px;font-weight:500;transition:color var(--t-fast) var(--ease),border-color var(--t-fast) var(--ease)}
+.brand b{font:600 16px/1 var(--font-display);letter-spacing:.01em}
+.head-actions{display:flex;align-items:center;gap:8px;flex-wrap:wrap;justify-content:flex-end}
+.nav{display:flex;gap:8px;flex-wrap:wrap;align-items:center}
+.nav a{display:inline-flex;align-items:center;white-space:nowrap;padding:9px 15px;border:1px solid transparent;border-radius:10px;color:var(--text-2);text-decoration:none;font-size:14px;font-weight:500;transition:color var(--t-fast) var(--ease),border-color var(--t-fast) var(--ease),background var(--t-fast) var(--ease)}
 .nav a:hover{color:var(--accent);border-color:var(--accent-line)}
 .nav a.cta-mini{border-color:var(--line-strong);color:var(--text)}
-.nav a.cta-mini:hover{background:var(--accent-dim);border-color:var(--accent-line)}
+.nav a.cta-mini:hover{background:var(--accent-dim)}
+/* ---- переключатель языка ---- */
+.lang{display:inline-flex;gap:2px;padding:3px;border:1px solid var(--line-strong);border-radius:10px;background:var(--inset-glass)}
+.lang-btn{appearance:none;border:0;background:transparent;color:var(--text-3);font:600 13px/1 var(--font-body);letter-spacing:.04em;padding:7px 10px;border-radius:7px;cursor:pointer;transition:color var(--t-fast) var(--ease),background var(--t-fast) var(--ease)}
+.lang-btn:hover{color:var(--text)}
+.lang-btn.on{color:var(--accent);background:var(--accent-dim)}
 /* ---- герой ---- */
-.hero{display:grid;grid-template-columns:1.08fr .92fr;gap:44px;align-items:center;padding-block:92px 72px}
+.hero{display:grid;grid-template-columns:1.05fr .95fr;gap:44px;align-items:center;padding-block:88px 68px}
+.hero>*{min-width:0}
 .eyebrow{display:inline-flex;align-items:center;gap:10px;color:var(--accent);font:600 12px/1 var(--font-mono);letter-spacing:.22em;text-transform:uppercase;margin:0 0 18px}
 .eyebrow::before{content:"";width:26px;height:1px;background:var(--accent)}
-h1{font:600 clamp(38px,5.6vw,64px)/1.08 var(--font-display);letter-spacing:-.015em;margin:0 0 20px}
-.grad{background:linear-gradient(96deg,var(--accent) 25%,var(--info) 90%);-webkit-background-clip:text;background-clip:text;color:transparent}
+h1{font:700 clamp(34px,5.4vw,60px)/1.08 var(--font-display);letter-spacing:-.02em;margin:0 0 20px}
+.grad{background:var(--grad-text);-webkit-background-clip:text;background-clip:text;color:transparent}
 .lead{color:var(--text-2);font-size:clamp(16px,1.4vw,18px);max-width:52ch}
 .cta{display:flex;flex-wrap:wrap;gap:14px;margin-top:32px}
-.btn{display:inline-flex;align-items:center;justify-content:center;gap:10px;background:var(--accent);color:var(--accent-ink);border:1px solid transparent;font:600 15.5px/1.2 var(--font-body);text-decoration:none;padding:14px 28px;border-radius:13px;transition:transform var(--t-fast) var(--ease),box-shadow var(--t-med) var(--ease),background var(--t-fast) var(--ease)}
-.btn:hover{background:var(--accent-strong);transform:translateY(-1px);box-shadow:var(--glow)}
-.btn:active{transform:translateY(0);box-shadow:none}
-.btn.ghost{background:transparent;color:var(--text);border-color:var(--line-strong)}
-.btn.ghost:hover{border-color:var(--accent-line);color:var(--accent);background:var(--accent-dim);box-shadow:none}
-.mascot{width:100%;max-width:600px;justify-self:end;filter:drop-shadow(0 24px 70px rgba(53,224,196,.18));-webkit-mask-image:radial-gradient(120% 120% at 50% 45%,#000 62%,transparent 92%);mask-image:radial-gradient(120% 120% at 50% 45%,#000 62%,transparent 92%)}
-/* ---- фичи ---- */
+.btn{display:inline-flex;align-items:center;justify-content:center;gap:10px;white-space:nowrap;background:var(--btn-grad);color:var(--accent-ink);border:1px solid transparent;font:600 15.5px/1.2 var(--font-body);text-decoration:none;padding:14px 24px;border-radius:13px;box-shadow:var(--btn-shadow);transition:transform var(--t-fast) var(--ease),box-shadow var(--t-med) var(--ease),filter var(--t-fast) var(--ease)}
+.btn:hover{transform:translateY(-1px);filter:brightness(1.06);box-shadow:var(--btn-shadow-hover)}
+.btn:active{transform:translateY(0);box-shadow:var(--btn-shadow-active)}
+.btn.ghost{background:transparent;color:var(--text);border-color:var(--line-strong);box-shadow:none}
+.btn.ghost:hover{border-color:var(--accent-line);color:var(--accent);background:var(--accent-dim);box-shadow:none;filter:none}
+/* маскот: подсветка снизу + мягкая маска краёв */
+.hero-art{position:relative;justify-self:end;width:100%;max-width:600px}
+.hero-art::before{content:"";position:absolute;inset:10% 6%;background:var(--hero-glow);filter:blur(34px)}
+.hero-art img{position:relative;display:block;width:100%;height:auto;filter:drop-shadow(var(--mascot-shadow));
+  -webkit-mask-image:radial-gradient(120% 120% at 50% 45%,#000 62%,transparent 92%);mask-image:radial-gradient(120% 120% at 50% 45%,#000 62%,transparent 92%)}
+/* ---- секции ---- */
 .section{padding-block:64px}
+#features,#how,#download{scroll-margin-top:86px}
 .sec-head{margin:0 0 28px}
 .sec-head .eyebrow{margin-bottom:12px}
-h2{font:600 clamp(23px,2.8vw,32px)/1.2 var(--font-display);letter-spacing:-.01em}
+h2{font:600 clamp(22px,2.6vw,30px)/1.2 var(--font-display);letter-spacing:-.01em}
 .sec-lead{color:var(--text-2);max-width:62ch;margin-top:12px}
-.feat{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:16px}
-.f-card{background:var(--bg1);border:1px solid var(--line);border-radius:16px;padding:24px;box-shadow:var(--top-hl);transition:transform var(--t-med) var(--ease),border-color var(--t-med) var(--ease)}
-.f-card:hover{transform:translateY(-3px);border-color:var(--accent-line)}
+/* ---- бенто-фичи ---- */
+.feat{display:grid;grid-template-columns:repeat(6,minmax(0,1fr));gap:14px}
+.feat>*{min-width:0}
+.f-card{background:var(--card);border:1px solid var(--line);border-radius:18px;padding:24px;box-shadow:var(--top-hl),var(--shadow-card);-webkit-backdrop-filter:blur(12px);backdrop-filter:blur(12px);transition:transform var(--t-med) var(--ease),border-color var(--t-med) var(--ease),box-shadow var(--t-med) var(--ease)}
+.f-card:hover{transform:translateY(-3px);border-color:var(--accent-line);box-shadow:var(--top-hl),var(--glow),var(--shadow-card)}
+.f-1,.f-2{grid-column:span 3}
+.f-3,.f-4,.f-5{grid-column:span 2}
+.f-6{grid-column:span 6;padding:30px;background-image:var(--tile-tint)}
+.f-1 h3,.f-2 h3{font-size:18px}
+.f-6 h3{font:600 20px/1.25 var(--font-display);letter-spacing:-.01em;margin:0 0 10px}
+.f-6 p{max-width:68ch}
+.chips{display:flex;flex-wrap:wrap;gap:8px;margin-top:18px}
+.chip{font:500 12px/1 var(--font-mono);color:var(--text-2);border:1px solid var(--line-strong);border-radius:999px;padding:6px 12px;background:var(--inset-glass)}
 .f-ico{display:grid;place-items:center;width:42px;height:42px;border-radius:12px;background:var(--accent-dim);border:1px solid var(--accent-line);color:var(--accent);margin-bottom:16px}
 .f-ico svg{width:20px;height:20px}
-.f-card h3{font-size:16.5px;margin:0 0 8px}
+.f-card h3{font-size:16.5px;font-weight:600;margin:0 0 8px}
 .f-card p{color:var(--text-2);font-size:14.5px}
 /* ---- схема ---- */
-.shot{background:var(--bg1);border:1px solid var(--line);border-radius:18px;padding:12px;box-shadow:var(--shadow-card)}
-.shot img{display:block;width:100%;border-radius:10px}
+.shot{margin:0;background:var(--card);border:1px solid var(--line);border-radius:18px;padding:12px;box-shadow:var(--shadow-card),var(--glow-soft);-webkit-backdrop-filter:blur(12px);backdrop-filter:blur(12px)}
+.shot img{display:block;width:100%;height:auto;border-radius:10px}
 .shot-note{display:flex;align-items:center;justify-content:space-between;gap:14px;flex-wrap:wrap;padding:14px 8px 4px}
-.shot-note p{color:var(--text-3);font-size:14px}
+.shot-note p{color:var(--text-3);font-size:14px;max-width:64ch}
 /* ---- загрузки ---- */
-.down{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:16px}
-.d-card{display:flex;flex-direction:column;background:var(--bg1);border:1px solid var(--line);border-radius:16px;padding:24px;box-shadow:var(--top-hl)}
+.down{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:14px}
+.down>*{min-width:0}
+.d-card{display:flex;flex-direction:column;background:var(--card);border:1px solid var(--line);border-radius:18px;padding:24px;box-shadow:var(--top-hl),var(--shadow-card);-webkit-backdrop-filter:blur(12px);backdrop-filter:blur(12px);transition:border-color var(--t-med) var(--ease),box-shadow var(--t-med) var(--ease)}
+.d-card:hover{border-color:var(--accent-line);box-shadow:var(--top-hl),var(--glow),var(--shadow-card)}
 .d-head{display:flex;align-items:center;gap:12px;margin-bottom:18px}
-.d-head svg{width:22px;height:22px;color:var(--text)}
+.d-head svg{width:22px;height:22px;color:var(--text);flex:none}
 .d-head h3{font-size:17px}
 .d-card .btn{margin-top:auto;width:100%}
 .d-alt{margin:10px 0 0;text-align:center;font-size:13px}
 .d-alt a{color:var(--text-3)}
 .d-alt a:hover{color:var(--accent)}
 .repo-note{margin-top:18px;color:var(--text-3);font-size:14px}
+.repo-note a{color:var(--text-2)}
+.repo-note a:hover{color:var(--accent)}
 .repo-note code{font:500 13px var(--font-mono);color:var(--text-2);background:var(--bg-inset);border:1px solid var(--line);border-radius:6px;padding:2px 7px}
 /* ---- подвал ---- */
 .foot{border-top:1px solid var(--line);margin-top:72px}
@@ -98,41 +141,63 @@ h2{font:600 clamp(23px,2.8vw,32px)/1.2 var(--font-display);letter-spacing:-.01em
 .foot-in a{color:var(--text-2)}
 .foot-in a:hover{color:var(--accent)}
 .foot-mono{font:500 12.5px var(--font-mono)}
-/* ---- появление ---- */
+/* ---- движение: только под no-preference ---- */
 @media (prefers-reduced-motion: no-preference){
+  html{scroll-behavior:smooth}
   .rise{animation:rise var(--t-med) var(--ease) backwards}
   .rise:nth-child(2){animation-delay:70ms}.rise:nth-child(3){animation-delay:140ms}
   .rise:nth-child(4){animation-delay:210ms}.rise:nth-child(5){animation-delay:280ms}
   .rise:nth-child(6){animation-delay:350ms}
 }
 @keyframes rise{from{opacity:0;transform:translateY(10px)}to{opacity:1;transform:translateY(0)}}
-/* ---- адаптив ---- */
-@media (max-width:900px){
+@media (prefers-reduced-motion: reduce){
+  *,*::before,*::after{animation:none!important;transition:none!important}
+}
+/* ---- адаптив 320–1280 ---- */
+@media (max-width:980px){
   .hero{grid-template-columns:1fr;padding-block:60px 52px}
-  .mascot{justify-self:center;max-width:480px}
-  .feat,.down{grid-template-columns:repeat(2,minmax(0,1fr))}
+  .hero-art{justify-self:center;max-width:480px}
+  .feat{grid-template-columns:repeat(2,minmax(0,1fr))}
+  .f-1,.f-2,.f-3,.f-4,.f-5{grid-column:span 1}
+  .f-1{grid-column:span 2}
+  .f-6{grid-column:span 2}
+  .down{grid-template-columns:1fr}
 }
 @media (max-width:600px){
   .wrap{padding:0 16px}
-  .head-in{min-height:62px}
+  .head-in{min-height:62px;gap:10px}
   .nav a:not(.cta-mini){display:none}
-  .feat,.down{grid-template-columns:1fr}
+  .nav a.cta-mini.gh-mini{display:none}
+  .feat{grid-template-columns:1fr}
+  .f-1,.f-6{grid-column:auto}
   .section{padding-block:44px}
   .hero{padding-block:44px 40px}
+  .shot-note{flex-direction:column;align-items:flex-start}
+}
+@media (max-width:360px){
+  .brand b{display:none}
 }
 </style>
 </head>
 <body>
 
+<div class="bg" aria-hidden="true"></div>
+
 <header class="head">
   <div class="wrap head-in">
     <a class="brand" href="#"><img src="assets/enot-icon.svg" alt="" width="36" height="36"><b>EnotDesk</b></a>
-    <nav class="nav" aria-label="Разделы">
-      <a href="#features">Возможности</a>
-      <a href="#how">Как устроен</a>
-      <a href="#download" class="cta-mini">Скачать</a>
-      <a href="https://github.com/Flint-sega/enotdesk" class="cta-mini">GitHub</a>
-    </nav>
+    <div class="head-actions">
+      <nav class="nav" aria-label="Разделы" data-i18n-aria="nav.aria">
+        <a href="#features" data-i18n="nav.features">Возможности</a>
+        <a href="#how" data-i18n="nav.how">Как устроен</a>
+        <a href="#download" class="cta-mini" data-i18n="nav.download">Скачать</a>
+        <a href="https://github.com/Flint-sega/enotdesk" class="cta-mini gh-mini">GitHub</a>
+      </nav>
+      <div class="lang" role="group" aria-label="Язык интерфейса" data-i18n-aria="lang.aria">
+        <button type="button" class="lang-btn on" data-lang="ru" aria-pressed="true">RU</button>
+        <button type="button" class="lang-btn" data-lang="en" aria-pressed="false">EN</button>
+      </div>
+    </div>
   </div>
 </header>
 
@@ -140,76 +205,79 @@ h2{font:600 clamp(23px,2.8vw,32px)/1.2 var(--font-display);letter-spacing:-.01em
   <section class="wrap hero">
     <div>
       <p class="eyebrow">Open source · Self-hosted · AGPL-3.0</p>
-      <h1>Удалённая помощь <span class="grad">без установки</span></h1>
-      <p class="lead">Специалист помогает клиенту за пару минут: тот открывает один файл, называет одноразовые ID и пароль — и доступ появляется. Закрыл окно — доступ исчез. Сервер — ваш собственный.</p>
+      <h1><span data-i18n="hero.h1a">Удалённая помощь</span> <span class="grad" data-i18n="hero.h1b">без установки</span></h1>
+      <p class="lead" data-i18n="hero.lead">Специалист помогает клиенту за пару минут: тот открывает один файл, называет одноразовые ID и пароль — и доступ появляется. Закрыл окно — доступ исчез. Сервер — ваш собственный.</p>
       <p class="cta">
-        <a class="btn" href="#download">Скачать бесплатно</a>
-        <a class="btn ghost" href="#how">Как это работает</a>
+        <a class="btn" href="#download" data-i18n="hero.cta1">Скачать бесплатно</a>
+        <a class="btn ghost" href="#how" data-i18n="hero.cta2">Как это работает</a>
       </p>
     </div>
-    <img class="mascot" src="assets/mascot-site.png" alt="Енот-помощник EnotDesk" width="736" height="372">
+    <div class="hero-art">
+      <img src="assets/mascot-site.png" alt="Енот-помощник EnotDesk" width="736" height="372" data-i18n-alt="img.mascot.alt">
+    </div>
   </section>
 
   <section id="features" class="wrap section">
     <div class="sec-head">
-      <p class="eyebrow">Возможности</p>
-      <h2>Всё, что нужно помощи на расстоянии</h2>
-      <p class="sec-lead">Один инструмент для разовых подключений и постоянного обслуживания машин — без облаков третьих сторон.</p>
+      <p class="eyebrow" data-i18n="feat.eyebrow">Возможности</p>
+      <h2 data-i18n="feat.h2">Всё, что нужно помощи на расстоянии</h2>
+      <p class="sec-lead" data-i18n="feat.lead">Один инструмент для разовых подключений и постоянного обслуживания машин — без облаков третьих сторон.</p>
     </div>
     <div class="feat">
-      <article class="f-card rise">
+      <article class="f-card f-1 rise">
         <span class="f-ico"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg></span>
-        <h3>Запуск без установки</h3>
-        <p>Клиент — один файл для Windows, macOS и Linux. Никаких инсталляторов и прав администратора: открыл, подключился, закрыл.</p>
+        <h3 data-i18n="f1.t">Запуск без установки</h3>
+        <p data-i18n="f1.p">Клиент — один файл для Windows, macOS и Linux. Никаких инсталляторов и прав администратора: открыл, подключился, закрыл.</p>
       </article>
-      <article class="f-card rise">
+      <article class="f-card f-2 rise">
         <span class="f-ico"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="3" y="11" width="18" height="11" rx="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/></svg></span>
-        <h3>Одноразовый доступ</h3>
-        <p>Сеанс открывается по одноразовым ID и паролю из обычного чата. Пароль живёт, пока открыто окно: закрыли — доступ исчез.</p>
+        <h3 data-i18n="f2.t">Одноразовый доступ</h3>
+        <p data-i18n="f2.p">Сеанс открывается по одноразовым ID и паролю из обычного чата. Пароль живёт, пока открыто окно: закрыли — доступ исчез.</p>
       </article>
-      <article class="f-card rise">
+      <article class="f-card f-3 rise">
         <span class="f-ico"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="10"/><path d="M2 12h20"/><path d="M12 2a15.3 15.3 0 0 1 4 10 15.3 15.3 0 0 1-4 10 15.3 15.3 0 0 1-4-10 15.3 15.3 0 0 1 4-10z"/></svg></span>
-        <h3>Оператор из браузера</h3>
-        <p>Подключаться к клиенту можно прямо из браузера — клиент-приложение оператору не требуется.</p>
+        <h3 data-i18n="f3.t">Оператор из браузера</h3>
+        <p data-i18n="f3.p">Подключаться к клиенту можно прямо из браузера — клиент-приложение оператору не требуется.</p>
       </article>
-      <article class="f-card rise">
+      <article class="f-card f-4 rise">
         <span class="f-ico"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="2" y="3" width="20" height="14" rx="2"/><line x1="8" y1="21" x2="16" y2="21"/><line x1="12" y1="17" x2="12" y2="21"/></svg></span>
-        <h3>Обслуживаемые машины</h3>
-        <p>Агент-служба на постоянных машинах: подключение по заявке с обязательной причиной, PIN-политикой и записью в журнал.</p>
+        <h3 data-i18n="f4.t">Обслуживаемые машины</h3>
+        <p data-i18n="f4.p">Агент-служба на постоянных машинах: подключение по заявке с обязательной причиной, PIN-политикой и записью в журнал.</p>
       </article>
-      <article class="f-card rise">
+      <article class="f-card f-5 rise">
         <span class="f-ico"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></svg></span>
-        <h3>Хаб: тикеты и чат</h3>
-        <p>Тикет-система с чатом для сайта, письма из почты и кнопкой «подключиться» прямо в переписке с клиентом.</p>
+        <h3 data-i18n="f5.t">Хаб: тикеты и чат</h3>
+        <p data-i18n="f5.p">Тикет-система с чатом для сайта, письма из почты и кнопкой «подключиться» прямо в переписке с клиентом.</p>
       </article>
-      <article class="f-card rise">
+      <article class="f-card f-6 rise">
         <span class="f-ico"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/><polyline points="9 12 11.5 14.5 15.5 9.5"/></svg></span>
-        <h3>Ваш сервер, ваши данные</h3>
-        <p>Сервер ставится на вашу машину за один скрипт: Docker или bare-metal, HTTPS через Caddy, телефония через собственный TURN.</p>
+        <h3 data-i18n="f6.t">Ваш сервер, ваши данные</h3>
+        <p data-i18n="f6.p">Сервер ставится на вашу машину за один скрипт: Docker или bare-metal, HTTPS через Caddy, медиа через собственный TURN.</p>
+        <p class="chips" aria-hidden="true"><span class="chip">docker compose</span><span class="chip">bare-metal</span><span class="chip">Caddy · HTTPS</span><span class="chip">coturn</span></p>
       </article>
     </div>
   </section>
 
   <section id="how" class="wrap section">
     <div class="sec-head">
-      <p class="eyebrow">Как устроен</p>
-      <h2>От окна клиента до вашей БД — один взгляд</h2>
-      <p class="sec-lead">Схема ниже — живая карта проекта: сервер, хаб, службы агентов на трёх ОС, видео-хелпер и путь медиа между машинами.</p>
+      <p class="eyebrow" data-i18n="how.eyebrow">Как устроен</p>
+      <h2 data-i18n="how.h2">От окна клиента до вашей БД — один взгляд</h2>
+      <p class="sec-lead" data-i18n="how.lead">Схема ниже — живая карта проекта: сервер, хаб, службы агентов на трёх ОС, видео-хелпер и путь медиа между машинами.</p>
     </div>
-    <figure class="shot" style="margin:0">
-      <img src="assets/architecture.png" alt="Схема устройства EnotDesk: оператор, Caddy, сервер, хаб, TURN, машина клиента" loading="lazy">
+    <figure class="shot rise">
+      <img src="assets/architecture.png" alt="Схема устройства EnotDesk: оператор, Caddy, сервер, хаб, TURN, машина клиента" loading="lazy" data-i18n-alt="img.arch.alt">
       <figcaption class="shot-note">
-        <p>Полная схема: сигналинг, WebRTC-медиа, DataChannel-каналы (видео, ввод, чат, файлы, терминал) и службы на машине клиента.</p>
-        <a class="btn ghost" href="architecture.html">Открыть интерактивную схему</a>
+        <p data-i18n="how.cap">Полная схема: сигналинг, WebRTC-медиа, DataChannel-каналы (видео, ввод, чат, файлы, терминал) и службы на машине клиента.</p>
+        <a class="btn ghost" href="architecture.html" data-i18n="how.btn">Открыть интерактивную схему</a>
       </figcaption>
     </figure>
   </section>
 
   <section id="download" class="wrap section">
     <div class="sec-head">
-      <p class="eyebrow">Скачать</p>
-      <h2>Бесплатно и открыто</h2>
-      <p class="sec-lead">Файлы берутся напрямую из официальных релизов GitHub. Сервер — tarball с установщиком за один прогон.</p>
+      <p class="eyebrow" data-i18n="dl.eyebrow">Скачать</p>
+      <h2 data-i18n="dl.h2">Бесплатно и открыто</h2>
+      <p class="sec-lead" data-i18n="dl.lead">Файлы берутся напрямую из официальных релизов GitHub. Сервер — tarball с установщиком за один прогон.</p>
     </div>
     <div class="down">
       <article class="d-card rise">
@@ -217,36 +285,141 @@ h2{font:600 clamp(23px,2.8vw,32px)/1.2 var(--font-display);letter-spacing:-.01em
           <svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M0 0h11.377v11.372H0zM12.623 0H24v11.372H12.623zM0 12.623h11.377V24H0zM12.623 12.623H24V24H12.623z"/></svg>
           <h3>Windows</h3>
         </div>
-        <a class="btn" href="https://github.com/Flint-sega/enotdesk/releases/latest/download/EnotDesk-win-x64.exe">Portable .exe</a>
-        <p class="d-alt"><a href="https://github.com/Flint-sega/enotdesk/releases/latest/download/EnotDesk-win-x64-setup.exe">или установщик setup.exe</a></p>
+        <a class="btn" href="https://github.com/Flint-sega/enotdesk/releases/latest/download/EnotDesk-win-x64.exe" data-i18n="dl.win.btn">Portable .exe</a>
+        <p class="d-alt"><a href="https://github.com/Flint-sega/enotdesk/releases/latest/download/EnotDesk-win-x64-setup.exe" data-i18n="dl.win.alt">или установщик setup.exe</a></p>
       </article>
       <article class="d-card rise">
         <div class="d-head">
           <svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M12.152 6.896c-.948 0-2.415-1.078-3.96-1.04-2.04.027-3.91 1.183-4.961 3.014-2.117 3.675-.546 9.103 1.519 12.09 1.013 1.454 2.208 3.09 3.792 3.039 1.52-.065 2.09-.987 3.935-.987 1.831 0 2.35.987 3.96.948 1.637-.026 2.676-1.48 3.676-2.948 1.156-1.688 1.636-3.325 1.662-3.415-.039-.013-3.182-1.221-3.22-4.857-.026-3.04 2.48-4.494 2.597-4.559-1.429-2.09-3.623-2.324-4.39-2.376-2-.156-3.675 1.09-4.61 1.09zM15.53 3.83c.843-1.012 1.4-2.427 1.245-3.83-1.207.052-2.662.805-3.532 1.818-.78.896-1.454 2.338-1.273 3.714 1.338.104 2.715-.688 3.559-1.701"/></svg>
           <h3>macOS</h3>
         </div>
-        <a class="btn" href="https://github.com/Flint-sega/enotdesk/releases/latest/download/EnotDesk-mac-arm64.zip">.zip для Apple Silicon</a>
-        <p class="d-alt"><a href="https://github.com/Flint-sega/enotdesk/releases/latest">все сборки релиза</a></p>
+        <a class="btn" href="https://github.com/Flint-sega/enotdesk/releases/latest/download/EnotDesk-mac-arm64.zip" data-i18n="dl.mac.btn">.zip для Apple Silicon</a>
+        <p class="d-alt"><a href="https://github.com/Flint-sega/enotdesk/releases/latest" data-i18n="dl.mac.alt">все сборки релиза</a></p>
       </article>
       <article class="d-card rise">
         <div class="d-head">
           <svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M12.504 0c-.155 0-.315.008-.48.021-4.226.333-3.105 4.807-3.17 6.298-.076 1.092-.3 1.953-1.05 3.02-.885 1.051-2.127 2.75-2.716 4.521-.278.832-.41 1.684-.287 2.489a.424.424 0 00-.11.135c-.26.268-.45.6-.663.839-.199.199-.485.267-.797.4-.313.136-.658.269-.864.68-.09.189-.136.394-.132.602 0 .199.027.4.055.536.058.399.116.728.04.97-.249.68-.28 1.145-.106 1.484.174.334.535.47.94.601.81.2 1.91.135 2.774.6.926.466 1.866.67 2.616.47.526-.116.97-.464 1.208-.946.587-.003 1.23-.269 2.26-.334.699-.058 1.574.267 2.577.2.025.134.063.198.114.333l.003.003c.391.778 1.113 1.132 1.884 1.071.771-.06 1.592-.536 2.257-1.306.631-.765 1.683-1.084 2.378-1.503.348-.199.629-.469.649-.853.023-.4-.2-.811-.714-1.376v-.097l-.003-.003c-.17-.2-.25-.535-.338-.926-.085-.401-.182-.786-.492-1.046h-.003c-.059-.054-.123-.067-.188-.135a.357.357 0 00-.19-.064c.431-1.278.264-2.55-.173-3.694-.533-1.41-1.465-2.638-2.175-3.483-.796-1.005-1.576-1.957-1.56-3.368.026-2.152.236-6.133-3.544-6.139z"/></svg>
           <h3>Linux</h3>
         </div>
-        <a class="btn" href="https://github.com/Flint-sega/enotdesk/releases/latest/download/EnotDesk-linux-x86_64.AppImage">AppImage x86_64</a>
-        <p class="d-alt"><a href="https://github.com/Flint-sega/enotdesk/releases/latest/download/enotdesk-server.tar.gz">сервер: enotdesk-server.tar.gz</a></p>
+        <a class="btn" href="https://github.com/Flint-sega/enotdesk/releases/latest/download/EnotDesk-linux-x86_64.AppImage" data-i18n="dl.lin.btn">AppImage x86_64</a>
+        <p class="d-alt"><a href="https://github.com/Flint-sega/enotdesk/releases/latest/download/enotdesk-server.tar.gz" data-i18n="dl.lin.alt">сервер: enotdesk-server.tar.gz</a></p>
       </article>
     </div>
-    <p class="repo-note">Исходный код: <a href="https://github.com/Flint-sega/enotdesk">github.com/Flint-sega/enotdesk</a> · лицензия AGPL-3.0 · сборка из тегов воспроизводима на CI.</p>
+    <p class="repo-note"><span data-i18n="dl.note1">Исходный код:</span> <a href="https://github.com/Flint-sega/enotdesk">github.com/Flint-sega/enotdesk</a><span data-i18n="dl.note2"> · лицензия AGPL-3.0 · сборка из тегов воспроизводима на CI.</span></p>
   </section>
 </main>
 
 <footer class="foot">
   <div class="wrap foot-in">
-    <p>EnotDesk — открытое самохостинг-решение удалённой помощи.</p>
+    <p data-i18n="foot.p">EnotDesk — открытое самохостинг-решение удалённой помощи.</p>
     <p class="foot-mono">AGPL-3.0 · <a href="https://github.com/Flint-sega/enotdesk">GitHub</a></p>
   </div>
 </footer>
+
+<script>
+(function(){
+  "use strict";
+  var I18N={
+    ru:{
+      "meta.title":"EnotDesk — удалённая помощь без установки",
+      "meta.desc":"Open-source удалённая помощь: приложение запускается без установки, одноразовые ID и пароль, браузерный оператор, self-hosted сервер. AGPL-3.0.",
+      "nav.aria":"Разделы","nav.features":"Возможности","nav.how":"Как устроен","nav.download":"Скачать",
+      "lang.aria":"Язык интерфейса",
+      "hero.h1a":"Удалённая помощь","hero.h1b":"без установки",
+      "hero.lead":"Специалист помогает клиенту за пару минут: тот открывает один файл, называет одноразовые ID и пароль — и доступ появляется. Закрыл окно — доступ исчез. Сервер — ваш собственный.",
+      "hero.cta1":"Скачать бесплатно","hero.cta2":"Как это работает",
+      "feat.eyebrow":"Возможности","feat.h2":"Всё, что нужно помощи на расстоянии",
+      "feat.lead":"Один инструмент для разовых подключений и постоянного обслуживания машин — без облаков третьих сторон.",
+      "f1.t":"Запуск без установки","f1.p":"Клиент — один файл для Windows, macOS и Linux. Никаких инсталляторов и прав администратора: открыл, подключился, закрыл.",
+      "f2.t":"Одноразовый доступ","f2.p":"Сеанс открывается по одноразовым ID и паролю из обычного чата. Пароль живёт, пока открыто окно: закрыли — доступ исчез.",
+      "f3.t":"Оператор из браузера","f3.p":"Подключаться к клиенту можно прямо из браузера — клиент-приложение оператору не требуется.",
+      "f4.t":"Обслуживаемые машины","f4.p":"Агент-служба на постоянных машинах: подключение по заявке с обязательной причиной, PIN-политикой и записью в журнал.",
+      "f5.t":"Хаб: тикеты и чат","f5.p":"Тикет-система с чатом для сайта, письма из почты и кнопкой «подключиться» прямо в переписке с клиентом.",
+      "f6.t":"Ваш сервер, ваши данные","f6.p":"Сервер ставится на вашу машину за один скрипт: Docker или bare-metal, HTTPS через Caddy, медиа через собственный TURN.",
+      "how.eyebrow":"Как устроен","how.h2":"От окна клиента до вашей БД — один взгляд",
+      "how.lead":"Схема ниже — живая карта проекта: сервер, хаб, службы агентов на трёх ОС, видео-хелпер и путь медиа между машинами.",
+      "how.cap":"Полная схема: сигналинг, WebRTC-медиа, DataChannel-каналы (видео, ввод, чат, файлы, терминал) и службы на машине клиента.",
+      "how.btn":"Открыть интерактивную схему",
+      "dl.eyebrow":"Скачать","dl.h2":"Бесплатно и открыто",
+      "dl.lead":"Файлы берутся напрямую из официальных релизов GitHub. Сервер — tarball с установщиком за один прогон.",
+      "dl.win.btn":"Portable .exe","dl.win.alt":"или установщик setup.exe",
+      "dl.mac.btn":".zip для Apple Silicon","dl.mac.alt":"все сборки релиза",
+      "dl.lin.btn":"AppImage x86_64","dl.lin.alt":"сервер: enotdesk-server.tar.gz",
+      "dl.note1":"Исходный код:","dl.note2":" · лицензия AGPL-3.0 · сборка из тегов воспроизводима на CI.",
+      "img.mascot.alt":"Енот-помощник EnotDesk",
+      "img.arch.alt":"Схема устройства EnotDesk: оператор, Caddy, сервер, хаб, TURN, машина клиента",
+      "foot.p":"EnotDesk — открытое самохостинг-решение удалённой помощи."
+    },
+    en:{
+      "meta.title":"EnotDesk — remote support with zero install",
+      "meta.desc":"Open-source remote support: the app runs without installation, one-time ID and password, browser-based operator, self-hosted server. AGPL-3.0.",
+      "nav.aria":"Sections","nav.features":"Features","nav.how":"How it works","nav.download":"Download",
+      "lang.aria":"Interface language",
+      "hero.h1a":"Remote support","hero.h1b":"with zero install",
+      "hero.lead":"Help arrives in minutes: the client opens a single file, reads out one-time ID and password — and access is there. Close the window, and it's gone. The server is your own.",
+      "hero.cta1":"Download free","hero.cta2":"How it works",
+      "feat.eyebrow":"Features","feat.h2":"Everything remote support needs",
+      "feat.lead":"One tool for one-off connections and ongoing machine care — no third-party clouds.",
+      "f1.t":"Runs without installation","f1.p":"The client is a single file for Windows, macOS and Linux. No installers, no admin rights: open, connect, close.",
+      "f2.t":"One-time access","f2.p":"A session opens with one-time ID and password from a regular chat. The password lives while the window is open: close it, and access is gone.",
+      "f3.t":"Operator in the browser","f3.p":"Connect to the client straight from a browser — the operator doesn't need the desktop app.",
+      "f4.t":"Managed machines","f4.p":"An agent service for permanent machines: access by request with a mandatory reason, PIN policy and a journal entry.",
+      "f5.t":"Hub: tickets and chat","f5.p":"A ticket system with a website chat, inbound email, and a \u00abconnect\u00bb button right in the conversation with the client.",
+      "f6.t":"Your server, your data","f6.p":"The server installs on your machine with a single script: Docker or bare-metal, HTTPS via Caddy, media through your own TURN.",
+      "how.eyebrow":"How it's built","how.h2":"From the client's window to your database — one look",
+      "how.lead":"The diagram below is a living map of the project: the server, the hub, agent services on three OSes, the video helper and the path media takes between machines.",
+      "how.cap":"Full diagram: signalling, WebRTC media, DataChannel channels (video, input, chat, files, terminal) and the services on the client's machine.",
+      "how.btn":"Open the interactive diagram",
+      "dl.eyebrow":"Download","dl.h2":"Free and open",
+      "dl.lead":"Files come straight from the official GitHub releases. The server ships as a tarball with a one-run installer.",
+      "dl.win.btn":"Portable .exe","dl.win.alt":"or the setup.exe installer",
+      "dl.mac.btn":".zip for Apple Silicon","dl.mac.alt":"all release builds",
+      "dl.lin.btn":"AppImage x86_64","dl.lin.alt":"server: enotdesk-server.tar.gz",
+      "dl.note1":"Source code:","dl.note2":" \u00b7 AGPL-3.0 license \u00b7 tagged builds are reproducible on CI.",
+      "img.mascot.alt":"EnotDesk raccoon helper",
+      "img.arch.alt":"EnotDesk architecture: operator, Caddy, server, hub, TURN, client machine",
+      "foot.p":"EnotDesk — an open-source, self-hosted remote support solution."
+    }
+  };
+  function applyLang(lang){
+    var dict=I18N[lang]||I18N.ru;
+    var nodes=document.querySelectorAll("[data-i18n]");
+    for(var i=0;i<nodes.length;i++){
+      var v=dict[nodes[i].getAttribute("data-i18n")];
+      if(typeof v==="string")nodes[i].textContent=v;
+    }
+    var arias=document.querySelectorAll("[data-i18n-aria]");
+    for(var j=0;j<arias.length;j++){
+      var va=dict[arias[j].getAttribute("data-i18n-aria")];
+      if(typeof va==="string")arias[j].setAttribute("aria-label",va);
+    }
+    var alts=document.querySelectorAll("[data-i18n-alt]");
+    for(var k=0;k<alts.length;k++){
+      var vd=dict[alts[k].getAttribute("data-i18n-alt")];
+      if(typeof vd==="string")alts[k].setAttribute("alt",vd);
+    }
+    document.documentElement.lang=lang;
+    document.title=dict["meta.title"];
+    var meta=document.getElementById("meta-desc");
+    if(meta)meta.setAttribute("content",dict["meta.desc"]);
+    var btns=document.querySelectorAll(".lang-btn");
+    for(var m=0;m<btns.length;m++){
+      var on=btns[m].getAttribute("data-lang")===lang;
+      btns[m].classList.toggle("on",on);
+      btns[m].setAttribute("aria-pressed",on?"true":"false");
+    }
+    try{localStorage.setItem("enotdesk-lang",lang);}catch(e){}
+  }
+  var saved=null;
+  try{saved=localStorage.getItem("enotdesk-lang");}catch(e){}
+  var lang=(saved==="en"||saved==="ru")?saved:(((navigator.language||"ru").toLowerCase().indexOf("ru")===0)?"ru":"en");
+  applyLang(lang);
+  var switchBtns=document.querySelectorAll(".lang-btn");
+  for(var n=0;n<switchBtns.length;n++){
+    switchBtns[n].addEventListener("click",function(){applyLang(this.getAttribute("data-lang"));});
+  }
+})();
+</script>
 
 </body>
 </html>
