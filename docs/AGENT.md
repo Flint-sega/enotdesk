@@ -38,7 +38,7 @@ onboarding-код. Отзыв на стороне сервера: список �
 
 ## Установка по ОС
 
-- **Windows (приоритет)**: `sc.exe create` (start= auto, description, автоперезапуск при сбоях,
+- **Windows (приоритет)**: `sc.exe create` (start= delayed-auto, description, автоперезапуск при сбоях,
   переменные через `Environment` + `AppEnvironment`). См. `client/agent-service/windows.md`, скрипты
   `windows-install.bat` / `windows-remove.bat`. Установка идемпотентна: повторный запуск
   на существующей службе обновляет конфиг и перезапускает её (апгрейд бинарников —

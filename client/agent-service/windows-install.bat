@@ -4,6 +4,10 @@ REM EnotDesk agent - service install (Windows 10+/Server 2019+)
 REM Запускать из cmd с правами администратора.
 REM Сначала заполните переменные ниже (APP_EXE обязателен).
 REM ============================================================
+REM Ручной путь установки. В клиенте есть тот же сценарий кнопкой
+REM «Машина (постоянный доступ)» в Настройках — там setup.exe скачивается
+REM из релиза, код регистрации вводится в интерфейсе, служба ставится
+REM отложенным автостартом (ADR 0029).
 setlocal
 
 REM --- Параметры (проверьте и при необходимости поправьте) ---
@@ -41,17 +45,20 @@ if errorlevel 1 (
   exit /b 1
 )
 
-REM --- Создание/обновление службы: автостарт, описание. Идемпотентно:
+REM --- Создание/обновление службы. Идемпотентно:
 REM --- повторный запуск по существующей службе ОБНОВЛЯЕТ конфиг (апгрейд
 REM --- бинарников), а не падает на «already exists» (наблюдение 01.10:
 REM --- апгрейд оставлял службу Stopped, т.к. create падал и до start
-REM --- дело не доходило).
+REM --- дело не доходило). Старт отложенный (delayed-auto): на холодной
+REM --- загрузке SCM-таймаут старта не лечится failure-действиями, а
+REM --- отложенный старт уходит от пикового шторма диска (ADR 0029; живой
+REM --- случай 08.10: агент ВМ102 не поднялся после ребута, 7009).
 sc.exe query "%SVC_NAME%" >nul 2>&1
 if errorlevel 1 (
-  sc.exe create "%SVC_NAME%" binPath= "\"%APP_EXE%\"" start= auto obj= LocalSystem DisplayName= "EnotDesk Agent"
+  sc.exe create "%SVC_NAME%" binPath= "\"%APP_EXE%\"" start= delayed-auto obj= LocalSystem DisplayName= "EnotDesk Agent"
   if errorlevel 1 goto :fail
 ) else (
-  sc.exe config "%SVC_NAME%" binPath= "\"%APP_EXE%\"" start= auto obj= LocalSystem DisplayName= "EnotDesk Agent"
+  sc.exe config "%SVC_NAME%" binPath= "\"%APP_EXE%\"" start= delayed-auto obj= LocalSystem DisplayName= "EnotDesk Agent"
   if errorlevel 1 goto :fail
 )
 sc.exe description "%SVC_NAME%" "EnotDesk: unattended agent. Auto-registers on the EnotDesk server, waits for operator claims. No window by design; managed via this service (see docs/AGENT.md)."
@@ -108,7 +115,7 @@ if errorlevel 1 (
   exit /b 1
 )
 echo.
-echo Готово. Служба %SVC_NAME% создана/обновлена и запущена (start= auto).
+echo Готово. Служба %SVC_NAME% создана/обновлена и запущена (start= delayed-auto).
 echo Повторный запуск скрипта безопасен: конфиг обновляется, служба перезапускается.
 echo Логи в v1 не пишутся на диск (см. docs/AGENT.md, раздел "Логи").
 echo Регистрация машины проверяется на сервере: список машин / journal-стиль диагностики -

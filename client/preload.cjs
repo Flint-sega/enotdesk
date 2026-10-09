@@ -31,6 +31,9 @@ contextBridge.exposeInMainWorld('enot', {
   input: (event) => ipcRenderer.invoke('enot:input', event),
   copy: (text) => ipcRenderer.invoke('enot:copy', text),
   openExternal: (url) => ipcRenderer.invoke('enot:openExternal', url),
+  // Установка машины (службы агента) из клиента (ADR 0029): main скачивает
+  // setup и запускает install-скрипт с UAC; ответ {ok, reason?, log?}
+  installAgentService: (code) => ipcRenderer.invoke('enot:installAgentService', { code }),
   quit: () => ipcRenderer.invoke('enot:quit'),
   // One-click (R04): репорт {sessionId,password} на hub — сеть только в main
   // (CSP рендерера connect-src 'self' file:); ответ {ok,status}
