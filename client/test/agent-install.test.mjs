@@ -88,6 +88,15 @@ test('генератор: настройки LocalSystem без BOM + права
   assert.match(s, /\*S-1-5-32-544:\(OI\)\(CI\)F/);
   assert.ok(s.includes('set "SERVER_URL=https://support.ruenot.site"'));
   assert.match(s, /serverUrl='%SERVER_URL%'/);
+  // http-адрес без флага loadSettings отбрасывает до дефолта (SEC-006/007),
+  // поэтому allowInsecureHttp выводится из схемы адреса; литералы PowerShell
+  // ($true/$false) — голое true PS считает командой (живая приёмка ВМ101)
+  assert.ok(s.includes('set "INSECURE_HTTP=$false"'), 'https — флаг выключен');
+  assert.ok(s.includes('allowInsecureHttp=%INSECURE_HTTP%'));
+  assert.match(s, /Test-Path \(Join-Path '%AGENT_PROFILE%' 'settings\.json'\)/, 'пост-проверка записи настроек');
+  const http = buildInstallScript({ ...BASE, serverUrl: 'http://192.168.100.174:8080' });
+  assert.ok(http.includes('set "INSECURE_HTTP=$true"'), 'http — флаг включён');
+  assert.match(http, /allowInsecureHttp=%INSECURE_HTTP%/);
 });
 
 test('генератор: служба delayed-auto, идемпотентный create/config, failure actions', () => {
