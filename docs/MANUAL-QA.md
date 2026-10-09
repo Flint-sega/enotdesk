@@ -82,6 +82,14 @@ glue — `scripts/lab/enot-xauth-sync.sh`, runbook — `docs/LAB.md`).
 
 ## Фаза 4 — macOS, unattended
 
+> **Статус фазы (08.10.2026): отложена — блокеры, решение владельца.** В лабе
+> создана macOS-VM `enotdesk-mac-a1` (VMID 104, Catalina 10.15.7, OpenCore —
+> см. docs/LAB.md 08.10), но агент на неё не ставится: (1) mac-релизы EnotDesk
+> arm64-only (mac-x64 не собирается); (2) Electron 44 требует macOS 13+, а
+> потолок хоста лабы — Catalina (CPU без AVX2). Варианты: даунгрейд Electron
+> ≤32 + mac-x64 в релизах (продуктовое решение, пины заморожены) или реальный
+> Mac (надёжнее для M3-TCC). Пункты M1–M6 — план после снятия ограничения.
+
 | ID | Проверка | Ожидаемо | Результат |
 |----|----------|----------|-----------|
 | M1 | `install-macos.sh` | LaunchDaemon загружен (`launchctl print`), лог пишется в /var/log/enotdesk-agent.log, машина online | |
