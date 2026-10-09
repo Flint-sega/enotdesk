@@ -1,6 +1,6 @@
 {
   "name": "enotdesk",
-  "version": "0.6.10",
+  "version": "0.6.11",
   "description": "EnotDesk — portable удалённая поддержка (клиент запускается без установки)",
   "private": true,
   "type": "module",
