@@ -439,6 +439,13 @@ function startUpdater() {
   autoUpdater.on('update-downloaded', async (info) => {
     const version = String(info?.version ?? '');
     console.log(`[enotdesk] обновление ${version} скачано`);
+    // electron-updater регистрирует свой quit-хук синхронно сразу после этого
+    // события и читает autoInstallOnAppQuit именно в ЭТОТ момент (находка U-4,
+    // приёмка 09.10: флаг, выставленный после диалога, опаздывал — подтверждение
+    // не имело эффекта). Поэтому true ставим до первого await; отказ ниже
+    // возвращает false — quit-колбэк перечитывает флаг и установку честно
+    // пропускает (SEC-010 сохранён: без явного «да» ничего не ставим).
+    autoUpdater.autoInstallOnAppQuit = true;
     // Подтверждение перед автоустановкой (SEC-010): dialog-баннер с кнопкой
     // «Установить при выходе»; отказ/нет окна — только уведомление, ничего не ставим.
     let confirmed = false;
