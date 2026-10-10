@@ -601,3 +601,41 @@ test('настройки виджета: GET/POST админом, операто
     assert.equal(forbidden.status, 403);
   } finally { h.close(); }
 });
+
+// Ревью 10.10: HTTP-эндпоинты виджета шли без per-IP лимита (паритет с WS-гостем
+// не выдержан — CORS-allowlist ограничивает «кто», но не «как часто»), а ip()
+// брал ЛЕВЫЙ hop X-Forwarded-For — за доверенным прокси клиент подставлял себе
+// свежий «IP» на каждый запрос и обходил все лимиты. Здесь оба факта: бакет
+// ключится на ПРАВЫЙ недоверенный hop (то, что дописывает Caddy), фейки слева
+// свежего лимита не дают.
+test('widget API: per-IP лимит записи + ip() правоход по XFF за доверенным прокси', async () => {
+  const f = fakeEnotDesk();
+  const h = await startHub({ enotFetch: f.enotFetch, trustedProxy: '127.0.0.1', widgetApiLimit: 3 });
+  try {
+    const post = (left) => fetch(`${h.base}/api/hub/widget/create`, {
+      method: 'POST',
+      headers: {
+        'content-type': 'application/json',
+        'sec-fetch-site': 'same-origin',
+        'x-forwarded-for': `${left}, 203.0.113.7`,
+      },
+      body: JSON.stringify({ visitorId: STRONG_VISITOR }),
+    });
+    for (let i = 0; i < 3; i++) {
+      const r = await post(`spoof-${i}`);
+      assert.equal(r.status, 201, `запрос ${i + 1} — в лимите, ключ по правому hop`);
+    }
+    const limited = await post('spoof-4');
+    assert.equal(limited.status, 429, 'смена левого фейка не даёт свежий бакет');
+    const other = await fetch(`${h.base}/api/hub/widget/create`, {
+      method: 'POST',
+      headers: {
+        'content-type': 'application/json',
+        'sec-fetch-site': 'same-origin',
+        'x-forwarded-for': 'spoof-9, 198.51.100.5',
+      },
+      body: JSON.stringify({ visitorId: STRONG_VISITOR_2 }),
+    });
+    assert.equal(other.status, 201, 'другой клиент — свой бакет');
+  } finally { h.close(); }
+});

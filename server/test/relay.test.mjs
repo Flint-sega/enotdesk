@@ -101,3 +101,47 @@ test('relay: auth-отказы — без токена 401, лишний раз�
   assert.equal(tooBig.status, 413);
   inst.close();
 });
+
+test('relay: chunked (без Content-Length) → 411 (ревью 10.10), валидный путь не задет', async (t) => {
+  const dbPath = tmpDb(t);
+  const { inst, base, port } = await startServer(t, { dbPath });
+  const admin = await adminLogin(dbPath, base);
+  const reg = await api(base, 'POST', '/sessions');
+  const { sessionId, password, hostToken } = reg.json;
+  const host = wsConnect(port);
+  await wsAuth(host, { type: 'auth', role: 'host', sessionId, token: hostToken });
+  const claim = await api(base, 'POST', `/sessions/${sessionId}/claim`, { token: admin.token, body: { password } });
+  assert.equal(claim.status, 201);
+
+  // chunked-загрузка (undici шлёт Transfer-Encoding: chunked, когда body —
+  // поток без длины): глобальный потолок релея считает байты по декларации,
+  // отсутствие декларации раньше обнуляло её и обходило потолок.
+  // Кривую декларацию («5, 5», мусор) raw-клиент не доставит — HTTP-парсер
+  // Node режет её до обработчика; гард Number.isFinite в коде — защита
+  // в глубину, отдельного пути через undici нет.
+  const { Readable } = await import('node:stream');
+  const chunked = await fetch(base + '/api/v1/relay', {
+    method: 'POST',
+    headers: {
+      authorization: `Bearer ${hostToken}`,
+      'content-type': 'application/octet-stream',
+      'x-file-name': 'chunked.bin',
+    },
+    body: Readable.from([Buffer.from('chunk'), Buffer.from('-body')]),
+    duplex: 'half',
+  });
+  assert.equal(chunked.status, 411, 'без Content-Length — честный отказ');
+
+  // обычная загрузка с валидной декларацией по-прежнему работает
+  const fine = await fetch(base + '/api/v1/relay', {
+    method: 'POST',
+    headers: {
+      authorization: `Bearer ${hostToken}`,
+      'content-type': 'application/octet-stream',
+      'x-file-name': 'ok.txt',
+    },
+    body: Buffer.from('нормально'),
+  });
+  assert.equal(fine.status, 201, 'валидный путь не задет');
+  inst.close();
+});

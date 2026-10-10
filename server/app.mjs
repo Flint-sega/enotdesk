@@ -466,7 +466,15 @@ export function createServer(opts = {}) {
       actor = `host:${hs.id}`;
     }
     if (!cfg.limits.relayUpload.take(`ip:${ip(req)}`)) return err(res, 429, 'rate_limited', 'Слишком много загрузок');
-    const declared = Number(req.headers['content-length'] ?? 0);
+    // Глобальный потолок ниже считается по декларации; chunked-запрос без
+    // Content-Length обнулял declared и обходил его — неаутентифицированный
+    // disk-fill через анонимный hostToken (ревью 10.10). Продуктовый клиент
+    // всегда шлёт Content-Length; кривую декларацию («100, 100», мусор)
+    // тоже отклоняем — иначе NaN → 0 тем же путём.
+    const declaredRaw = req.headers['content-length'];
+    if (declaredRaw === undefined) return err(res, 411, 'length_required', 'Требуется Content-Length');
+    const declared = Number(declaredRaw);
+    if (!Number.isFinite(declared) || declared < 0) return err(res, 400, 'bad_request', 'Некорректный Content-Length');
     if (declared > cfg.relayMax) return err(res, 413, 'too_large', `Файл больше ${Math.round(cfg.relayMax / 1048576)} МБ`);
     if (relayTotalBytes() + declared > cfg.relayMax * 10) {
       return err(res, 507, 'insufficient_storage', 'Хранилище релея переполнено — повторите позже');
@@ -1532,12 +1540,14 @@ export function createServer(opts = {}) {
     m = p.match(/^\/machines\/([^/]+)\/toast$/);
     if (m && req.method === 'POST') {
       const locale = pickLocale(req.headers['accept-language']);
-      if (!cfg.limits.machineToast.take(`ip:${ip(req)}`)) {
-        return err(res, 429, 'rate_limited', t('machines.toastLimited', {}, locale));
-      }
       if (!user) return err(res, 401, 'unauthorized', 'Требуется авторизация');
       // операция поддержки, как claim: admin+operator; аудитор — нет
       if (!['admin', 'operator'].includes(user.role)) return err(res, 403, 'forbidden', 'Недостаточно прав');
+      // лимит ПОСЛЕ auth, как у claim/wol (ревью 10.10: аноним жёг IP-бакет,
+      // общий с операторами за тем же egress, и выедал их лимит)
+      if (!cfg.limits.machineToast.take(`ip:${ip(req)}`)) {
+        return err(res, 429, 'rate_limited', t('machines.toastLimited', {}, locale));
+      }
       const machine = machinesStore.get(m[1]);
       if (!machine) return err(res, 404, 'not_found', t('machines.notFound', {}, locale));
       const text = typeof body?.text === 'string' ? body.text.trim() : '';
@@ -1955,7 +1965,12 @@ export function createServer(opts = {}) {
       const s = db.prepare('SELECT * FROM sessions WHERE id = ?').get(String(msg.sessionId ?? ''));
       if (!s || s.state === 'ended') return ws.close(4003, 'invalid-session');
       if (msg.role === 'host') {
-        if (typeof msg.token !== 'string' || sha256(msg.token) !== s.host_token_hash) return ws.close(4003, 'invalid-session');
+        // оба — hex-дайджесты sha256 равной длины; timingSafe как в релее (замечание 10.10)
+        const digest = typeof msg.token === 'string' ? Buffer.from(sha256(msg.token)) : null;
+        const stored = Buffer.from(s.host_token_hash);
+        if (!digest || digest.length !== stored.length || !crypto.timingSafeEqual(digest, stored)) {
+          return ws.close(4003, 'invalid-session');
+        }
         const existingRt = live.get(s.id);
         // №13b (ревью GLM-5.3 v0.4.4): в approved лизинг — не судья входа, ПОКА
         // сеанс жив: и в объявленном грейсе, и в зазоре «лизинг истёк, свипер

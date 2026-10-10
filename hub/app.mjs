@@ -37,9 +37,11 @@ const WS_BUFFERED_MAX = 256 * 1024;
 const CLAIM_TIMEOUT_MS = 5000; // авто-claim в EnotDesk
 const HOOK_BODY_MAX = 16 * 1024; // тело webhook-события
 
-// Копия server/app.mjs (readJson/err/ok): там модуль-приватные и не экспортируются,
-// а server/ намеренно не трогаем. Логика совпадает 1:1 — при изменении сервера
-// синхронизировать вручную.
+// Копия server/app.mjs (readJson/err/ok, а также ip()/parseTrustedProxyList):
+// там модуль-приватные и не экспортируются, а server/ намеренно не трогаем.
+// Логика совпадает 1:1 — при изменении сервера синхронизировать вручную
+// (ревью 10.10: ip() разъехался с сервером — левый hop XFF вместо правохода,
+// что стоило обхода всех per-IP лимитов; правило теперь именует и его).
 function err(res, status, code, message) {
   res.writeHead(status, { 'Content-Type': 'application/json; charset=utf-8' });
   res.end(JSON.stringify({ error: { code, message } }));
@@ -186,16 +188,20 @@ export function createHub(opts = {}) {
     widgetHelloMs: opts.widgetHelloMs ?? 10_000, // таймаут hello гостя
     wsPingMs: opts.wsPingMs ?? 30_000, // период ping/чистки мёртвых сокетов
   };
-  // ip() берёт X-Forwarded-For только от доверенных адресов сокета
+  // ip() берёт X-Forwarded-For только от доверенных адресов сокета. Логика —
+  // зеркало server/app.mjs (правило readJson/err/ok распространяется и на
+  // ip()/parseTrustedProxyList: ревью 10.10 — первая версия брала ЛЕВЫЙ hop XFF,
+  // и клиент мог спуфом подставлять себе свежий «IP» на каждый запрос, обходя
+  // все per-IP лимиты хаба за Caddy). Правоход с пропуском доверенных: последний
+  // незнакомый hop — единственный, за который отвечает цепочка прокси.
   const trustedProxyList = parseTrustedProxyList(cfg.trustedProxy);
+  const isTrustedProxy = (addr) => trustedProxyList.some((entry) => addrTrusted(String(addr), entry));
   function ip(req) {
     const socketAddr = req.socket.remoteAddress || '';
-    for (const entry of trustedProxyList) {
-      if (addrTrusted(socketAddr, entry)) {
-        const fwd = String(req.headers['x-forwarded-for'] ?? '').split(',')[0].trim();
-        if (fwd) return fwd;
-        break;
-      }
+    if (!trustedProxyList.length || !isTrustedProxy(socketAddr)) return socketAddr;
+    const hops = String(req.headers['x-forwarded-for'] ?? '').split(',').map((s) => s.trim()).filter(Boolean);
+    for (let i = hops.length - 1; i >= 0; i--) {
+      if (!isTrustedProxy(hops[i])) return hops[i];
     }
     return socketAddr;
   }
@@ -247,6 +253,9 @@ export function createHub(opts = {}) {
     join: new RateLimiter(opts.joinLimit ?? 10, 60_000, { now: cfg.now }),
     joinReport: new RateLimiter(opts.joinReportLimit ?? 30, 60_000, { now: cfg.now }),
     hooks: new RateLimiter(opts.hooksLimit ?? 60, 60_000, { now: cfg.now }),
+    // запись гостя по HTTP — паритет с WS-гостем (20/10с на сообщение):
+    // CORS-allowlist ограничивает кто, но не как часто (ревью 10.10)
+    widgetApi: new RateLimiter(opts.widgetApiLimit ?? 30, 60_000, { now: cfg.now }),
   };
 
   // ---- one-click «Подключиться» (T05) ----
@@ -836,6 +845,10 @@ export function createHub(opts = {}) {
     if (!widgetCors(req, res)) return err(res, 403, 'cors_denied', 'Origin не разрешён для виджета');
     const p = url.pathname;
     const method = req.method;
+    // лимит на запись до чтения тела — дешёвый отказ раньше работы (ревью 10.10)
+    if (method === 'POST' && !limits.widgetApi.take(`ip:${ip(req)}`)) {
+      return err(res, 429, 'rate_limited', 'Слишком много запросов, попробуйте позже');
+    }
 
     if (p === '/api/hub/widget/settings' && method === 'GET') {
       const s = settings.getWidget();

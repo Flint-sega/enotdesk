@@ -1068,3 +1068,18 @@ test('machines API: favorite POST/DELETE за RBAC; claim ставит lastClaim
   assert.equal(list2.json.items[0].id, b.created.machine.id, 'без звезды первой становится недавно подключённая');
   assert.equal(list2.json.items[0].favorite, false);
 });
+
+// Ревью 10.10: лимит toast списывался ДО проверки аутентификации — аноним
+// выжигал IP-бакет (10/мин), общий с операторами за тем же egress. Как у
+// claim/wol: лимит только после auth+RBAC.
+test('toast API: анонимные запросы не выедают IP-бакет оператора', async (t) => {
+  const { base, admin } = await setup(t);
+  const operator = await makeUser(base, admin, 'operator', 'op-toast3');
+  const { created } = await onboardAndRegister(base, admin);
+  for (let i = 0; i < 10; i++) {
+    assert.equal((await api(base, 'POST', `/machines/${created.machine.id}/toast`)).status, 401);
+  }
+  const op = await api(base, 'POST', `/machines/${created.machine.id}/toast`, { token: operator.token, body: { text: 'х' } });
+  assert.notEqual(op.status, 429, 'бакет не тронут анонимными запросами');
+  assert.equal(op.status, 409, 'оператор дошёл до машинной логики (машина офлайн)');
+});
