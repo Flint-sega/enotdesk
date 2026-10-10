@@ -1,5 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
+import path from 'node:path';
 import { applyDesktopEntry, buildDesktopEntry, DESKTOP_ID, DESKTOP_MIME } from '../lib/desktop-entry.mjs';
 
 function fakeIo(existing = new Map()) {
@@ -37,8 +38,9 @@ test('applyDesktopEntry: создаёт запись и копирует ико�
   const run = [];
   const r1 = applyDesktopEntry({ home, execPath: '/opt/EnotDesk/enotdesk', iconSource, runXdgMime: (...a) => run.push(a) }, io);
   assert.equal(r1.changed, true);
-  assert.equal(r1.entryFile, `${home}/.local/share/applications/${DESKTOP_ID}`);
-  assert.equal(r1.iconPath, `${home}/.local/share/icons/enotdesk.png`);
+  // пути — только через path.join: на Windows разделитель другой
+  assert.equal(r1.entryFile, path.join(home, '.local', 'share', 'applications', DESKTOP_ID));
+  assert.equal(r1.iconPath, path.join(home, '.local', 'share', 'icons', 'enotdesk.png'));
   assert.deepEqual(io._calls.copy, [[iconSource, r1.iconPath]]);
   assert.deepEqual(run, [['default', DESKTOP_ID, DESKTOP_MIME]]);
 

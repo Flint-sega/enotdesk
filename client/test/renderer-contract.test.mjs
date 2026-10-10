@@ -274,7 +274,8 @@ test('main: автоустановка при выходе только посл
   assert.ok(handler, 'обработчик update-downloaded найден');
   const earlyTrue = handler.search(/autoInstallOnAppQuit = true/);
   const dialogAsk = handler.search(/await dialog\.showMessageBox/);
-  const consentGate = handler.search(/autoInstallOnAppQuit = false;\n {6}bootLog/);
+  // \r? — на Windows-раннере рабочий дуб checkout'ается с CRLF
+  const consentGate = handler.search(/autoInstallOnAppQuit = false;\r?\n {6}bootLog/);
   assert.ok(earlyTrue >= 0, 'включение флага до await — иначе quit-хук не зарегистрируется');
   assert.ok(dialogAsk >= 0, 'подтверждение — dialog-баннер внутри обработчика');
   assert.ok(consentGate > dialogAsk, 'после диалога отказ возвращает флаг в false (SEC-010)');
