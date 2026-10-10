@@ -28,6 +28,12 @@ test('buildDesktopEntry: обязательные поля и кавычки в�
   assert.match(e, new RegExp(`^MimeType=${DESKTOP_MIME}$`, 'm'));
   const spaced = buildDesktopEntry({ execPath: '/opt/My App/enotdesk' });
   assert.match(spaced, /^Exec="\/opt\/My App\/enotdesk"$/m);
+  // Экранирование freedesktop Exec (ревью 10.10): % удваивается, " и \
+  // экранируются, кавычки нужны и когда пробела нет, но есть кавычка.
+  assert.match(buildDesktopEntry({ execPath: '/opt/50%apps/EnotDesk' }), /^Exec=\/opt\/50%%apps\/EnotDesk$/m);
+  assert.match(buildDesktopEntry({ execPath: '/opt/a"b/app' }), /^Exec=\/opt\/a\\"b\/app$/m);
+  assert.match(buildDesktopEntry({ execPath: String.raw`/opt\a/app` }), /^Exec=\/opt\\\\a\/app$/m);
+  assert.match(buildDesktopEntry({ execPath: '/opt/1% and "x"/app' }), /^Exec="\/opt\/1%% and \\"x\\"\/app"$/m);
 });
 
 test('applyDesktopEntry: создаёт запись и копирует иконку, повторный вызов — no-op', () => {
