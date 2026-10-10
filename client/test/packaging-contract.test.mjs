@@ -128,3 +128,37 @@ test('packaging: хелпер собирается со статическим C
 test('packaging: main.mjs копирует хелпер в ProgramData\\EnotDesk\\helper', () => {
   assert.ok(mainJs.includes("'EnotDesk', 'helper'"), 'нужна копия хелпера в ProgramData (ACL портативной распаковки)');
 });
+
+// installer.nsh: жизненный цикл службы (живой инцидент 10.10.2026, v0.6.15:
+// обновление выполняет деинсталлятор предыдущей версии — тот со времени
+// v0.6.14 делает sc delete, и зачисленная машина оставалась без службы,
+// потому что customInstall умел только ЗАПУСТИТЬ существующую). Контракт:
+// customInstall умеет пересоздать службу по маркеру зачисления (профиль
+// агента в systemprofile, видимый из 32-битного установщика через Sysnative),
+// customUnInstall по-прежнему удаляет службу при настоящей деинсталляции.
+const installerNsh = readFileSync(fileURLToPath(new URL('../../build/installer.nsh', import.meta.url)), 'utf8');
+
+test('packaging: customInstall восстанавливает службу зачисленной машины', () => {
+  assert.match(
+    installerNsh,
+    /IfFileExists "\$WINDIR\\Sysnative\\config\\systemprofile\\AppData\\Roaming\\EnotDesk\\agent\\\*\.\*" 0 ed_no_agent/,
+    'маркер зачисления — профиль агента в systemprofile через Sysnative (x64-редирект 32-битного установщика)',
+  );
+  assert.match(installerNsh, /ed_agent_recreate:[\s\S]*sc\.exe create EnotDeskAgent binPath=/, 'нужна ветка пересоздания службы');
+  assert.match(installerNsh, /sc\.exe create EnotDeskAgent binPath= \$\\"\$INSTDIR\\EnotDesk\.exe\$\\" start= delayed-auto obj= LocalSystem/, 'конфиг create = бинPath в $INSTDIR, delayed-auto, LocalSystem (ADR 0029/0026)');
+  assert.ok(installerNsh.includes('/v Environment /t REG_MULTI_SZ /d "EDESK_AGENT=1\\0EDESK_AGENT_NAME='), 'Environment обязан нести EDESK_AGENT=1 + имя + EDESK_AGENT_SVC=1 (SCM-режим)');
+  assert.match(installerNsh, /sc\.exe failure EnotDeskAgent reset= 86400 actions= restart\/5000\/restart\/10000\/restart\/30000/, 'failure-действия 5/10/30 с обязаны вернуться после пересоздания');
+});
+
+test('packaging: customUnInstall по-прежнему удаляет службу (настоящая деинсталляция)', () => {
+  const un = installerNsh.slice(installerNsh.indexOf('!macro customUnInstall'));
+  assert.match(un, /sc\.exe delete EnotDeskAgent/, 'без удаления служба оставалась бы висеть на удалённом каталоге');
+});
+
+test('packaging: внешние команды установщика — только по абсолютному $SYSDIR (ревью 10.10)', () => {
+  const cmds = [...installerNsh.matchAll(/nsExec::Exec (.+)$/gm)].map((m) => m[1].trim().replace(/^['"]|['"]$/g, ''));
+  assert.ok(cmds.length > 0, 'в installer.nsh есть nsExec-команды');
+  for (const c of cmds) {
+    assert.match(c, /^\$SYSDIR\\(sc|taskkill|reg)\.exe /, `команда должна начинаться с $SYSDIR\\… : ${c}`);
+  }
+});
