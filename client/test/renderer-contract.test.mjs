@@ -272,11 +272,16 @@ test('main: автоустановка при выходе только посл
   // закрытое окно при открытом диалоге (ревью 10.10; ранее U-4, приёмка 09.10 —
   // обратная крайность: флаг только после диалога делал подтверждение мёртвым).
   // Отказ после диалога оставляет флаг в false; установка — только через
-  // will-quit по updateOnQuitVersion (явное «Обновить сейчас»).
+  // will-quit по updateOnQuitVersion (явное «Обновить сейчас»). macOS —
+  // исключение: MacUpdater не имеет quit-хука и гейтит Squirrel-фетч тем же
+  // флагом в момент emit — false убивает весь mac-путь (ревью 10.10, P2-1),
+  // поэтому там платформенный сплит с честной оговоркой про Squirrel-семантику.
   const handler = /autoUpdater\.on\('update-downloaded',[\s\S]*?\n {2}\}\);/.exec(mainJs)?.[0] ?? '';
   assert.ok(handler, 'обработчик update-downloaded найден');
   const dialogAsk = handler.search(/await dialog\.showMessageBox/);
   assert.ok(dialogAsk >= 0, 'подтверждение — dialog-баннер внутри обработчика');
+  const darwinGate = handler.search(/autoInstallOnAppQuit = process\.platform === 'darwin'/);
+  assert.ok(darwinGate >= 0 && darwinGate < dialogAsk, 'mac-ветка: платформенный сплит до диалога — иначе MacUpdater не инициирует Squirrel-фетч');
   const consentTrue = handler.search(/autoInstallOnAppQuit = true/);
   assert.ok(consentTrue === -1 || consentTrue > dialogAsk, 'до диалога флага true быть не должно — иначе зарегистрируется тихий quit-хук updaterа');
   // \r? — на Windows-раннере рабочий дуб checkout'ается с CRLF
