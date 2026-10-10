@@ -60,9 +60,11 @@ $('form-login').addEventListener('submit', async (e) => {
   setBusy(btn, true, t('op.loginBusy'));
   text($('login-error'), '');
   try {
+    const login = $('login-name').value.trim();
+    const password = $('login-password').value;
     const res = await enot.request('login', {
-      login: $('login-name').value.trim(),
-      password: $('login-password').value,
+      login,
+      password,
       totp: $('login-totp').value.trim() || undefined,
     });
     if (res.status === 401 && res.body?.error?.code === 'totp_required') {
@@ -72,7 +74,16 @@ $('form-login').addEventListener('submit', async (e) => {
       text($('login-error'), t('op.totpRequired'));
       return;
     }
+    if (res.status === 401) {
+      // сохранённые креды не подошли (пароль сменился) — не хранить мусор
+      enot.opCredentialsClear();
+      $('login-remember').checked = false;
+      throw new Error(res.body?.error?.message ?? t('op.loginFail'));
+    }
     if (res.status !== 200) throw new Error(res.body?.error?.message ?? t('op.loginFail'));
+    // Запомнить меня: хранить только по явному чекбоксу
+    if ($('login-remember').checked) enot.opCredentialsSave({ login, password });
+    else enot.opCredentialsClear();
     state.me = res.body.user;
     hide($('field-login-totp')); // чистое поле для следующего входа
     $('login-totp').value = '';
@@ -86,6 +97,20 @@ $('form-login').addEventListener('submit', async (e) => {
     setBusy(btn, false);
   }
 });
+
+// «Запомнить меня»: предзаполняем форму сохранёнными кредами. Шифрование
+// недоступно (нет DPAPI/Keychain/keyring) — чекбокс честно не предлагаем.
+(async () => {
+  try {
+    if (!(await enot.opCredentialsAvailable())) { hide($('field-login-remember')); return; }
+    const saved = await enot.opCredentialsLoad();
+    if (saved) {
+      $('login-name').value = saved.login;
+      $('login-password').value = saved.password;
+      $('login-remember').checked = true;
+    }
+  } catch { /* хранилище недоступно — форма работает как раньше */ }
+})();
 
 $('btn-logout').addEventListener('click', async () => {
   await enot.request('logout', {}).catch(() => {});

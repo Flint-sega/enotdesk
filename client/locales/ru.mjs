@@ -87,6 +87,7 @@ export default {
   "op.loginTitle": "Вход оператора",
   "op.login": "Логин",
   "op.password": "Пароль",
+  "op.remember": "Запомнить меня",
   "op.loginBtn": "Войти",
   "op.loginBusy": "Входим…",
   "op.loginFail": "Не удалось войти",

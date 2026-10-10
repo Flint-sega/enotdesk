@@ -16,7 +16,7 @@
 <body>
   <header class="topbar">
     <div class="brand">
-      <img class="brand-icon" src="../../assets/enot-icon.svg" alt="">
+      <img class="brand-icon" src="../../assets/mascot-mini.webp" alt="">
       <span class="brand-name">EnotDesk</span>
       <span class="brand-sub" data-i18n="app.subtitle">Удалённая поддержка</span>
     </div>
@@ -101,7 +101,7 @@
           </div>
         </div>
         <div class="hero-art">
-          <img class="mascot-hero" src="../../assets/mascot-app.png" alt="Енот-специалист EnotDesk" data-i18n-alt="app.alt.mascotHero">
+          <img class="mascot-hero" src="../../assets/mascot-app.webp" alt="Енот-специалист EnotDesk" data-i18n-alt="app.alt.mascotHero">
         </div>
       </div>
 
@@ -183,7 +183,7 @@
     <section id="view-operator" class="view hidden" data-i18n-aria-label="app.aria.operatorMode" aria-label="Режим оператора">
       <!-- Вход -->
       <div id="op-login" class="card narrow center">
-        <img class="mascot-mini" src="../../assets/enot-mascot.svg" alt="" aria-hidden="true">
+        <img class="mascot-mini" src="../../assets/mascot-mini.webp" alt="" aria-hidden="true">
         <h2 data-i18n="op.loginTitle">Вход оператора</h2>
         <form id="form-login" novalidate>
           <div class="field">
@@ -199,6 +199,10 @@
             <label for="login-totp" data-i18n="op.totpCode">Код подтверждения</label>
             <input id="login-totp" name="totp" inputmode="numeric" autocomplete="one-time-code" data-i18n-placeholder="op.totpPlaceholder" placeholder="6 цифр или резервный код">
           </div>
+          <label class="check-row" id="field-login-remember">
+            <input type="checkbox" id="login-remember">
+            <span data-i18n="op.remember">Запомнить меня</span>
+          </label>
           <p id="login-error" class="err-text" role="alert"></p>
           <button type="submit" id="btn-login" class="cta wide" data-i18n="op.loginBtn">Войти</button>
         </form>
@@ -491,7 +495,7 @@
     <!-- ======================= ПЕРВЫЙ ЗАПУСК ======================= -->
     <div id="firstrun-overlay" class="overlay hidden" role="dialog" aria-modal="true" aria-labelledby="firstrun-title">
       <div class="card narrow center">
-        <img class="mascot-mini" src="../../assets/enot-mascot.svg" alt="" aria-hidden="true">
+        <img class="mascot-mini" src="../../assets/mascot-mini.webp" alt="" aria-hidden="true">
         <h2 id="firstrun-title" data-i18n="firstRun.title">Первый запуск</h2>
         <p class="muted" data-i18n="firstRun.lead">Адрес сервера уже настроен — проверим, что он доступен.</p>
         <p id="firstrun-url" class="firstrun-url"></p>

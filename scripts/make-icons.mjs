@@ -19,11 +19,29 @@ if (!fs.existsSync(src)) {
   process.exit(1);
 }
 
+// Палитра 256 + дизеринг: иконки-арт (шерсть/неон) в RGB-PNG весит втрое дороже,
+// на размерах дока/трея квантование визуально неотличимо (замер 10.10: icns
+// 2850→975 КБ, icon.png 1530→486 КБ). python3+PIL есть на любой macOS с CLT;
+// нет — честно оставляем sips-результат (тяжелее, но корректный).
+const PIL_SNIPPET = 'import sys; from PIL import Image;' +
+  'im = Image.open(sys.argv[1]).convert("RGB")' +
+  '.quantize(colors=256, method=Image.MEDIANCUT, dither=Image.Dither.FLOYDSTEINBERG);' +
+  'im.save(sys.argv[1], "PNG", optimize=True)';
+function quantizePng(file) {
+  try {
+    execFileSync('python3', ['-c', PIL_SNIPPET, file], { stdio: 'pipe' });
+    return true;
+  } catch {
+    return false;
+  }
+}
+
 const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'enotdesk-icons-'));
 try {
   // --- icon.png: квадратный кроп уже содержит тёмный фон бренда, растягиваем без полей ---
   const iconPng = path.join(root, 'assets', 'icon.png');
   execFileSync('sips', ['-z', '1024', '1024', src, '--out', iconPng], { stdio: 'pipe' });
+  if (!quantizePng(iconPng)) console.log('python3/PIL недоступен — icon.png оставлен в RGB (тяжелее)');
   console.log(`Создан ${iconPng}`);
 
   // --- icns (macOS) ---
@@ -34,6 +52,7 @@ try {
     execFileSync('sips', ['-z', String(s), String(s), iconPng, '--out', path.join(set, `icon_${s}x${s}.png`)], { stdio: 'pipe' });
     execFileSync('sips', ['-z', String(s * 2), String(s * 2), iconPng, '--out', path.join(set, `icon_${s}x${s}@2x.png`)], { stdio: 'pipe' });
   }
+  for (const f of fs.readdirSync(set)) quantizePng(path.join(set, f));
   const icns = path.join(root, 'assets', 'icon.icns');
   execFileSync('iconutil', ['-c', 'icns', set, '-o', icns], { stdio: 'pipe' });
   console.log(`Создан ${icns}`);
@@ -41,6 +60,7 @@ try {
   // --- ico (Windows): один PNG-элемент 256×256 (ширина/высота 0 = 256) ---
   const png256 = path.join(tmp, 'icon-256.png');
   execFileSync('sips', ['-z', '256', '256', iconPng, '--out', png256], { stdio: 'pipe' });
+  quantizePng(png256);
   const png = fs.readFileSync(png256);
   const header = Buffer.alloc(6);
   header.writeUInt16LE(0, 0); // reserved

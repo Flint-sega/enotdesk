@@ -2,7 +2,7 @@
 // ворота нативного ввода по реальному WS-состоянию, выбор источника захвата.
 // Рендереру доступен только context-isolated мост window.enot (preload.cjs).
 
-import { app, BrowserWindow, ipcMain, session, desktopCapturer, screen, shell, clipboard, systemPreferences, Menu, dialog, Notification, powerSaveBlocker } from 'electron';
+import { app, BrowserWindow, ipcMain, session, desktopCapturer, screen, shell, clipboard, systemPreferences, Menu, dialog, Notification, powerSaveBlocker, safeStorage } from 'electron';
 import path from 'node:path';
 import os from 'node:os';
 import fs from 'node:fs';
@@ -27,6 +27,7 @@ import { createBridgeRelay, BRIDGE_IPC } from './agent-bridge/relay.mjs';
 import { createTermHost } from './lib/term.mjs';
 import { showToast } from './lib/notify.mjs';
 import { createMachineServices } from './lib/machine-services.mjs';
+import { createOpCredentialsStore } from './lib/op-credentials.mjs';
 import { onIncoming as chatWidgetOnIncoming, shouldNotify as chatWidgetShouldNotify } from './lib/chat-widget.mjs';
 import { createSessionSpawner } from './lib/session-spawn.mjs';
 import { createVideoHost } from './lib/video-host.mjs';
@@ -904,6 +905,31 @@ function registerIpc() {
 
   ipcMain.handle('enot:getSettings', (e) => { guard(e); return { serverUrl: settings.serverUrl, allowInsecureHttp: settings.allowInsecureHttp, locale: settings.locale, firstRun: !fs.existsSync(settingsPath), version: app.isPackaged ? app.getVersion() : pkg.version }; });
 
+  // «Запомнить меня» на входе оператора: пароль хранится ТОЛЬКО шифротекстом
+  // safeStorage (DPAPI/Keychain/keyring; Linux basic_text = как «нет») в файле
+  // 0600 профиля пользователя; шифрование недоступно — рендереру честно
+  // отказываем, чекбокс скрыт, протухший файл стираем (ревью 10.10 P1-1/P2-3).
+  const opCreds = createOpCredentialsStore({
+    readText: async (p) => {
+      const st = await fs.promises.stat(p);
+      if (st.size > 4096) throw new Error('too_large'); // чужой гигантский файл — не читаем (P2-1)
+      return fs.promises.readFile(p, 'utf8');
+    },
+    writeText: (p, data) => fs.promises.writeFile(p, data, { mode: 0o600 }),
+    unlink: (p) => fs.promises.unlink(p),
+    exists: (p) => fs.existsSync(p),
+    safeStorage,
+    file: path.join(app.getPath('userData'), 'op-credentials.json'),
+  });
+  // Креды нужны рендереру только ДО первого успешного входа; дальше load отдаёт
+  // null — будущий XSS в рендерере не получает постоянный канал к паролю (P2-2).
+  let opCredsConsumed = false;
+  opCreds.available().then((ok) => { if (!ok) opCreds.clear(); });
+  ipcMain.handle('enot:opCredentialsAvailable', (e) => { guard(e); return opCreds.available(); });
+  ipcMain.handle('enot:opCredentialsSave', (e, creds) => { guard(e); return opCreds.save(creds); });
+  ipcMain.handle('enot:opCredentialsLoad', (e) => { guard(e); return opCredsConsumed ? Promise.resolve(null) : opCreds.load(); });
+  ipcMain.handle('enot:opCredentialsClear', (e) => { guard(e); return opCreds.clear(); });
+
   // Выбор языка интерфейса (R08.2): только известные локали, null снимает выбор.
   ipcMain.handle('enot:setLocale', (e, locale) => {
     guard(e);
@@ -1015,6 +1041,8 @@ function registerIpc() {
     // до его завершения; на не-Windows/без koffi — no-op внутри либы.
     if (operation === 'session.create' && result.status === 201) keepAwake.acquire();
     if (operation === 'session.end') keepAwake.release();
+    // Успешный вход оператора закрывает окно потребности в сохранённых кредах
+    if (operation === 'login' && result.status === 200) opCredsConsumed = true;
     // Ошибки HTTP приходят рендереру как {status, body:{error}} — честно, без выдуманных данных
     return result;
   });

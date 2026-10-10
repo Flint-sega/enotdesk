@@ -6,7 +6,7 @@
 <title>EnotDesk — удалённая помощь без установки</title>
 <meta name="description" id="meta-desc" content="Open-source удалённая помощь: приложение запускается без установки, одноразовые ID и пароль, браузерный оператор, self-hosted сервер. AGPL-3.0.">
 <meta name="theme-color" content="#050A13">
-<link rel="icon" href="assets/enot-icon.svg" type="image/svg+xml">
+<link rel="icon" href="assets/favicon.png" type="image/png">
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=Onest:wght@500;600;700&family=Inter:wght@400;500;600&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
@@ -91,7 +91,7 @@ h1{font:600 clamp(46px,6.4vw,78px)/1.04 var(--font-display);letter-spacing:-.015
    страницы под артом, чтобы переход фона был невидим; снизу — drop-shadow */
 .hero-art{position:relative;justify-self:end;width:100%;max-width:600px}
 .hero-art::before{content:"";position:absolute;inset:-8% -6%;background:var(--hero-glow);filter:blur(60px);z-index:0}
-.hero-art img{position:relative;display:block;width:100%;height:auto;z-index:1;
+.hero-art img{position:relative;display:block;width:auto;max-width:100%;max-height:480px;margin-left:auto;z-index:1;
   filter:drop-shadow(0 24px 70px rgba(53,208,186,.16));
   -webkit-mask-image:linear-gradient(90deg,transparent,#000 7%,#000 93%,transparent),linear-gradient(180deg,transparent,#000 9%,#000 96%,transparent);
   -webkit-mask-composite:source-in;
@@ -192,7 +192,7 @@ h2{font:600 clamp(22px,2.6vw,30px)/1.2 var(--font-display);letter-spacing:-.01em
 
 <header class="head">
   <div class="wrap head-in">
-    <a class="brand" href="#"><img src="assets/enot-icon.svg" alt="" width="36" height="36"><b>EnotDesk</b></a>
+    <a class="brand" href="#"><img src="assets/enot-brand-72.png" alt="" width="36" height="36"><b>EnotDesk</b></a>
     <div class="head-actions">
       <nav class="nav" aria-label="Разделы" data-i18n-aria="nav.aria">
         <a href="#features" data-i18n="nav.features">Возможности</a>
@@ -221,7 +221,7 @@ h2{font:600 clamp(22px,2.6vw,30px)/1.2 var(--font-display);letter-spacing:-.01em
       </p>
     </div>
     <div class="hero-art">
-      <img id="hero-mascot" src="assets/mascot-site.webp" alt="Енот-помощник EnotDesk" width="736" height="372" data-i18n-alt="img.mascot.alt">
+      <img id="hero-mascot" src="assets/mascot-site.webp" alt="Енот-помощник EnotDesk" width="640" height="640" data-i18n-alt="img.mascot.alt">
     </div>
   </section>
 

@@ -15,9 +15,9 @@ files:
   - client/**/*
   - "!client/test/**"
   - "!**/.DS_Store"
-  - assets/enot-icon.svg
-  - assets/enot-mascot.svg
-  - assets/mascot-app.png
+  # Бренд-лого (10.10): WebP вместо PNG — визуально 1:1, в бандле в 4 раза легче
+  - assets/mascot-app.webp
+  - assets/mascot-mini.webp
   # иконка для Linux-ярлыка (client/lib/desktop-entry.mjs копирует её в
   # ~/.local/share/icons при старте упакованного десктоп-приложения)
   - assets/icon.png
