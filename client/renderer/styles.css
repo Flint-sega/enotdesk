@@ -234,6 +234,9 @@ p:last-child { margin-bottom: 0; }
 }
 .mascot-mini {
   display: block; width: 84px; height: auto; margin: 0 auto var(--s-2);
+  /* квадратный фон арта растворяем скруглением: без него рамка арта видна
+     на карточке входа (прогон v0.6.17, ВМ101) */
+  border-radius: 18px;
   filter: drop-shadow(0 14px 26px rgba(0, 0, 0, .45));
 }
 
