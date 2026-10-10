@@ -274,11 +274,22 @@ test('main: автоустановка при выходе только посл
   assert.ok(handler, 'обработчик update-downloaded найден');
   const earlyTrue = handler.search(/autoInstallOnAppQuit = true/);
   const dialogAsk = handler.search(/await dialog\.showMessageBox/);
-  const consentGate = handler.search(/autoInstallOnAppQuit = decision\.autoInstallOnAppQuit/);
+  const consentGate = handler.search(/autoInstallOnAppQuit = false;\n {6}bootLog/);
   assert.ok(earlyTrue >= 0, 'включение флага до await — иначе quit-хук не зарегистрируется');
   assert.ok(dialogAsk >= 0, 'подтверждение — dialog-баннер внутри обработчика');
-  assert.ok(consentGate >= 0, 'после диалога флагом управляет решение человека');
-  assert.ok(earlyTrue < dialogAsk && dialogAsk < consentGate, 'порядок: true (регистрация) → await диалога → гейт согласием');
+  assert.ok(consentGate > dialogAsk, 'после диалога отказ возвращает флаг в false (SEC-010)');
+  assert.ok(earlyTrue < dialogAsk, 'порядок: true (регистрация) → await диалога');
+  assert.match(handler, /updateOnQuitVersion = version/, 'подтверждение ставит установку в очередь will-quit');
+  assert.match(handler, /gate\.isOpen\(\)/, 'активный сеанс не рвётся кнопкой обновления');
+  assert.match(handler, /app\.quit\(\)/, '«Обновить сейчас» — честный выход приложения');
+  // Находка 10.10.2026: quit-хук electron-updater'а молча пропускал установку
+  // при exitCode ≠ 0 и не перезапускал приложение — пользователь видел «ничего
+  // не произошло». Теперь в will-quit (после before-quit-очистки) — тихая
+  // установка с перезапуском (--force-run).
+  const willQuit = /app\.on\('will-quit',[\s\S]*?\n\}\);/.exec(mainJs)?.[0] ?? '';
+  assert.ok(willQuit, 'will-quit обработчик обновления найден');
+  assert.match(willQuit, /quitAndInstall\(true, true\)/, 'тихая установка с перезапуском');
+  assert.match(willQuit, /updateOnQuitVersion/, 'установка только подтверждённого обновления');
 });
 
 // ---- SEC-002 (desktop): входящий буфер оператора не пишется автоматически ----

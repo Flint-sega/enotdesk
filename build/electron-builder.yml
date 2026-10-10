@@ -18,6 +18,9 @@ files:
   - assets/enot-icon.svg
   - assets/enot-mascot.svg
   - assets/mascot-app.png
+  # иконка для Linux-ярлыка (client/lib/desktop-entry.mjs копирует её в
+  # ~/.local/share/icons при старте упакованного десктоп-приложения)
+  - assets/icon.png
   - package.json
   # Срез мёртвого груза koffi (R01): C++-исходники, vendor-заголовки, doc.
   # Рантайму нужны index.cjs -> src/koffi/index.cjs -> src/koffi/src/static.cjs
@@ -83,6 +86,12 @@ nsis:
   # %LOCALAPPDATA%\Programs (живой сеанс 28.09: владелец ожидал системную
   # установку; служба агента также ожидает стабильный системный путь).
   perMachine: true
+  # Служба EnotDeskAgent держит EnotDesk.exe из Program Files круглосуточно:
+  # без хуков ниже тихое обновление могло проиграть SCM-перезапуску службы
+  # гонку за файлы (находка 10.10.2026), а после установки служба оставалась
+  # убитой. customInit: sc stop до копирования; customInstall: sc start;
+  # customUnInstall: stop + delete.
+  include: build/installer.nsh
   createDesktopShortcut: true
   createStartMenuShortcut: true
   artifactName: EnotDesk-win-x64-setup.${ext}
