@@ -18,6 +18,12 @@ contextBridge.exposeInMainWorld('enot', {
   relayUpload: (name, buffer) => ipcRenderer.invoke('enot:relayUpload', { name, buffer }),
   sendFileLink: (link) => ipcRenderer.invoke('enot:sendFileLink', link),
   permissions: () => ipcRenderer.invoke('enot:permissions'),
+  // «Запомнить меня» на входе оператора: креды только в шифротекстах safeStorage
+  // (DPAPI/Keychain/keyring), на диск в открытом виде не попадают никогда.
+  opCredentialsAvailable: () => ipcRenderer.invoke('enot:opCredentialsAvailable'),
+  opCredentialsSave: (creds) => ipcRenderer.invoke('enot:opCredentialsSave', creds),
+  opCredentialsLoad: () => ipcRenderer.invoke('enot:opCredentialsLoad'),
+  opCredentialsClear: () => ipcRenderer.invoke('enot:opCredentialsClear'),
   // Чат-виджет (спека владельца 02.10): рендерер отдаёт сообщения оператора в
   // main, обратно получает ответы из виджета и события жизненного цикла.
   chatWidgetMsg: (text) => ipcRenderer.send('enot:chat-widget-msg', String(text ?? '')),

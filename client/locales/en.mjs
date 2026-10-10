@@ -87,6 +87,7 @@ export default {
   "op.loginTitle": "Operator sign in",
   "op.login": "Login",
   "op.password": "Password",
+  "op.remember": "Remember me",
   "op.loginBtn": "Sign in",
   "op.loginBusy": "Signing in…",
   "op.loginFail": "Sign in failed",

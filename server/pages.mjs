@@ -248,7 +248,7 @@ function downloadsHtml(items, version, locale, insecure = false) {
     `<ul class="chips"><li>${icon('shield')}<span>${esc(t('server.chip.secure', {}, locale))}</span></li>` +
     `<li>${icon('bolt')}<span>${esc(t('server.chip.fast', {}, locale))}</span></li>` +
     `<li>${icon('lock')}<span>${esc(t('server.chip.noInstall', {}, locale))}</span></li></ul>` +
-    `</div><img class="mascot" src="/brand/mascot-site.webp" alt="${esc(t('server.mascotAlt', {}, locale))}" width="736" height="372"></section>` +
+    `</div><img class="mascot" src="/brand/mascot-site.webp" alt="${esc(t('server.mascotAlt', {}, locale))}" width="640" height="640"></section>` +
     `<section id="download" class="wrap section"><h2>${esc(t('server.downloadFor', {}, locale))}</h2><div class="cards">${cards}</div></section>` +
     `<section id="how" class="wrap section"><h2>${esc(t('server.how', {}, locale))}</h2><ol class="steps">${stepItems}</ol></section></main>` +
     siteFooter(version, locale);

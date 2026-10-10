@@ -336,3 +336,20 @@ test('крест: revoke сеанса — ДО app.quit, не внутри befor
     'quit только после revoke (бюджет 1.2 с)');
   assert.match(mainJs, /session\.end[\s\S]{0,60}asHost: true/, 'revoke гасит сеанс как хост');
 });
+
+// «Запомнить меня» на входе оператора (10.10): чекбокс в форме, мост в preload,
+// хранение только через шифротекст safeStorage (lib-тесты — op-credentials.test.mjs).
+test('вход оператора: запоминание кредов на месте и идёт через safeStorage-мост', () => {
+  const preload = readFileSync(path.join(dir, '..', 'preload.cjs'), 'utf8');
+  assert.match(html, /id="login-remember"/, 'чекбокс «Запомнить меня» в форме входа');
+  assert.match(html, /data-i18n="op.remember"/, 'подпись чекбокса — через словарь');
+  for (const method of ['opCredentialsAvailable', 'opCredentialsSave', 'opCredentialsLoad', 'opCredentialsClear']) {
+    assert.ok(preload.includes(method), `preload обязан выставлять ${method}`);
+    assert.ok(mainJs.includes(`'enot:${method}'`), `main обязан держать канал enot:${method}`);
+  }
+  assert.match(mainJs, /createOpCredentialsStore/, 'main собирает хранилище из lib');
+  assert.match(mainJs, /mode: 0o600/, 'файл кредов — 0600');
+  const view = readFileSync(path.join(dir, 'views', 'operator-view.js'), 'utf8');
+  assert.match(view, /opCredentialsSave\(\{ login, password \}\)/, 'сохранение — только после успешного входа');
+  assert.match(view, /opCredentialsClear\(\)/, 'очистка: снятый чекбокс и 401 с сохранёнными кредами');
+});
