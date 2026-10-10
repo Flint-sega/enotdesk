@@ -6,9 +6,10 @@
 ;     Killing the process alone made the SCM relaunch the agent (failure
 ;     actions 5s/10s/30s) and race the installer for file locks (finding
 ;     10.10.2026: quit-install updates could fail on a slow disk);
-;   - after copying we start it back up -- but only if the service actually
-;     exists: on a fresh install it is not created by the installer, it is
-;     created from the client UI ("Machine (persistent access)", ADR 0029);
+;   - after copying we start it back up -- and if the service is missing
+;     while the machine was enrolled (agent profile in the SYSTEM profile),
+;     we re-create it: an update first runs the previous version's
+;     uninstaller, which deletes the service (finding 10.10.2026);
 ;   - on uninstall we stop the agent and delete the service registration,
 ;     otherwise a service pointing into a deleted directory stays registered.
 ; Hooks are the documented electron-builder extension points (installer.nsi,
@@ -57,10 +58,33 @@ ed_unlocked:
 !macro customInstall
   Push $R1
   ; ADR 0029: the service is created by the client UI, not by the installer,
-  ; so on a fresh install it does not exist (sc query returns 1060) -- skip
+  ; so on a fresh install it does not exist (sc query returns 1060) -- skip.
+  ; But an UPDATE over an enrolled machine arrives here AFTER the previous
+  ; version's uninstaller ran (electron-builder executes it first), and that
+  ; uninstaller deletes the service since v0.6.14 (customUnInstall below).
+  ; Healing rule (live finding 10.10.2026: 0.6.14 -> 0.6.15 update left
+  ; enrolled machines without the service): if the agent profile exists in
+  ; the SYSTEM profile, the machine was enrolled via ADR 0029 -- re-create
+  ; the service with the full registration config. A plain desktop install
+  ; has no profile -> still no service. Sysnative reaches the real System32
+  ; from this 32-bit process (x64 redirection hides it behind SysWOW64).
+  IfFileExists "$WINDIR\Sysnative\config\systemprofile\AppData\Roaming\EnotDesk\agent\*.*" 0 ed_no_agent
   nsExec::Exec "$SYSDIR\sc.exe query EnotDeskAgent"
   Pop $R1
-  IntCmp $R1 0 0 ed_no_agent ed_no_agent
+  IntCmp $R1 0 ed_agent_start ed_agent_recreate ed_agent_recreate
+ed_agent_recreate:
+  ReadRegStr $R1 HKLM "SYSTEM\CurrentControlSet\Control\ComputerName\ComputerName" "ComputerName"
+  nsExec::Exec "$SYSDIR\sc.exe create EnotDeskAgent binPath= $\"$INSTDIR\EnotDesk.exe$\" start= delayed-auto obj= LocalSystem DisplayName= $\"EnotDesk Agent$\""
+  Pop $R1
+  nsExec::Exec "$SYSDIR\sc.exe description EnotDeskAgent $\"EnotDesk: unattended agent. Auto-registers on the EnotDesk server, waits for operator claims. No window by design; managed via this service (see docs/AGENT.md).$\""
+  Pop $R1
+  nsExec::Exec '$SYSDIR\reg.exe add "HKLM\SYSTEM\CurrentControlSet\Services\EnotDeskAgent" /v Environment /t REG_MULTI_SZ /d "EDESK_AGENT=1\0EDESK_AGENT_NAME=$R1\0EDESK_AGENT_SVC=1" /f'
+  Pop $R1
+  nsExec::Exec '$SYSDIR\reg.exe add "HKLM\SYSTEM\CurrentControlSet\Services\EnotDeskAgent" /v AppEnvironment /t REG_MULTI_SZ /d "EDESK_AGENT=1\0EDESK_AGENT_NAME=$R1\0EDESK_AGENT_SVC=1" /f'
+  Pop $R1
+  nsExec::Exec "$SYSDIR\sc.exe failure EnotDeskAgent reset= 86400 actions= restart/5000/restart/10000/restart/30000"
+  Pop $R1
+ed_agent_start:
   nsExec::Exec "$SYSDIR\sc.exe start EnotDeskAgent"
   Pop $R1
 ed_no_agent:
