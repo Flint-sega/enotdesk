@@ -6,8 +6,6 @@ English | [Русский](README.ru.md)
 
 EnotDesk is a self-hosted remote-support application for Windows, macOS and Linux, licensed under **AGPL-3.0**. In the default **attended** mode the person receiving help runs a portable app with no installation, gets a one-time ID and password, and passes them to the operator through their usual chat; closing the app immediately ends access — no services, no autostart, no background processes. Optionally, on Windows the **agent service** can be installed right from the app (Settings → “Machine”) for unattended access: the operator claims the machine with a mandatory reason and an optional PIN. Operators can work from the desktop client or a plain browser, and the optional EnotDesk Hub adds a ticket desk with a chat widget, one-click join and an email channel.
 
-This is an original Electron + WebRTC application, not a RustDesk fork (see docs/adr/0001-original-electron-webrtc.md, in Russian).
-
 ## Screenshots
 
 Main window — the client side with the one-time ID/password for the operator (smoke screenshot of the packaged build):
