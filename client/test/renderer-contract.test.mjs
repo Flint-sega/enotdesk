@@ -264,24 +264,24 @@ test('main: автоустановка при выходе только посл
   assert.match(mainJs, /updateInstallDecision/);
   assert.match(mainJs, /dialog\.showMessageBox/, 'подтверждение — dialog-баннер');
   assert.match(mainJs, /autoInstallOnAppQuit = false/, 'по умолчанию установка выключена');
-  // U-4 (живая приёмка 09.10): electron-updater регистрирует quit-хук синхронно
-  // сразу после emit 'update-downloaded' и требует флаг=true в момент
-  // регистрации, иначе хук не регистрируется вовсе. Ревью 10.10.2026 (P1): сам
-  // quit-колбэк перечитывает флаг при каждом выходе, поэтому после регистрации
-  // флаг обязан немедленно вернуться в false — закрытие окна, пока диалог ещё
-  // открыт, не является согласием; явное «Обновить сейчас» возвращает true.
+  // Механика (BaseUpdater.executeDownload → addQuitHandler): свой quit-хук
+  // electron-updater ставит сразу ПОСЛЕ возврата из обработчика и лишь при
+  // autoInstallOnAppQuit=true в тот момент. Продукт от хука не зависит: до
+  // первого await диалога в обработчике флага true быть не должно — иначе хук
+  // зарегистрируется и поставит обновление при любом выходе с кодом 0, включая
+  // закрытое окно при открытом диалоге (ревью 10.10; ранее U-4, приёмка 09.10 —
+  // обратная крайность: флаг только после диалога делал подтверждение мёртвым).
+  // Отказ после диалога оставляет флаг в false; установка — только через
+  // will-quit по updateOnQuitVersion (явное «Обновить сейчас»).
   const handler = /autoUpdater\.on\('update-downloaded',[\s\S]*?\n {2}\}\);/.exec(mainJs)?.[0] ?? '';
   assert.ok(handler, 'обработчик update-downloaded найден');
-  const earlyTrue = handler.search(/autoInstallOnAppQuit = true/);
-  const consentReset = handler.search(/autoInstallOnAppQuit = true;\r?\n {4}autoUpdater\.autoInstallOnAppQuit = false/);
   const dialogAsk = handler.search(/await dialog\.showMessageBox/);
-  assert.ok(earlyTrue >= 0, 'включение флага до await — иначе quit-хук не зарегистрируется');
-  assert.ok(consentReset >= 0, 'сразу после регистрации флаг гасится');
-  assert.ok(consentReset === earlyTrue && consentReset < dialogAsk, 'порядок: true (регистрация) и немедленное false вплотную, до await диалога');
   assert.ok(dialogAsk >= 0, 'подтверждение — dialog-баннер внутри обработчика');
+  const consentTrue = handler.search(/autoInstallOnAppQuit = true/);
+  assert.ok(consentTrue === -1 || consentTrue > dialogAsk, 'до диалога флага true быть не должно — иначе зарегистрируется тихий quit-хук updaterа');
   // \r? — на Windows-раннере рабочий дуб checkout'ается с CRLF
   const consentGate = handler.search(/autoInstallOnAppQuit = false;\r?\n {6}bootLog/);
-  assert.ok(consentGate > dialogAsk, 'после диалога отказ возвращает флаг в false (SEC-010)');
+  assert.ok(consentGate > dialogAsk, 'после диалога отказ оставляет флаг в false (SEC-010)');
   assert.match(handler, /updateOnQuitVersion = version;\r?\n {4}autoUpdater\.autoInstallOnAppQuit = true/, 'явное согласие возвращает флаг в true');
   assert.match(handler, /gate\.isOpen\(\)/, 'активный сеанс не рвётся кнопкой обновления');
   assert.match(handler, /app\.quit\(\)/, '«Обновить сейчас» — честный выход приложения');

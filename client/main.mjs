@@ -463,15 +463,15 @@ function startUpdater() {
     const version = String(info?.version ?? '');
     console.log(`[enotdesk] обновление ${version} скачано`);
     bootLog.write('update', `обновление ${version} скачано`);
-    // electron-updater регистрирует свой quit-хук синхронно сразу после этого
-    // события и требует autoInstallOnAppQuit=true в МОМЕНТ РЕГИСТРАЦИИ
-    // (BaseUpdater.addQuitHandler; находка U-4, приёмка 09.10: флаг, выставленный
-    // после диалога, опаздывал — хук не регистрировался и подтверждение не
-    // работало). Сам колбэк, однако, перечитывает флаг при каждом выходе, поэтому
-    // после регистрации флаг немедленно гасим: окно, закрытое пользователем, пока
-    // диалог ещё открыт, — это НЕ согласие (ревью 10.10: иначе была тихая
-    // установка без явного «да»). Явное «Обновить сейчас» ниже возвращает true.
-    autoUpdater.autoInstallOnAppQuit = true;
+    // electron-updater ставит свой quit-хук сразу ПОСЛЕ возврата из этого
+    // обработчика (BaseUpdater.executeDownload: emit 'update-downloaded' →
+    // addQuitHandler) и регистрирует его только если флаг autoInstallOnAppQuit
+    // равен true в ЭТОТ момент. Держим false нарочно: его путь «тихая установка
+    // при любом выходе с кодом 0» не отличает согласие от закрытого окна —
+    // окно, закрытое при открытом диалоге, это НЕ согласие (ревью 10.10;
+    // ранее U-4, приёмка 09.10: флаг только после диалога делал хук и
+    // подтверждение мёртвыми). Установка в продукте одна — will-quit ниже по
+    // updateOnQuitVersion, который ставится лишь явным «Обновить сейчас».
     autoUpdater.autoInstallOnAppQuit = false;
     let confirmed = false;
     if (installPolicy.askConfirm) {
@@ -493,14 +493,15 @@ function startUpdater() {
       notify({ version, auto: false });
       return;
     }
-    // Согласие получено — флаг возвращаем: quit-колбэк перечитывает его при
-    // выходе (и банер при активном сеансе, и честный выход ниже ведут к
-    // установке при закрытии приложения).
+    // Согласие получено: установку при закрытии приложения выполняет will-quit
+    // по updateOnQuitVersion. Флаг true возвращаем на случай, если будущая
+    // версия electron-updater зарегистрирует хук в другой момент — тогда она
+    // увидит явное согласие, а не тишину.
     updateOnQuitVersion = version;
     autoUpdater.autoInstallOnAppQuit = true;
     if (gate.isOpen()) {
       // Идёт сеанс — не рвём его кнопкой обновления: применится при следующем
-      // закрытии приложения через quit-хук updater'а.
+      // закрытии приложения (will-quit: updateOnQuitVersion → quitAndInstall).
       bootLog.write('update', `обновление ${version}: сеанс активен — применится при закрытии`);
       notify({ version, auto: true });
       return;
