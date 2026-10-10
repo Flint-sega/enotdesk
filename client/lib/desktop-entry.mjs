@@ -13,7 +13,12 @@ export const DESKTOP_ID = 'enotdesk.desktop';
 export const DESKTOP_MIME = 'x-scheme-handler/enotdesk';
 
 export function buildDesktopEntry({ execPath, iconPath = null, comment = 'EnotDesk' }) {
-  const exec = String(execPath).includes(' ') ? `"${execPath}"` : String(execPath);
+  // Спецификация Desktop Entry (Exec): литеральный % в аргументе удваивается,
+  // " и \ экранируются обратным слэшем; аргумент с пробелом берётся в кавычки
+  // (ревью 10.10: путь AppImage, выбранный пользователем, может содержать % —
+  // без удвоения запись ломалась или парсилась с лишним токеном).
+  const raw = String(execPath).replace(/%/g, '%%').replace(/(["\\])/g, '\\$1');
+  const exec = /[ \t]/.test(raw) ? `"${raw}"` : raw;
   return [
     '[Desktop Entry]',
     'Type=Application',

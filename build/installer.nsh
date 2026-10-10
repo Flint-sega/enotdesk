@@ -15,13 +15,20 @@
 ; installSection.nsh, uninstaller.nsh). ASCII-only text: this file is compiled
 ; into both the installer and the uninstaller and input encoding is not
 ; guaranteed.
+; External tools are always invoked by absolute path ($SYSDIR): nsExec hands the
+; command line to CreateProcess, which resolves bare names against the caller's
+; directory first -- an elevated installer launched from a user-writable folder
+; (e.g. Downloads) must never execute a planted binary (security review
+; 10.10.2026). nsExec does not expand %VAR%, so $SYSDIR (NSIS system-dir
+; constant) is used; on x64 a 32-bit installer resolves it to SysWOW64, where
+; sc.exe and taskkill.exe also exist.
 
 !macro edStopAgentAndAwait
   Push $R0
   Push $R1
-  nsExec::Exec "sc.exe stop EnotDeskAgent"
+  nsExec::Exec "$SYSDIR\sc.exe stop EnotDeskAgent"
   Pop $R1
-  nsExec::Exec "taskkill /F /IM EnotDesk.exe /T"
+  nsExec::Exec "$SYSDIR\taskkill.exe /F /IM EnotDesk.exe /T"
   Pop $R1
   ; Wait until the exe is free (up to 30 x 500ms): sc stop is async, the
   ; service process may take a moment to exit. Probe = open the exe for
@@ -32,7 +39,7 @@ ed_wait:
   System::Call 'kernel32::CreateFile(t "$INSTDIR\EnotDesk.exe", i 1073741824, i 0, i 0, i 3, i 0, i 0) p.R1'
   System::Call 'kernel32::CloseHandle(p R1)'
   IntCmp $R1 -1 0 ed_unlocked ed_unlocked
-  nsExec::Exec "taskkill /F /IM EnotDesk.exe /T"
+  nsExec::Exec "$SYSDIR\taskkill.exe /F /IM EnotDesk.exe /T"
   Pop $R1
   Sleep 500
   IntOp $R0 $R0 + 1
@@ -51,10 +58,10 @@ ed_unlocked:
   Push $R1
   ; ADR 0029: the service is created by the client UI, not by the installer,
   ; so on a fresh install it does not exist (sc query returns 1060) -- skip
-  nsExec::Exec "sc.exe query EnotDeskAgent"
+  nsExec::Exec "$SYSDIR\sc.exe query EnotDeskAgent"
   Pop $R1
   IntCmp $R1 0 0 ed_no_agent ed_no_agent
-  nsExec::Exec "sc.exe start EnotDeskAgent"
+  nsExec::Exec "$SYSDIR\sc.exe start EnotDeskAgent"
   Pop $R1
 ed_no_agent:
   Pop $R1
@@ -63,12 +70,12 @@ ed_no_agent:
 !macro customUnInstall
   Push $R0
   DetailPrint "EnotDesk: stopping and removing EnotDeskAgent service"
-  nsExec::Exec "sc.exe stop EnotDeskAgent"
+  nsExec::Exec "$SYSDIR\sc.exe stop EnotDeskAgent"
   Pop $R0
-  nsExec::Exec "taskkill /F /IM EnotDesk.exe /T"
+  nsExec::Exec "$SYSDIR\taskkill.exe /F /IM EnotDesk.exe /T"
   Pop $R0
   ; pause so the service exits before delete (sc stop is async)
   Sleep 1500
-  nsExec::Exec "sc.exe delete EnotDeskAgent"
+  nsExec::Exec "$SYSDIR\sc.exe delete EnotDeskAgent"
   Pop $R0
 !macroend
