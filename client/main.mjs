@@ -8,7 +8,7 @@ import os from 'node:os';
 import fs from 'node:fs';
 import net from 'node:net';
 import crypto from 'node:crypto';
-import { spawn as nodeSpawn } from 'node:child_process';
+import { spawn as nodeSpawn, execFile } from 'node:child_process';
 import { createRequire } from 'node:module';
 import { createApi } from './lib/api.mjs';
 import { createSignalClient } from './lib/signal.mjs';
@@ -38,6 +38,7 @@ import { t, setLocale } from './lib/i18n.mjs';
 import { createSvcDiag, envDiagSlice, maskJoinTokens } from './lib/svc-diag.mjs';
 import { createKeepAwake } from './lib/keep-awake.mjs';
 import { createBootLog } from './lib/boot-log.mjs';
+import { applyDesktopEntry } from './lib/desktop-entry.mjs';
 
 // Диагностика Windows-службы (W-U2): первый маркер каждого запуска процесса —
 // ДО ветки службы. Если svc-ветка НЕ вошла, а эта строка в логе есть —
@@ -406,6 +407,9 @@ function sendToRenderer(channel, payload) {
 // Windows: установленная сборка (NSIS) обновляется как mac/linux; портативный .exe —
 // только уведомление со ссылкой на страницу релизов (update.manualBanner), ADR 0029.
 const UPDATE_CHECK_MS = 24 * 60 * 60 * 1000;
+// Активный updater (нужен в will-quit) и подтверждённое к установке обновление.
+let activeUpdater = null;
+let updateOnQuitVersion = null;
 
 function startUpdater() {
   if (SMOKE || AGENT || !app.isPackaged) return;
@@ -434,6 +438,17 @@ function startUpdater() {
   const installPolicy = updateInstallDecision({ platform: process.platform, winInstalled: WIN_INSTALLED });
   autoUpdater.autoDownload = installPolicy.autoDownload;
   autoUpdater.autoInstallOnAppQuit = false;
+  // Решения updater'а (в т.ч. отказ ставить при выходе, ошибки запуска
+  // установщика через elevate.exe) видны только в его логгере — у GUI-приложения
+  // stdout нет (находка 10.10: подтверждённое обновление молча не ставилось,
+  // и причин в следах не оставалось). Пишем в boot-лог, тег update.
+  autoUpdater.logger = {
+    info: (m) => bootLog.write('update', String(m)),
+    warn: (m) => bootLog.write('update', String(m)),
+    error: (m) => bootLog.write('update', String(m)),
+    debug: () => {},
+  };
+  activeUpdater = autoUpdater;
   try {
     autoUpdater.setFeedURL({ provider: 'generic', url: feedUrl });
   } catch (e) {
@@ -447,6 +462,7 @@ function startUpdater() {
   autoUpdater.on('update-downloaded', async (info) => {
     const version = String(info?.version ?? '');
     console.log(`[enotdesk] обновление ${version} скачано`);
+    bootLog.write('update', `обновление ${version} скачано`);
     // electron-updater регистрирует свой quit-хук синхронно сразу после этого
     // события и читает autoInstallOnAppQuit именно в ЭТОТ момент (находка U-4,
     // приёмка 09.10: флаг, выставленный после диалога, опаздывал — подтверждение
@@ -454,8 +470,6 @@ function startUpdater() {
     // возвращает false — quit-колбэк перечитывает флаг и установку честно
     // пропускает (SEC-010 сохранён: без явного «да» ничего не ставим).
     autoUpdater.autoInstallOnAppQuit = true;
-    // Подтверждение перед автоустановкой (SEC-010): dialog-баннер с кнопкой
-    // «Установить при выходе»; отказ/нет окна — только уведомление, ничего не ставим.
     let confirmed = false;
     if (installPolicy.askConfirm) {
       try {
@@ -470,12 +484,32 @@ function startUpdater() {
         confirmed = r.response === 0;
       } catch { /* диалог недоступен — остаёмся на уведомлении */ }
     }
-    const decision = updateInstallDecision({ platform: process.platform, confirmed });
-    autoUpdater.autoInstallOnAppQuit = decision.autoInstallOnAppQuit;
-    console.log(`[enotdesk] установка при выходе: ${decision.autoInstallOnAppQuit ? 'подтверждена' : 'не подтверждена'}`);
-    notify({ version, auto: decision.autoInstallOnAppQuit });
+    if (!confirmed) {
+      autoUpdater.autoInstallOnAppQuit = false;
+      bootLog.write('update', `обновление ${version}: подтверждения нет — только уведомление`);
+      notify({ version, auto: false });
+      return;
+    }
+    updateOnQuitVersion = version;
+    if (gate.isOpen()) {
+      // Идёт сеанс — не рвём его кнопкой обновления: применится при следующем
+      // закрытии приложения через quit-хук updater'а.
+      bootLog.write('update', `обновление ${version}: сеанс активен — применится при закрытии`);
+      notify({ version, auto: true });
+      return;
+    }
+    // «Обновить сейчас»: честный выход (before-quit снимет сеанс), в will-quit —
+    // тихая установка с перезапуском приложения (см. will-quit ниже).
+    bootLog.write('update', `обновление ${version}: выход для установки`);
+    app.quit();
   });
-  autoUpdater.on('error', (e) => console.log(`[enotdesk] проверка обновлений не удалась: ${e?.message ?? e}`));
+  autoUpdater.on('error', (e) => {
+    const msg = String(e?.message ?? e);
+    console.log(`[enotdesk] проверка обновлений не удалась: ${msg}`);
+    // У GUI stdout нет: ошибки updater'а (отказ elevate/UAC при тихой установке,
+    // сеть, проверка подписи) иначе невидимы вовсе (находка 10.10)
+    bootLog.write('update', `ошибка updater'а: ${msg}`);
+  });
   autoUpdater.checkForUpdates().catch((e) => console.log(`[enotdesk] проверка обновлений не удалась: ${e?.message ?? e}`));
   setInterval(() => { autoUpdater.checkForUpdates().catch(() => { /* ошибки приходят в 'error' */ }); }, UPDATE_CHECK_MS);
 }
@@ -1539,6 +1573,22 @@ function cleanupAndQuit() {
   api.clearSessionTokens();
   api.clearAuth();
 }
+// Подтверждённое обновление: в will-quit (после before-quit-очистки) тихо
+// ставим и просим установщик перезапустить приложение (--force-run). Это
+// закрывает находку 10.10: раньше всё оставалось на quit-хуке electron-updater'а
+// (install при выходе без перезапуска), который молча пропускал установку при
+// exitCode ≠ 0, а пользователь после закрытия видел «ничего не произошло».
+app.on('will-quit', () => {
+  if (!updateOnQuitVersion || !activeUpdater) return;
+  const version = updateOnQuitVersion;
+  console.log(`[enotdesk] обновление ${version}: тихая установка с перезапуском`);
+  bootLog.write('update', `обновление ${version}: quitAndInstall (тихая, с перезапуском)`);
+  try {
+    activeUpdater.quitAndInstall(true, true);
+  } catch (e) {
+    bootLog.write('update', `обновление ${version}: quitAndInstall ошибка: ${e?.message ?? e}`);
+  }
+});
 app.on('before-quit', cleanupAndQuit);
 app.on('window-all-closed', () => {
   // Агент живёт без окон: скрытый мост терминала — единственное окно процесса, и
@@ -1583,6 +1633,21 @@ app.whenReady().then(() => {
     }
   }
   loadSettings();
+  // Linux: ярлык приложения в меню (находка 10.10: на ВМ ярлыка не было, запуск
+  // только из терминала). Только упакованный десктоп-режим; AppImage-обновление
+  // меняет файл по тому же пути, при смене пути Exec перезапишется сам.
+  if (process.platform === 'linux' && !AGENT && !SMOKE && app.isPackaged) {
+    try {
+      const r = applyDesktopEntry({
+        home: os.homedir(),
+        execPath: process.env.APPIMAGE || process.execPath,
+        iconSource: path.join(app.getAppPath(), 'assets', 'icon.png'),
+        comment: t('desktop.entryComment'),
+        runXdgMime: (cmd, id, mime) => { execFile('xdg-mime', [cmd, id, mime], () => {}); },
+      });
+      if (r.changed) console.log(`[enotdesk] ярлык приложения: ${r.entryFile}`);
+    } catch { /* ярлык не критичен */ }
+  }
   // Join-ссылка, пришедшая до ready (mac open-url / win-linux argv, R04):
   // применяем после loadSettings — настройки и api уже готовы
   if (STARTUP_JOIN_LINK) pendingRawJoin = STARTUP_JOIN_LINK;
