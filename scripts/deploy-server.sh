@@ -152,9 +152,22 @@ info "health на сервере: $REMOTE_HEALTH"
 HEALTH_URL="$PROTO://$HOST:$PORT/api/v1/health"
 info "проверяю health снаружи: $HEALTH_URL"
 if ! PUBLIC_HEALTH="$(curl -fsS --max-time 10 "$HEALTH_URL")"; then
-  die "health снаружи не отвечает ($HEALTH_URL) — проверьте firewall/порт. Открыть порт: $OPEN_FIREWALL_HINT"
+  # За обратным прокси (Caddy) прямой порт наружу часто не публикуется — это не
+  # ошибка установки: локальный health уже проверен выше. Если задан
+  # ENOT_PUBLIC_URL — проверяем через него; без него просто предупреждаем.
+  # (живой деплой 11.10: за Caddy «Empty reply from server» на IP:8080 при
+  # полностью зелёной установке — ложная тревога в финале)
+  info "health по $HEALTH_URL не отвечает (за обратным прокси это норма)"
+  if [ -n "${ENOT_PUBLIC_URL:-}" ]; then
+    PUBLIC_HEALTH="$(curl -fsS --max-time 10 "${ENOT_PUBLIC_URL%/}/api/v1/health")" \
+      || die "health не отвечает и через ENOT_PUBLIC_URL ($ENOT_PUBLIC_URL) — проверьте прокси/файрвол"
+    info "health через ENOT_PUBLIC_URL: $PUBLIC_HEALTH"
+  else
+    info "ENOT_PUBLIC_URL не задан — внешний чек пропущен. Открыть порт: $OPEN_FIREWALL_HINT"
+  fi
+else
+  info "health снаружи: $PUBLIC_HEALTH"
 fi
-info "health снаружи: $PUBLIC_HEALTH"
 
 cat <<EOF
 
