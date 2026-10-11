@@ -48,14 +48,50 @@ export function spawnShellFor(platform, { consoleUser, uid } = {}) {
 }
 
 // Реальный адаптер (прод): пайпы без PTY — это ограничение v1, задокументировано выше.
+
+// Компенсация отсутствия TTY line discipline: операторские клиенты легитимно
+// шлют CR как терминатор строки (как в настоящем терминале — веб-панель шлёт
+// `line\r`), но оболочка на голых пайпах (bash) считает командой только строку
+// до \n — команды с одиночным \r копились и никогда не исполнялись (тикет
+// 08.10, ВМ103: «service-контекст не проводит I/O»). `\r\n` схлопываем в `\n`.
+// Будущий PTY-адаптер нормализацию НЕ получает — там \r нужен сырым.
+export function normalizeTermInput(data) {
+  if (typeof data !== 'string') return data;
+  return data.replace(/\r\n/g, '\n').replace(/\r/g, '\n');
+}
+
+// Килл дерева оболочки. На POSIX спавн detached (ребёнок — лидер своей группы,
+// pgid=pid), поэтому kill(-pid) снимает ВСЁ дерево: обёртки sudo/launchctl и
+// потомков оболочки. kill(-pid) может отказать, если группа уже разошлась —
+// добиваем прямого ребёнка. На Windows оболочка — прямой процесс, хватит pid.
+export function killProcessTree({ pid, platform = process.platform, killImpl }) {
+  if (!Number.isInteger(pid) || pid <= 0 || typeof killImpl !== 'function') return false;
+  try {
+    if (platform !== 'win32') {
+      try { killImpl(-pid, 'SIGKILL'); } catch { /* группа уже не существует */ }
+    }
+    killImpl(pid, 'SIGKILL');
+    return true;
+  } catch {
+    return false; // процесс уже мёртв — best-effort, наружу не бросаем
+  }
+}
+
 function defaultSpawn({ shell }) {
+  const detached = process.platform !== 'win32';
   const child = nodeSpawn(shell.file, shell.args ?? [], {
     ...(shell.env ? { env: shell.env } : {}),
     stdio: ['pipe', 'pipe', 'pipe'],
+    // POSIX: своя группа процессов — чтобы килл снимал дерево (см. killProcessTree).
+    // Граница: при КРАХЕ агента detached-оболочка доживёт до рестарта службы —
+    // systemd KillMode=control-group (дефолт юнита) прибирает cgroup при stop.
+    ...(detached ? { detached: true } : {}),
   });
   return {
-    write: (data) => { child.stdin?.write(data); },
-    kill: () => { try { child.kill('SIGKILL'); } catch { /* уже мёртв */ } },
+    write: (data) => { child.stdin?.write(normalizeTermInput(data)); },
+    kill: () => {
+      killProcessTree({ pid: child.pid, platform: process.platform, killImpl: (p, sig) => process.kill(p, sig) });
+    },
     resize: () => {}, // пайпы не имеют размера; см. честную пометку в шапке
     onData: (cb) => {
       child.stdout?.on('data', (chunk) => cb(String(chunk)));

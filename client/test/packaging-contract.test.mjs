@@ -162,3 +162,39 @@ test('packaging: внешние команды установщика — тол
     assert.match(c, /^\$SYSDIR\\(sc|taskkill|reg)\.exe /, `команда должна начинаться с $SYSDIR\\… : ${c}`);
   }
 });
+
+// Диета asar (волна 0.6.19): серверно-почтовое дерево (imapflow/nodemailer —
+// зависимости хаба) и чужие платформенные koffi-нативы не должны ездить в
+// клиентские сборки. Регрессия «вернул жир» ловится здесь. Осторожно: sax и
+// tiny-typed-emitter НУЖНЫ electron-updater (проверено npm ls) — их исключать
+// нельзя, аPresence в keep-комментарии — контракт на комментарий.
+test('packaging: asar-диета — почтовое дерево исключено, чужие koffi-нативы по платформам', () => {
+  for (const pkg of ['imapflow', 'nodemailer', 'encoding-japanese', 'iconv-lite', 'libmime', 'libqp', 'libbase64', 'socks', 'smart-buffer', 'ip-address', 'safer-buffer', 'pino', 'thread-stream', 'sonic-boom', 'split2']) {
+    assert.ok(yml.includes(`"!node_modules/${pkg}/**"`), `нет исключения ${pkg} (почтовое дерево в asar не нужно)`);
+  }
+  assert.ok(yml.includes('"!node_modules/@zone-eu/**"'), 'нет исключения @zone-eu (mailsplit из imapflow)');
+  assert.ok(yml.includes('"!node_modules/@pinojs/**"'), 'нет исключения @pinojs');
+  // платформенные files: ЗАПРЕЩЕНЫ — подмешивают дефолт **/*, и в asar уезжает
+  // весь репозиторий (живой инцидент волны 0.6.19: helper 323 МБ + graphify-out
+  // в mac-сборке). Чужие платформенные koffi-нативы (~1 МБ) — осознанная цена.
+  for (const section of ['mac:', 'win:', 'linux:']) {
+    const chunk = yml.slice(yml.indexOf(section));
+    const nextSection = chunk.slice(1).search(/\n(mac|win|linux|nsis):/);
+    const body = nextSection === -1 ? chunk : chunk.slice(0, nextSection + 1);
+    assert.ok(!/^\s{2}files:/m.test(body), `в секции ${section} запрещён files: — затирает глобальный список (инцидент 0.6.19)`);
+  }
+  // критичное НЕ исключено: рантайм koffi и дерево electron-updater на месте
+  assert.ok(yml.includes('"node_modules/koffi/src/koffi/*.cjs"'), 'реинклюд JS-рантайма koffi обязан остаться');
+  assert.ok(!/["!]node_modules\/sax/.test(yml), 'sax нужен electron-updater (builder-util-runtime) — исключать нельзя');
+  assert.ok(!/["!]node_modules\/tiny-typed-emitter/.test(yml), 'tiny-typed-emitter нужен electron-updater — исключать нельзя');
+  assert.ok(!/["!]node_modules\/ws/.test(yml), 'ws — рантайм клиента (signal.mjs) — исключать нельзя');
+});
+
+// Волна 0.6.19: честное ограничение видео вне Windows (B2.1) и отложенный
+// первый чек обновлений (A2).
+test('packaging: видео вне Windows — честный video-unsupported-platform; первый чек апдейтов отложен', () => {
+  assert.match(mainJs, /const videoSupported = process\.platform === 'win32';/, 'нужен платформенный гвард videoHost');
+  assert.ok(mainJs.includes("'video-unsupported-platform'"), 'нужен точный reason для операторской панели (локализуется в web.video.unsupportedPlatform)');
+  assert.match(mainJs, /firstUpdateCheck = setTimeout/, 'первый чек апдейтов уходит с критического пути старта');
+  assert.match(mainJs, /}, 10_000\);/, 'задержка первого чека — 10 с');
+});
