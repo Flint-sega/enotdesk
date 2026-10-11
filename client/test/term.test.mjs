@@ -7,6 +7,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import {
   createTerm, spawnShellFor, createTermHost, rejectTermChannel,
+  normalizeTermInput, killProcessTree,
   TERM_BUFFER_LIMIT,
 } from '../lib/term.mjs';
 import { createAgent } from '../lib/agent.mjs';
@@ -389,8 +390,7 @@ test('агент: моста нет (rtc → null) — терминал чест
 
 // ---- волна 0.6.19: normalizeTermInput + killProcessTree ----
 
-test('term: normalizeTermInput превращает CR в \\n, не трогая \\r\\n и мультибайты', async (t) => {
-  const { normalizeTermInput } = await import('../lib/term.mjs');
+test('term: normalizeTermInput превращает CR в \\n, не трогая \\r\\n и мультибайты', () => {
   assert.equal(normalizeTermInput('ls\r'), 'ls\n', 'одиночный \\r — терминатор для пайп-bash');
   assert.equal(normalizeTermInput('a\r\nb'), 'a\nb', '\\r\\n схлопывается в \\n без дубля');
   assert.equal(normalizeTermInput('a\nb'), 'a\nb', '\\n не трогается');
@@ -399,8 +399,7 @@ test('term: normalizeTermInput превращает CR в \\n, не трогая
   assert.equal(normalizeTermInput(42), 42, 'не-строка проходит как есть');
 });
 
-test('term: killProcessTree — posix бьёт группу и ребёнка, win только ребёнка, мусор честный false', async (t) => {
-  const { killProcessTree } = await import('../lib/term.mjs');
+test('term: killProcessTree — posix бьёт группу и ребёнка, win только ребёнка, мусор честный false', () => {
   const calls = [];
   const killImpl = (pid, sig) => calls.push([pid, sig]);
 
