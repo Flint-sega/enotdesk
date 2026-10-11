@@ -175,13 +175,13 @@ function page(res, title, bodyHtml, locale) {
     'X-Frame-Options': 'DENY',
   });
   res.end(`<!doctype html><html lang="${esc(locale)}"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">` +
-    `<title>${esc(title)}</title><link rel="icon" href="/brand/enot-icon.svg" type="image/svg+xml">` +
+    `<title>${esc(title)}</title><link rel="icon" href="/brand/enot-brand-72.png" type="image/png">` +
     `<link rel="stylesheet" href="/web/theme.css"><style>${BASE_STYLE}</style></head><body class="aurora-bg">${bodyHtml}</body></html>`);
 }
 
 function siteHeader(locale) {
   return `<header class="site-head"><div class="wrap head-inner">` +
-    `<a class="brand" href="/downloads"><img src="/brand/enot-icon.svg" alt="" width="40" height="40">` +
+    `<a class="brand" href="/downloads"><img src="/brand/enot-brand-72.png" alt="" width="40" height="40">` +
     `<span class="brand-name">EnotDesk</span><span class="brand-sep" aria-hidden="true"></span>` +
     `<span class="brand-sub">${esc(t('app.subtitle', {}, locale))}</span></a>` +
     `<nav class="head-nav" aria-label="${esc(t('server.nav.ariaMain', {}, locale))}">` +
@@ -248,7 +248,7 @@ function downloadsHtml(items, version, locale, insecure = false) {
     `<ul class="chips"><li>${icon('shield')}<span>${esc(t('server.chip.secure', {}, locale))}</span></li>` +
     `<li>${icon('bolt')}<span>${esc(t('server.chip.fast', {}, locale))}</span></li>` +
     `<li>${icon('lock')}<span>${esc(t('server.chip.noInstall', {}, locale))}</span></li></ul>` +
-    `</div><img class="mascot" src="/brand/mascot-site.webp" alt="${esc(t('server.mascotAlt', {}, locale))}" width="640" height="640"></section>` +
+    `</div><img class="mascot" src="/brand/mascot-site.webp" alt="${esc(t('server.mascotAlt', {}, locale))}" width="736" height="372"></section>` +
     `<section id="download" class="wrap section"><h2>${esc(t('server.downloadFor', {}, locale))}</h2><div class="cards">${cards}</div></section>` +
     `<section id="how" class="wrap section"><h2>${esc(t('server.how', {}, locale))}</h2><ol class="steps">${stepItems}</ol></section></main>` +
     siteFooter(version, locale);
