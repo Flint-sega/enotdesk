@@ -12,6 +12,10 @@ Main window — the client side with the one-time ID/password for the operator (
 
 ![Main window of EnotDesk](docs/screenshot-main.png)
 
+Browser operator console — the machines panel (claim with a reason, terminal, toast, PIN, revoke):
+
+![Browser operator console of EnotDesk](docs/screenshot-operator.png)
+
 ## Architecture
 
 How the project fits together — operator, server, hub, TURN relay, and the agent stack on the client machine (unattended sessions, video/input helper, RTC bridge):
