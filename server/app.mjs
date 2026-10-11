@@ -119,6 +119,7 @@ export class RateLimiter {
 const BRAND_FILES = {
   'enot-mascot.svg': 'image/svg+xml',
   'enot-icon.svg': 'image/svg+xml',
+  'enot-brand-72.png': 'image/png',
   'icon.png': 'image/png',
   'mascot-site.png': 'image/png',
   'mascot-site.webp': 'image/webp',
