@@ -386,3 +386,66 @@ test('агент: моста нет (rtc → null) — терминал чест
     await new Promise((r) => setTimeout(r, 5));
   }
 });
+
+// ---- волна 0.6.19: normalizeTermInput + killProcessTree ----
+
+test('term: normalizeTermInput превращает CR в \\n, не трогая \\r\\n и мультибайты', async (t) => {
+  const { normalizeTermInput } = await import('../lib/term.mjs');
+  assert.equal(normalizeTermInput('ls\r'), 'ls\n', 'одиночный \\r — терминатор для пайп-bash');
+  assert.equal(normalizeTermInput('a\r\nb'), 'a\nb', '\\r\\n схлопывается в \\n без дубля');
+  assert.equal(normalizeTermInput('a\nb'), 'a\nb', '\\n не трогается');
+  assert.equal(normalizeTermInput('привет\rмир'), 'привет\nмир', 'мультибайты не рвутся');
+  assert.equal(normalizeTermInput(''), '');
+  assert.equal(normalizeTermInput(42), 42, 'не-строка проходит как есть');
+});
+
+test('term: killProcessTree — posix бьёт группу и ребёнка, win только ребёнка, мусор честный false', async (t) => {
+  const { killProcessTree } = await import('../lib/term.mjs');
+  const calls = [];
+  const killImpl = (pid, sig) => calls.push([pid, sig]);
+
+  calls.length = 0;
+  assert.equal(killProcessTree({ pid: 4242, platform: 'linux', killImpl }), true);
+  assert.deepEqual(calls, [[-4242, 'SIGKILL'], [4242, 'SIGKILL']], 'posix: группа (-pid) затем прямой pid');
+
+  calls.length = 0;
+  assert.equal(killProcessTree({ pid: 4242, platform: 'darwin', killImpl }), true);
+  assert.deepEqual(calls, [[-4242, 'SIGKILL'], [4242, 'SIGKILL']], 'darwin тоже posix-группа');
+
+  calls.length = 0;
+  assert.equal(killProcessTree({ pid: 4242, platform: 'win32', killImpl }), true);
+  assert.deepEqual(calls, [[4242, 'SIGKILL']], 'win: только прямой pid');
+
+  // группа уже разошлась (ESRCH) — добиваем прямого ребёнка, наружу не бросаем
+  calls.length = 0;
+  const killGroupDead = (pid, sig) => { if (pid < 0) throw new Error('ESRCH'); calls.push([pid, sig]); };
+  assert.equal(killProcessTree({ pid: 4242, platform: 'linux', killImpl: killGroupDead }), true);
+  assert.deepEqual(calls, [[4242, 'SIGKILL']], 'отказ группы не роняет килл ребёнка');
+
+  // pid уже мёртв целиком — false, без throw
+  assert.equal(killProcessTree({ pid: 4242, platform: 'linux', killImpl: () => { throw new Error('ESRCH'); } }), false);
+
+  // мусорные входы
+  assert.equal(killProcessTree({ pid: 0, killImpl }), false);
+  assert.equal(killProcessTree({ pid: undefined, killImpl }), false);
+  assert.equal(killProcessTree({ pid: 4242, killImpl: 'nope' }), false);
+});
+
+test('term: defaultSpawn (реальный адаптер) нормализует ввод и умирает по киллу группы', async () => {
+  if (process.platform === 'win32') return; // detached/группа — семантика POSIX
+  const { createTerm } = await import('../lib/term.mjs');
+  const node = process.execPath;
+  // эхо: каждый чанк stdin печатаем как JSON-строку — видно, что дошло до процесса
+  const shell = { file: node, args: ['-e', 'process.stdin.on("data",d=>process.stdout.write(JSON.stringify(d.toString())))'] };
+  const term = createTerm({ shell });
+  term.write('x\r');
+  await new Promise((r) => setTimeout(r, 250));
+  const got = term.buffer();
+  assert.ok(got.includes('"x\\n"'), `до процесса должен дойти x\n (нормализовано), факт: ${got}`);
+  assert.ok(!got.includes('\r'), 'голый \r до процесса не доходит');
+  let exitSeen = false;
+  term.onExit(() => { exitSeen = true; });
+  term.kill('closed');
+  await new Promise((r) => setTimeout(r, 200));
+  assert.ok(exitSeen, 'группа процессов убита — close дошёл');
+});

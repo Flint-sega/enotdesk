@@ -528,7 +528,13 @@ function startUpdater() {
     // сеть, проверка подписи) иначе невидимы вовсе (находка 10.10)
     bootLog.write('update', `ошибка updater'а: ${msg}`);
   });
-  autoUpdater.checkForUpdates().catch((e) => console.log(`[enotdesk] проверка обновлений не удалась: ${e?.message ?? e}`));
+  // Первый чек — через 10 с: сетевой fetch и планировщик диффа уходят с
+  // критического пути старта окна (волна 0.6.19; суточный интервал и семантика
+  // SEC-010 не меняются; выход раньше таймера — чека просто не было).
+  const firstUpdateCheck = setTimeout(() => {
+    autoUpdater.checkForUpdates().catch((e) => console.log(`[enotdesk] проверка обновлений не удалась: ${e?.message ?? e}`));
+  }, 10_000);
+  if (firstUpdateCheck.unref) firstUpdateCheck.unref();
   setInterval(() => { autoUpdater.checkForUpdates().catch(() => { /* ошибки приходят в 'error' */ }); }, UPDATE_CHECK_MS);
 }
 
@@ -1465,23 +1471,32 @@ function startAgentMode() {
       svcDiag.write('video', `helper copy failed (${e.message}) — пробуем исходный путь`);
     }
   }
-  const videoHost = createVideoHost({
-    token: videoHostToken,
-    spawner: createSessionSpawner({
-      koffi: spawnKoffi,
+  // B2.1 (волна 0.6.19): вне Windows хелпера нет, а Linux-захвата в продукте
+  // не существует (мост рисует только кадры Windows-хелпера). Раньше на Linux
+  // createSessionSpawner падал на koffi.load('kernel32.dll') и оператор видел
+  // бессмысленный spawn-native-unavailable. Честное ограничение: videoHost не
+  // строится вовсе, start() сразу репортит video-unsupported-platform.
+  const videoSupported = process.platform === 'win32';
+  let videoHost = null;
+  if (videoSupported) {
+    videoHost = createVideoHost({
+      token: videoHostToken,
+      spawner: createSessionSpawner({
+        koffi: spawnKoffi,
+        log: { warn: (...a) => { console.warn(...a); svcDiag.write('video', a.map(String).join(' ')); } },
+      }),
+      netFactory: (p) => net.connect(p),
+      killer: (pid) => { nodeSpawn('taskkill', ['/PID', String(pid), '/T', '/F'], { windowsHide: true }); },
+      exePath: helperExe,
+      // v0.6 fix (ревью GLM-5.3): токен дублируется в argv — DETACHED-спавн не
+      // имеет stdin; командная строка видна только в пределах того же домена
+      // доверия, что и дефолтный ACL пайпа (тот же сеанс/пользователь).
+      commandLine: helperExe ? `"${helperExe}" --token ${videoHostToken}` : '',
       log: { warn: (...a) => { console.warn(...a); svcDiag.write('video', a.map(String).join(' ')); } },
-    }),
-    netFactory: (p) => net.connect(p),
-    killer: (pid) => { nodeSpawn('taskkill', ['/PID', String(pid), '/T', '/F'], { windowsHide: true }); },
-    exePath: helperExe,
-    // v0.6 fix (ревью GLM-5.3): токен дублируется в argv — DETACHED-спавн не
-    // имеет stdin; командная строка видна только в пределах того же домена
-    // доверия, что и дефолтный ACL пайпа (тот же сеанс/пользователь).
-    commandLine: helperExe ? `"${helperExe}" --token ${videoHostToken}` : '',
-    log: { warn: (...a) => { console.warn(...a); svcDiag.write('video', a.map(String).join(' ')); } },
-    onFrame: (jpeg) => videoForward.relay?.(BRIDGE_IPC.VIDEO_FRAME, jpeg),
-    onStatus: (s) => videoStatusCb.fn?.(s),
-  });
+      onFrame: (jpeg) => videoForward.relay?.(BRIDGE_IPC.VIDEO_FRAME, jpeg),
+      onStatus: (s) => videoStatusCb.fn?.(s),
+    });
+  }
   // Контракт для agent.mjs (deps.video): жизненный цикл, ввод, статусы.
   // W2 (0.6.8): пресеты качества — оператор шлёт {quality:'high|medium|low'}
   // по input-каналу, хост маппит в параметры хелпера (хелпер сам клампит
@@ -1493,11 +1508,19 @@ function startAgentMode() {
   };
   const video = {
     bind: () => {}, // relay привязывается в createAgentRtc (videoForward.setRelay)
-    start: () => videoHost.start(),
-    stop: () => videoHost.stop(),
-    sendCommand: (obj) => videoHost.sendCommand(obj),
-    sendInput: (raw) => videoHost.sendCommand({ cmd: 'input', raw }),
+    start: () => {
+      if (!videoHost) {
+        const s = { state: 'error', reason: 'video-unsupported-platform' };
+        videoStatusCb.fn?.(s);
+        return s;
+      }
+      return videoHost.start();
+    },
+    stop: () => { videoHost?.stop(); },
+    sendCommand: (obj) => videoHost?.sendCommand(obj),
+    sendInput: (raw) => videoHost?.sendCommand({ cmd: 'input', raw }),
     handleInputChannel: (ch) => {
+      if (!videoHost) return; // платформа без видео: каналы честно игнорируются
       ch.onmessage = (m) => {
         if (typeof m?.data !== 'string') return;
         svcDiag.write('video', `input msg: ${m.data.slice(0, 60)}`);

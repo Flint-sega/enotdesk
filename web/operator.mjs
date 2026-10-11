@@ -622,6 +622,9 @@ async function onSignal(msg) {
       // поверх качества.
       if (msg.state === 'running') setVideoStatus(null);
       else if (msg.state === 'spawning' || msg.state === 'connecting') setVideoStatus(t('web.video.starting'));
+      // волна 0.6.19: вне Windows захвата нет — осмысленный статус вместо
+      // spawn-native-unavailable (throw koffi.load('kernel32.dll') на Linux).
+      else if (msg.reason === 'video-unsupported-platform') setVideoStatus(t('web.video.unsupportedPlatform'));
       else setVideoStatus(t('web.video.unavailable', {
         reason: msg.reason ? ` (${msg.reason})` : '',
       }));
