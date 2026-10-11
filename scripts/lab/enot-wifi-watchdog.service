@@ -1,0 +1,12 @@
+[Unit]
+Description=EnotDesk lab Wi-Fi watchdog (aic8800 self-heal)
+After=enot-wifi.service
+
+[Service]
+Type=simple
+ExecStart=/usr/local/sbin/enot-wifi-watchdog.sh
+Restart=always
+RestartSec=30
+
+[Install]
+WantedBy=multi-user.target
