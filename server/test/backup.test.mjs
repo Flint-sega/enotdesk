@@ -38,3 +38,24 @@ test('backup: дамп читается, ретенция держит keep св
     assert.equal(mode, 0o600, `права дампа 0600 (фактически ${mode.toString(8)})`);
   }
 });
+
+test('backup: prefix изолирует дампы и ретенцию другой базы (hub vs enotdesk)', (t) => {
+  const dir = tmpDir(t);
+  const dbPath = path.join(dir, 'src.db');
+  const db = new DatabaseSync(dbPath);
+  db.exec('CREATE TABLE t (x INTEGER)');
+  db.close();
+
+  const out = tmpDir(t);
+  // чужой дамп с другим префиксом не трогается ретенцией hub-базы
+  fs.writeFileSync(path.join(out, 'enotdesk-2026-01-01T000000Z.db'), 'чужой');
+  fs.writeFileSync(path.join(out, 'hub-2026-01-01T000000Z.db'), 'старый-hub');
+
+  const r = backupDb(dbPath, out, { keep: 1, prefix: 'hub-' });
+  assert.match(path.basename(r.file), /^hub-\d{4}-\d{2}-\d{2}T\d{6}Z\.db$/, 'имя с префиксом hub-');
+  assert.deepEqual(r.removed, ['hub-2026-01-01T000000Z.db'], 'ретенция чистит только свой префикс');
+  assert.ok(fs.existsSync(path.join(out, 'enotdesk-2026-01-01T000000Z.db')), 'чужой дамп цел');
+
+  // мусорный префикс (сломал бы RegExp ретенции) — честный отказ
+  assert.throws(() => backupDb(dbPath, out, { prefix: 'h(b)[' }), /prefix/);
+});

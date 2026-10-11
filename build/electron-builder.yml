@@ -100,3 +100,7 @@ linux:
     - AppImage
   icon: assets/icon.png
   category: Utility
+  # версия в имени: «EnotDesk-linux-x86_64.AppImage» без версии путался при
+  # ручном скачивании нескольких релизов (замечание владельца 10.10). Фид
+  # latest-linux.yml ссылается на фактическое имя — обновление не ломается.
+  artifactName: "EnotDesk-${version}-linux-${arch}.${ext}"

@@ -30,7 +30,7 @@ dist/                        результат сборки (EnotDesk-mac-arm64
 | macOS (arm64) | `npm ci && npm run pack:mac` | `dist/EnotDesk-mac-arm64.zip` (внутри portable `EnotDesk.app`) | **Проверено на macOS arm64**: сборка и запуск |
 | macOS (Intel) | `npm ci && npm run pack:mac` | `dist/EnotDesk-mac-x64.zip` | Не прогонялось (та же конфигурация) |
 | Windows (x64) | `npm ci`, затем `npm run pack:win` | `dist/EnotDesk-win-x64.exe` (portable) | **Не прогонялось — нужна Windows-машина** (конфигурация готова) |
-| Linux (x64) | `npm ci && npm run pack:linux` | `dist/EnotDesk-linux-x64.AppImage` | **Не прогонялось — нужна Linux-машина или CI** (конфигурация готова) |
+| Linux (x64) | `npm ci && npm run pack:linux` | `dist/EnotDesk-<версия>-linux-x86_64.AppImage` (версия в имени с 0.6.19) | **Проверено CI** (release-воркфлоу собирает на каждый тег; вручную — Linux-машина) |
 
 В PowerShell/cmd команды выполняются по одной (разделитель `;` там тоже работает, но `npm ci` должен завершиться успешно до `pack:win`):
 
@@ -42,8 +42,8 @@ npm run pack:win
 Linux: инструменты сборки AppImage electron-builder скачивает сам (отдельно ставить их не нужно). Для *запуска* AppImage нужен FUSE: на Ubuntu 24.04 — `sudo apt install libfuse2t64`, на 22.04 — `libfuse2`. Без FUSE можно распаковать и запустить:
 
 ```bash
-chmod +x dist/EnotDesk-linux-x64.AppImage
-./dist/EnotDesk-linux-x64.AppImage --appimage-extract-and-run
+chmod +x dist/EnotDesk-*-linux-x86_64.AppImage
+./dist/EnotDesk-*-linux-x86_64.AppImage --appimage-extract-and-run
 ```
 
 ## Адрес сервера: вшитый или файлом (первый запуск без ручного ввода)
