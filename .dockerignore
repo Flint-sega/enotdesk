@@ -28,6 +28,29 @@ Dockerfile
 .dockerignore
 eslint.config.js
 README.md
+README.ru.md
 BRAND.md
 CLAUDE.md
+CODE_OF_CONDUCT.md
+CONTRIBUTING.md
+SECURITY.md
 LICENSE
+site
+spike
+helper
+web
+out
+# Локальные склады и служебные каталоги (уборка 12.10: .local/ теперь держит
+# БД/отчёты/скрипты, ранее прикрывавшиеся правилами *.db и scripts) — ревью P1-1
+.local
+.claude
+.archify
+.hallmark
+.mimosa
+.v2c
+.video_agent
+graphify-out
+AGENTS.md
+handoff.md
+report-*
+ultra-*.md

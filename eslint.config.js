@@ -8,6 +8,9 @@ export default [
     ignores: [
       'node_modules/**', 'dist/**', 'archive/**', '.autopilot/**',
       'graphify-out/**', 'docs/**', 'assets/**', 'build/**', '.zcode/**',
+      // служебные каталоги инструментов/локальный склад — не продукт (уборка 12.10:
+      // .claude/zcode-archive зацепил линт своими workflow-скриптами)
+      '.claude/**', '.local/**', '.archify/**',
     ],
   },
   js.configs.recommended,
