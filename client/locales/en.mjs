@@ -547,8 +547,6 @@ export default {
   "hub.console.logout": "Sign out",
   "hub.forbidden.title": "Access denied",
   "hub.forbidden.body": "The hub console is not available for the auditor role — sign in as an operator or administrator.",
-  "hub.w.title": "Chat — coming soon",
-  "hub.w.body": "The chat window will appear here in a future update.",
   "hub.join.title": "Session join",
   "hub.join.lead": "Press the button — EnotDesk will open and join the support session.",
   "hub.join.start": "Launch helper",

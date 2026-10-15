@@ -153,7 +153,7 @@ test('relay: chunked (без Content-Length) → 411 (ревью 10.10), вал�
 // До фикса: 'error' у WriteStream/ReadStream без слушателя → uncaughtException
 // → крах процесса со всеми живыми сеансами (ENOSPC/ENOTDIR/EISDIR/TOCTOU).
 
-test('relay: ошибка записи (ENOTDIR) → честный 400, сервер жив (P1)', async (t) => {
+test('relay: ошибка записи (ENOTDIR) → честный 507 write_failed, сервер жив (P1)', async (t) => {
   const dbPath = tmpDb(t);
   const relayDir = path.join(os.tmpdir(), `enot-relay-err-${Date.now()}`);
   const { base, port, inst } = await startServer(t, { dbPath, relayDir });
@@ -178,7 +178,7 @@ test('relay: ошибка записи (ENOTDIR) → честный 400, сер�
     },
     body: Buffer.from('данные, которым некуда писаться'),
   });
-  assert.equal(up.status, 400, 'ошибка записи — честный отказ, не крах процесса');
+  assert.equal(up.status, 507, 'ошибка записи — честный write_failed (507), не крах процесса');
 
   // главный критерий: сервер пережил ошибку стрима
   const health = await fetch(base + '/api/v1/health');

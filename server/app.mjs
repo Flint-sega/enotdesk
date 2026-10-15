@@ -526,6 +526,9 @@ export function createServer(opts = {}) {
     });
     if (aborted || failed || total === 0) {
       try { fs.unlinkSync(filePath); } catch { /* уже удалён */ }
+      // ошибка записи (ENOSPC/EACCES/ENOTDIR из out.on('error')) — отдельный
+      // честный код, не «пустой файл» (аудит 12.10 P3 / ревью Рината)
+      if (failed) return err(res, 507, 'write_failed', 'Не удалось записать файл на диск сервера');
       return err(res, aborted ? 413 : 400, aborted ? 'too_large' : 'bad_request', aborted ? `Файл больше ${Math.round(cfg.relayMax / 1024 / 1024)} МБ` : 'Пустой файл');
     }
     const expiresAt = new Date(cfg.nowMs() + cfg.relayTtlDays * 86_400_000).toISOString();
