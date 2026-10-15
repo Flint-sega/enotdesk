@@ -2,6 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync, readdirSync, statSync } from 'node:fs';
 import path from 'node:path';
+import { pathToFileURL } from 'node:url';
 
 // Шов UI: index.html обязан сохранять все id, которые ищет JS рендерера (во всех
 // модулях), без inline-стилей/скриптов (CSP); каждая кнопка HTML должна быть
@@ -446,8 +447,8 @@ test('C+D: сообщение оператора релеится чат-кан�
   };
   globalThis.window = { enot: { chatWidgetMsg: (v) => widgetMsgs.push(String(v)) } };
   try {
-    const { wireHostChannel } = await import(path.join(dir, 'session-services.js'));
-    const { state } = await import(path.join(dir, 'state.js'));
+    const { wireHostChannel } = await import(pathToFileURL(path.join(dir, 'session-services.js')).href);
+    const { state } = await import(pathToFileURL(path.join(dir, 'state.js')).href);
     const mkCh = (label) => ({
       label, readyState: 'open', binaryType: '', onmessage: null, onopen: null, onclose: null,
       sent: [],
@@ -494,8 +495,8 @@ test('C+D (P3-1): при открытии input-канала оператору 
   };
   globalThis.window = { enot: {} };
   try {
-    const { wireHostChannel } = await import(path.join(dir, 'session-services.js'));
-    const { state } = await import(path.join(dir, 'state.js'));
+    const { wireHostChannel } = await import(pathToFileURL(path.join(dir, 'session-services.js')).href);
+    const { state } = await import(pathToFileURL(path.join(dir, 'state.js')).href);
     const mkCh = (label) => ({
       label, readyState: 'open', binaryType: '', onmessage: null, onopen: null, onclose: null,
       sent: [],
