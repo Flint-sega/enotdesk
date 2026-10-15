@@ -475,7 +475,7 @@ fetch_builds() {
   local appimg
   appimg="$(awk '{gsub(/^\.\//,"",$2)} $2 ~ /^EnotDesk-[0-9][0-9.a-z_-]*-linux-x86_64\.AppImage$/ {print $2; exit}' "$tmp/checksums-sha256.txt")"
   [ -n "$appimg" ] && want="$want $appimg"
-  local name sum ok_name
+  local name sum ok_name=""
   for name in $want; do
     # SHA256 из checksums (полная строка: <hex>  ./<name>)
     sum="$(awk -v n="$name" '{f=$2; gsub(/^\.\//,"",f)} f == n {print $1; exit}' "$tmp/checksums-sha256.txt")"
