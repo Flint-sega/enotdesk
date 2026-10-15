@@ -1,0 +1,75 @@
+# 0031. Linux unattended-видео: getDisplayMedia в мосту агента + авто-выбор экрана в агент-режиме
+
+Дата: 2026-10-15. Статус: принят (волна D). Наследует: 0026 (SCM-служба),
+0027 (unattended-видео Windows через DXGI/GDI-хелпер), 0030 (N pc в мосту,
+общий canvas-track).
+
+## Контекст
+
+Unattended-видео машины сегодня есть только на Windows: служба спавнит
+Rust-хелпер (`helper/video`), который снимает экран (DXGI, fallback GDI) и
+льёт JPEG-кадры по named pipe; агент рисует их на canvas скрытого моста,
+canvas.captureStream-track уходит в WebRTC (replaceTrack в каждый pc
+оператора — ADR 0030). На Linux unattended-видео честно отсутствует
+(`video-unsupported-platform`): агент-режим main не устанавливает
+`setDisplayMediaRequestHandler` (он ставится только в `createWindow()`
+attended-окна), а без хендлера getDisplayMedia в скрытой странице моста
+не может выдать источник.
+
+На Linux НЕ нужен отдельный хелпер: Chromium сам умеет снимать X11-экран
+через getDisplayMedia (XSHM), и это штатный путь Electron. Ограничения
+платформы честные: X11 работает; чистый Wayland без pipewire-портала —
+нет (осознанная граница v1, как и для инъекции ввода).
+
+## Решение
+
+1. **Хендлер в агент-режиме** (`client/main.mjs`, ветка AGENT): при старте
+   моста ставить `session.defaultSession.setDisplayMediaRequestHandler`
+   с АВТО-выбором первичного экрана (`desktopCapturer.getSources({types:['screen']})`
+   → source с display_id, соответствующим `screen.getPrimaryDisplay()`,
+   fallback — первый source). Интерактивного пикера нет и не должно быть:
+   согласие даёт операторский claim машины (машина зачислена владельцем
+   осознанно), человек за консолью unattended-сеанса не нужен.
+   `useSystemPicker: false` (на Linux системного пикера всё равно нет).
+2. **Захват в мосту** (`client/agent-bridge/bridge.mjs`): когда кадров
+   хелпера нет (Linux/mac путь) — `navigator.mediaDevices.getDisplayMedia({video:true})`
+   → stream в `<video>`-элемент → рисование в ТОТ ЖЕ общий canvas (rAF-цикл
+   по requestVideoFrameCallback), дальше существующий конвейер ADR 0030:
+   один canvas-track → replaceTrack в pc каждого оператора. Имя env-флага:
+   `EDESK_AGENT_VIDEO=gdm` (по умолчанию on для linux-агента; Windows
+   остаётся на хелпере — флаг не действует, приоритет кадров хелпера).
+3. **Честные статусы**: отказ getDisplayMedia (нет DISPLAY/XAUTHORITY,
+   Wayland-без-портала, экран выключен) → мост шлёт в main статус
+   `video-unavailable` с причиной; main пишет в svc-diag и heartbeat-инвентарь
+   видео не подменяет — оператор видит статус из существующей проводки
+   (`video-unsupported-platform` остаётся для платформ без пути вовсе:
+   macOS-агент вне рамок — Electron 44 требует macOS 13+, фаза M отложена).
+4. **DISPLAY/XAUTHORITY**: юнит-службе нужны env от консольной сессии —
+   glue `enot-xauth-sync` на лабе уже поддерживает окружение; для чистых
+   установок `install-linux.sh` документирует Environment=DISPLAY=:0
+   и XAUTHORITY (запуск под реальным пользователем консоли — рекомендуемый
+   путь юнита, как у терминала: консольный пользователь, не root).
+5. **Bitrate**: статический потолок TOP_BITRATE на senders моста (как в
+   ADR 0030) — JPEG/canvas-путь един, per-viewer adaptive — вне волны.
+
+## Альтернативы
+
+- Порт Windows-хелпера на Linux (XSHM-снимки в JPEG): отвергнут — дублирует
+  штатный Chromium-захват, +Rust-код +сборка, нулевая ценность сверх
+  getDisplayMedia на X11.
+- Съёмка внешним ffmpeg (xdamage/x11grab) с подачей в canvas: отвергнуто —
+  новая зависимость в поставке, честность статусов хуже.
+- Ожидание pipewire-портала для Wayland: вне v1 (Wayland-управление и так
+  осознанная граница); задокументировано в AGENT.md.
+
+## Последствия
+
++ Unattended-видео машины на Linux/X11 без нового нативного кода; тот же
+  конвейер кадров, что у Windows-хелпера (общий canvas → N операторов).
++ Скрытая страница получает экран без участия человека — то же доверие,
+  что у Windows-хелпера (служба от имени системы/консольного юзера).
+− Wayland-сессии остаются без видео (честный статус, как ввод).
+− CPU: rAF-перерисовка canvas на каждый кадр — на уровне JPEG-пути
+  (замер в приёмке на VM103).
+− DISPLAY=:0 в юните привязывает к первому экрану/сессии — мульти-сид
+  (несколько локальных сессий) вне рамок.
