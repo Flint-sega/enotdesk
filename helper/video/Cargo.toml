@@ -45,6 +45,8 @@ windows = { version = "0.58", features = [
   "Win32_System_Pipes",
   # Gates CreateNamedPipeW (SECURITY_ATTRIBUTES parameter type).
   "Win32_Security",
+  # ConvertStringSecurityDescriptorToSecurityDescriptorW: the explicit pipe DACL.
+  "Win32_Security_Authorization",
   # OpenInputDesktop / CloseDesktop / DESKTOP_* (stations-and-desktops group).
   "Win32_System_StationsAndDesktops",
   # Gates IPropertyBag2::Write (VARIANT parameter).

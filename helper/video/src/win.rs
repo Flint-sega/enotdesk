@@ -4,9 +4,10 @@
 // signatures in this file are verified against windows 0.58.0 on crates.io by
 // `cargo check --target x86_64-pc-windows-msvc`. Target: Windows only.
 
-use windows::core::{Interface, PCWSTR, PWSTR};
+use windows::core::{Interface, PCWSTR, PWSTR, VARIANT};
 use windows::Win32::Foundation::{
-    CloseHandle, GetLastError, GENERIC_READ, HANDLE, HGLOBAL, HMODULE, LPARAM, POINT, WPARAM,
+    CloseHandle, GetLastError, GENERIC_READ, HANDLE, HGLOBAL, HLOCAL, HMODULE, LPARAM, LocalFree,
+    POINT, WPARAM,
 };
 use windows::Win32::Graphics::Direct3D::{D3D_DRIVER_TYPE_UNKNOWN, D3D_FEATURE_LEVEL};
 use windows::Win32::Graphics::Direct3D11::{
@@ -30,7 +31,9 @@ use windows::Win32::Graphics::Imaging::{
     IWICBitmapEncoder, IWICBitmapFrameEncode, IWICBitmapSource, IWICImagingFactory,
     WICBitmapEncoderNoCache,
 };
-use windows::Win32::Storage::FileSystem::PIPE_ACCESS_DUPLEX;
+use windows::Win32::Storage::FileSystem::{
+    FILE_FLAGS_AND_ATTRIBUTES, PIPE_ACCESS_DUPLEX,
+};
 use windows::Win32::System::Com::StructuredStorage::{IPropertyBag2, PROPBAG2};
 use windows::Win32::System::Com::{
     CoCreateInstance, CoInitializeEx, IStream, CLSCTX_INPROC_SERVER, COINIT_MULTITHREADED,
@@ -45,11 +48,16 @@ use windows::Win32::System::Diagnostics::ToolHelp::{
 };
 use windows::Win32::System::Pipes::{
     ConnectNamedPipe, CreateNamedPipeW, DisconnectNamedPipe, PeekNamedPipe, PIPE_READMODE_BYTE,
-    PIPE_TYPE_BYTE,
+    PIPE_REJECT_REMOTE_CLIENTS, PIPE_TYPE_BYTE,
 };
 use windows::Win32::System::RemoteDesktop::{
     ProcessIdToSessionId, WTSGetActiveConsoleSessionId,
 };
+use windows::Win32::Security::Authorization::{
+    ConvertStringSecurityDescriptorToSecurityDescriptorW, SDDL_REVISION_1,
+};
+use windows::Win32::Security::{PSECURITY_DESCRIPTOR, SECURITY_ATTRIBUTES};
+use windows::Win32::System::Variant::VT_R4;
 use windows::Win32::System::StationsAndDesktops::{
     CloseDesktop, GetUserObjectInformationW, GetThreadDesktop, OpenInputDesktop, SetThreadDesktop,
     DESKTOP_ACCESS_FLAGS, DESKTOP_CONTROL_FLAGS, DESKTOP_READOBJECTS, DESKTOP_SWITCHDESKTOP,
@@ -140,19 +148,27 @@ impl PipeServer {
     pub fn new() -> Result<PipeServer, String> {
         // Byte mode, one instance, duplex. 64 KiB buffers are only hints --
         // frames are larger and WriteFile simply blocks until the service
-        // drains, which is the entire v1 backpressure story. No SDDL: v1
-        // relies on the default ACL plus the stdin token (README, ADR 0027).
+        // drains, which is the entire v1 backpressure story.
+        // Explicit protected DACL (audit P1-1): the default named-pipe DACL
+        // grants Everyone read, which would hand the frame stream to any
+        // local (and with SMB enabled, remote) process. PIPE_REJECT_REMOTE_
+        // CLIENTS is an open-mode flag even though the crate types it as
+        // NAMED_PIPE_MODE (metadata quirk).
+        let sa = pipe_security_attributes()?;
         unsafe {
             let h = CreateNamedPipeW(
                 PCWSTR(PIPE_NAME_WIDE.as_ptr()),
-                PIPE_ACCESS_DUPLEX,
+                PIPE_ACCESS_DUPLEX | FILE_FLAGS_AND_ATTRIBUTES(PIPE_REJECT_REMOTE_CLIENTS.0),
                 PIPE_TYPE_BYTE | PIPE_READMODE_BYTE,
                 1,
                 64 * 1024,
                 64 * 1024,
                 0,
-                None,
+                Some(&sa),
             );
+            // The kernel copied the SD inside CreateNamedPipeW; the process
+            // copy is not needed past that point (no child inherits handles).
+            let _ = LocalFree(HLOCAL(sa.lpSecurityDescriptor));
             if h.is_invalid() {
                 let e = GetLastError();
                 return Err(format!("CreateNamedPipeW failed, GetLastError={e:?}"));
@@ -195,6 +211,32 @@ impl PipeServer {
     /// Disconnect the connected client so the next instance starts clean.
     pub fn disconnect(&self) {
         let _ = unsafe { DisconnectNamedPipe(self.raw) };
+    }
+}
+
+/// SECURITY_ATTRIBUTES carrying the pipe DACL, built from SDDL by
+/// ConvertStringSecurityDescriptorToSecurityDescriptorW. `D:P(A;;GA;;;SY)
+/// (A;;GA;;;BA)(A;;GA;;;OW)`: a protected DACL (P -- no inherited ACEs) giving
+/// SYSTEM and Administrators GENERIC_ALL plus an Owner-Rights GENERIC_ALL --
+/// the owner of a pipe created by this process is whatever its token names
+/// (the user SID for a standard token, Administrators for a full admin token),
+/// so the console user keeps access and Everyone/anonymous have no entry at
+/// all. The legitimate pipe client is the SYSTEM service that spawned us.
+fn pipe_security_attributes() -> Result<SECURITY_ATTRIBUTES, String> {
+    unsafe {
+        let mut sd = PSECURITY_DESCRIPTOR::default();
+        ConvertStringSecurityDescriptorToSecurityDescriptorW(
+            windows::core::w!("D:P(A;;GA;;;SY)(A;;GA;;;BA)(A;;GA;;;OW)"),
+            SDDL_REVISION_1,
+            &mut sd,
+            None,
+        )
+        .map_err(|e| format!("pipe sddl: {e}"))?;
+        Ok(SECURITY_ATTRIBUTES {
+            nLength: std::mem::size_of::<SECURITY_ATTRIBUTES>() as u32,
+            lpSecurityDescriptor: sd.0,
+            bInheritHandle: false.into(),
+        })
     }
 }
 
@@ -791,19 +833,35 @@ impl Wic {
             enc.Initialize(&stream, WICBitmapEncoderNoCache)
                 .map_err(|e| format!("jpeg: enc init: {e}"))?;
             let mut frame: Option<IWICBitmapFrameEncode> = None;
-            let mut no_options: Option<IPropertyBag2> = None;
-            enc.CreateNewFrame(&mut frame, &mut no_options)
+            let mut options: Option<IPropertyBag2> = None;
+            enc.CreateNewFrame(&mut frame, &mut options)
                 .map_err(|e| format!("jpeg: new frame: {e}"))?;
             let frame = frame.ok_or("jpeg: no frame returned")?;
-            frame
-                .Initialize(None)
-                .map_err(|e| format!("jpeg: frame init: {e}"))?;
+            // ImageQuality -- the JPEG encoder's quality property, matched by
+            // NAME (not id), VT_R4 over 0..1 -- must be written into the
+            // frame's property bag BEFORE frame.Initialize: the encoder reads
+            // the bag exactly once, there.
+            match &options {
+                Some(bag) => {
+                    let name = windows::core::w!("ImageQuality");
+                    let mut prop = PROPBAG2::default();
+                    prop.dwType = 1; // PROPBAG2_TYPE_DATA
+                    prop.vt = VT_R4;
+                    prop.pstrName = PWSTR(name.as_ptr().cast_mut());
+                    let value = VARIANT::from(q01.clamp(0.0, 1.0));
+                    bag.Write(1, &prop, &value)
+                        .map_err(|e| format!("jpeg: quality bag: {e}"))?;
+                    frame
+                        .Initialize(Some(bag))
+                        .map_err(|e| format!("jpeg: frame init: {e}"))?;
+                }
+                None => frame
+                    .Initialize(None)
+                    .map_err(|e| format!("jpeg: frame init: {e}"))?,
+            }
             frame
                 .SetSize(w, h)
                 .map_err(|e| format!("jpeg: set size: {e}"))?;
-            // Quality: the property-bag knob is deferred — WIC's JPEG default
-            // is 0.9 and the spike shipped identical numbers without it.
-            let _ = q01;
             let src: IWICBitmapSource =
                 bmp.cast().map_err(|e| format!("jpeg: source cast: {e}"))?;
             // null rect = whole image
@@ -846,11 +904,15 @@ impl Wic {
     }
 }
 
-/// Minimal in-memory IStream for WIC encoders, ported verbatim from
-/// spike/video-dxgi (the benchmark that measured 14.9 ms/169 KB JPEG here).
-/// One encode step per stdout line: a crash inside windowscodecs.dll names
-/// its exact step (the stdout log survives the process).
+/// One stdout line per encode step -- ONLY under ENOT_VIDEO_TRACE (lab
+/// diagnostics, audit P3-2; unconditional it was up to 48 lines/s against the
+/// README start/tick/capture/exit contract). With the flag on, a crash inside
+/// windowscodecs.dll still names its exact step (the stdout log survives the
+/// process).
 fn enc_step(step: &str) {
+    if !crate::VIDEO_TRACE.load(Ordering::Relaxed) {
+        return;
+    }
     use std::io::Write as _;
     let mut out = std::io::stdout().lock();
     let _ = writeln!(out, "{{\"ev\":\"enc\",\"step\":\"{step}\"}}");

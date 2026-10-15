@@ -25,12 +25,19 @@ proven `spike/video-dxgi`).
 1. Service (SYSTEM) starts the helper in the console session (token of the
    logged-on user, `CreateProcessAsUser`) with `--token <hex>` on the command
    line (v0.6: DETACHED spawn has no stdin; the command line is visible only
-   within the same trust domain as the default pipe ACL — same session/user).
+   within the same trust domain as the pipe DACL — same session/user).
 2. No/empty `--token` -> exit code 1.
-3. Helper creates the pipe server and blocks in `ConnectNamedPipe`.
+3. Helper creates the pipe server with an explicit protected DACL
+   (`D:P(A;;GA;;;SY)(A;;GA;;;BA)(A;;GA;;;OW)` — SYSTEM, Administrators and the
+   pipe owner only; Everyone has no entry) and `PIPE_REJECT_REMOTE_CLIENTS`,
+   then blocks in `ConnectNamedPipe`.
 4. Service connects, then MUST send `hello` (type 0) with the same token as the
-   first message. Mismatch -> session torn down, exit code 3.
-5. Shutdown: the service kills the helper (`taskkill /T /F` by pid). There is
+   first message, within 5 seconds of connecting. Mismatch -> session torn
+   down, exit code 3. Silence past the 5 s hello timeout -> session torn down
+   (`{"ev":"hello","result":"timeout"}` on stdout), helper returns to waiting.
+5. Until the hello is verified, no byte leaves the helper: no frames, no
+   status documents.
+6. Shutdown: the service kills the helper (`taskkill /T /F` by pid). There is
    no stdin-based shutdown signal (no stdin at all).
 
 stdout carries **only ASCII JSON diagnostic lines**: one `start` event, one
@@ -38,8 +45,9 @@ stdout carries **only ASCII JSON diagnostic lines**: one `start` event, one
 "fps":N,"pr":N,"empty":N,"vp":N,"probe":"-","displayOff":bool,"dup":N,
 "err":"…"}`), one optional
 `{"ev":"capture","mode":"gdi","reason":…}` when the capture mode switches
-(see below), and one `exit` event. Errors also go to `lastErr` in the
-status document; nothing else is printed.
+(see below), one `{"ev":"hello","result":"timeout"}` when a connected client
+lets the 5 s hello timeout lapse, and one `exit` event. Errors also go to
+`lastErr` in the status document; nothing else is printed.
 
 ## Pipe protocol
 
@@ -50,9 +58,17 @@ Binary messages in both directions, byte-mode duplex named pipe
 [u32 LE magic = 0x454E4F54 ("ENOT")][u8 type][u32 LE payload length][payload]
 ```
 
+Pipe security: the server end is created with an explicit **protected DACL**
+`D:P(A;;GA;;;SY)(A;;GA;;;BA)(A;;GA;;;OW)` — SYSTEM, Administrators and the
+pipe owner (the console-user token the helper runs under) get full access,
+Everyone and anonymous have no entry — plus `PIPE_REJECT_REMOTE_CLIENTS`, so
+the default named-pipe DACL (which granted Everyone read) is no longer in
+play. Frames and status documents are sent only after the hello token is
+verified; before that, zero bytes leave the helper.
+
 | type | direction        | payload                                              |
 |------|------------------|------------------------------------------------------|
-| 0    | service -> helper | `hello`: token bytes, must be the first message     |
+| 0    | service -> helper | `hello`: token bytes, must be the first message, within 5 s of connecting |
 | 1    | helper -> service | `frame`: JPEG bytes                                 |
 | 2    | helper -> service | `status`: JSON, every 2 s                           |
 | 3    | service -> helper | `command`: JSON, one command per message            |
@@ -109,7 +125,9 @@ Commands (JSON object with `"cmd"`):
   backspace delete`, arrows, `home end pageup pagedown`, `shift control alt
   meta`, and the punctuation set). Navigation keys are injected with
   `KEYEVENTF_EXTENDEDKEY` so they do not type digits (numpad twins).
-- `jpegQ` clamps to 40..90, `maxFps` clamps to 1..=60.
+- `jpegQ` clamps to 40..90 and is applied for real: each frame's property bag
+  carries the JPEG encoder's `ImageQuality` (`VT_R4`, 0.4..0.9) before the
+  frame is initialized. `maxFps` clamps to 1..=60.
 - `probe` (lab diagnostics): one input probe — read the cursor, nudge it
   +2 px by X with `SetCursorPos`, read again, nudge back. Verified `ok` iff
   the position demonstrably followed the nudge.
@@ -133,9 +151,11 @@ Commands (JSON object with `"cmd"`):
   to set LastError, so `gle=0 (not set)` is a valid observation.
 - `ENOT_VIDEO_TRACE=<any>` (env, read once at startup, lab-only) returns the
   unconditional per-command mouse trace:
-  `{"ev":"cmd-mouse","via":"cursor","sent":bool,…}` — without it success is
-  silent (the unconditional trace accumulated input latency and was removed
-  in 0b419b3).
+  `{"ev":"cmd-mouse","via":"cursor","sent":bool,…}` and the per-encode-step
+  lines `{"ev":"enc","step":"bitmap|encoder"}` (a WIC crash then names its
+  exact step) — without it both are silent (the unconditional traces
+  accumulated latency / were up to 48 lines/s and were removed or gated in
+  0b419b3 / the 2026-10-15 audit fixes).
 - `ENOT_VIDEO_AUTOPROBE_SECS=<N>` with `N >= 1` (env, lab-only): the helper
   enqueues one `probe3` matrix pass every N seconds with no operator command.
   The env is inherited by the service-spawned helper (session-spawn passes
@@ -246,10 +266,13 @@ Every switch emits exactly one log line
 
 ## v1 limitations (honest list)
 
-- **Pipe security**: no SDDL — the pipe uses the default ACL of the user the
-  helper runs as. The argv token mirrored by the first pipe hello is the gate. This is a
-  simplification agreed for v1; hardening (explicit DACL or token rotation) is
-  future work.
+- **Pipe security**: explicit protected DACL — SYSTEM + Administrators + the
+  pipe owner (the console-user token the helper runs as) hold full access;
+  Everyone/anonymous have no entry, `PIPE_REJECT_REMOTE_CLIENTS` rejects
+  remote opens. Frames and statuses are sent only after a verified hello
+  (5 s hello timeout otherwise tears the session down). The pre-hardening
+  default (Everyone-read DACL, streaming before hello) was closed in the
+  2026-10-15 audit fixes.
 - Single client, single instance of the pipe.
 - Blocking writes: a slow reader stalls capture (that is the backpressure
   story); blocking reads are unblocked via `CancelIoEx` on teardown.
