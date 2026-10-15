@@ -288,6 +288,10 @@ export function createAgent({ api, signal, native, policy, termHost, rtc, notify
       }
       slots.clear();
       pendingIce.clear();
+      // Ревью 16.10 P1-1: destroy() релея гасит окно моста и ipc-слушателей
+      // (семантика ≤0.6.19). Без него каждый сеанс течёт скрытым окном, а
+      // gdm-захват Linux (ADR 0031) продолжался бы в осиротевшем окне.
+      try { rtcObj?.destroy?.(); } catch { /* мост уже умер */ }
       rtcObj = null;
     };
     const wireBridgeChannel = (ch, op) => {
@@ -414,9 +418,11 @@ const unsubscribe = client.onMessage((msg) => {
         arbiter.drop(msg.claimId);
         opInputs.delete(msg.claimId);
         const slot = slots.get(msg.claimId);
+        // Ревью 16.10 P3-2: буфер ранних кандидатов чистится и без слота —
+        // цикл claim/ICE/left без offer больше не копит Map вечно.
+        pendingIce.delete(msg.claimId);
         if (slot) {
           slots.delete(msg.claimId);
-          pendingIce.delete(msg.claimId);
           try { slot.pc.close(); } catch { /* уже закрыт */ }
         }
       }

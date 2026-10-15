@@ -174,9 +174,13 @@ if (!api) {
         // без ренеготиации. В attended-сеансах видео-трансивера нет — no-op.
         // Cap (W-C5): видеослоты заняты — трансивер inactive, оператор получает
         // честный session-info; чат/файлы/терминал работают без видео.
+        // Ревью 16.10 P2-2: ренеготиация уже-видео оператора (re-offer того же
+        // op, например переоткрытие терминала) кап НЕ пересчитывает — иначе на
+        // полном капе штатное действие демонтировало бы его видео навсегда.
         const vt = pc.getTransceivers().find((t) => t.receiver.track?.kind === 'video');
         if (vt) {
-          if (videoAllowed(videoPeerCount())) {
+          const renegotiatingWithVideo = !peer.videoDenied && vt.direction !== 'inactive';
+          if (renegotiatingWithVideo || videoAllowed(videoPeerCount())) {
             vt.direction = 'sendonly';
             void attachVideoTrack(op); // кадры могли прийти раньше offer'а (гонка)
           } else {
@@ -189,9 +193,12 @@ if (!api) {
       .then((answer) => pc.setLocalDescription(answer))
       .then(() => api.sendAnswer(pc.localDescription.sdp, op))
       .catch((err) => {
-        // честный отказ: при пустом iceServers добавляем причину, почему TURN не был
+        // Ревью 16.10 P2-1: ошибка ОДНОГО offer'а (мусорный SDP оператора)
+        // закрывает только ЕГО пира — глобальный FAIL (мост → все каналы всех
+        // операторов мертвы до конца сеанса) оставлен фатальным ошибкам страницы.
         const ice = !iceServers.length && iceReason ? ` (ice: ${iceReason})` : '';
-        api.fail(`rtc: ${err?.message ?? err}${ice}`);
+        console.warn(`agent-bridge: offer op=${op} отклонён (${err?.message ?? err}${ice}) — пира закрываю`);
+        closePeer(op);
       });
   }
 

@@ -35,9 +35,9 @@ attended-окна), а без хендлера getDisplayMedia в скрытой
    хелпера нет (Linux/mac путь) — `navigator.mediaDevices.getDisplayMedia({video:true})`
    → stream в `<video>`-элемент → рисование в ТОТ ЖЕ общий canvas (rAF-цикл
    по requestVideoFrameCallback), дальше существующий конвейер ADR 0030:
-   один canvas-track → replaceTrack в pc каждого оператора. Имя env-флага:
-   `EDESK_AGENT_VIDEO=gdm` (по умолчанию on для linux-агента; Windows
-   остаётся на хелпере — флаг не действует, приоритет кадров хелпера).
+   один canvas-track → replaceTrack в pc каждого оператора. Env-флаг:
+   `EDESK_AGENT_VIDEO=off` отключает (по умолчанию на linux-агенте включён;
+   Windows остаётся на хелпере — флаг не действует, приоритет кадров хелпера).
 3. **Честные статусы**: отказ getDisplayMedia (нет DISPLAY/XAUTHORITY,
    Wayland-без-портала, экран выключен) → мост шлёт в main статус
    `video-unavailable` с причиной; main пишет в svc-diag и heartbeat-инвентарь
