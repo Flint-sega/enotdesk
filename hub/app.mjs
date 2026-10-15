@@ -845,8 +845,9 @@ export function createHub(opts = {}) {
     if (!widgetCors(req, res)) return err(res, 403, 'cors_denied', 'Origin не разрешён для виджета');
     const p = url.pathname;
     const method = req.method;
-    // лимит на запись до чтения тела — дешёвый отказ раньше работы (ревью 10.10)
-    if (method === 'POST' && !limits.widgetApi.take(`ip:${ip(req)}`)) {
+    // лимит на запись до чтения тела — дешёвый отказ раньше работы (ревью 10.10);
+    // GET-ветки гостевого API тоже лимитятся (аудит 12.10 P3: чтения были без лимита)
+    if (!limits.widgetApi.take(`ip:${ip(req)}`)) {
       return err(res, 429, 'rate_limited', 'Слишком много запросов, попробуйте позже');
     }
 
@@ -1264,7 +1265,14 @@ export function createHub(opts = {}) {
   // Дом-уборщик хаба (аудит 12.10, P2): истёкшие hub_sessions и старые
   // email_seen — раз в час, по образцу серверного housekeeper.
   const hubHousekeeper = setInterval(() => {
-    try { runHubRetention(db); } catch { /* БД закрывается — интервал снимется в close() */ }
+    try {
+      runHubRetention(db);
+    } catch (e) {
+      // остановка БД в close() — ожидаемо (интервал снимется строкой ниже);
+      // прочие ошибки ретенции не глотаем молча (ревью Рината: дрейф схемы
+      // молчал бы вечно)
+      if (!dbClosed) console.warn('[hub] retention error:', e?.message ?? e);
+    }
   }, 3_600_000);
   hubHousekeeper.unref();
   attachUpgrade();
