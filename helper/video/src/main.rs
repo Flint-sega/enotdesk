@@ -76,8 +76,8 @@ const PROBE_LOG_THROTTLE: Duration = Duration::from_secs(3);
 // operator cadence and was removed in 0b419b3; the W-U7 diagnostic signature
 // ("SendInput TRUE, cursor does not move") is invisible without it. Default
 // (flag unset): silent, exactly as shipped since 0b419b3. Read once at
-// startup.
-static VIDEO_TRACE: AtomicBool = AtomicBool::new(false);
+// startup. pub(crate): win.rs gates the per-encode-step trace on it too.
+pub(crate) static VIDEO_TRACE: AtomicBool = AtomicBool::new(false);
 
 // D9 (ADR 0027 addendum-2): master switch of the unresponsive-detection
 // machinery — product auto-nudges now, the input-dead-video trigger when it
@@ -104,6 +104,10 @@ struct Shared {
     last_err: Mutex<String>,
     broken: AtomicBool,    // pipe connection is gone
     auth_fail: AtomicBool, // hello token mismatch -> hard exit
+    // Set by the reader thread once the hello token is verified. Frames and
+    // STATUS documents leave the helper only while it is true (audit P1-1:
+    // before that, zero bytes go down the pipe).
+    authenticated: AtomicBool,
     stop: AtomicBool,
     state: Mutex<String>,  // "waiting" | "live" (stdout tick)
     mode: Mutex<&'static str>, // "dxgi" | "gdi" (status doc + stdout tick)
@@ -148,6 +152,7 @@ impl Shared {
             last_err: Mutex::new(String::new()),
             broken: AtomicBool::new(false),
             auth_fail: AtomicBool::new(false),
+            authenticated: AtomicBool::new(false),
             stop: AtomicBool::new(false),
             state: Mutex::new("starting".into()),
             mode: Mutex::new("dxgi"),
@@ -387,7 +392,10 @@ fn run() -> Result<i32, String> {
         set_state(&shared, "waiting");
 
         // Fresh pipe instance per connection; Drop closes the server handle
-        // (unless the reader took it over as a std File).
+        // (unless the reader took it over as a std File). Every connection
+        // starts unauthenticated -- the reader thread flips the shared flag
+        // only after a verified hello (audit P1-1).
+        shared.authenticated.store(false, Ordering::SeqCst);
         let pipe = win::PipeServer::new()?;
         if let Err(e) = pipe.connect() {
             // Rare: client vanished between create and connect. Recreate.
@@ -491,6 +499,7 @@ fn reader_thread(
     privacy_sleep: Arc<AtomicBool>,
 ) {
     let mut io = io; // Arc<File> derefs to File for read_exact
+    let connected_at = Instant::now();
     let mut authenticated = false;
     loop {
         // Wait for bytes without parking a ReadFile on the handle: the pipe is
@@ -502,6 +511,16 @@ fn reader_thread(
                 Ok(n) if n > 0 => break,
                 Ok(_) => {
                     if shared.stop.load(Ordering::SeqCst) || shared.broken.load(Ordering::SeqCst) {
+                        shared.broken.store(true, Ordering::SeqCst);
+                        return;
+                    }
+                    // Audit P1-1: no hello within HELLO_TIMEOUT of the
+                    // connection -> the session ends and the helper returns
+                    // to waiting; the single pipe instance must not belong to
+                    // a silent client.
+                    if !authenticated && connected_at.elapsed() >= HELLO_TIMEOUT {
+                        set_last_err(&shared, "pipe: hello timeout");
+                        log_line("{\"ev\":\"hello\",\"result\":\"timeout\"}");
                         shared.broken.store(true, Ordering::SeqCst);
                         return;
                     }
@@ -549,6 +568,8 @@ fn reader_thread(
                 set_last_err(&shared, "pipe: hello token mismatch");
                 break;
             }
+            // Frames and statuses are gated on this flag (audit P1-1).
+            shared.authenticated.store(true, Ordering::SeqCst);
         } else {
             handle_command(&shared, &privacy_sleep, &String::from_utf8_lossy(&payload), &input_tx);
         }
@@ -560,6 +581,12 @@ fn reader_thread(
 // (input/quality/privacy), so the wakeups cost nothing and input latency
 // stays well under the 100 ms frame cadence.
 const PIPE_POLL_PERIOD: Duration = Duration::from_millis(30);
+
+// Audit P1-1: a client that connects and then stays silent must not hold the
+// single pipe instance. The hello has this long to arrive after the
+// connection; past it the session is torn down and the helper returns to
+// waiting (reader thread).
+const HELLO_TIMEOUT: Duration = Duration::from_secs(5);
 
 fn handle_command(
     shared: &Shared,
@@ -1006,47 +1033,52 @@ fn capture_session(
         }
 
         // Status document every 2 s: fps, lastErr, uac, locked, displayOff.
+        // Audit P1-1: no STATUS byte leaves the pipe before a verified hello;
+        // while unauthenticated only the window clock keeps rolling, so the
+        // first STATUS follows the handshake within one period.
         if last_status.elapsed() >= STATUS_PERIOD {
-            // 6=in status_json (Toolhelp/OpenInputDesktop), 7=in STATUS write;
-            // both are blocking calls on this thread, invisible to the STATUS
-            // channel itself — the ticker names them (v0.6.0 приёмка: wedge).
-            win::mark_dup_op(6);
-            // D4-дисциплина: uac/locked считаются ОДИН РАЗ здесь, на capture-
-            // потоке, и публикуются в Shared — авто-нудж читает кэш, своих
-            // Win32-вызовов у него нет.
-            let uac = win::consent_running();
-            let locked = win::input_desktop_locked();
-            shared.uac.store(uac, Ordering::Relaxed);
-            shared.locked.store(locked, Ordering::Relaxed);
-            let secs = window_start.elapsed().as_secs_f64();
-            let fps = if secs > 0.0 {
-                (frames_window as f64 / secs).round() as u64
-            } else {
-                0
-            };
-            shared.fps.store(fps, Ordering::Relaxed);
-            // D6 (spec rev 3): snapshot the window counters for the stdout
-            // ticker BEFORE they reset -- the ticker thread cannot see these
-            // locals. probe_window is shared state read at the same moment.
-            shared.pr_pub.store(frames_window, Ordering::Relaxed);
-            shared.empty_pub.store(empty_window, Ordering::Relaxed);
-            let vp = shared.probe_window.load(Ordering::Relaxed);
-            shared.vp_pub.store(vp, Ordering::Relaxed);
-            let body = status_json(shared, fps, frames_window, empty_window, vp, uac, locked);
-            win::mark_dup_op(7);
-            if let Err(e) = send_msg(io, pipe_lock, proto::T_STATUS, body.as_bytes()) {
-                // The ticker carries this text: a dying pipe must name its
-                // error, not just flip to waiting (v0.6.0 приёмка).
-                set_last_err(shared, &format!("send status: {e}"));
-                shared.broken.store(true, Ordering::SeqCst);
-                return SessionEnd::Broken;
-            }
-            win::mark_dup_op(0);
-            frames_window = 0;
-            empty_window = 0;
-            shared.probe_window.store(0, Ordering::Relaxed);
-            window_start = Instant::now();
             last_status = Instant::now();
+            if shared.authenticated.load(Ordering::SeqCst) {
+                // 6=in status_json (Toolhelp/OpenInputDesktop), 7=in STATUS write;
+                // both are blocking calls on this thread, invisible to the STATUS
+                // channel itself — the ticker names them (v0.6.0 приёмка: wedge).
+                win::mark_dup_op(6);
+                // D4-дисциплина: uac/locked считаются ОДИН РАЗ здесь, на capture-
+                // потоке, и публикуются в Shared — авто-нудж читает кэш, своих
+                // Win32-вызовов у него нет.
+                let uac = win::consent_running();
+                let locked = win::input_desktop_locked();
+                shared.uac.store(uac, Ordering::Relaxed);
+                shared.locked.store(locked, Ordering::Relaxed);
+                let secs = window_start.elapsed().as_secs_f64();
+                let fps = if secs > 0.0 {
+                    (frames_window as f64 / secs).round() as u64
+                } else {
+                    0
+                };
+                shared.fps.store(fps, Ordering::Relaxed);
+                // D6 (spec rev 3): snapshot the window counters for the stdout
+                // ticker BEFORE they reset -- the ticker thread cannot see these
+                // locals. probe_window is shared state read at the same moment.
+                shared.pr_pub.store(frames_window, Ordering::Relaxed);
+                shared.empty_pub.store(empty_window, Ordering::Relaxed);
+                let vp = shared.probe_window.load(Ordering::Relaxed);
+                shared.vp_pub.store(vp, Ordering::Relaxed);
+                let body = status_json(shared, fps, frames_window, empty_window, vp, uac, locked);
+                win::mark_dup_op(7);
+                if let Err(e) = send_msg(io, pipe_lock, proto::T_STATUS, body.as_bytes()) {
+                    // The ticker carries this text: a dying pipe must name its
+                    // error, not just flip to waiting (v0.6.0 приёмка).
+                    set_last_err(shared, &format!("send status: {e}"));
+                    shared.broken.store(true, Ordering::SeqCst);
+                    return SessionEnd::Broken;
+                }
+                win::mark_dup_op(0);
+                frames_window = 0;
+                empty_window = 0;
+                shared.probe_window.store(0, Ordering::Relaxed);
+                window_start = Instant::now();
+            }
         }
 
         // Capture step, per mode. A pending GDI switch is parked in
@@ -1109,7 +1141,12 @@ fn capture_session(
                             let max_fps = *shared.max_fps.lock().unwrap_or_else(|p| p.into_inner());
                             let interval = Duration::from_secs_f64(1.0 / (max_fps.max(1)) as f64);
                             let due = last_encode.map_or(true, |t| t.elapsed() >= interval);
-                            if due {
+                            // Audit P1-1: until the hello is verified the frame is
+                            // dropped before downscale -- this also keeps the
+                            // black-frame probe from counting an unauthenticated
+                            // window (no spurious GDI switch while a client is
+                            // silently sitting on the pipe).
+                            if due && shared.authenticated.load(Ordering::SeqCst) {
                                 let (sw, sh, buf) = match dup.as_ref() {
                                     Some(d) => {
                                         let (w, h) = d.size();
@@ -1267,26 +1304,30 @@ fn capture_session(
                     win::Grab::Frame => {
                         shared.display_off.store(false, Ordering::Relaxed);
                         other_err_streak = 0;
-                        let (sw, sh, buf) = {
-                            let (w, h) = gdi.size();
-                            (w, h, gdi.buf())
-                        };
-                        let (px, pw, ph) = downscale(buf, sw, sh, FRAME_TARGET_W);
-                        // No black detection here (revision 2): the switch has
-                        // already happened and BitBlt returns the real
-                        // framebuffer, black or not.
-                        if !encode_and_send(
-                            wic,
-                            &px,
-                            pw,
-                            ph,
-                            shared,
-                            io,
-                            pipe_lock,
-                            &mut frames_window,
-                            &mut last_encode,
-                        ) {
-                            return SessionEnd::Broken;
+                        // Audit P1-1: nothing is encoded until the hello is
+                        // verified; the grabbed frame is simply dropped.
+                        if shared.authenticated.load(Ordering::SeqCst) {
+                            let (sw, sh, buf) = {
+                                let (w, h) = gdi.size();
+                                (w, h, gdi.buf())
+                            };
+                            let (px, pw, ph) = downscale(buf, sw, sh, FRAME_TARGET_W);
+                            // No black detection here (revision 2): the switch has
+                            // already happened and BitBlt returns the real
+                            // framebuffer, black or not.
+                            if !encode_and_send(
+                                wic,
+                                &px,
+                                pw,
+                                ph,
+                                shared,
+                                io,
+                                pipe_lock,
+                                &mut frames_window,
+                                &mut last_encode,
+                            ) {
+                                return SessionEnd::Broken;
+                            }
                         }
                     }
                     win::Grab::ModeChanged => {
@@ -1360,6 +1401,13 @@ fn encode_and_send(
     frames_window: &mut u64,
     last_encode: &mut Option<Instant>,
 ) -> bool {
+    // Audit P1-1, authoritative gate: no frame is encoded or delivered before
+    // the hello is verified. True keeps the session alive; the frame is
+    // dropped. The capture-loop call sites skip the work earlier -- this one
+    // covers every caller.
+    if !shared.authenticated.load(Ordering::SeqCst) {
+        return true;
+    }
     let q = *shared.jpeg_q.lock().unwrap_or_else(|p| p.into_inner()) / 100.0;
     match wic.encode(pw, ph, px, q) {
         Ok(jpeg) => {
