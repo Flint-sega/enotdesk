@@ -95,13 +95,24 @@ export function wireHostChannel(ch, opKey = 'primary') {
       }
       enot.input(m.data, opKey).catch(() => {});
     };
+    // Начальный input-grant (P3-1 ревью Рината, приёмка C+D): событие
+    // input-active может прийти до открытия канала (inputAttach уходит раньше
+    // createOffer) и потеряться на ещё не открытом канале — сливаем текущее
+    // состояние арбитража оператору в момент готовности его канала.
+    const sendInitialGrant = () => {
+      try { ch.send(JSON.stringify({ type: 'input-grant', granted: state.inputActiveClaimId === opKey })); } catch { /* канал закрывается */ }
+    };
     // W-C5: деградация без видео — честный статус по input-каналу оператора,
     // как только канал открыт (каналы открываются после answer)
     if (op && op.noVideo) {
       const info = JSON.stringify({ type: 'session-info', video: false, reason: 'video-slots-full' });
-      const sendInfo = () => { try { ch.send(info); } catch { /* канал закрывается */ } };
+      const sendInfo = () => { sendInitialGrant(); try { ch.send(info); } catch { /* канал закрывается */ } };
       if (ch.readyState === 'open') sendInfo();
       else ch.onopen = sendInfo;
+    } else if (ch.readyState !== 'open') {
+      ch.onopen = sendInitialGrant;
+    } else {
+      sendInitialGrant();
     }
   } else if (ch.label === 'chat') {
     ch.onmessage = (m) => {
@@ -110,6 +121,14 @@ export function wireHostChannel(ch, opKey = 'primary') {
       appendChat('client-chat-log', 'operator', msg.text);
       // чат-виджет в углу (спека владельца 02.10): показываем сообщение оператора
       enot.chatWidgetMsg?.(msg.text);
+      // Мультиоператор: хост — точка fan-out и для операторов: сообщение
+      // одного оператора релеется чат-каналам остальных (исходящие хоста уже
+      // уходят всем — sendChat/sendWidgetChat). Приёмка C+D (16.10): раньше
+      // сообщения операторов видел только хост, операторы — друг друга нет.
+      for (const dc of hostOperatorChannels('chat')) {
+        if (dc === ch) continue; // отправителю не эхаем
+        try { dc.send(m.data); } catch { /* канал закрывается */ }
+      }
     };
   } else if (ch.label === 'clip') {
     ch.onmessage = (m) => {

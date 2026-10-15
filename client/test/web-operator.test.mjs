@@ -213,3 +213,10 @@ test('SEC-008: токен не хранится в cookie/sessionStorage — т�
   assert.match(code, /const hadRole = Boolean\(readRoleCookie\(\)\)/, 'роль из cookie — только признак старой сессии: без токена в памяти честный вход заново');
   assert.match(code, /res\.status === 401 && hadToken/, '401 при живом bearer возвращает на форму входа, а не оставляет мёртвую сессию');
 });
+
+// ---- Приёмка C+D (16.10): лог чата не переживает конец сеанса ----
+test('C+D (minor UI): лог чата чистится в обеих точках старта нового сеанса', () => {
+  const points = operatorJs.match(/state\.connect = \{[^\n]*\n[^\n]*text\(\$\('op-chat-log'\), ''\)/g) ?? [];
+  assert.ok(points.length >= 2,
+    `лог чата (#op-chat-log) обязан очищаться при старте нового сеанса — форма подключения и claim машины (найдено ${points.length})`);
+});

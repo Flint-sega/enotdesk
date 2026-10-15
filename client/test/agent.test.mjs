@@ -749,13 +749,15 @@ test('W-C4: ввод не-активного оператора не доход�
     assert.deepEqual(sinkGot, [move], 'ввод не-активного оператора дошёл до sink');
 
     // claim второго: его ввод пошёл, первого — нет; grants разосланы обоим
+    // (берем ПОСЛЕДНИЙ грант: при проводке канала оператору уже сливается
+    // начальный input-grant — P3-1 приёмки C+D, итоговое состояние важнее)
     chB.onmessage({ data: JSON.stringify({ type: 'claim-input' }) });
     await sleep(5);
     chB.onmessage({ data: move });
     chA.onmessage({ data: move });
     assert.deepEqual(sinkGot, [move, move], 'после claim op-b только его ввод доходит');
-    const grantB = chB.sent.map((x) => JSON.parse(x)).find((m) => m.type === 'input-grant');
-    const grantA = chA.sent.map((x) => JSON.parse(x)).find((m) => m.type === 'input-grant');
+    const grantB = chB.sent.map((x) => JSON.parse(x)).filter((m) => m.type === 'input-grant').at(-1);
+    const grantA = chA.sent.map((x) => JSON.parse(x)).filter((m) => m.type === 'input-grant').at(-1);
     assert.deepEqual(grantB, { type: 'input-grant', granted: true }, 'захвативший получил granted:true');
     assert.deepEqual(grantA, { type: 'input-grant', granted: false }, 'бывший активный получил granted:false');
 

@@ -111,6 +111,7 @@ export function cleanupSession() {
   state.session = null;
   state.pendingClaim = null;
   state.connect = null;
+  state.inputActiveClaimId = null; // арбитраж сеанса не протекает в следующий (P3-1)
 }
 
 export function stopMedia() {
@@ -500,6 +501,7 @@ function videoOperatorCount() {
 // Арбитраж (W-C4): main сменил активного вводчика — grants уходят всем
 // операторам по их input-каналам, клиенту честный бейдж «кто управляет».
 enot.onInputActive?.(({ claimId } = {}) => {
+  state.inputActiveClaimId = claimId ?? null; // кэш для начального гранта (P3-1)
   for (const [opId, op] of state.operators) {
     const ch = op.dcs?.input;
     if (!ch || ch.readyState !== 'open') continue;

@@ -277,10 +277,14 @@ if (!api) {
     // приказ main закрыть pc оператора (W-C2 closeOp): расширение payload DC_TO,
     // отдельного close-канала в BRIDGE_IPC нет (имена менять нельзя)
     if (payload?.close === true) {
-      closePeer(opOf(payload));
+      closePeer(opOf(payload.op));
       return;
     }
-    const op = opOf(payload);
+    // Фикс регрессии волны C (живая приёмка C+D, 16.10): локальный opOf(v) ждёт
+    // СТРОКУ-op (payload.op), а не payload-объект — opOf(payload) всегда давал
+    // 'primary', пир оператора не находился, и весь исходящий DC_TO ({opened},
+    // вывод терминала, input-гранты) молча отбрасывался при живом claimId-теге.
+    const op = opOf(payload.op);
     const peer = peers.get(op);
     const ch = peer?.dcs.get(label);
     if (!ch || ch.readyState !== 'open') return;
