@@ -13,13 +13,13 @@ enotdesk.db-wal
 *.db-wal
 node_modules
 dist
-client
-!client/lib/i18n.mjs
-!client/locales
+# Клиент в образ не входит ЦЕЛИКОМ (Electron-приложение), но сервер раздаёт
+# его статические части: allowlist OPERATOR_ASSETS (client/lib, client/renderer)
+# и словари client/locales — поэтому из контекста уходит только client/test.
+# Волна A: раньше исключался весь client/ и assets/web — /operator в docker падал.
+client/test
 docs
 archive
-assets
-build
 scripts
 docker/caddy
 docker/README.md
@@ -37,7 +37,6 @@ LICENSE
 site
 spike
 helper
-web
 out
 # Локальные склады и служебные каталоги (уборка 12.10: .local/ теперь держит
 # БД/отчёты/скрипты, ранее прикрывавшиеся правилами *.db и scripts) — ревью P1-1

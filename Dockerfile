@@ -15,9 +15,15 @@ COPY package.json ./
 COPY server ./server
 # Hub (тикет-система) идёт тем же образом, своим сервисом compose (profile hub)
 COPY hub ./hub
-# Серверные страницы (/downloads, /invite) читают общий словарь client/lib/i18n.mjs
-COPY client/lib/i18n.mjs ./client/lib/i18n.mjs
+# Серверные страницы и браузерный оператор: /operator читает ../web/operator.html,
+# статика оператора — allowlist OPERATOR_ASSETS (client/lib, client/renderer/{dom,state}),
+# словари client/locales, /brand/* — из assets (BRAND_FILES + шрифты self-host).
+# Волна A (100%): раньше web/assets/renderer не копировались → /operator 500 в docker.
+COPY client/lib ./client/lib
+COPY client/renderer ./client/renderer
 COPY client/locales ./client/locales
+COPY web ./web
+COPY assets ./assets
 # Оболочка запуска: вычисляет ENOT_PUBLIC_URL и TURN-креденшелы из DOMAIN/TURN_SECRET
 COPY docker/enotdesk/entrypoint.sh /entrypoint.sh
 

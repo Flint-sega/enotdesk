@@ -54,7 +54,32 @@ if [ -n "${DOMAIN:-}" ]; then
     )"
   fi
 elif [ -n "${ENOT_TURN_SECRET:-}" ]; then
-  echo "ENOTDESK: DOMAIN не задан — TURN клиенту не отдан (нужен публичный адрес); coturn запущен, но простаивает." >&2
+  # Волна A (100%): без домена TURN тоже отдаём — по публичному IP из
+  # ENOT_PUBLIC_URL (quick-setup вычисляет его при установке без домена) —
+  # паритет с bare-metal, где TURN работает по IP. coturn слушает 3478 на
+  # хосте (network_mode: host); realm в конфиге coturn остаётся localhost.
+  TURN_HOST="$(printf '%s' "${ENOT_PUBLIC_URL:-}" | sed -n 's#^[a-z]*://\([^:/]*\).*#\1#p')"
+  if [ -n "$TURN_HOST" ] && valid_hostport "$TURN_HOST"; then
+    if [ -z "${ENOT_TURN_URLS:-}" ]; then
+      ENOT_TURN_URLS="stun:$TURN_HOST:3478,turn:$TURN_HOST:3478?transport=udp,turn:$TURN_HOST:3478?transport=tcp"
+    fi
+    if [ -z "${ENOT_TURN_USERNAME:-}" ]; then
+      ENOT_TURN_USERNAME="2000000000"
+    fi
+    if [ -z "${ENOT_TURN_PASSWORD:-}" ]; then
+      ENOT_TURN_PASSWORD="$(
+        ENOT_TURN_USERNAME="$ENOT_TURN_USERNAME" node -e '
+          const c = require("node:crypto");
+          process.stdout.write(
+            c.createHmac("sha1", process.env.ENOT_TURN_SECRET)
+              .update(process.env.ENOT_TURN_USERNAME)
+              .digest("base64"));
+        '
+      )"
+    fi
+  else
+    echo "ENOTDESK: ни DOMAIN, ни адрес в ENOT_PUBLIC_URL не заданы — TURN клиенту не отдан (нужен публичный адрес); coturn запущен, но простаивает." >&2
+  fi
 fi
 
 # ENOT_TURN_SECRET пробрасывается серверу как есть (эфемерные TURN-креды):
