@@ -1152,8 +1152,10 @@ docker_install() {
       awk -F= '
         BEGIN { managed["DOMAIN"]=1; managed["TURN_SECRET"]=1; managed["ENOT_SECRET_KEY"]=1;
                 managed["ENOT_PUBLIC_URL"]=1; managed["HUB"]=1; managed["COMPOSE_PROFILES"]=1 }
-        /^[A-Za-z_][A-Za-z0-9_]*=/ { if (!($1 in managed)) print; next }
+        # неуправляемые ключи: последнее вхождение побеждает (дубли не копим)
+        /^[A-Za-z_][A-Za-z0-9_]*=/ { if (!($1 in managed)) line[$1]=$0; next }
         /^#/ { print }
+        END { for (k in line) print line[k] }
       ' "$prev_envf"
       rm -f "$prev_envf"
     fi
