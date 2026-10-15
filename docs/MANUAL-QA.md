@@ -1316,3 +1316,44 @@ messagebox дефолтной кнопкой; влияние на SEC-010 — у
   Новый только в /root/enot-lab-secrets/enotdesk-server.env и локальном
   0600-файле; логин проверен (200). Урок автоматизации: domSnapshot не делать
   на формах с заполненными секретами; env-креды парсить со снятием кавычек.
+
+### 15.10.2026 — волна A «установка одной командой на 100%»: чистая VM 105 (Debian 13), bare-metal + docker + update
+
+Живая приёмка на временно поднятой чистой VM (Debian 13 cloud-image, 2 ядра/3 ГБ/20 ГБ,
+из каталога лабы; quick-setup — raw.githubusercontent main, серверный код — локальный
+tarball волны через --tarball; установка non-interactive: --admin-password-stdin).
+
+**Bare-metal (I1–I10):**
+- I1 одна команда → RC=0: Node 24 tarball, coturn apt, systemd-юниты, bootstrap по stdin-пайпу.
+- I2 юниты `enotdesk`+`enotdesk-hub` active, health `{"ok":true,"version":"0.6.19"}`, hub health `enotdesk:true`.
+- I3 **--fetch-builds**: все 4 клиентские сборки в /downloads с SHA256-проверкой
+  (win portable+setup, mac zip, версионированный AppImage) — страница загрузок рабочая сразу.
+- I4 /downloads 200 (со сборками), /operator 401-жив, /invite 200, /brand 200, insecure-плашка (HTTP-режим).
+- I5 **TURN отдаётся по IP без домена** (realm=IP, ephemeral-креды).
+- I6 **enotdesk-backup.timer**: enabled, Persistent-catchup; oneshot-пуск руками →
+  ОБЕ базы задамплены (`enotdesk-<ts>.db` + `hub-<ts>.db`, префиксы изолированы).
+- I7 smoke-remote с VM (ws из node_modules релиза): ПОЛНЫЙ ЦИКЛ PASS.
+- I8 повторный запуск без --update честно отказал.
+
+**Docker (D1–D8, та же VM после --uninstall):**
+- D1 docker.io+compose **авто-установились** из пакетов дистрибутива (Debian 13:
+  дистрибутивный docker-compose v2 подключён симлинком как CLI-плагин).
+- D2 одна команда → RC=0: 4 контейнера Up (enotdesk healthy, caddy, coturn, hub).
+- D3 **контекст сборки из релизного tarball** (раньше на чистой машине build падал на COPY).
+- D4 /downloads 200, /operator 401, /invite 200, **/hub 401-жив** (раньше 502 —
+  hub-контейнер стартовал СЕРВЕРОМ; фикс: command node hub/main.mjs).
+- D5 **--fetch-builds в docker-том**: все 4 сборки внутри /data/dist (ESM-скрипт в контейнере).
+- D6 TURN по IP отдаётся (hostToken → iceServers c IP:3478).
+- D7 **--update --docker**: секреты сохранены, HUB/COMPOSE_PROFILES сохранены,
+  кастомный ENOT_TRUSTED_PROXY пережил обновление (merge, дедуп ключей).
+- D8 снос стека — docker compose down (задокументировано).
+
+**Живьём найдено и закрыто в этой волне (5 дыр установки):** web/assets/renderer не
+COPY'ились в docker-образ (/operator 500); docker-контекст не содержал код приложения
+(build на чистой машине падал); hub-сервис без command запускал сервер (502 /hub);
+checksums-парсер не принимал `./`-префикс релизных checksums (путь «скачать релиз» падал);
+docker-режим без домена не отдавал TURN. Дополнительно: docker-compose-v2 не в Debian →
+фолбэк на дистрибутивный docker-compose v2 как CLI-плагин.
+
+VM 105 удалена после приёмки. Флаги: --fetch-builds/--no-fetch-builds (вопрос default Y),
+--no-backup-timer; ENOT_SETUP_NO_DOCKER_INSTALL=1 отключает авто-docker.
