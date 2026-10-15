@@ -1184,7 +1184,7 @@ try {
   const base = `https://github.com/${repo}/releases/download/${tag}`;
   const sumsText = await (await fetch(`${base}/checksums-sha256.txt`)).text();
   const sums = new Map(sumsText.split(/\r?\n/).map((l) => {
-    const m = /^([0-9a-f]{64})\s+\.\.\/?(.+)$/.exec(l.trim());
+    const m = /^([0-9a-f]{64})\s+\.\/(.+)$/.exec(l.trim());
     return m ? [m[2], m[1]] : null;
   }).filter(Boolean));
   const want = ["EnotDesk-win-x64.exe", "EnotDesk-win-x64-setup.exe", "EnotDesk-mac-arm64.zip",
