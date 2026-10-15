@@ -88,19 +88,12 @@ if (!api) {
 
   async function drawVideoFrame(jpeg) {
     try {
+      helperLive = true; // кадры хелпера пошли — gdm-захват (ADR 0031) самоотключается
+      stopGdm('helper');
       const seq = ++videoSeq;
       const bitmap = await createImageBitmap(new Blob([jpeg], { type: 'image/jpeg' }));
       if (seq !== videoSeq) { bitmap.close?.(); return; }
-      if (!videoCanvas) {
-        videoCanvas = document.createElement('canvas');
-        videoCanvas.width = bitmap.width;
-        videoCanvas.height = bitmap.height;
-        videoCtx = videoCanvas.getContext('2d');
-        videoTrack = videoCanvas.captureStream(24).getVideoTracks()[0] ?? null;
-      } else if (videoCanvas.width !== bitmap.width || videoCanvas.height !== bitmap.height) {
-        videoCanvas.width = bitmap.width;
-        videoCanvas.height = bitmap.height;
-      }
+      ensureCanvas(bitmap.width, bitmap.height);
       videoCtx.drawImage(bitmap, 0, 0);
       bitmap.close?.();
       for (const op of peers.keys()) await attachVideoTrack(op);
@@ -108,6 +101,67 @@ if (!api) {
   }
 
   api.onVideoFrame?.((jpeg) => { void drawVideoFrame(jpeg); });
+
+  // ADR 0031: Linux-захват без хелпера — getDisplayMedia в тот же canvas
+  // (конвейер один: canvas-track → replaceTrack каждому pc). Main включает
+  // режим посылкой video-mode (только linux, env EDESK_AGENT_VIDEO≠off);
+  // кадры Windows-хелпера всегда приоритетнее.
+  let helperLive = false;
+  let gdmStarted = false;
+  let gdmStopped = false;
+  let gdmEl = null;
+  let gdmStream = null;
+  function ensureCanvas(w, h) {
+    if (!videoCanvas) {
+      videoCanvas = document.createElement('canvas');
+      videoCanvas.width = w;
+      videoCanvas.height = h;
+      videoCtx = videoCanvas.getContext('2d');
+      videoTrack = videoCanvas.captureStream(24).getVideoTracks()[0] ?? null;
+    } else if (videoCanvas.width !== w || videoCanvas.height !== h) {
+      videoCanvas.width = w;
+      videoCanvas.height = h;
+    }
+  }
+  function stopGdm(reason) {
+    if (!gdmStarted || gdmStopped) return;
+    gdmStopped = true;
+    try { gdmStream?.getTracks().forEach((t) => t.stop()); } catch { /* уже мёртв */ }
+    try { gdmEl?.pause(); } catch { /* уже мёртв */ }
+    gdmEl = null; gdmStream = null;
+    api.gdmStatus?.('stopped', reason);
+  }
+  async function startGdm() {
+    if (gdmStarted || helperLive || gdmStopped) return;
+    gdmStarted = true;
+    try {
+      gdmStream = await navigator.mediaDevices.getDisplayMedia({ video: true, audio: false });
+      if (helperLive) { stopGdm('helper'); return; }
+      gdmEl = document.createElement('video');
+      gdmEl.srcObject = gdmStream;
+      gdmEl.muted = true;
+      await gdmEl.play();
+      const pump = () => {
+        if (gdmStopped) return;
+        if (helperLive) { stopGdm('helper'); return; }
+        const w = gdmEl.videoWidth || 0, h = gdmEl.videoHeight || 0;
+        if (w && h) {
+          ensureCanvas(w, h);
+          videoCtx.drawImage(gdmEl, 0, 0);
+          for (const op of peers.keys()) void attachVideoTrack(op);
+        }
+        gdmEl.requestVideoFrameCallback(pump);
+      };
+      gdmEl.requestVideoFrameCallback(pump);
+      api.gdmStatus?.('running', '');
+    } catch (e) {
+      gdmStopped = true;
+      // Честный отказ: нет DISPLAY/XAUTHORITY, Wayland-без-портала и т.п. —
+      // оператор видит статус, кадры никогда не фейкаются.
+      api.gdmStatus?.('unavailable', String(e?.message ?? e).slice(0, 200));
+    }
+  }
+  api.onVideoMode?.((cfg) => { if (cfg?.gdm) void startGdm(); });
 
   function answerChain(op, offerSdp) {
     const peer = peers.get(op);

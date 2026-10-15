@@ -1371,6 +1371,23 @@ function createAgentRtc({ fetchIceServers, videoForward = null } = {}) {
     let win = null;
     let relay = null;
     const ipcHandlers = [];
+    // ADR 0031: Linux unattended-видео — getDisplayMedia в мосту требует
+    // хендлер источника. Интерактивного пикера нет (и не должно быть: согласие
+    // даёт операторский claim зачисленной машины) — авто-выбор первичного
+    // экрана. Ставится только в агент-режиме на linux; attended-окно ставит
+    // свой хендлер в createWindow() (там пикер по selectedSource).
+    if (process.platform === 'linux') {
+      session.defaultSession.setDisplayMediaRequestHandler((_opts, callback) => {
+        desktopCapturer.getSources({ types: ['screen'], thumbnailSize: { width: 0, height: 0 } })
+          .then((sources) => {
+            const primary = screen.getPrimaryDisplay();
+            const src = sources.find((s) => String(s.display_id ?? '') === String(primary.id)) ?? sources[0];
+            if (src) callback({ video: src });
+            else callback({});
+          })
+          .catch(() => callback({}));
+      }, { useSystemPicker: false });
+    }
     const cleanup = () => {
       for (const [channel, handler] of ipcHandlers.splice(0)) ipcMain.removeListener(channel, handler);
       if (win) {
@@ -1419,7 +1436,25 @@ function createAgentRtc({ fetchIceServers, videoForward = null } = {}) {
       ipcMain.on(channel, handler);
       ipcHandlers.push([channel, handler]);
     }
-    win.webContents.on('did-finish-load', () => relay.markReady()); // мост готов получать offer
+    // Статус Linux-захвата моста (ADR 0031): honest running/unavailable — в
+    // svc-diag; мост никогда не фейкает кадры, недоступность видит оператор.
+    {
+      const handler = (e, payload) => {
+        if (win && !win.isDestroyed() && e.sender === win.webContents) {
+          svcDiag.write('video', `gdm ${payload?.state ?? '?'}${payload?.reason ? ` (${payload.reason})` : ''}`);
+        }
+      };
+      ipcMain.on('enot:bridge-gdm', handler);
+      ipcHandlers.push(['enot:bridge-gdm', handler]);
+    }
+    win.webContents.on('did-finish-load', () => {
+      relay.markReady(); // мост готов получать offer
+      // ADR 0031: включаем Linux-захват в мосту (gdm) — только linux, env
+      // EDESK_AGENT_VIDEO=off отключает; кадры Windows-хелпера приоритетнее.
+      if (process.platform === 'linux' && process.env.EDESK_AGENT_VIDEO !== 'off') {
+        win.webContents.send('enot:video-mode', { gdm: true });
+      }
+    });
     win.webContents.on('render-process-gone', () => {
       console.warn('[enotdesk-agent] мост RTC упал — терминал честно закрывается');
       bootLog.write('bridge', 'мост RTC упал (render-process-gone)');

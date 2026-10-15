@@ -20,8 +20,10 @@ contextBridge.exposeInMainWorld('agentRtc', {
   onIceConfig: (cb) => subscribe('enot:rtc-ice-config', cb), // общий TURN-конфиг
   onToDc: (cb) => subscribe('enot:term-dc-to', cb), // {op, label, data} | {op, close:true}
   onVideoFrame: (cb) => subscribe('enot:video-frame', cb), // общий jpeg-кадр
+  onVideoMode: (cb) => subscribe('enot:video-mode', cb), // {gdm:true} — Linux-захват без хелпера (ADR 0031)
   // мост → main
   sendAnswer: (sdp, op) => ipcRenderer.send('enot:rtc-answer', op ? { op, sdp } : sdp),
+  gdmStatus: (state, reason) => ipcRenderer.send('enot:bridge-gdm', { state, reason }),
   sendIce: (candidate, op) => ipcRenderer.send('enot:rtc-ice', op ? { op, candidate } : candidate),
   dcOpened: (label, op) => ipcRenderer.send('enot:term-dc-open', op ? { op, label } : label),
   // data — строка ИЛИ Uint8Array (бинарные чанки файлов, W-U6): structured clone

@@ -416,16 +416,45 @@ test('W-C2/W-C5: страница моста держит N pc (peers Map), per-
 // Паритет каналов моста: единый источник имён — BRIDGE_IPC в relay.mjs. preload.cjs
 // живёт в sandbox-preload (main.mjs: sandbox true) и не может подключить общий
 // модуль, поэтому имена там — литералы; контракт сверяет их по исходнику файла.
+// Допуск (ADR 0031): enot:video-mode (main→мост, вкл. Linux-захвата) и
+// enot:bridge-gdm (мост→main, статус захвата) — однонаправленные статусы
+// gdm-пути, вне pc/канальной механики BRIDGE_IPC.
 test('паритет каналов: литералы preload.cjs повторяют Object.values(BRIDGE_IPC) один в один', () => {
   const declared = [...new Set(Object.values(BRIDGE_IPC))].sort();
   assert.ok(declared.length >= 10, 'BRIDGE_IPC подозрительно пуст');
 
   const preloadPath = path.join(path.dirname(fileURLToPath(import.meta.url)), '..', 'agent-bridge', 'preload.cjs');
   const preload = fs.readFileSync(preloadPath, 'utf8');
-  const used = [...new Set(preload.match(/'enot:[a-z-]+'/g)?.map((s) => s.slice(1, -1)) ?? [])].sort();
+  const extras = new Set(['enot:video-mode', 'enot:bridge-gdm']);
+  const used = [...new Set(preload.match(/'enot:[a-z-]+'/g)?.map((s) => s.slice(1, -1)) ?? [])]
+    .filter((c) => !extras.has(c))
+    .sort();
   assert.deepEqual(
     used,
     declared,
     'preload.cjs разошёлся с BRIDGE_IPC: переименовали канал в одном месте без сверки — сообщение молча пропадёт',
   );
+});
+
+// ADR 0031 (волна D): Linux-захват без хелпера — структурный контракт по
+// исходникам (DOM-страница юнит-тестом не покрывается; живая приёмка VM103).
+test('волна D: gdm-захват в мосту — приоритет хелпера, честные статусы, вкл. только linux', () => {
+  const dir = path.dirname(fileURLToPath(import.meta.url));
+  const bridge = fs.readFileSync(path.join(dir, '..', 'agent-bridge', 'bridge.mjs'), 'utf8');
+  const main = fs.readFileSync(path.join(dir, '..', 'main.mjs'), 'utf8');
+  const preload = fs.readFileSync(path.join(dir, '..', 'agent-bridge', 'preload.cjs'), 'utf8');
+  // мост: захват тем же canvas-конвейером, приоритет кадров хелпера
+  assert.match(bridge, /getDisplayMedia\(\{ video: true, audio: false \}\)/, 'gdm-захват запрашивается');
+  assert.match(bridge, /requestVideoFrameCallback/, 'кадры качаются через rVFC в общий canvas');
+  assert.match(bridge, /helperLive/, 'живой флаг приоритета хелпера');
+  assert.match(bridge, /stopGdm\('helper'\)/, 'кадры хелпера останавливают gdm');
+  assert.match(bridge, /gdmStatus\?\.\('unavailable'/, 'отказ захвата честно репортится');
+  // main: хендлер авто-экрана только в агент-режиме на linux + env-выключатель
+  assert.match(main, /process\.platform === 'linux'[\s\S]{0,400}setDisplayMediaRequestHandler/, 'хендлер ставится на linux');
+  assert.match(main, /getPrimaryDisplay\(\)/, 'авто-выбор первичного экрана');
+  assert.match(main, /EDESK_AGENT_VIDEO !== 'off'/, "env-выключатель EDESK_AGENT_VIDEO=off");
+  assert.match(main, /'enot:bridge-gdm'/, 'статус gdm слушается и пишется в svc-diag');
+  // preload: каналы объявлены
+  assert.match(preload, /onVideoMode/, 'main→мост video-mode');
+  assert.match(preload, /gdmStatus/, 'мост→main gdmStatus');
 });
