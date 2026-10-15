@@ -33,8 +33,11 @@ REM --- Настройки агента пишутся в профиль LocalSy
 REM --- службу запускает SCM от имени LocalSystem, а не текущего админа.
 REM --- WriteAllText (в отличие от Set-Content -Encoding UTF8 в PowerShell 5.1)
 REM --- пишет UTF-8 БЕЗ BOM: JSON.parse клиента падает на BOM-файле (ревью 28.09).
+REM --- allowInsecureHttp обязателен для http://-адресов: без него клиент считает
+REM --- такой serverUrl невалидным и молча сбрасывается на дефолт 127.0.0.1:8080
+REM --- (живой прогон идемпотентности 15.10: агент после bat уходил в ECONNREFUSED).
 set "AGENT_PROFILE=%SystemRoot%\System32\config\systemprofile\AppData\Roaming\EnotDesk\agent"
-powershell.exe -NoProfile -Command "$d='%AGENT_PROFILE%'; New-Item -ItemType Directory -Force -Path $d | Out-Null; [System.IO.File]::WriteAllText((Join-Path $d 'settings.json'), (@{serverUrl='%SERVER_URL%'} | ConvertTo-Json) + [Environment]::NewLine); icacls $d /inheritance:r /grant '*S-1-5-18:(OI)(CI)F' /grant '*S-1-5-32-544:(OI)(CI)F' | Out-Null; exit $LASTEXITCODE"
+powershell.exe -NoProfile -Command "$d='%AGENT_PROFILE%'; $u='%SERVER_URL%'; New-Item -ItemType Directory -Force -Path $d | Out-Null; [System.IO.File]::WriteAllText((Join-Path $d 'settings.json'), (@{serverUrl=$u; allowInsecureHttp=($u -like 'http://*')} | ConvertTo-Json) + [Environment]::NewLine); icacls $d /inheritance:r /grant '*S-1-5-18:(OI)(CI)F' /grant '*S-1-5-32-544:(OI)(CI)F' | Out-Null; exit $LASTEXITCODE"
 REM Права выдаются по well-known SID (SYSTEM=*S-1-5-18, Администраторы=*S-1-5-32-544):
 REM имена групп локализованы — на русской Windows 'Administrators' не резолвится
 REM (живой сеанс 28.09: «Сопоставление между именами и SID не было произведено»).
