@@ -303,8 +303,11 @@ function connect() {
       case 'ready':
         clearTimeout(helloTimer);
         setStatus((m.presence && m.presence.status) || 'offline');
-        refreshConsentUi();
+        // applyReady обновляет settings из ответа сервера — consent-строка
+        // рисуется ПОСЛЕ него, иначе гость видит требование согласия без чекбокса
         applyReady(m);
+        refreshConsentUi();
+        renderView();
         break;
       case 'sent':
         if (m.threadId) thread = { ...(thread ?? {}), id: m.threadId, status: thread?.status ?? 'open', rating: thread?.rating ?? null };
