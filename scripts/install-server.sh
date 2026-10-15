@@ -58,6 +58,9 @@ RELEASE=""
 DRY_RUN=0
 OPEN_FIREWALL=0
 PURGE_DATA=0
+FETCH_BUILDS="${FETCH_BUILDS:-0}"
+BACKUP_TIMER=1
+SETUP_REPO="${ENOT_SETUP_REPO:-Flint-sega/enotdesk}"
 
 usage() {
   cat <<'EOF'
@@ -81,6 +84,10 @@ EnotDesk — установщик сервера.
   --no-turn          не ставить coturn; TURN настраивается снаружи (ENOT_TURN_* в env)
   --no-tls           не ставить Caddy; сервер останется в локальном http-режиме
   --reset-turn       перенастроить встроенный coturn, даже если в env уже есть ENOT_TURN_URLS
+  --fetch-builds     скачать клиентские сборки (win/mac/linux) из последнего GitHub-релиза
+                     в $DIST_DIR — страница /downloads заполнится сразу; SHA256 по checksums
+  --no-fetch-builds  не скачивать сборки (то же — env FETCH_BUILDS=0)
+  --no-backup-timer  не ставить ежедневный systemd-таймер бэкапа обеих БД (по умолчанию ставится)
   --help             эта справка
 
 Переменные окружения:
@@ -166,6 +173,9 @@ while [ $# -gt 0 ]; do
     --no-turn) SETUP_TURN=0 ;;
     --no-tls) SETUP_TLS=0 ;;
     --reset-turn) RESET_TURN=1 ;;
+    --fetch-builds) FETCH_BUILDS=1 ;;
+    --no-fetch-builds) FETCH_BUILDS=0 ;;
+    --no-backup-timer) BACKUP_TIMER=0 ;;
     -*) die "неизвестный аргумент: $1 (справка: --help)" ;;
     *) TARBALL="$1" ;;
   esac
@@ -438,6 +448,91 @@ setup_turn() {
   info "coturn настроен: 3478 tcp/udp, relay 49160–49200/udp, креды TURN — в env-файле"
 }
 
+# Волна A (100%): клиентские сборки из последнего GitHub-релиза → $DIST_DIR,
+# чтобы /downloads была рабочей сразу после установки. SHA256 обязателен
+# (checksums-sha256.txt из того же релиза); имена — allowlist-паттерны сервера.
+# Сбой сети — предупреждение, НЕ ошибка установки (сервер уже поднят).
+fetch_builds() {
+  info "скачиваю клиентские сборки из последнего релиза $SETUP_REPO"
+  local api="https://api.github.com/repos/$SETUP_REPO/releases/latest"
+  local meta
+  meta="$(curl -fsSL --max-time 30 "$api" 2>/dev/null)" || { info "ВНИМАНИЕ: не удалось получить список релизов ($api) — /downloads останется пустой, доберите вручную (dist/ на сервер)"; return 0; }
+  local tag
+  tag="$(printf '%s' "$meta" | sed -n 's/.*"tag_name"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' | head -n 1)"
+  [ -n "$tag" ] || { info "ВНИМАНИЕ: ответ GitHub без tag_name — пропускаю скачивание сборок"; return 0; }
+  local base="https://github.com/$SETUP_REPO/releases/download/$tag"
+  local tmp; tmp="$(mktemp -d)"
+  curl -fsSL --max-time 30 "$base/checksums-sha256.txt" -o "$tmp/checksums-sha256.txt" 2>/dev/null \
+    || { info "ВНИМАНИЕ: в релизе $tag нет checksums-sha256.txt — сборки не скачаны (требуется проверка SHA256)"; rm -rf "$tmp"; return 0; }
+  # allowlist имён: ровно то, что сервер раздаёт (server/app.mjs distFiles) —
+  # новые платформы добавлять и там, и здесь
+  local want
+  want="$(printf '%s\n' \
+    'EnotDesk-win-x64.exe' \
+    'EnotDesk-win-x64-setup.exe' \
+    'EnotDesk-mac-arm64.zip')"
+  # AppImage версионированный с 0.6.19: имя берём из checksums по паттерну
+  local appimg
+  appimg="$(awk '{gsub(/^\.\//,"",$2)} $2 ~ /^EnotDesk-[0-9][0-9.a-z_-]*-linux-x86_64\.AppImage$/ {print $2; exit}' "$tmp/checksums-sha256.txt")"
+  [ -n "$appimg" ] && want="$want $appimg"
+  local name sum ok_name
+  for name in $want; do
+    # SHA256 из checksums (полная строка: <hex>  ./<name>)
+    sum="$(awk -v n="$name" '{f=$2; gsub(/^\.\//,"",f)} f == n {print $1; exit}' "$tmp/checksums-sha256.txt")"
+    if [ -z "$sum" ]; then info "  $name: нет в checksums — пропущено"; continue; fi
+    if curl -fsSL --max-time 300 "$base/$name" -o "$tmp/$name" 2>/dev/null; then
+      if printf '%s  %s\n' "$sum" "$name" | ( cd "$tmp" && sha256sum -c - ) >/dev/null 2>&1; then
+        install -m 0644 "$tmp/$name" "$DIST_DIR/$name"
+        ok_name="$ok_name $name"
+      else
+        info "ВНИМАНИЕ: SHA256 не совпал для $name — файл не установлен"
+      fi
+    else
+      info "ВНИМАНИЕ: не удалось скачать $name"
+    fi
+  done
+  rm -rf "$tmp"
+  chown "$ENOT_USER:$ENOT_USER" "$DIST_DIR" 2>/dev/null || true
+  if [ -n "$ok_name" ]; then
+    info "сборки в /downloads (релиз $tag):$(printf '\n    %s' $ok_name)"
+  else
+    info "ВНИМАНИЕ: ни одна сборка не скачана — /downloads пустая"
+  fi
+}
+
+# Волна A (100%): ежедневный бэкап обеих БД (systemd-timer), default on.
+# Дампы — тем же backup.mjs (VACUUM INTO, безопасно на живой базе), keep 10;
+# hub-дампы — с префиксом hub- (ретенция изолирована).
+setup_backup_timer() {
+  info "ставлю ежедневный таймер бэкапа (enotdesk-backup.timer, 04:30 + рандом, Persistent)"
+  install -m 0644 /dev/null /etc/systemd/system/enotdesk-backup.service
+  tee /etc/systemd/system/enotdesk-backup.service >/dev/null <<EOF
+[Unit]
+Description=EnotDesk — daily database backup (VACUUM INTO)
+
+[Service]
+Type=oneshot
+User=$ENOT_USER
+Group=$ENOT_USER
+ExecStart=/bin/sh -c '$NODE_BIN $CURRENT_LINK/server/backup.mjs $DB_PATH $DATA_DIR/backups 10; sleep 1; [ -f $DATA_DIR/hub.db ] && $NODE_BIN $CURRENT_LINK/server/backup.mjs $DATA_DIR/hub.db $DATA_DIR/backups 10 hub- || true'
+EOF
+  install -m 0644 /dev/null /etc/systemd/system/enotdesk-backup.timer
+  tee /etc/systemd/system/enotdesk-backup.timer >/dev/null <<EOF
+[Unit]
+Description=EnotDesk — daily database backup timer
+
+[Timer]
+OnCalendar=*-*-* 04:30:00
+RandomizedDelaySec=30m
+Persistent=true
+
+[Install]
+WantedBy=timers.target
+EOF
+  systemctl daemon-reload
+  systemctl enable --now enotdesk-backup.timer >/dev/null 2>&1 || info "ВНИМАНИЕ: не удалось включить таймер бэкапа (см. systemctl status enotdesk-backup.timer)"
+}
+
 # Caddy из официального репозитория (как в docs/SERVER.md): авто-HTTPS для домена,
 # обратный прокси на 127.0.0.1:PORT. Вызывается только при домене в ENOT_PUBLIC_URL.
 ensure_caddy() {
@@ -600,6 +695,16 @@ print_plan() {
   fi
   echo "  Node.js:            $node_state"
   echo "  health-poll:        http://127.0.0.1:$PORT/api/v1/health (до 30 с)"
+  if [ "$FETCH_BUILDS" = "1" ]; then
+    echo "  сборки клиента:     скачать из последнего релиза $SETUP_REPO (SHA256) в $DIST_DIR"
+  else
+    echo "  сборки клиента:     не скачивать (--fetch-builds включает)"
+  fi
+  if [ "$BACKUP_TIMER" = "1" ]; then
+    echo "  бэкап-таймер:       enotdesk-backup.timer (ежедневно 04:30, обе БД, keep 10)"
+  else
+    echo "  бэкап-таймер:       пропущен (--no-backup-timer)"
+  fi
   if [ "$OPEN_FIREWALL" = "1" ]; then
     local fw_ports=""
     if [ "$TLS_ACTIVE" = "1" ]; then fw_ports="80,443/tcp, 443/udp (HTTP/3)"; else fw_ports="$PORT/tcp"; fi
@@ -647,6 +752,8 @@ if [ "$MODE" = "uninstall" ]; then
   rm -f "$UNIT_FILE"
   systemctl disable --now "$SERVICE_HUB_NAME" >/dev/null 2>&1 || true
   rm -f "$UNIT_HUB_FILE"
+  systemctl disable --now enotdesk-backup.timer >/dev/null 2>&1 || true
+  rm -f /etc/systemd/system/enotdesk-backup.timer /etc/systemd/system/enotdesk-backup.service
   systemctl daemon-reload
   rm -rf "$OPT_DIR" "$ENV_DIR"
   if [ "$PURGE_DATA" = "1" ]; then
@@ -882,6 +989,12 @@ if [ "$OPEN_FIREWALL" = "1" ]; then
   fi
 fi
 
+if [ "$BACKUP_TIMER" = "1" ]; then
+  setup_backup_timer
+else
+  info "таймер бэкапа пропущен (--no-backup-timer); ручной бэкап: sudo bash $0 --backup"
+fi
+
 HEALTH_URL="http://127.0.0.1:$PORT/api/v1/health"
 info "проверяю health: $HEALTH_URL"
 healthy=0
@@ -900,6 +1013,10 @@ if [ "$healthy" != "1" ]; then
 fi
 info "health: ok"
 
+if [ "$FETCH_BUILDS" = "1" ]; then
+  fetch_builds
+fi
+
 if [ "$SETUP_TURN" = "1" ]; then
   TURN_SUMMARY="coturn, realm $REALM (3478 tcp/udp, relay 49160–49200/udp), секрет в $ENV_FILE"
 else
@@ -915,6 +1032,16 @@ if [ "$ENABLE_HUB" = "1" ]; then
 else
   HUB_SUMMARY="не установлен (ENOT_HUB=1 включает; перезапуск установщика с ним)"
 fi
+if [ "$FETCH_BUILDS" = "1" ]; then
+  BUILDS_SUMMARY="скачаны из последнего релиза в $DIST_DIR (страница /downloads заполнена)"
+else
+  BUILDS_SUMMARY="не скачивались (--fetch-builds); положите сборки в $DIST_DIR"
+fi
+if [ "$BACKUP_TIMER" = "1" ]; then
+  BACKUP_SUMMARY="enotdesk-backup.timer — ежедневно 04:30 (обе БД, keep 10, $DATA_DIR/backups)"
+else
+  BACKUP_SUMMARY="только вручную: sudo bash $0 --backup"
+fi
 
 cat <<EOF
 
@@ -928,6 +1055,8 @@ cat <<EOF
   TURN:      $TURN_SUMMARY
   TLS:       $TLS_SUMMARY
   hub:       $HUB_SUMMARY
+  сборки:    $BUILDS_SUMMARY
+  бэкапы:    $BACKUP_SUMMARY
 
 Первый администратор (интерактивно):
   sudo -u $ENOT_USER env ENOT_DB=$DB_PATH $NODE_BIN $CURRENT_LINK/server/main.mjs bootstrap

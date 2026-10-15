@@ -21,6 +21,12 @@
 #   --port <p>               порт сервера, 1-65535 (по умолчанию 8080; в --docker фиксирован)
 #   --no-firewall            не предлагать и не открывать ufw
 #   --hub / --no-hub         установить / не ставить EnotDesk Hub (вопрос задаётся, если флага нет)
+#   --fetch-builds / --no-fetch-builds
+#                            скачать / не скачивать клиентские сборки (win/mac/linux)
+#                            из последнего релиза на страницу /downloads (по умолчанию
+#                            спрашивается, default — да; bare-metal: ещё и ежедневный
+#                            бэкап-таймер enotdesk-backup, отключается в install-server
+#                            флагом --no-backup-timer)
 #   --admin-password-stdin   пароль администратора — одной строкой из stdin (не argv);
 #                            ВСЕ остальные значения задаются флагами (недостающее —
 #                            честный отказ: stdin занят паролем, вопросы не задаются)
@@ -52,6 +58,8 @@ FIREWALL=0
 FIREWALL_SET=0
 HUB=""                    # "1" = поставить EnotDesk Hub; "" = спросить/взять прежний выбор
 HUB_SET=0                 # флаг --hub/--no-hub задан
+FETCH_BUILDS=1            # 1 = скачать клиентские сборки в /downloads (волна A, default yes)
+FETCH_SET=0               # флаг --fetch-builds/--no-fetch-builds задан
 PASS_STDIN=0
 
 SETUP_TMP=""
@@ -161,6 +169,8 @@ while [ $# -gt 0 ]; do
     --no-firewall) FIREWALL=0; FIREWALL_SET=1 ;;
     --hub) HUB="1"; HUB_SET=1 ;;
     --no-hub) HUB="0"; HUB_SET=1 ;;
+    --fetch-builds) FETCH_BUILDS=1; FETCH_SET=1 ;;
+    --no-fetch-builds) FETCH_BUILDS=0; FETCH_SET=1 ;;
     --admin-password-stdin) PASS_STDIN=1 ;;
     -*) die "неизвестный аргумент: $1 (справка: --help)" ;;
     *) die "лишний аргумент: $1 (справка: --help)" ;;
@@ -203,8 +213,9 @@ if [ "$HUB_SET" = "0" ]; then
   fi
 fi
 if [ "$MODE" = "docker" ] && [ -n "$TARBALL" ]; then
-  warn "в режиме --docker флаг --tarball игнорируется (образ собирается из Dockerfile)"
-  TARBALL=""
+  # Волна A: --tarball в docker-режиме — контекст сборки (раньше игнорировался,
+  # и чистая машина не могла собрать образ: в контексте не было кода приложения)
+  warn "$(M "--docker + --tarball: tarball распаковывается в контекст сборки (SHA256-проверка пропускается — файл ваш)" "--docker + --tarball: the tarball is unpacked into the build context (SHA256 check is skipped — it is your own file)")"
 fi
 if [ "$MODE" = "docker" ] && [ -n "$PORT" ]; then
   warn "$(M "в режиме --docker флаг --port игнорируется (порты фиксирует compose: 127.0.0.1:8080 + 80/443)" "in --docker mode the --port flag is ignored (compose fixes the ports: 127.0.0.1:8080 + 80/443)")"
@@ -386,9 +397,32 @@ preflight_baremetal() {
 }
 
 preflight_docker() {
-  command -v docker >/dev/null 2>&1 || die "$(M "не найден docker — установите Docker с плагином compose (docker compose version)" "docker not found — install Docker with the compose plugin (docker compose version)")"
+  # Волна A («одна команда»): на чистом сервере docker ставим сами из пакетов
+  # дистрибутива (без исполнения удалённых скриптов): docker.io + compose-плагин.
+  # Отключить авто-установку: ENOT_SETUP_NO_DOCKER_INSTALL=1.
+  if ! command -v docker >/dev/null 2>&1; then
+    if [ "${ENOT_SETUP_NO_DOCKER_INSTALL:-}" = "1" ]; then
+      die "$(M "не найден docker — установите Docker с плагином compose, или снимите ENOT_SETUP_NO_DOCKER_INSTALL для авто-установки" "docker not found — install Docker with the compose plugin, or unset ENOT_SETUP_NO_DOCKER_INSTALL to auto-install")"
+    fi
+    command -v apt-get >/dev/null 2>&1 || die "$(M "docker не найден, а apt-get нет — установите Docker с плагином compose вручную и повторите" "docker not found and no apt-get — install Docker with the compose plugin manually and retry")"
+    info "$(M "docker не найден — ставлю из пакетов дистрибутива (docker.io, это займёт пару минут)" "docker not found — installing from distro packages (docker.io, takes a couple of minutes)")"
+    apt-get update -qq || die "$(M "apt-get update не удался — установка docker прервана" "apt-get update failed — docker installation aborted")"
+    DEBIAN_FRONTEND=noninteractive apt-get install -y docker.io >/dev/null \
+      || die "$(M "не удалось установить пакет docker.io — поставьте Docker вручную и повторите" "could not install docker.io — install Docker manually and retry")"
+    systemctl enable --now docker >/dev/null 2>&1 || true
+  fi
   if ! docker compose version >/dev/null 2>&1; then
-    die "$(M "docker compose (v2) не найден — нужен плагин compose: docker compose version" "docker compose (v2) not found — the compose plugin is required: docker compose version")"
+    # compose-плагин: имя пакета зависит от дистрибутива (Ubuntu: docker-compose-v2;
+    # Debian: docker-compose-plugin). Пробуем по порядку, неуспех — честный отказ.
+    if command -v apt-get >/dev/null 2>&1; then
+      info "$(M "compose-плагин не найден — ставлю из пакетов дистрибутива" "compose plugin not found — installing from distro packages")"
+      DEBIAN_FRONTEND=noninteractive apt-get install -y docker-compose-v2 >/dev/null 2>&1 \
+        || DEBIAN_FRONTEND=noninteractive apt-get install -y docker-compose-plugin >/dev/null 2>&1 \
+        || true
+    fi
+    if ! docker compose version >/dev/null 2>&1; then
+      die "$(M "docker compose (v2) не найден и пакет не поставился — нужен плагин compose: docker compose version" "docker compose (v2) not found and the package did not install — the compose plugin is required: docker compose version")"
+    fi
   fi
   if [ "$UPDATE" = "1" ]; then
     if [ ! -f "./enotdesk-docker/.env" ]; then
@@ -608,6 +642,21 @@ collect_answers() {
     1) HUB="1" ;;
     *) HUB="0" ;;
   esac
+
+  # 8. Клиентские сборки в /downloads (волна A: страница загрузок рабочая сразу;
+  # default — да; --fetch-builds/--no-fetch-builds фиксируют; в --admin-password-stdin
+  # режиме вопросов нет — используется default «да»)
+  if [ "$FETCH_SET" = "0" ] && [ "$PASS_STDIN" != "1" ]; then
+    prompt_out "$(M "Скачать клиентские сборки (win/mac/linux) на страницу /downloads? [Y/n]: " "Download client builds (win/mac/linux) to the /downloads page? [Y/n]: ")"
+    read_answer
+    if [ "$PIPE_EOF" = "1" ]; then
+      die "$(M "ввод закончился на вопросе о сборках — задайте --fetch-builds или --no-fetch-builds" "input ended at the builds question — supply --fetch-builds or --no-fetch-builds")"
+    fi
+    case "$ANSWER" in
+      n|N|no|NO|No|н|Н|нет|НЕТ|Нет) FETCH_BUILDS=0 ;;
+      *) FETCH_BUILDS=1 ;;
+    esac
+  fi
 }
 
 # ── Секреты (автоген всегда; не спрашиваем, не выводим) ──────────────────────
@@ -716,6 +765,14 @@ print_plan() {
     else
       echo "  hub:             нет"
     fi
+    if [ "$FETCH_BUILDS" = "1" ]; then
+      echo "  сборки /downloads: да (win/mac/linux из последнего релиза, SHA256)"
+      if [ "$MODE" = "baremetal" ]; then
+        echo "  бэкапы:          enotdesk-backup.timer ежедневно (обе БД)"
+      fi
+    else
+      echo "  сборки /downloads: нет (--fetch-builds включает)"
+    fi
     if [ "$MODE" = "baremetal" ]; then
       if [ -n "${TRUSTED_PROXY:-}" ]; then
         echo "  trusted proxy:   $TRUSTED_PROXY"
@@ -749,6 +806,14 @@ print_plan() {
       echo "  hub:             yes (EnotDesk Hub: /hub/, widget, /join)"
     else
       echo "  hub:             no"
+    fi
+    if [ "$FETCH_BUILDS" = "1" ]; then
+      echo "  /downloads:      fetch client builds (win/mac/linux, SHA256)"
+      if [ "$MODE" = "baremetal" ]; then
+        echo "  backups:         enotdesk-backup.timer daily (both DBs)"
+      fi
+    else
+      echo "  /downloads:      skip builds (--fetch-builds enables)"
     fi
     if [ "$MODE" = "baremetal" ]; then
       if [ -n "${TRUSTED_PROXY:-}" ]; then
@@ -867,6 +932,9 @@ baremetal_install() {
     kv ENOT_SECRET_KEY "$SECRET_KEY"
     # решение о hub: install-server.sh ставит/снимает юнит enotdesk-hub по этому флагу
     kv ENOT_HUB "$HUB"
+    # сборки в /downloads (волна A): install-server.sh --fetch-builds читает env FETCH_BUILDS
+    kv FETCH_BUILDS "$FETCH_BUILDS"
+    kv ENOT_SETUP_REPO "$REPO"
     if [ -n "$DOMAIN" ]; then
       kv ENOT_TURN_SECRET "$TURN_SECRET"
       kv ENOT_TRUSTED_PROXY "$TRUSTED_PROXY"
@@ -1024,10 +1092,41 @@ docker_install() {
     fetch "$base/$f" "$DOCKER_DIR/$f" "$f"
   done
 
+  # Волна A (100%, дыра docker-пути): контекст сборки обязан содержать код
+  # приложения (Dockerfile: COPY server/hub/client/...), но раньше quick-setup
+  # клал в каталог только файлы стека — на чистой машине docker compose build
+  # падал на первом COPY. Распаковываем релизный tarball прямо в контекст
+  # (тот же enotdesk-server.tar.gz, что и bare-metal; SHA256 — fail-closed).
+  if [ -n "$TARBALL" ]; then
+    if [ ! -f "$TARBALL" ]; then
+      die "$(M "tarball не найден: $TARBALL" "tarball not found: $TARBALL")"
+    fi
+    info "$(M "использую локальный tarball как контекст сборки: $TARBALL" "using the local tarball as the build context: $TARBALL")"
+    tar -xzf "$TARBALL" -C "$DOCKER_DIR"
+  else
+    info "$(M "скачиваю релиз в контекст сборки: $(tarball_url)" "downloading the release into the build context: $(tarball_url)")"
+    SETUP_TMP="$(mktemp -d /tmp/enotdesk-setup.XXXXXX)"
+    local app_tgz="$SETUP_TMP/enotdesk-server.tar.gz"
+    fetch "$(tarball_url)" "$app_tgz" "$(M "tarball релиза" "release tarball")"
+    if ! curl -fsSL --retry 2 --connect-timeout 15 "$(checksums_url)" -o "$SETUP_TMP/checksums-sha256.txt"; then
+      printf '' > "$SETUP_TMP/checksums-sha256.txt"
+    fi
+    verify_sha256 "$app_tgz" "$SETUP_TMP/checksums-sha256.txt" "enotdesk-server.tar.gz"
+    tar -xzf "$app_tgz" -C "$DOCKER_DIR"
+    rm -rf "$SETUP_TMP"; SETUP_TMP=""
+  fi
+
   # .env compose читает сам (интерполяция ${VAR} в compose.yaml); права 0600
   # выставляются ДО записи (внутри секреты) — без окна world-readable.
   # ENOT_PUBLIC_URL добавляем, чтобы без домена страницы знали адрес.
   local envf="$DOCKER_DIR/.env"
+  # --update: перезаписываем ТОЛЬКО управляемые ключи; чужие (TURN_USERNAME,
+  # ENOT_TRUSTED_PROXY, HUB_URL и вручную добавленные) — сохраняем (волна A:
+  # раньше .env перетирался шестью ключами и ручная настройка терялась).
+  local prev_envf="$SETUP_TMP/env.docker-prev"
+  if [ "$UPDATE" = "1" ] && [ -f "$envf" ]; then
+    cp "$envf" "$prev_envf"
+  fi
   install -m 0600 /dev/null "$envf"
   {
     printf 'DOMAIN=%s\n' "$DOMAIN"
@@ -1037,6 +1136,16 @@ docker_install() {
     # Hub: сервис в compose под профилем hub; Caddy получает HUB и добавляет маршруты
     printf 'HUB=%s\n' "$HUB"
     if [ "$HUB" = "1" ]; then printf 'COMPOSE_PROFILES=hub\n'; fi
+    if [ -f "$prev_envf" ]; then
+      printf '# --- сохранено из прежнего .env (обновление) ---\n'
+      awk -F= '
+        BEGIN { managed["DOMAIN"]=1; managed["TURN_SECRET"]=1; managed["ENOT_SECRET_KEY"]=1;
+                managed["ENOT_PUBLIC_URL"]=1; managed["HUB"]=1; managed["COMPOSE_PROFILES"]=1 }
+        /^[A-Za-z_][A-Za-z0-9_]*=/ { if (!($1 in managed)) print; next }
+        /^#/ { print }
+      ' "$prev_envf"
+      rm -f "$prev_envf"
+    fi
   } >> "$envf"
 
   info "$(M "поднимаю стек: docker compose up -d --build (в $DOCKER_DIR)" "bringing the stack up: docker compose up -d --build (in $DOCKER_DIR)")"
@@ -1045,6 +1154,52 @@ docker_install() {
   fi
 
   wait_health "http://127.0.0.1:8080/api/v1/health" docker "$DOCKER_DIR"
+
+  # Клиентские сборки в /downloads (волна A): качаем ВНУТРИ контейнера штатным
+  # fetch Node 24 (curl в alpine-образе нет) прямо в том /data/dist; SHA256 —
+  # по checksums-sha256.txt релиза. Сбой — предупреждение, стек уже поднят.
+  if [ "$FETCH_BUILDS" = "1" ]; then
+    info "$(M "скачиваю клиентские сборки в /downloads (внутри контейнера)" "downloading client builds to /downloads (inside the container)")"
+    cat > "$SETUP_TMP/docker-fetch.mjs" <<'NODEEOF'
+const repo = process.env.ENOT_SETUP_REPO || "Flint-sega/enotdesk";
+const dist = process.env.ENOT_DIST_DIR || "/data/dist";
+const api = `https://api.github.com/repos/${repo}/releases/latest`;
+const sha = (buf) => require("node:crypto").createHash("sha256").update(buf).digest("hex");
+try {
+  const meta = await (await fetch(api)).json();
+  const tag = meta.tag_name;
+  if (!tag) throw new Error("no tag_name");
+  const base = `https://github.com/${repo}/releases/download/${tag}`;
+  const sumsText = await (await fetch(`${base}/checksums-sha256.txt`)).text();
+  const sums = new Map(sumsText.split(/\r?\n/).map((l) => {
+    const m = /^([0-9a-f]{64})\s+\.\.\/?(.+)$/.exec(l.trim());
+    return m ? [m[2], m[1]] : null;
+  }).filter(Boolean));
+  const want = ["EnotDesk-win-x64.exe", "EnotDesk-win-x64-setup.exe", "EnotDesk-mac-arm64.zip",
+    ...[...sums.keys()].filter((n) => /^EnotDesk-[0-9][0-9.a-z_-]*-linux-x86_64\.AppImage$/.test(n))];
+  const fs = require("node:fs");
+  fs.mkdirSync(dist, { recursive: true });
+  const ok = [];
+  for (const name of want) {
+    const expect = sums.get(name);
+    if (!expect) continue;
+    const buf = Buffer.from(await (await fetch(`${base}/${name}`)).arrayBuffer());
+    if (sha(buf) !== expect) { console.log(`SHA256 mismatch: ${name}`); continue; }
+    fs.writeFileSync(`${dist}/${name}`, buf);
+    ok.push(name);
+  }
+  console.log(`fetched ${tag}: ${ok.join(", ") || "none"}`);
+} catch (e) {
+  console.log(`builds fetch failed: ${e.message}`);
+}
+NODEEOF
+    if ( cd "$DOCKER_DIR" && docker compose exec -T -e ENOT_SETUP_REPO="$REPO" enotdesk node - < "$SETUP_TMP/docker-fetch.mjs" ); then
+      info "$(M "сборки — в /downloads" "builds are in /downloads")"
+    else
+      info "$(M "ВНИМАНИЕ: не удалось скачать сборки — /downloads пустая, доберите вручную" "WARNING: could not download builds — /downloads stays empty")"
+    fi
+    rm -f "$SETUP_TMP/docker-fetch.mjs"
+  fi
 }
 
 docker_bootstrap() {
