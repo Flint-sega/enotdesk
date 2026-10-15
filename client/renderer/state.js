@@ -22,6 +22,10 @@ export const state = {
   // pc и каналы на каждого присоединённого оператора, ключ — claimId.
   // localStream (захват) на хосте один и расшаривается во все pc.
   operators: new Map(), // claimId → {pc, iceQueue: [], dcs: {label: channel}}
+  // Арбитраж (W-C4): последний активный вводчик из main (enot:input-active) —
+  // нужен wireHostChannel'у для начального input-grant при открытии канала:
+  // событие смены могло прийти до готовности канала и потеряться (P3-1).
+  inputActiveClaimId: null,
   busy: false,
   graceMs: null, // из ready сервера (ENOT_GRACE_MS) — окно hold №15 у оператора
   pages: { contacts: 0, history: 0, audit: 0 },

@@ -309,6 +309,10 @@ export function createAgent({ api, signal, native, policy, termHost, rtc, notify
       if (ch.label === 'input') {
         opInputs.set(op, ch);
         arbiter.attach(op); // страховка: operator-joined мог не дойти (старый сервер)
+        // Начальный input-grant (P3-1 ревью Рината, приёмка C+D): attach молчит,
+        // если оператор уже учтён (operator-joined пришёл раньше канала) —
+        // сливаем текущее состояние арбитража новому каналу явно.
+        try { ch.send(JSON.stringify({ type: 'input-grant', granted: arbiter.active() === op })); } catch { /* канал закрывается */ }
         const gated = gatedInputChannel(ch, op);
         if (inputSink) { inputSink.handleChannel(gated); return; }
         video?.handleInputChannel?.(gated);

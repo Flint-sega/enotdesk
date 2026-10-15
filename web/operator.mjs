@@ -1238,6 +1238,7 @@ function wire() {
         return;
       }
       state.connect = { sessionId: res.body.sessionId, claimId: res.body.claimId, machineId: res.body.machineId ?? null };
+      text($('op-chat-log'), ''); // лог чата не переживает сеанс (приёмка C+D, minor UI)
       text($('conn-error'), '');
       showOnly('op-waiting');
       openSignal();
@@ -1371,6 +1372,7 @@ function wire() {
       text($('machines-error'), '');
       // дальше — существующий flow machine-сеанса: approved → терминал
       state.connect = { sessionId, claimId, machineId: machineId ?? claimMachine.id };
+      text($('op-chat-log'), ''); // лог чата не переживает сеанс (приёмка C+D, minor UI)
       showOnly('op-waiting');
       openSignal();
     } finally {

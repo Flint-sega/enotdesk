@@ -420,3 +420,110 @@ test('вход оператора: запоминание кредов на ме
   assert.match(view, /opCredentialsSave\(\{ login, password \}\)/, 'сохранение — только после успешного входа');
   assert.match(view, /opCredentialsClear\(\)/, 'очистка: снятый чекбокс и 401 с сохранёнными кредами');
 });
+
+// ---- Приёмка C+D (16.10): host fan-out чата операторов + начальный input-grant ----
+// Функциональный DOM-шим: session-services.js исполняется по-настоящему (модуль
+// верхнего уровня вешает листенеры — фейк их просто принимает), wireHostChannel
+// гоняется на фейковых DataChannel двух операторов.
+
+test('C+D: сообщение оператора релеится чат-каналам остальных операторов (host fan-out)', async () => {
+  const el = () => ({
+    value: '', textContent: '', className: '', innerHTML: '', dataset: {},
+    classList: { add() {}, remove() {} },
+    appendChild() {}, append() {},
+    addEventListener() {}, removeEventListener() {},
+    querySelectorAll: () => [], querySelector: () => null,
+    scrollTop: 0, scrollHeight: 0, files: [],
+  });
+  const widgetMsgs = [];
+  globalThis.document = {
+    getElementById: () => el(),
+    createElement: () => el(),
+    createTextNode: () => ({}),
+    querySelector: () => el(),
+    addEventListener() {}, removeEventListener() {},
+    getSelection: () => '',
+  };
+  globalThis.window = { enot: { chatWidgetMsg: (v) => widgetMsgs.push(String(v)) } };
+  try {
+    const { wireHostChannel } = await import(path.join(dir, 'session-services.js'));
+    const { state } = await import(path.join(dir, 'state.js'));
+    const mkCh = (label) => ({
+      label, readyState: 'open', binaryType: '', onmessage: null, onopen: null, onclose: null,
+      sent: [],
+      send(data) { this.sent.push(data); },
+      close() { this.readyState = 'closed'; },
+    });
+    state.operators.clear();
+    state.inputActiveClaimId = null;
+    state.operators.set('op1', { dcs: {} });
+    state.operators.set('op2', { dcs: {} });
+    const op1chat = mkCh('chat'); const op2chat = mkCh('chat');
+    wireHostChannel(op1chat, 'op1');
+    wireHostChannel(op2chat, 'op2');
+    op1chat.onmessage({ data: JSON.stringify({ type: 'chat', text: 'привет от op1' }) });
+    assert.deepEqual(op2chat.sent, [JSON.stringify({ type: 'chat', text: 'привет от op1' })],
+      'сообщение op1 дошло op2 (регресс C+D: раньше видел только хост)');
+    assert.deepEqual(op1chat.sent, [], 'отправителю не эхаем его же сообщение');
+    assert.deepEqual(widgetMsgs, ['привет от op1'], 'чат-виджет хоста по-прежнему получает сообщение');
+    op2chat.onmessage({ data: JSON.stringify({ type: 'chat', text: 'ответ op2' }) });
+    assert.deepEqual(op1chat.sent, [JSON.stringify({ type: 'chat', text: 'ответ op2' })],
+      'ответ op2 дошёл op1');
+  } finally {
+    delete globalThis.document;
+    delete globalThis.window;
+  }
+});
+
+test('C+D (P3-1): при открытии input-канала оператору сливается текущий input-grant', async () => {
+  const el = () => ({
+    value: '', textContent: '', className: '', innerHTML: '', dataset: {},
+    classList: { add() {}, remove() {} },
+    appendChild() {}, append() {},
+    addEventListener() {}, removeEventListener() {},
+    querySelectorAll: () => [], querySelector: () => null,
+    scrollTop: 0, scrollHeight: 0, files: [],
+  });
+  globalThis.document = {
+    getElementById: () => el(),
+    createElement: () => el(),
+    createTextNode: () => ({}),
+    querySelector: () => el(),
+    addEventListener() {}, removeEventListener() {},
+    getSelection: () => '',
+  };
+  globalThis.window = { enot: {} };
+  try {
+    const { wireHostChannel } = await import(path.join(dir, 'session-services.js'));
+    const { state } = await import(path.join(dir, 'state.js'));
+    const mkCh = (label) => ({
+      label, readyState: 'open', binaryType: '', onmessage: null, onopen: null, onclose: null,
+      sent: [],
+      send(data) { this.sent.push(data); },
+      close() { this.readyState = 'closed'; },
+    });
+    state.operators.clear();
+    state.operators.set('op1', { dcs: {} });
+    state.operators.set('op2', { dcs: {} });
+    // событие input-active уже пришло (канал ещё не открыт был) — кэш в state
+    state.inputActiveClaimId = 'op1';
+    const op1input = mkCh('input'); const op2input = mkCh('input');
+    wireHostChannel(op1input, 'op1');
+    wireHostChannel(op2input, 'op2');
+    const grant = (ch) => ch.sent.map((s) => JSON.parse(s)).filter((m) => m.type === 'input-grant');
+    assert.deepEqual(grant(op1input), [{ type: 'input-grant', granted: true }],
+      'активный оператор узнаёт своё состояние на открытии канала');
+    assert.deepEqual(grant(op2input), [{ type: 'input-grant', granted: false }],
+      'второй оператор честно видит «только просмотр»');
+    // деградация W-C5 не съедает грант: noVideo-оператору уходят и grant, и session-info
+    state.operators.set('op3', { dcs: {}, noVideo: true });
+    const op3input = mkCh('input');
+    wireHostChannel(op3input, 'op3');
+    const parsed3 = op3input.sent.map((s) => JSON.parse(s));
+    assert.ok(parsed3.some((m) => m.type === 'input-grant' && m.granted === false), 'грант ушёл и noVideo-оператору');
+    assert.ok(parsed3.some((m) => m.type === 'session-info' && m.reason === 'video-slots-full'), 'session-info на месте');
+  } finally {
+    delete globalThis.document;
+    delete globalThis.window;
+  }
+});
