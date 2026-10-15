@@ -288,6 +288,7 @@ function stopMedia() {
   if (qp) qp.value = '';
   hide(qp);
   resetKeyboardMode(); // индикатор клавиш не переживает сеанс
+  setControl(null); // статус управления не переживает сеанс (W-C4)
   stopTimers();
 }
 
@@ -417,6 +418,7 @@ async function doOperatorAnswer(offerSdp) {
     state.dcs[ch.label] = ch;
     if (ch.label === 'input') {
       state.dc = ch;
+      wireControlChannel(ch); // гранты арбитража и статус видео (W-C4/W-C5)
       state.dc.onopen = () => {
         // #remote-video один на все сеансы страницы: прежние слушатели снимаем,
         // иначе каждый второй сеанс дублирует ввод (ревью GLM-5.3 v0.3.0);
@@ -478,6 +480,7 @@ async function machineOffer() {
     // (без ренеготиации). Канал input — ввод/privacy оператора → хелпер.
     pc.addTransceiver('video', { direction: 'recvonly' });
     const inputCh = pc.createDataChannel('input');
+    wireControlChannel(inputCh); // гранты арбитража и статус видео (W-C4/W-C5)
     inputCh.onopen = () => {
       // #remote-video один на все сеансы страницы: прежние слушатели снимаем
       inputDetach?.detach?.();
@@ -520,6 +523,43 @@ async function machineOffer() {
     text($('conn-error'), t('common.serverError'));
   }
 }
+
+// ---- Арбитраж ввода (W-C4): статус и кнопки браузерного оператора ----
+// Кнопки не гейтят отправку событий (хост отбрасывает не-активного сам) —
+// только честный статус и служебные claim/release по input-каналу.
+
+function setControl(granted) {
+  const st = $('control-status');
+  if (granted !== true && granted !== false) {
+    text(st, '');
+    hide($('btn-take-control'));
+    hide($('btn-give-control'));
+    return;
+  }
+  text(st, granted ? t('op.hasControl') : t('op.viewOnly'));
+  (granted ? show : hide)($('btn-give-control'));
+  (granted ? hide : show)($('btn-take-control'));
+}
+
+// input-канал оператора: гранты хоста и честные session-info (W-C5)
+function wireControlChannel(ch) {
+  ch.onmessage = (m) => {
+    if (typeof m.data !== 'string') return;
+    let msg = null;
+    try { msg = JSON.parse(m.data); } catch { /* мусор игнорируется */ }
+    if (!msg || typeof msg !== 'object') return;
+    if (msg.type === 'input-grant') setControl(msg.granted === true);
+    else if (msg.type === 'session-info' && msg.video === false) setVideoStatus(t('op.videoSlotsFull'));
+  };
+}
+
+function sendControlMessage(type) {
+  const dc = state.dcs?.input;
+  if (!dc || dc.readyState !== 'open') return;
+  try { dc.send(JSON.stringify({ type })); } catch { /* канал закрывается */ }
+}
+$('btn-take-control')?.addEventListener('click', () => sendControlMessage('claim-input'));
+$('btn-give-control')?.addEventListener('click', () => sendControlMessage('release-input'));
 
 // ---- роутер сигналов (операторская ветка desktop app.js) ----
 

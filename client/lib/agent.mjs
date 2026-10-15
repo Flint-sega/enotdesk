@@ -9,6 +9,7 @@
 
 import nodeDgram from 'node:dgram';
 import { createInputGate } from './protocol.mjs';
+import { createInputArbiter } from './input-arbiter.mjs';
 import { createWakeSender } from './wol.mjs';
 
 // HTTP-клиент агента: /agent/* плюс host-решение по сеансу. Токен машины
@@ -235,77 +236,154 @@ export function createAgent({ api, signal, native, policy, termHost, rtc, notify
     let finish = null;
     const done = new Promise((resolve) => { finish = resolve; });
     resolveSessionDone = () => finish('stopped');
-    // Терминал (R09): pc без медиа-треков — данных-каналам медиа не нужно.
-    // Оператор офферит, агент отвечает answer'ом; канал 'term' уходит в termHost.
-    let termPc = null;
-    let termIce = [];
-    let termAnswered = false; // оффер принят и remote description выставлен (pcLike моста не экспонирует remoteDescription)
-    const closeTermRtc = () => {
-      if (termPc) { try { termPc.close(); } catch { /* уже закрыт */ } termPc = null; }
-      termIce = [];
-      termAnswered = false;
+// Мультиоператор (W-C2): у машины персональный pc КАЖДОМУ оператору — все pc
+    // живут в одном скрытом мосту (Map<op, …> в релее, R09/ADR 0027 не меняются).
+    // op = claimId из from-тегов сервера; сигналы без from (старые серверы/шимы) —
+    // 'primary'. Медиа pc не нужна: данным-каналам хватает DataChannel, видео
+    // идёт видеотрансивером моста. Каналы каждого pc адресуются своим op.
+    const slots = new Map(); // op → {pc, ice: [], answered}
+    // Арбитраж ввода (W-C4): активный вводчик один, состояние — на host-стороне.
+    // Гранты уходят по input-каналам всех операторов; события не-активного
+    // отбрасываются ДО хелпера/нативного пайплайна (оба пути за одним арбитром).
+    const opInputs = new Map(); // op → input-канал оператора (адаптер моста)
+    const sendInputGrants = (activeOp) => {
+      for (const [op, ch] of opInputs) {
+        if (ch.readyState !== 'open') continue;
+        try { ch.send(JSON.stringify({ type: 'input-grant', granted: op === activeOp })); } catch { /* канал закрывается */ }
+      }
     };
-    const answerTermOffer = async (sdp) => {
-      const pc = termPc;
-      if (!pc) return;
+    const arbiter = createInputArbiter({ onChange: sendInputGrants });
+    // Служебные claim/release перехватываются до валидации событий; события
+    // не-активного оператора не доходят до инъекции (обёртка над каналом).
+    const gateOperatorInput = (op, m) => {
+      if (typeof m?.data === 'string') {
+        let svc = null;
+        try { svc = JSON.parse(m.data); } catch { /* мусор — не служебное */ }
+        if (svc && typeof svc === 'object') {
+          if (svc.type === 'claim-input') { arbiter.claim(op); return false; }
+          if (svc.type === 'release-input') { arbiter.release(op); return false; }
+        }
+      }
+      return arbiter.isAllowed(op);
+    };
+    const gatedInputChannel = (ch, op) => ({
+      label: ch.label,
+      get onmessage() { return ch.onmessage; },
+      set onmessage(cb) {
+        ch.onmessage = (m) => {
+          if (!gateOperatorInput(op, m)) return;
+          cb(m);
+        };
+      },
+    });
+    const pendingIce = new Map(); // op → [candidate] — ранние кандидаты до offer (чужой op не трогает pc)
+    const ICE_QUEUE_CAP = 64; // потолок раннего буфера: мусорный op не копит память (сигнал-лимит сервера — 150/окно)
+    let rtcObj = null; // {getPcLike(op,{claim}), closeOp(op), ops()} — мост волны C или легаси-обёртка одного pcLike
+    // Ответ/ICE адресуются владельцу (to=op): fan-out'ом answer уходил бы ВСЕМ
+    // операторам и чужие pc пытались бы применить его (W-C1).
+    const signalTo = (op) => (op !== 'primary' ? { to: op } : {});
+    const closeTermRtc = () => {
+      for (const slot of slots.values()) {
+        try { slot.pc.close(); } catch { /* уже закрыт */ } // pcLike.close() = closeOp(op) в релее
+      }
+      slots.clear();
+      pendingIce.clear();
+      rtcObj = null;
+    };
+    const wireBridgeChannel = (ch, op) => {
+      if (!ch) return;
+      if (ch.label === 'term') {
+        // открытие — только approved-сеанс: мы уже в нём; второй term-канал
+        // получает честный term-busy от termHost (W-C3)
+        term.handleChannel(ch);
+        return;
+      }
+      // v0.6.4: ввод machine-сеанса — Windows: хелпер (SendInput в консольном
+      // сеансе), Linux: нативный пайплайн (inputSink, XTest). Гейт — approved:
+      // мы уже в нём. Арбитраж W-C4: каналу оператора — фильтр по op до обоих
+      // путей; grant-рассылке нужен живой канал.
+      if (ch.label === 'input') {
+        opInputs.set(op, ch);
+        arbiter.attach(op); // страховка: operator-joined мог не дойти (старый сервер)
+        const gated = gatedInputChannel(ch, op);
+        if (inputSink) { inputSink.handleChannel(gated); return; }
+        video?.handleInputChannel?.(gated);
+        return;
+      }
+      // W-U6 (v0.5): чат/файлы machine-сеанса — обработка в main (тост/запись
+      // файла); нет services — как раньше, неизвестные каналы закрываются.
+      if (services?.handleChannel?.(ch.label, ch)) return;
+      try { ch.close(); } catch { /* уже закрыт */ }
+    };
+    const answerOffer = async (op, sdp) => {
+      let slot = slots.get(op);
+      if (!slot) {
+        const pc = rtcObj ? rtcObj.getPcLike(op, { claim: true }) : null;
+        if (!pc) {
+          // W-C1: мост одиночный (легаси-контракт) и pc уже занят другим
+          // оператором — чужой offer не трогает живой pc владельца.
+          log.warn(`Агент: offer от оператора ${op} игнорирован — pc оператора недоступен/занят`);
+          return;
+        }
+        slot = { pc, ice: pendingIce.get(op) ?? [], answered: false };
+        pendingIce.delete(op);
+        slots.set(op, slot);
+        pc.onicecandidate = (e) => {
+          if (!e?.candidate) return;
+          try {
+            client.sendSignal({ type: 'signal', ...signalTo(op), data: { candidate: e.candidate.toJSON ? e.candidate.toJSON() : e.candidate } });
+          } catch (err) {
+            // Различаем причины: молчащий catch маскировал отказ валидации формы
+            // (дефект №12); предупреждение в лог делает регрессию видимой.
+            log.warn(`Агент: ICE-кандидат не отправлен (${err.message})`);
+          }
+        };
+        pc.ondatachannel = (e) => wireBridgeChannel(e?.channel, op);
+      }
       try {
-        await pc.setRemoteDescription({ type: 'offer', sdp });
-        for (const c of termIce.splice(0)) pc.addIceCandidate(c).catch(() => { /* устаревший */ });
-        const answer = await pc.createAnswer();
-        await pc.setLocalDescription(answer);
+        await slot.pc.setRemoteDescription({ type: 'offer', sdp });
+        for (const c of slot.ice.splice(0)) slot.pc.addIceCandidate(c).catch(() => { /* устаревший */ });
+        const answer = await slot.pc.createAnswer();
+        await slot.pc.setLocalDescription(answer);
         // Исходящие сигналы обязаны идти в конверте {type:'signal', data:…} —
         // validateOutgoingSignal отбрасывает всё остальное (живой сеанс 28.09:
         // без обёртки answer терминала не доходил до оператора, W-U6/W-U11 были мертвы).
-        client.sendSignal({ type: 'signal', data: { description: { type: 'answer', sdp: pc.localDescription.sdp } } });
+        client.sendSignal({ type: 'signal', ...signalTo(op), data: { description: { type: 'answer', sdp: slot.pc.localDescription.sdp } } });
         // Только после выставленного remote description прямые ICE-кандидаты
         // оператора применяются сразу (тригкл после answer); раньше — в буфер.
-        termAnswered = true;
+        slot.answered = true;
       } catch (e) {
-        log.warn(`Агент: ответ терминала не удался (${e.message})`);
+        log.warn(`Агент: ответ оператору ${op} не удался (${e.message})`);
       }
     };
-    const openTermRtc = () => {
-      if (termPc || !term || !rtcFactory) return;
-      let pc;
-      let rtcObj;
-      try { rtcObj = rtcFactory(); } catch { rtcObj = null; }
-      pc = rtcObj?.pcLike ?? rtcObj; // v0.6: фабрика может вернуть {pcLike, …}
-      if (!pc) {
-        log.warn('Агент: терминал недоступен — в этом окружении нет RTCPeerConnection');
-        return;
-      }
-      termPc = pc;
-      // v0.6 (ADR 0027): кадры видео-хелпера уходят в мост текущего сеанса.
-      video?.bind?.();
-      pc.onicecandidate = (e) => {
-        if (!e?.candidate) return;
-        try {
-          client.sendSignal({ type: 'signal', data: { candidate: e.candidate.toJSON ? e.candidate.toJSON() : e.candidate } });
-        } catch (err) {
-          // Различаем причины: молчащий catch маскировал отказ валидации формы
-          // (дефект №12); предупреждение в лог делает регрессию видимой.
-          log.warn(`Агент: ICE-кандидат не отправлен (${err.message})`);
-        }
-      };
-      pc.ondatachannel = (e) => {
-        const ch = e?.channel;
-        if (!ch) return;
-        if (ch.label === 'term') { term.handleChannel(ch); return; } // открытие — только approved-сеанс: мы уже в нём
-        // v0.6.4: ввод machine-сеанса — Windows: хелпер (SendInput в консольном
-        // сеансе), Linux: нативный пайплайн (inputSink, XTest). Гейт — approved:
-        // мы уже в нём.
-        if (ch.label === 'input') {
-          if (inputSink) { inputSink.handleChannel(ch); return; }
-          video?.handleInputChannel?.(ch);
+    const openRtc = () => {
+      if (rtcObj || !term || !rtcFactory) return;
+      let made;
+      try { made = rtcFactory(); } catch { made = null; }
+      if (made && typeof made.getPcLike === 'function' && typeof made.closeOp === 'function') {
+        rtcObj = made; // мост волны C (W-C2): N pc в одном окне
+      } else {
+        const pcLike = made?.pcLike ?? made; // v0.6: фабрика могла вернуть {pcLike, …}
+        if (!pcLike) {
+          log.warn('Агент: терминал недоступен — в этом окружении нет RTCPeerConnection');
           return;
         }
-        // W-U6 (v0.5): чат/файлы machine-сеанса — обработка в main (тост/запись
-        // файла); нет services — как раньше, неизвестные каналы закрываются.
-        if (services?.handleChannel?.(ch.label, ch)) return;
-        try { ch.close(); } catch { /* уже закрыт */ }
-      };
+        // Легаси-контракт (один pcLike, W-C1-граница): pc один на сеанс — первый
+        // offer (любой op) назначает владельца, чужие offer/ICE игнорируются.
+        let owner = null;
+        rtcObj = {
+          getPcLike: (op, { claim } = {}) => {
+            if (owner == null && claim) owner = op;
+            return owner === op ? pcLike : null;
+          },
+          closeOp: () => { owner = null; try { pcLike.close(); } catch { /* уже закрыт */ } },
+          ops: () => (owner ? [owner] : []),
+        };
+      }
+      // v0.6 (ADR 0027): кадры видео-хелпера уходят в мост текущего сеанса.
+      video?.bind?.();
     };
-    const unsubscribe = client.onMessage((msg) => {
+const unsubscribe = client.onMessage((msg) => {
       gate.onSignal(msg);
       if (gate.needInputReset()) native.end();
       if (msg.type === 'claim' && msg.claimId) {
@@ -317,22 +395,52 @@ export function createAgent({ api, signal, native, policy, termHost, rtc, notify
           .catch(() => { /* транзиентно: replay approved придёт при переподключении */ });
       }
       if (msg.type === 'approved') {
-        openTermRtc();
+        openRtc();
         // v0.6 (ADR 0027): хелпер видео/ввода живёт в сеансе — спавн в
-        // консольном сеансе + pipe; статусы релеятся операторам.
+        // консольном сеансе + pipe; статусы релеются операторам.
         video?.onStatus?.((s) => { try { client.sendMachineVideo(s); } catch { /* WS мёртв */ } });
         video?.start?.();
       }
-      if (msg.type === 'signal' && termPc) {
+      if (msg.type === 'operator-joined' && msg.claimId) {
+        // W-C2: pc поднимется по offer самого оператора (офферит оператор);
+        // участник фиксируется для арбитража ввода (W-C4) и аудита.
+        arbiter.attach(msg.claimId);
+        log.info(`Агент: оператор ${msg.operator?.name ?? msg.operator?.login ?? msg.claimId} присоединился (${msg.claimId})`);
+      }
+      if (msg.type === 'operator-left' && msg.claimId) {
+        // pc ушедшего не копится до конца сеанса: релей закрывает его pc в
+        // мосту и каналы (closeOp), остальные операторы не затрагиваются (W-C2);
+        // ввод ушедшего освобождается без автопередачи (W-C4)
+        arbiter.drop(msg.claimId);
+        opInputs.delete(msg.claimId);
+        const slot = slots.get(msg.claimId);
+        if (slot) {
+          slots.delete(msg.claimId);
+          pendingIce.delete(msg.claimId);
+          try { slot.pc.close(); } catch { /* уже закрыт */ }
+        }
+      }
+      if (msg.type === 'signal' && rtcObj) {
         const d = msg.data;
+        // Сервер тегирует op→host сигналы from=claimId (W-C1/W-C2): маршрутизация
+        // в персональный pc оператора; чужой/неизвестный op — честный игнор.
+        const op = typeof msg.from === 'string' && msg.from ? msg.from : 'primary';
         if (d?.description?.type === 'offer' && typeof d.description.sdp === 'string') {
-          void answerTermOffer(d.description.sdp);
+          void answerOffer(op, d.description.sdp);
         } else if (d?.candidate) {
-          // pcLike моста не экспонирует remoteDescription — полагаемся на флаг
-          // termAnswered (ставится после answer'а): поздние трикл-кандидаты
-          // оператора применяются сразу, ранние — из буфера (ревью 28.09).
-          if (termAnswered) termPc.addIceCandidate(d.candidate).catch(() => { /* устаревший */ });
-          else termIce.push(d.candidate);
+          const slot = slots.get(op);
+          if (slot) {
+            // pcLike моста не экспонирует remoteDescription — полагаемся на флаг
+            // answered (ставится после answer'а): поздние тригкл-кандидаты
+            // применяются сразу, ранние — из буфера (ревью 28.09).
+            if (slot.answered) slot.pc.addIceCandidate(d.candidate).catch(() => { /* устаревший */ });
+            else slot.ice.push(d.candidate);
+          } else {
+            // до offer слота нет — буфер per-op (применится в answer-фазе);
+            // чужой мусорный op ограничен капом и никогда не применяется
+            const q = pendingIce.get(op) ?? [];
+            if (q.length < ICE_QUEUE_CAP) { q.push(d.candidate); pendingIce.set(op, q); }
+          }
         }
       }
       if (msg.type === 'ended') finish('over');

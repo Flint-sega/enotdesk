@@ -15,6 +15,7 @@ import { createSignalClient } from './lib/signal.mjs';
 import { createInputGate } from './lib/protocol.mjs';
 import { createNativeInput, loadPlatformAdapter } from './lib/native-input.mjs';
 import { createInputPipeline } from './lib/input-pipeline.mjs';
+import { createInputArbiter } from './lib/input-arbiter.mjs';
 import { INPUT_KEYS } from './lib/protocol.mjs';
 import { normalizeServerUrl } from './lib/server-url.mjs';
 import { resolveServerUrl, DEFAULT_SERVER_URL } from './lib/first-run.mjs';
@@ -322,6 +323,14 @@ let signalRole = null;
 const IDLE_MINUTES = Math.max(0, Number(process.env.ENOT_IDLE_MINUTES ?? 30));
 let lastInputAt = 0;
 let idleWarned = false; // уже показывали предупреждение о скором завершении
+// Арбитраж ввода мультиоператора (W-C4): активный вводчик один, решение — только
+// в main (конвенция продукта). Рендерер получает события смены и сам рассылает
+// grants по input-каналам операторов (каналы живут в рендерере host-стороны).
+const inputArbiter = createInputArbiter({
+  onChange: (activeOp, operators) => sendToRenderer('enot:input-active', { claimId: activeOp, operators }),
+});
+let droppedInputCount = 0; // события не-активных операторов (svc-diag, без тел событий)
+let droppedInputLoggedAt = 0;
 // Последняя ошибка загрузки koffi — попадает в честный статус ввода клиента
 let lastKoffiError = null;
 // koffi грузится лениво: permissions()/status() его не трогают, только старт host-сеанса
@@ -550,6 +559,7 @@ function stopSignal() {
   signalRole = null;
   selectedSource = null; // разрешение 'media' привязано к источнику: сеанс кончился — гейт закрыт
   nativeInput.resetAdapter(); // koffi мог быть заблокирован SAC в прошлом сеансе — пробуем снова
+  inputArbiter.reset(); // операторы сеанса ушли вместе с ним (W-C4)
 }
 
 // Грейс-переподключение сигналинга (ADR 0013, живой сеанс 28.09 / W-A9): физический
@@ -1114,9 +1124,20 @@ function registerIpc() {
 
   ipcMain.handle('enot:permissions', (e) => { guard(e); return permissionsReport(); });
 
-  ipcMain.handle('enot:input', (e, ev) => {
+  ipcMain.handle('enot:input', (e, ev, opKey = 'primary') => {
     guard(e);
-    lastInputAt = Date.now(); // любая активность оператора сбрасывает таймер простоя
+    // Арбитраж (W-C4): ввод не-активного оператора отбрасывается ДО idle-таймера
+    // и инъекции — таймер простоя считает только разрешённые события
+    if (!inputArbiter.isAllowed(typeof opKey === 'string' && opKey ? opKey : 'primary')) {
+      droppedInputCount += 1;
+      const now = Date.now();
+      if (now - droppedInputLoggedAt > 5000) { // счётчик без тел событий (в вводе бывают пароли)
+        droppedInputLoggedAt = now;
+        svcDiag.write('input', `отброшено событий не-активных операторов: ${droppedInputCount}`);
+      }
+      return { ok: false, reason: 'input-not-granted' };
+    }
+    lastInputAt = Date.now(); // разрешённая активность оператора сбрасывает таймер простоя
     // Ворота и диспетчер — main, по реальному WS-состоянию (см. input-pipeline.mjs)
     if (!selectedSource) return { ok: false, reason: 'no-source' };
     // Окно-источник живёт: его двигают/ресайзят/максимизируют во время сеанса —
@@ -1131,6 +1152,33 @@ function registerIpc() {
       }
     }
     return inputPipeline.handle(ev, selectedSource.bounds);
+  });
+
+  // Арбитраж ввода (W-C4): claim/release — от оператора по его input-каналу,
+  // attach/drop — от рендерера host-стороны (operator-joined/left)
+  ipcMain.handle('enot:input-claim', (e, opKey) => {
+    guard(e);
+    if (typeof opKey !== 'string' || !opKey) throw new Error('Некорректный оператор');
+    inputArbiter.claim(opKey);
+    return { ok: true };
+  });
+  ipcMain.handle('enot:input-release', (e, opKey) => {
+    guard(e);
+    if (typeof opKey !== 'string' || !opKey) throw new Error('Некорректный оператор');
+    inputArbiter.release(opKey);
+    return { ok: true };
+  });
+  ipcMain.handle('enot:input-attach', (e, claimId) => {
+    guard(e);
+    if (typeof claimId !== 'string' || !claimId) throw new Error('Некорректный оператор');
+    inputArbiter.attach(claimId);
+    return { ok: true };
+  });
+  ipcMain.handle('enot:input-drop', (e, claimId) => {
+    guard(e);
+    if (typeof claimId !== 'string' || !claimId) throw new Error('Некорректный оператор');
+    inputArbiter.drop(claimId);
+    return { ok: true };
   });
 
   ipcMain.handle('enot:copy', (e, text) => {
@@ -1381,7 +1429,9 @@ function createAgentRtc({ fetchIceServers, videoForward = null } = {}) {
       console.error(`[enotdesk-agent] страница моста не загрузилась: ${e.message}`);
       relay.destroy();
     });
-    return relay.pcLike;
+    // W-C2 (волна C): релей держит N pc (Map<op>) — агенту нужен сам relay
+    // (getPcLike(op)/closeOp(op)/ops()); pcLike-поле остаётся для легаси-шим.
+    return relay;
   };
 }
 
@@ -1450,7 +1500,6 @@ function startAgentMode() {
   const videoStatusCb = { fn: null };
   let spawnKoffi;
   try { spawnKoffi = createRequire(import.meta.url)('koffi'); } catch { spawnKoffi = null; } // честный spawn-koffi-unavailable
-  const videoHostToken = crypto.randomBytes(16).toString('hex'); // hello-токен хелпера (argv + первый кадр pipe)
   // Портативная сборка самораспаковывается в %TEMP%\<случай>\ с SYSTEM-only ACL
   // на файлах: CreateProcessAsUserW от консольного пользователя не может даже
   // прочитать exe хелпера (этап 4, 06.10 — «Access is denied» воспроизведён).
@@ -1463,7 +1512,11 @@ function startAgentMode() {
       const helperDir = path.join(process.env.PROGRAMDATA || 'C:\\ProgramData', 'EnotDesk', 'helper');
       fs.mkdirSync(helperDir, { recursive: true });
       const dst = path.join(helperDir, 'enotdesk-video.exe');
-      const same = (() => { try { return fs.statSync(dst).size === fs.statSync(helperExe).size; } catch { return false; } })();
+      // Аудит 15.10 P2-1: ProgramData пишется любым пользователем — size-only
+      // проверка позволяла подложить чужой exe совпадающего размера (эскалация
+      // в сессию консольного пользователя). Сверяем SHA-256 с эталоном.
+      const sha = (p) => crypto.createHash('sha256').update(fs.readFileSync(p)).digest();
+      const same = (() => { try { return sha(dst).equals(sha(helperExe)); } catch { return false; } })();
       if (!same) fs.copyFileSync(helperExe, dst);
       helperExe = dst;
       svcDiag.write('video', `helper path: ${dst}`);
@@ -1480,7 +1533,10 @@ function startAgentMode() {
   let videoHost = null;
   if (videoSupported) {
     videoHost = createVideoHost({
-      token: videoHostToken,
+      // Токен и argv строит сам videoHost на каждый start() (аудит 15.10 P2-2:
+      // переиспользуемый argv-токен живёт весь lifetime агента — одноразовый
+      // по контракту README хелпера). argv нужен: DETACHED-спавн не имеет stdin,
+      // командная строка видна только процессам того же пользователя.
       spawner: createSessionSpawner({
         koffi: spawnKoffi,
         log: { warn: (...a) => { console.warn(...a); svcDiag.write('video', a.map(String).join(' ')); } },
@@ -1488,10 +1544,6 @@ function startAgentMode() {
       netFactory: (p) => net.connect(p),
       killer: (pid) => { nodeSpawn('taskkill', ['/PID', String(pid), '/T', '/F'], { windowsHide: true }); },
       exePath: helperExe,
-      // v0.6 fix (ревью GLM-5.3): токен дублируется в argv — DETACHED-спавн не
-      // имеет stdin; командная строка видна только в пределах того же домена
-      // доверия, что и дефолтный ACL пайпа (тот же сеанс/пользователь).
-      commandLine: helperExe ? `"${helperExe}" --token ${videoHostToken}` : '',
       log: { warn: (...a) => { console.warn(...a); svcDiag.write('video', a.map(String).join(' ')); } },
       onFrame: (jpeg) => videoForward.relay?.(BRIDGE_IPC.VIDEO_FRAME, jpeg),
       onStatus: (s) => videoStatusCb.fn?.(s),

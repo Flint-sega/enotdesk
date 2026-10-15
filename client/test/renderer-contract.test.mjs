@@ -337,6 +337,73 @@ test('крест: revoke сеанса — ДО app.quit, не внутри befor
   assert.match(mainJs, /session\.end[\s\S]{0,60}asHost: true/, 'revoke гасит сеанс как хост');
 });
 
+// ---- Волна C (мультиоператор: арбитраж ввода W-C4 + видеокап W-C5) ----
+
+test('W-C4: события ввода уходят в main с opKey; claim/release перехватываются до валидации', () => {
+  const services = readFileSync(path.join(dir, 'session-services.js'), 'utf8');
+  assert.match(services, /enot\.input\(m\.data, opKey\)/,
+    'enot.input обязан нести opKey — иначе main не отличит операторов');
+  assert.match(services, /svc\.type === 'claim-input'[\s\S]{0,120}enot\.inputClaim\(opKey\)/,
+    'claim-input уходит в main IPC-мостом');
+  assert.match(services, /svc\.type === 'release-input'[\s\S]{0,120}enot\.inputRelease\(opKey\)/,
+    'release-input уходит в main IPC-мостом');
+  assert.match(services, /claim-input[\s\S]{0,200}return;/,
+    'служебное сообщение не падает в enot.input');
+});
+
+test('W-C4: main держит фильтр арбитража ДО idle-таймера и инъекции; кнопки/статус в разметке', () => {
+  // фильтр раньше lastInputAt: idle-таймер считает только разрешённые события
+  const inputHandler = /ipcMain\.handle\('enot:input', \(e, ev, opKey = 'primary'\) => \{[\s\S]*?\n {2}\}\);/.exec(mainJs)?.[0] ?? '';
+  assert.ok(inputHandler, 'обработчик enot:input найден');
+  const gatePos = inputHandler.search(/inputArbiter\.isAllowed/);
+  const idlePos = inputHandler.search(/lastInputAt = Date\.now/);
+  assert.ok(gatePos >= 0 && idlePos > gatePos, 'arbiter.isAllowed обязан стоять раньше lastInputAt');
+  assert.match(inputHandler, /reason: 'input-not-granted'/, 'честный отказ отброшенному вводу');
+  // IPC-набор арбитража
+  for (const ch of ['enot:input-claim', 'enot:input-release', 'enot:input-attach', 'enot:input-drop']) {
+    assert.ok(mainJs.includes(ch), `main обязан держать канал ${ch}`);
+  }
+  assert.match(mainJs, /inputArbiter\.reset\(\)/, 'сброс арбитра в stopSignal — операторы не переживают сеанс');
+  // preload-мост
+  const preload = readFileSync(path.join(dir, '..', 'preload.cjs'), 'utf8');
+  for (const m of ['inputClaim', 'inputRelease', 'inputAttach', 'inputDrop', 'onInputActive']) {
+    assert.ok(preload.includes(m), `preload обязан выставлять ${m}`);
+  }
+  // UI: статус + обе кнопки в разметке (анти-мёртвые-кнопки проверят подключение)
+  assert.match(html, /id="op-control-status"/, 'статус управления в op-remote');
+  assert.match(html, /id="btn-op-take-control"/, 'кнопка «Взять управление»');
+  assert.match(html, /id="btn-op-give-control"/, 'кнопка «Отдать управление»');
+  assert.match(html, /id="client-control-note"/, 'бейдж «кто управляет» у клиента');
+  // grants: рассылка по per-op input-каналам + бейдж
+  const media = readFileSync(path.join(dir, 'session-media.js'), 'utf8');
+  assert.match(media, /enot\.onInputActive[\s\S]{0,400}input-grant/,
+    'смена активного рассылает grants по input-каналам операторов');
+  assert.match(media, /enot\.inputAttach\(claimId\)/, 'attach оператора в attachOperatorNow');
+  assert.match(media, /enot\.inputDrop\(claimId\)/, 'drop оператора в dropOperator');
+  // словарный паритет статусов/кнопок (ru=en проверит i18n-автотест — здесь наличие t()-ключей)
+  assert.ok('op.takeControl' in ru && 'op.takeControl' in en, 'ключ op.takeControl в обоих словарях');
+  assert.ok('op.giveControl' in ru && 'op.giveControl' in en, 'ключ op.giveControl в обоих словарях');
+  assert.ok('op.viewOnly' in ru && 'op.hasControl' in en, 'ключи op.viewOnly/op.hasControl');
+  assert.ok('client.controlBy' in ru && 'client.controlBy' in en, 'ключ client.controlBy');
+});
+
+test('W-C5: cap видеослотов — сверх 3 операторов pc без видео + честный session-info', () => {
+  const media = readFileSync(path.join(dir, 'session-media.js'), 'utf8');
+  assert.match(media, /videoAllowed\(videoOperatorCount\(\)\)/,
+    'attachOperatorNow решает видеослот чистой функцией multiop-limits');
+  assert.match(media, /noVideo: !grantVideo/, 'оператор помечен деградированным');
+  const services = readFileSync(path.join(dir, 'session-services.js'), 'utf8');
+  assert.match(services, /'video-slots-full'/, 'session-info о занятых слотах по input-каналу');
+  assert.match(html, /id="op-video-note"/, 'статус «видеослоты заняты» в op-remote');
+  assert.ok('op.videoSlotsFull' in ru && 'op.videoSlotsFull' in en, 'ключ op.videoSlotsFull');
+});
+
+test('W-C0: not_approved не роняет UI клиента (ранний join второго оператора)', () => {
+  const src = readFileSync(path.join(dir, 'app.js'), 'utf8');
+  assert.match(src, /msg\.code === 'not_approved' && state\.session[\s\S]{0,80}break/,
+    'ошибка not_approved при живом сеансе тихо игнорируется — scheduleReattach доиграет');
+});
+
 // «Запомнить меня» на входе оператора (10.10): чекбокс в форме, мост в preload,
 // хранение только через шифротекст safeStorage (lib-тесты — op-credentials.test.mjs).
 test('вход оператора: запоминание кредов на месте и идёт через safeStorage-мост', () => {

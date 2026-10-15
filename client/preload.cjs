@@ -34,7 +34,20 @@ contextBridge.exposeInMainWorld('enot', {
     ipcRenderer.on('enot:chat-widget-out', listener);
     return () => ipcRenderer.removeListener('enot:chat-widget-out', listener);
   },
-  input: (event) => ipcRenderer.invoke('enot:input', event),
+  // Арбитраж ввода (W-C4): события ввода несут opKey (claimId оператора host-роли);
+  // claim/release — служебные кнопки оператора; attach/drop — жизненный цикл
+  // операторов host-стороны; input-active — события смены активного вводчика.
+  input: (event, opKey) => ipcRenderer.invoke('enot:input', event, opKey),
+  inputClaim: (opKey) => ipcRenderer.invoke('enot:input-claim', opKey),
+  inputRelease: (opKey) => ipcRenderer.invoke('enot:input-release', opKey),
+  inputAttach: (claimId) => ipcRenderer.invoke('enot:input-attach', claimId),
+  inputDrop: (claimId) => ipcRenderer.invoke('enot:input-drop', claimId),
+  onInputActive: (callback) => {
+    if (typeof callback !== 'function') return () => {};
+    const listener = (_event, payload) => callback(payload);
+    ipcRenderer.on('enot:input-active', listener);
+    return () => ipcRenderer.removeListener('enot:input-active', listener);
+  },
   copy: (text) => ipcRenderer.invoke('enot:copy', text),
   openExternal: (url) => ipcRenderer.invoke('enot:openExternal', url),
   // Установка машины (службы агента) из клиента (ADR 0029): main скачивает

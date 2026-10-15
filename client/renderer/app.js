@@ -200,6 +200,11 @@ enot.onSignal(async (msg) => {
       }
       break;
     case 'error':
+      // Ранний join второго оператора (pending-consent): его offer честно
+      // отвергнут сервером (not_approved) — это не ошибка СЕАНСА клиента,
+      // экран ошибки ронял живой UI (W-C0). Тихий ignore: scheduleReattach
+      // пере-офферит после approved.
+      if (msg.code === 'not_approved' && state.session) break;
       if (state.role === 'client' && state.session) { text($('client-error-text'), msg.message ?? t('common.serverError')); clientShow('error'); }
       else if (state.role === 'operator') {
         // транзиентные ошибки сигналинга (rate_limited, bad_signal) видимы оператору
