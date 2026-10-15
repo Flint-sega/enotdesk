@@ -81,7 +81,28 @@ export function wireHostChannel(ch, opKey = 'primary') {
   const op = state.operators.get(opKey);
   if (op) { op.dcs ??= {}; op.dcs[ch.label] = ch; }
   if (ch.label === 'input') {
-    ch.onmessage = (m) => { enot.input(m.data).catch(() => {}); };
+    // Арбитраж ввода (W-C4): служебные claim/release перехватываются до событий
+    // ввода; события уходят в main с opKey — не-активного оператора main отбросит
+    // до инъекции (idle-таймер считает только разрешённые).
+    ch.onmessage = (m) => {
+      if (typeof m.data === 'string') {
+        let svc = null;
+        try { svc = JSON.parse(m.data); } catch { /* мусор — не служебное */ }
+        if (svc && typeof svc === 'object' && svc !== null) {
+          if (svc.type === 'claim-input') { enot.inputClaim(opKey).catch(() => {}); return; }
+          if (svc.type === 'release-input') { enot.inputRelease(opKey).catch(() => {}); return; }
+        }
+      }
+      enot.input(m.data, opKey).catch(() => {});
+    };
+    // W-C5: деградация без видео — честный статус по input-каналу оператора,
+    // как только канал открыт (каналы открываются после answer)
+    if (op && op.noVideo) {
+      const info = JSON.stringify({ type: 'session-info', video: false, reason: 'video-slots-full' });
+      const sendInfo = () => { try { ch.send(info); } catch { /* канал закрывается */ } };
+      if (ch.readyState === 'open') sendInfo();
+      else ch.onopen = sendInfo;
+    }
   } else if (ch.label === 'chat') {
     ch.onmessage = (m) => {
       const msg = parseChatMessage(m.data);
@@ -335,6 +356,48 @@ $('btn-client-file').addEventListener('click', () => $('client-file-input').clic
 $('client-file-input').addEventListener('change', () => sendFile('client'));
 $('btn-op-file').addEventListener('click', () => $('op-file-input').click());
 $('op-file-input').addEventListener('change', () => sendFile('op'));
+
+// ---------- Арбитраж ввода (W-C4): статус и кнопки оператора ----------
+// Кнопки не гейтят отправку событий (хост сам отбрасывает не-активного) —
+// они показывают честный статус и шлют служебные claim/release по input-каналу.
+
+function setOperatorControl(granted) {
+  const statusEl = $('op-control-status');
+  if (granted !== true && granted !== false) { // null — сеанс кончился/грантов нет
+    text(statusEl, '');
+    hide($('btn-op-take-control'));
+    hide($('btn-op-give-control'));
+    return;
+  }
+  text(statusEl, granted ? t('op.hasControl') : t('op.viewOnly'));
+  (granted ? show : hide)($('btn-op-give-control'));
+  (granted ? hide : show)($('btn-op-take-control'));
+}
+
+// input-канал оператора: гранты хоста и честные session-info (W-C5)
+export function wireOperatorControlChannel(ch) {
+  ch.onmessage = (m) => {
+    if (typeof m.data !== 'string') return;
+    let msg = null;
+    try { msg = JSON.parse(m.data); } catch { /* мусор игнорируется */ }
+    if (!msg || typeof msg !== 'object') return;
+    if (msg.type === 'input-grant') setOperatorControl(msg.granted === true);
+    else if (msg.type === 'session-info' && msg.video === false) text($('op-video-note'), t('op.videoSlotsFull'));
+  };
+}
+
+export function resetOperatorControl() {
+  setOperatorControl(null);
+  text($('op-video-note'), '');
+}
+
+function sendControlMessage(type) {
+  const dc = state.dcs?.input ?? state.dc;
+  if (!dc || dc.readyState !== 'open') return;
+  try { dc.send(JSON.stringify({ type })); } catch { /* канал закрывается */ }
+}
+$('btn-op-take-control').addEventListener('click', () => sendControlMessage('claim-input'));
+$('btn-op-give-control').addEventListener('click', () => sendControlMessage('release-input'));
 
 // Drag&drop файла на карточки сеанса, у обеих сторон.
 function wireFileDrop(zone, side) {

@@ -177,6 +177,29 @@ test('SEC-002: incomingClip не пишет в буфер; writeText на стр
   assert.ok('web.clip.paste' in ru && 'web.clip.paste' in en, 'ключ кнопки в обоих словарях');
 });
 
+// ---- Волна C: арбитраж ввода (W-C4) + честный статус видеослотов (W-C5) ----
+
+test('W-C4/W-C5: кнопки «Взять/Отдать управление» и статус подключены; служебный протокол по input-каналу', () => {
+  // разметка: статус + обе кнопки (анти-мёртвые-кнопки выше проверят обработчики)
+  for (const id of ['control-status', 'btn-take-control', 'btn-give-control']) {
+    assert.ok(new RegExp(`id="${id}"`).test(html), `нет id «${id}» в web/operator.html`);
+  }
+  // служебные сообщения: оператор шлёт claim/release, слушает grants/session-info
+  assert.match(operatorJs, /'claim-input'/, 'кнопка шлёт claim-input');
+  assert.match(operatorJs, /'release-input'/, 'кнопка шлёт release-input');
+  assert.match(operatorJs, /msg\.type === 'input-grant'[\s\S]{0,120}setControl/,
+    'grant переключает статус управления');
+  assert.match(operatorJs, /msg\.type === 'session-info' && msg\.video === false[\s\S]{0,120}setVideoStatus/,
+    'честный статус занятых видеослотов (W-C5)');
+  // гранты слушают ОБЕ роли (attended input-канал от хоста и machine созданный)
+  const wired = [...operatorJs.matchAll(/wireControlChannel\(/g)].length;
+  assert.ok(wired >= 2, `гранты слушают обе роли страницы (найдено ${wired})`);
+  // сброс статуса при конце сеанса
+  assert.match(operatorJs, /setControl\(null\)/, 'статус управления не переживает сеанс');
+  // словарные ключи общие с desktop-оператором
+  assert.ok('op.takeControl' in ru && 'op.giveControl' in ru, 'ключи кнопок в словарях');
+  assert.ok('op.videoSlotsFull' in en, 'ключ видеослотов в en');
+});
 // ---- SEC-008: bearer только в памяти страницы, cookie — только роль ----
 
 test('SEC-008: токен не хранится в cookie/sessionStorage — только переменная модуля', () => {

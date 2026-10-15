@@ -657,6 +657,8 @@ test('machine-сеанс W-U6: каналы chat/file уходят в services, 
     await sleep(30);
     const client = sig.clients[0];
     client.emit({ type: 'approved' });
+    // W-C2: обработчики pc вешаются при создании слота — по offer оператора
+    client.emit({ type: 'signal', data: { description: { type: 'offer', sdp: 'v=0-o' } } });
     await sleep(10);
 
     const mk = (label) => ({ label, close() { closedLabels.push(label); } });
@@ -667,6 +669,196 @@ test('machine-сеанс W-U6: каналы chat/file уходят в services, 
     lastPc.ondatachannel({ channel: mk('garbage') });
     assert.deepEqual(handled, ['chat', 'file', 'clip', 'garbage'], 'services опрошен по каждому не-term каналу');
     assert.deepEqual(closedLabels, ['clip'], 'закрыт только тот, от кого services отказался');
+  } finally {
+    agent.stop();
+    await sleep(10);
+  }
+});
+
+// ---- W-C4 (волна C): арбитраж ввода machine-сеанса ----
+
+test('W-C4: ввод не-активного оператора не доходит до inputSink; claim/release переключают; grants уходят адресно', async () => {
+  const { api } = fakeApi({
+    session: () => ({ status: 200, body: { sessionId: 97, state: 'pending-consent', claimId: 'cl-40' } }),
+  });
+  const store = memoryStore();
+  store.save('tok-wc4');
+  const sig = fakeSignalFactory();
+  const pcs = new Map();
+  const makePc = (op) => ({
+    op,
+    onicecandidate: null,
+    ondatachannel: null,
+    async setRemoteDescription(d) { this.remote = d; },
+    async createAnswer() { return { type: 'answer', sdp: `v=0-a-${op}` }; },
+    async setLocalDescription(d) { this.localDescription = d; },
+    async addIceCandidate() {},
+    close() { pcs.delete(op); },
+  });
+  const rtcFactory = () => ({
+    getPcLike: (op) => pcs.get(op) ?? (pcs.set(op, makePc(op)), pcs.get(op)),
+    closeOp: (op) => pcs.get(op)?.close(),
+    ops: () => [...pcs.keys()],
+  });
+  // фейк-sink ставит onmessage как настоящий (client/lib/agent-input.mjs)
+  const sinkGot = [];
+  const inputSink = { handleChannel: (gated) => { gated.onmessage = (m) => sinkGot.push(String(m.data)); } };
+  const mkInputChannel = () => {
+    const ch = {
+      label: 'input',
+      readyState: 'open',
+      onmessage: null,
+      sent: [],
+      close() { this.readyState = 'closed'; },
+    };
+    ch.send = (obj) => { ch.sent.push(String(obj)); };
+    return ch;
+  };
+  const agent = createAgent({
+    api,
+    signal: sig.factory,
+    native: createNativeInput({ adapter: inertAdapter() }),
+    policy: { name: 'mk-wc4', os: 'test', version: '9.9', tokenStore: store, heartbeatMs: 5, backoffBaseMs: 10, backoffMaxMs: 40 },
+    termHost: fakeTermHost(),
+    rtc: rtcFactory,
+    inputSink,
+  });
+  try {
+    assert.equal(agent.start({}).ok, true);
+    await sleep(30);
+    const client = sig.clients[0];
+    client.emit({ type: 'approved' });
+    // оба оператора присоединились и офферили
+    client.emit({ type: 'operator-joined', claimId: 'op-a', operator: { name: 'A' } });
+    client.emit({ type: 'operator-joined', claimId: 'op-b', operator: { name: 'B' } });
+    client.emit({ type: 'signal', from: 'op-a', data: { description: { type: 'offer', sdp: 'v=0-a' } } });
+    client.emit({ type: 'signal', from: 'op-b', data: { description: { type: 'offer', sdp: 'v=0-b' } } });
+    await sleep(20);
+    const chA = mkInputChannel('op-a');
+    const chB = mkInputChannel('op-b');
+    pcs.get('op-a').ondatachannel({ channel: chA });
+    pcs.get('op-b').ondatachannel({ channel: chB });
+    const move = JSON.stringify({ type: 'move', x: 0.5, y: 0.5 });
+
+    // первый оператор — авто-активный: его ввод доходит
+    chA.onmessage({ data: move });
+    assert.deepEqual(sinkGot, [move], 'ввод первого (авто-активного) дошёл до sink');
+
+    // ввод второго отбрасывается ДО sink
+    chB.onmessage({ data: move });
+    assert.deepEqual(sinkGot, [move], 'ввод не-активного оператора дошёл до sink');
+
+    // claim второго: его ввод пошёл, первого — нет; grants разосланы обоим
+    chB.onmessage({ data: JSON.stringify({ type: 'claim-input' }) });
+    await sleep(5);
+    chB.onmessage({ data: move });
+    chA.onmessage({ data: move });
+    assert.deepEqual(sinkGot, [move, move], 'после claim op-b только его ввод доходит');
+    const grantB = chB.sent.map((x) => JSON.parse(x)).find((m) => m.type === 'input-grant');
+    const grantA = chA.sent.map((x) => JSON.parse(x)).find((m) => m.type === 'input-grant');
+    assert.deepEqual(grantB, { type: 'input-grant', granted: true }, 'захвативший получил granted:true');
+    assert.deepEqual(grantA, { type: 'input-grant', granted: false }, 'бывший активный получил granted:false');
+
+    // release: оба без ввода, следующий берёт сам
+    chB.onmessage({ data: JSON.stringify({ type: 'release-input' }) });
+    await sleep(5);
+    chB.onmessage({ data: move });
+    assert.deepEqual(sinkGot, [move, move], 'после release ввод не идёт (без автопередачи)');
+    chA.onmessage({ data: JSON.stringify({ type: 'claim-input' }) });
+    await sleep(5);
+    chA.onmessage({ data: move });
+    assert.deepEqual(sinkGot, [move, move, move], 'после явного claim op-a ввод снова идёт');
+
+    // уход активного освобождает ввод (operator-left)
+    client.emit({ type: 'operator-left', claimId: 'op-a' });
+    await sleep(10);
+    chA.onmessage({ data: move }); // канал уже не приедет (pc закрыт), но фильтр обязан молчать
+    chB.onmessage({ data: move });
+    assert.deepEqual(sinkGot, [move, move, move], 'после operator-left(op-a) ввод op-b не включился сам');
+  } finally {
+    agent.stop();
+    await sleep(10);
+  }
+});
+
+// ---- W-C2 (волна C): N pc в одном мосту машины ----
+
+test('W-C2: два оператора — оба получают адресный answer; operator-left(op1) закрывает только его pc; re-offer op2 жив', async () => {
+  const { api } = fakeApi({
+    session: () => ({ status: 200, body: { sessionId: 96, state: 'pending-consent', claimId: 'cl-30' } }),
+  });
+  const store = memoryStore();
+  store.save('tok-wc2');
+  const sig = fakeSignalFactory();
+  const pcs = new Map(); // op → фейковый pcLike
+  const closedOps = [];
+  const makePc = (op) => ({
+    op,
+    onicecandidate: null,
+    ondatachannel: null,
+    srdCalls: 0,
+    async setRemoteDescription(d) { this.srdCalls += 1; this.remote = d; },
+    async createAnswer() { return { type: 'answer', sdp: `v=0-answer-${op}` }; },
+    async setLocalDescription(d) { this.localDescription = d; },
+    async addIceCandidate(c) { this.iceApplied = [...(this.iceApplied ?? []), c]; },
+    close() { closedOps.push(op); pcs.delete(op); },
+  });
+  const rtcFactory = () => ({
+    getPcLike: (op) => pcs.get(op) ?? (pcs.set(op, makePc(op)), pcs.get(op)),
+    closeOp: (op) => pcs.get(op)?.close(),
+    ops: () => [...pcs.keys()],
+  });
+  const agent = createAgent({
+    api,
+    signal: sig.factory,
+    native: createNativeInput({ adapter: inertAdapter() }),
+    policy: { name: 'mk-wc2', os: 'test', version: '9.9', tokenStore: store, heartbeatMs: 5, backoffBaseMs: 10, backoffMaxMs: 40 },
+    termHost: fakeTermHost(),
+    rtc: rtcFactory,
+  });
+  try {
+    assert.equal(agent.start({}).ok, true);
+    await sleep(30);
+    const client = sig.clients[0];
+    client.emit({ type: 'approved' });
+    await sleep(10);
+
+    // ранний ICE op-2 до его offer — буфер per-op, не трогает op-1
+    client.emit({ type: 'signal', from: 'op-2', data: { candidate: { candidate: 'candidate:early-2' } } });
+    // первый оператор офферит — персональный pc + адресный answer
+    client.emit({ type: 'signal', from: 'op-1', data: { description: { type: 'offer', sdp: 'v=0-offer-1' } } });
+    await sleep(20);
+    const pc1 = pcs.get('op-1');
+    assert.ok(pc1, 'pc оператора op-1 создан');
+    assert.equal(pc1.remote?.sdp, 'v=0-offer-1');
+    let answers = client.sentSignals.filter((m) => m.type === 'signal' && m.data?.description?.type === 'answer');
+    assert.equal(answers.length, 1);
+    assert.equal(answers[0].to, 'op-1', 'answer адресован op-1');
+
+    // второй оператор офферит — свой pc, свой answer; ранний кандидат применён
+    client.emit({ type: 'signal', from: 'op-2', data: { description: { type: 'offer', sdp: 'v=0-offer-2' } } });
+    await sleep(20);
+    const pc2 = pcs.get('op-2');
+    assert.ok(pc2, 'pc оператора op-2 создан');
+    answers = client.sentSignals.filter((m) => m.type === 'signal' && m.data?.description?.type === 'answer');
+    assert.equal(answers.length, 2);
+    assert.equal(answers[1].to, 'op-2', 'answer адресован op-2');
+    assert.deepEqual((pc1.iceApplied ?? []).map((c) => c.candidate), [], 'ранний кандидат op-2 не доехал в pc1');
+    assert.deepEqual((pc2.iceApplied ?? []).map((c) => c.candidate), ['candidate:early-2'],
+      'ранний кандидат op-2 применён из буфера в answer-фазе');
+
+    // op-1 ушёл — его pc закрыт, op-2 продолжает
+    client.emit({ type: 'operator-left', claimId: 'op-1' });
+    await sleep(10);
+    assert.deepEqual(closedOps, ['op-1'], 'закрыт только pc op-1');
+    assert.ok(pcs.has('op-2'), 'pc op-2 жив после ухода op-1');
+
+    // терминальный re-offer op-2 работает после ухода op-1
+    client.emit({ type: 'signal', from: 'op-2', data: { description: { type: 'offer', sdp: 'v=0-offer-2-re' } } });
+    await sleep(20);
+    assert.equal(pcs.get('op-2').remote?.sdp, 'v=0-offer-2-re', 're-offer op-2 принят');
+    const last = client.sentSignals.filter((m) => m.type === 'signal' && m.data?.description?.type === 'answer').at(-1);
+    assert.equal(last.to, 'op-2');
   } finally {
     agent.stop();
     await sleep(10);
@@ -719,7 +911,9 @@ test('machine-сеанс v0.6.4: канал input уходит в inputSink (н�
     assert.equal(agent.start({}).ok, true);
     await sleep(30);
     const client = sig.clients[0];
-    client.emit({ type: 'approved' }); // openTermRtc по approved
+    client.emit({ type: 'approved' }); // openRtc по approved (W-C2)
+    // слот pc создаётся по offer оператора — туда вешается ondatachannel
+    client.emit({ type: 'signal', data: { description: { type: 'offer', sdp: 'v=0-o' } } });
     await sleep(10);
     rtcFactory.current().ondatachannel({ channel: { label: 'input', close() {} } });
     assert.equal(sinkChannels.length, 1, 'канал input отдан inputSink, а не видео-хелперу');
@@ -758,9 +952,89 @@ test('machine-сеанс v0.6.4: без inputSink (Windows) канал input у�
     await sleep(30);
     const client = sig.clients[0];
     client.emit({ type: 'approved' });
+    client.emit({ type: 'signal', data: { description: { type: 'offer', sdp: 'v=0-o' } } });
     await sleep(10);
     rtcFactory.current().ondatachannel({ channel: { label: 'input', close() {} } });
     assert.equal(videoChannels.length, 1, 'путь Windows не изменился: хелпер получает канал');
+  } finally {
+    agent.stop();
+    await sleep(10);
+  }
+});
+
+// ---- W-C1 (волна C): второй оператор не ломает живой pc машины ----
+
+test('W-C1: offer от второго оператора (другой from) не трогает живой pc; answer/ICE адресные (to=from)', async () => {
+  const { api } = fakeApi({
+    session: () => ({ status: 200, body: { sessionId: 95, state: 'pending-consent', claimId: 'cl-20' } }),
+  });
+  const store = memoryStore();
+  store.save('tok-wc1');
+  const sig = fakeSignalFactory();
+  const warns = [];
+  let pc = null;
+  let srdCalls = 0;
+  const rtcFactory = () => {
+    pc = {
+      onicecandidate: null,
+      ondatachannel: null,
+      async setRemoteDescription(d) { srdCalls += 1; pc.remote = d; },
+      async createAnswer() { return { type: 'answer', sdp: `v=0-answer-${srdCalls}` }; },
+      async setLocalDescription(d) { pc.localDescription = d; },
+      async addIceCandidate(c) { pc.iceApplied = [...(pc.iceApplied ?? []), c]; },
+      close() {},
+    };
+    return pc;
+  };
+  const agent = createAgent({
+    api,
+    signal: sig.factory,
+    native: createNativeInput({ adapter: inertAdapter() }),
+    policy: {
+      name: 'mk-wc1', os: 'test', version: '9.9', tokenStore: store, heartbeatMs: 5, backoffBaseMs: 10, backoffMaxMs: 40,
+      log: { info() {}, warn: (...a) => warns.push(a.join(' ')), error() {} },
+    },
+    termHost: fakeTermHost(),
+    rtc: rtcFactory,
+  });
+  try {
+    assert.equal(agent.start({}).ok, true);
+    await sleep(30);
+    const client = sig.clients[0];
+    client.emit({ type: 'approved' });
+    await sleep(10);
+    assert.ok(pc, 'pc поднят по approved');
+
+    // первый оператор (op-a) офферит — answer уходит АДРЕСНО ему
+    client.emit({ type: 'signal', from: 'op-a', data: { description: { type: 'offer', sdp: 'v=0-offer-a' } } });
+    await sleep(20);
+    assert.equal(pc.remote?.sdp, 'v=0-offer-a');
+    const answer = client.sentSignals.find((m) => m.type === 'signal' && m.data?.description?.type === 'answer');
+    assert.ok(answer, 'answer ушёл');
+    assert.equal(answer.to, 'op-a', 'answer адресован владельцу offer (to=from)');
+
+    // второй оператор (op-b) офферит — живой pc НЕ получает setRemoteDescription
+    client.emit({ type: 'signal', from: 'op-b', data: { description: { type: 'offer', sdp: 'v=0-offer-b' } } });
+    await sleep(20);
+    assert.equal(srdCalls, 1, 'чужой offer вызвал setRemoteDescription на живом pc');
+    assert.equal(pc.remote?.sdp, 'v=0-offer-a', 'remote description затёрт чужим offer');
+    assert.ok(warns.some((w) => w.includes('op-b')), 'честный warn о втором операторе');
+
+    // ICE от op-b игнорируется; собственный ICE уходит адресно op-a
+    client.emit({ type: 'signal', from: 'op-b', data: { candidate: { candidate: 'candidate:rogue' } } });
+    await sleep(10);
+    assert.deepEqual((pc.iceApplied ?? []).map((c) => c.candidate), [], 'чужой ICE применён к pc');
+    pc.onicecandidate({ candidate: { candidate: 'candidate:mine', sdpMid: '0' } });
+    const cand = client.sentSignals.find((m) => m.type === 'signal' && m.data?.candidate);
+    assert.equal(cand.to, 'op-a', 'исходящий ICE адресован владельцу pc');
+
+    // владелец ренеготиирует (терминальный re-offer) — pc отвечает ему же
+    client.emit({ type: 'signal', from: 'op-a', data: { description: { type: 'offer', sdp: 'v=0-offer-a2' } } });
+    await sleep(20);
+    assert.equal(srdCalls, 2, 're-offer владельца принят');
+    assert.equal(pc.remote?.sdp, 'v=0-offer-a2');
+    const answers = client.sentSignals.filter((m) => m.type === 'signal' && m.data?.description?.type === 'answer');
+    assert.equal(answers.at(-1).to, 'op-a');
   } finally {
     agent.stop();
     await sleep(10);

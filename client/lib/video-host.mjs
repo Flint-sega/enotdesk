@@ -59,7 +59,10 @@ export function createFrameReader() {
 export function createVideoHost({
   spawner, netFactory, killer = null, pipeName = PIPE_NAME,
   exePath, commandLine,
-  token = crypto.randomBytes(16).toString('hex'), // одноразовый токен hello-кадра (v0.6: дублируется в argv хелпера)
+  // null → свежий токен на КАЖДЫЙ start() (аудит 15.10 P2-2: токен обязан быть
+  // одноразовым — переиспользуемый argv-токен живёт вечно); явное значение —
+  // только для юнит-тестов с инъекциями.
+  token = null,
   log = console,
   onFrame = () => {}, onStatus = () => {},
   connectTimeoutMs = CONNECT_TIMEOUT_MS, connectRetries = CONNECT_RETRIES,
@@ -68,6 +71,7 @@ export function createVideoHost({
   let sock = null;
   let pid = null;
   let stopped = true;
+  let activeToken = null;
   const setStatus = (s, extra) => {
     state = s;
     try { onStatus({ state, ...extra }); } catch { /* потребитель не роняет хост */ }
@@ -100,7 +104,7 @@ export function createVideoHost({
       sock = socket;
       // Первый кадр в пайп — hello с одноразовым токеном (хелпер ждёт его,
       // чужой клиент без токена отбрасывается).
-      socket.write(encodeMessage(MSG.HELLO, token));
+      socket.write(encodeMessage(MSG.HELLO, activeToken));
       setStatus('running');
     });
     const reader = createFrameReader();
@@ -139,7 +143,11 @@ export function createVideoHost({
       if (!stopped) return;
       stopped = false;
       setStatus('spawning');
-      const r = await spawner.spawnInConsoleSession({ exePath, commandLine });
+      // Токен и argv строятся на каждый спавн (аудит 15.10 P2-2): argv хелпера
+      // виден процессам того же пользователя, вечный токен = накопленный риск.
+      activeToken = token ?? crypto.randomBytes(16).toString('hex');
+      const cl = commandLine ?? `"${exePath}" --token ${activeToken}`;
+      const r = await spawner.spawnInConsoleSession({ exePath, commandLine: cl });
       if (!r.ok) {
         setStatus('error', { reason: `spawn-${r.reason}` });
         return;

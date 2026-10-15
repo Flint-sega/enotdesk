@@ -147,6 +147,7 @@
         <p id="client-live-note" class="note" role="status"></p>
         <p id="client-input-status" class="note" role="status"></p>
         <p id="client-operators" class="note" role="status"></p>
+        <p id="client-control-note" class="note" role="status"></p>
         <p id="client-access-note" class="note" role="status"></p>
         <div class="row gap wrap-btns">
           <button id="btn-switch-source" class="btn" data-i18n="client.switchScreen">Сменить экран</button>
@@ -283,6 +284,9 @@
                 <span id="session-timer" class="note"></span>
                 <span id="op-idle-note" class="note hidden" role="alert"></span>
                 <span class="spacer"></span>
+                <span id="op-control-status" class="note" role="status"></span>
+                <button id="btn-op-take-control" class="btn small hidden" data-i18n="op.takeControl">Взять управление</button>
+                <button id="btn-op-give-control" class="btn small hidden" data-i18n="op.giveControl">Отдать управление</button>
                 <button id="btn-fit" class="btn small" data-i18n="op.fitFill">Заполнить</button>
                 <button id="btn-fullscreen" class="btn small" data-i18n="op.fullscreen">Во весь экран</button>
                 <button id="btn-op-file" class="btn small" data-i18n="client.sendFile">Отправить файл</button>
@@ -290,6 +294,7 @@
                 <button id="btn-end-session" class="btn danger" data-i18n="op.end">Завершить</button>
               </div>
               <video id="remote-video" autoplay playsinline data-i18n-aria-label="app.aria.remoteVideo" aria-label="Экран клиента"></video>
+              <p id="op-video-note" class="note" role="status"></p>
               <div class="row gap wrap-btns">
                 <label class="check-line" for="clip-op-toggle"><input type="checkbox" id="clip-op-toggle" checked> <span data-i18n="op.clipLabel">Отправлять мой буфер другой стороне</span></label>
                 <button id="btn-op-clip-paste" class="btn hidden" data-i18n="op.clipPaste">Вставить из сеанса</button>

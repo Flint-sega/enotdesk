@@ -5,7 +5,8 @@ import { $, enot, text, setBusyAll } from './dom.js';
 import { state, endReasonText } from './state.js';
 import { t } from '../lib/i18n.mjs';
 import { wireOperatorInput } from './operator-input.js';
-import { wireHostChannel, resetFileReceivers } from './session-services.js';
+import { wireHostChannel, resetFileReceivers, wireOperatorControlChannel, resetOperatorControl } from './session-services.js';
+import { videoAllowed } from '../lib/multiop-limits.mjs';
 import { setVideoEnabled } from '../lib/media-toggle.mjs';
 import { summarizeStats, formatQuality } from '../lib/rtc-stats.mjs';
 import { nextTarget, TOP_BITRATE } from '../lib/adaptive-bitrate.mjs';
@@ -115,6 +116,7 @@ export function cleanupSession() {
 export function stopMedia() {
   inputDetach?.detach?.(); // pointer-слушатели оператора не переживают сеанс
   inputDetach = null;
+  resetOperatorControl(); // статус управления/видео не протекает в следующий сеанс
   stopAllOperators(); // персональные pc всех операторов закрываются вместе с сеансом
   try { state.localStream?.getTracks().forEach((track) => track.stop()); } catch { /* треки уже остановлены */ }
   try { state.dc?.close(); } catch { /* уже закрыт */ }
@@ -417,10 +419,16 @@ async function attachOperatorNow(claimId, name) {
   const cfg = await enot.request('rtc.config', { asHost: true });
   if (!state.localStream || !state.session || state.operators.has(claimId)) return;
   const pc = makePcOperator(claimId, cfg.body?.iceServers ?? []);
-  for (const track of state.localStream.getTracks()) pc.addTrack(track, state.localStream);
-  applyVideoCap(pc);
-  const op = { pc, iceQueue: [], dcs: {}, name, adaptive: { target: adaptive.target, lastChangeAt: Date.now() } };
+  // Cap видеослотов (W-C5): сверх MULTIOP_VIDEO_CAP pc строится БЕЗ видео —
+  // чат/файлы/терминал работают, оператор получит честный session-info.
+  const grantVideo = videoAllowed(videoOperatorCount());
+  if (grantVideo) {
+    for (const track of state.localStream.getTracks()) pc.addTrack(track, state.localStream);
+    applyVideoCap(pc);
+  }
+  const op = { pc, iceQueue: [], dcs: {}, name, noVideo: !grantVideo, adaptive: { target: adaptive.target, lastChangeAt: Date.now() } };
   state.operators.set(claimId, op);
+  enot.inputAttach(claimId).catch(() => {}); // арбитраж (W-C4): одинокий получит ввод сам
   startAdaptiveIfNeeded(); // первый подписчик — цикл per-viewer ступеней
   // Каналы создаёт офферер (ADR 0014): per-operator набор input/chat/clip/file
   for (const label of ['input', 'chat', 'clip', 'file']) {
@@ -474,12 +482,34 @@ function makePcOperator(claimId, iceServers) {
 export function dropOperator(claimId) {
   const op = state.operators.get(claimId);
   if (!op) return;
+  enot.inputDrop(claimId).catch(() => {}); // арбитраж (W-C4): ввод ушедшего освобождается
   try { op.pc.close(); } catch { /* уже закрыт */ }
   for (const ch of Object.values(op.dcs)) { try { ch.close(); } catch { /* уже закрыт */ } }
   state.operators.delete(claimId);
   resetFileReceivers(claimId); // недокачанный файл этого оператора — вместе с каналом
   if (!state.operators.size) stopAdaptive(); // подписчиков нет — захват не крутится вхолостую (аналог has_subscribes у RustDesk)
 }
+
+// Живые операторы с видео (для cap'а W-C5): деградированные (noVideo) слот не занимают.
+function videoOperatorCount() {
+  let n = 0;
+  for (const op of state.operators.values()) if (!op.noVideo) n += 1;
+  return n;
+}
+
+// Арбитраж (W-C4): main сменил активного вводчика — grants уходят всем
+// операторам по их input-каналам, клиенту честный бейдж «кто управляет».
+enot.onInputActive?.(({ claimId } = {}) => {
+  for (const [opId, op] of state.operators) {
+    const ch = op.dcs?.input;
+    if (!ch || ch.readyState !== 'open') continue;
+    try { ch.send(JSON.stringify({ type: 'input-grant', granted: opId === claimId })); } catch { /* канал закрывается */ }
+  }
+  const note = $('client-control-note');
+  if (!note) return;
+  if (claimId) text(note, t('client.controlBy', { name: state.operators.get(claimId)?.name || claimId }));
+  else text(note, state.operators.size ? t('client.controlFree') : '');
+});
 
 function stopAllOperators() {
   for (const claimId of [...state.operators.keys()]) dropOperator(claimId);
@@ -604,6 +634,7 @@ async function doOperatorAnswer(offerSdp) {
       // (паритет web-твину inputDetach, ревью v0.4.6 доводка)
       inputDetach?.detach?.();
       inputDetach = wireOperatorInput(ch);
+      wireOperatorControlChannel(ch); // гранты арбитража и честный статус видео (W-C4/W-C5)
     } else if (ch.label === 'chat') {
       ch.onmessage = (m) => {
         const msg = parseChatMessage(m.data);

@@ -24,7 +24,8 @@ test('offer пришёл → answer ушёл: сигналинг через ре
   const { relay, sends } = makeRelay();
   relay.markReady(); // did-finish-load
   await relay.pcLike.setRemoteDescription({ type: 'offer', sdp: 'v=0 op-offer' });
-  assert.deepEqual(sends[0], [BRIDGE_IPC.OFFER, 'v=0 op-offer']);
+  // W-C2: исходящие payload несут op (primary — легаси-путь pcLike)
+  assert.deepEqual(sends[0], [BRIDGE_IPC.OFFER, { op: 'primary', sdp: 'v=0 op-offer' }]);
 
   const answerPromise = relay.pcLike.createAnswer();
   relay.handleMessage(BRIDGE_IPC.ANSWER, 'v=0 bridge-answer'); // мост ответил
@@ -39,7 +40,7 @@ test('offer пришёл → answer ушёл: сигналинг через ре
   relay.handleMessage(BRIDGE_IPC.ICE, { candidate: 'cand-1' });
   assert.deepEqual(gotIce, { candidate: 'cand-1' });
   await relay.pcLike.addIceCandidate({ candidate: 'cand-op' });
-  assert.deepEqual(sends.at(-1), [BRIDGE_IPC.ICE, { candidate: 'cand-op' }]);
+  assert.deepEqual(sends.at(-1), [BRIDGE_IPC.ICE, { op: 'primary', candidate: { candidate: 'cand-op' } }]);
 });
 
 test('до готовности моста offer не уходит; после destroy — createAnswer честно падает', async () => {
@@ -50,7 +51,7 @@ test('до готовности моста offer не уходит; после d
   assert.ok(!sends.some(([ch]) => ch === BRIDGE_IPC.OFFER), 'offer ушёл до загрузки моста');
   relay.markReady();
   await offer;
-  assert.ok(sends.some(([ch, p]) => ch === BRIDGE_IPC.OFFER && p === 'v=0'), 'после готовности offer ушёл');
+  assert.ok(sends.some(([ch, p]) => ch === BRIDGE_IPC.OFFER && p?.sdp === 'v=0'), 'после готовности offer ушёл');
   relay.destroy();
   await assert.rejects(pending, /мост закрыт/);
 });
@@ -71,7 +72,7 @@ test('данные ходят в обе стороны: канал term откр
   relay.handleMessage(BRIDGE_IPC.DC_FROM, { label: 'term', data: '{"type":"in","data":"dir\\r"}' });
   assert.equal(incoming, '{"type":"in","data":"dir\\r"}');
   channel.send({ type: 'out', data: 'C:\\> ' });
-  assert.deepEqual(sends.at(-1), [BRIDGE_IPC.DC_TO, { label: 'term', data: '{"type":"out","data":"C:\\\\> "}'}]);
+  assert.deepEqual(sends.at(-1), [BRIDGE_IPC.DC_TO, { op: 'primary', label: 'term', data: '{"type":"out","data":"C:\\\\> "}'}]);
   assert.equal(relay.hasAdapter(), true);
   assert.equal(relay.hasTermAdapter(), true);
   relay.handleMessage(BRIDGE_IPC.DC_CLOSED, 'term');
@@ -108,9 +109,9 @@ test('мультиканальность W-U6: chat/file поднимаются 
   assert.ok(channels.get('file').lastSeen instanceof Uint8Array);
   assert.deepEqual([...channels.get('file').lastSeen], [0, 255, 1, 254, 128]);
 
-  // исходящий бинарный кусок уходит с меткой канала
+  // исходящий бинарный кусок уходит с op и меткой канала (W-C2)
   channels.get('file').send(new Uint8Array([9, 8, 7]));
-  assert.deepEqual(sends.at(-1), [BRIDGE_IPC.DC_TO, { label: 'file', data: new Uint8Array([9, 8, 7]) }]);
+  assert.deepEqual(sends.at(-1), [BRIDGE_IPC.DC_TO, { op: 'primary', label: 'file', data: new Uint8Array([9, 8, 7]) }]);
 
   // закрытие одного канала не роняет остальные
   relay.handleMessage(BRIDGE_IPC.DC_CLOSED, 'chat');
@@ -183,7 +184,7 @@ test('rtc-config недоступен/пуст — мост получает ice
   await fail.relay.pcLike.setRemoteDescription({ type: 'offer', sdp: 'v=0' });
   const cfg = fail.sends.find(([ch]) => ch === BRIDGE_IPC.ICE_CONFIG)?.[1];
   assert.deepEqual(cfg, { iceServers: [], reason: 'rtc-config недоступен: сеть недоступна' });
-  assert.ok(fail.sends.some(([ch, p]) => ch === BRIDGE_IPC.OFFER && p === 'v=0'), 'offer потерян после сбоя rtc-config');
+  assert.ok(fail.sends.some(([ch, p]) => ch === BRIDGE_IPC.OFFER && p?.sdp === 'v=0'), 'offer потерян после сбоя rtc-config');
   assert.deepEqual(fail.relay.iceServersInfo().iceServers, []);
 
   const empty = makeRelay({ fetchIceServers: async () => ({ iceServers: [] }) });
@@ -200,7 +201,7 @@ test('без fetchIceServers релей ведёт себя как прежде:
   relay.markReady();
   await relay.pcLike.setRemoteDescription({ type: 'offer', sdp: 'v=0' });
   assert.equal(sends.filter(([ch]) => ch === BRIDGE_IPC.ICE_CONFIG).length, 0);
-  assert.ok(sends.some(([ch, p]) => ch === BRIDGE_IPC.OFFER && p === 'v=0'));
+  assert.ok(sends.some(([ch, p]) => ch === BRIDGE_IPC.OFFER && p?.sdp === 'v=0'));
 });
 
 test('гонка: ANSWER пришёл раньше createAnswer — ранний ответ применяется, кэш одноразовый', async () => {
@@ -263,6 +264,153 @@ test('посторонние IPC-каналы не проходят allowlist', 
   relay.markReady();
   relay.handleMessage('enot:evil', { evil: true });
   assert.ok(!sends.some(([ch]) => ch !== BRIDGE_IPC.OFFER));
+});
+
+// ---- W-C2 (волна C): N pc в одном мосту — payload-адресация полем op ----
+
+test('W-C2: два op — два независимых answerWait; OFFER(op1)+OFFER(op2) → ANSWER(op1)+ANSWER(op2)', async () => {
+  const { relay, sends } = makeRelay();
+  relay.markReady();
+  const pc1 = relay.getPcLike('op-1');
+  const pc2 = relay.getPcLike('op-2');
+  await pc1.setRemoteDescription({ type: 'offer', sdp: 'v=0 offer-1' });
+  await pc2.setRemoteDescription({ type: 'offer', sdp: 'v=0 offer-2' });
+  assert.deepEqual(sends.find(([ch, p]) => ch === BRIDGE_IPC.OFFER && p?.op === 'op-1')?.[1],
+    { op: 'op-1', sdp: 'v=0 offer-1' });
+  assert.deepEqual(sends.find(([ch, p]) => ch === BRIDGE_IPC.OFFER && p?.op === 'op-2')?.[1],
+    { op: 'op-2', sdp: 'v=0 offer-2' });
+
+  // оба ждут свой answer независимо
+  const a1 = pc1.createAnswer();
+  const a2 = pc2.createAnswer();
+  // ответы приходят в ОБРАТНОМ порядке — каждый резолвится своим
+  relay.handleMessage(BRIDGE_IPC.ANSWER, { op: 'op-2', sdp: 'v=0 answer-2' });
+  relay.handleMessage(BRIDGE_IPC.ANSWER, { op: 'op-1', sdp: 'v=0 answer-1' });
+  assert.deepEqual(await a2, { type: 'answer', sdp: 'v=0 answer-2' });
+  assert.deepEqual(await a1, { type: 'answer', sdp: 'v=0 answer-1' });
+  await pc1.setLocalDescription({ type: 'answer', sdp: 'v=0 answer-1' });
+  await pc2.setLocalDescription({ type: 'answer', sdp: 'v=0 answer-2' });
+  assert.deepEqual(pc1.localDescription, { type: 'answer', sdp: 'v=0 answer-1' });
+  assert.deepEqual(pc2.localDescription, { type: 'answer', sdp: 'v=0 answer-2' });
+});
+
+test('W-C2: ICE(op2) не попадает в op1; входящий ICE адресуется по op', async () => {
+  const { relay, sends } = makeRelay();
+  relay.markReady();
+  const pc1 = relay.getPcLike('op-1');
+  const pc2 = relay.getPcLike('op-2');
+  let ice1 = null;
+  let ice2 = null;
+  pc1.onicecandidate = (e) => { ice1 = e.candidate; };
+  pc2.onicecandidate = (e) => { ice2 = e.candidate; };
+  relay.handleMessage(BRIDGE_IPC.ICE, { op: 'op-2', candidate: { candidate: 'c2' } });
+  assert.equal(ice1, null, 'кандидат op2 доехал до pc1');
+  assert.deepEqual(ice2, { candidate: 'c2' });
+  // легаси-кандидат без конверта — primary
+  let icePrimary = null;
+  relay.pcLike.onicecandidate = (e) => { icePrimary = e.candidate; };
+  relay.handleMessage(BRIDGE_IPC.ICE, { candidate: 'cp' });
+  assert.deepEqual(icePrimary, { candidate: 'cp' });
+  // исходящие ICE несут op
+  await pc1.addIceCandidate({ candidate: 'c1-out' });
+  assert.deepEqual(sends.at(-1), [BRIDGE_IPC.ICE, { op: 'op-1', candidate: { candidate: 'c1-out' } }]);
+});
+
+test('W-C2: DC_OPEN/DC_FROM/DC_CLOSED keyed op — pcLike оператора получает только его каналы', () => {
+  const { relay } = makeRelay();
+  const seen = new Map();
+  const pc1 = relay.getPcLike('op-1');
+  const pc2 = relay.getPcLike('op-2');
+  pc1.ondatachannel = (e) => { seen.set('op1:' + e.channel.label, e.channel); };
+  pc2.ondatachannel = (e) => { seen.set('op2:' + e.channel.label, e.channel); };
+  relay.handleMessage(BRIDGE_IPC.DC_OPEN, { op: 'op-1', label: 'term' });
+  relay.handleMessage(BRIDGE_IPC.DC_OPEN, { op: 'op-2', label: 'term' });
+  relay.handleMessage(BRIDGE_IPC.DC_OPEN, { op: 'op-2', label: 'chat' });
+  assert.deepEqual([...seen.keys()].sort(), ['op1:term', 'op2:chat', 'op2:term']);
+  let got = null;
+  seen.get('op1:term').onmessage = (m) => { got = m.data; };
+  relay.handleMessage(BRIDGE_IPC.DC_FROM, { op: 'op-2', label: 'term', data: 'x' });
+  assert.equal(got, null, 'сообщение op2 доехало в канал op1');
+  relay.handleMessage(BRIDGE_IPC.DC_FROM, { op: 'op-1', label: 'term', data: 'y' });
+  assert.equal(got, 'y');
+  // закрытие канала op2 не трогает op1
+  relay.handleMessage(BRIDGE_IPC.DC_CLOSED, { op: 'op-2', label: 'term' });
+  assert.equal(seen.get('op2:term').readyState, 'closed');
+  assert.equal(seen.get('op1:term').readyState, 'open');
+  assert.equal(relay.hasTermAdapter(), true, 'term op1 жив');
+});
+
+test('W-C2: PAUSE(op1) не останавливает очередь op2', () => {
+  const { relay, sends } = makeRelay();
+  let ch1 = null;
+  let ch2 = null;
+  relay.getPcLike('op-1').ondatachannel = (e) => { ch1 = e.channel; };
+  relay.getPcLike('op-2').ondatachannel = (e) => { ch2 = e.channel; };
+  relay.handleMessage(BRIDGE_IPC.DC_OPEN, { op: 'op-1', label: 'term' });
+  relay.handleMessage(BRIDGE_IPC.DC_OPEN, { op: 'op-2', label: 'term' });
+  relay.handleMessage(BRIDGE_IPC.PAUSE, 'op-1');
+  ch1.send({ type: 'out', data: 'a' });
+  ch2.send({ type: 'out', data: 'b' });
+  const out = dcTos(sends).filter(([, p]) => !p.close).map(([, p]) => [p.op, p.data]);
+  assert.deepEqual(out, [['op-2', '{"type":"out","data":"b"}']], 'op1 в паузе, op2 отправляет сразу');
+  relay.handleMessage(BRIDGE_IPC.RESUME, 'op-1');
+  assert.deepEqual(dcTos(sends).at(-1), [BRIDGE_IPC.DC_TO, { op: 'op-1', label: 'term', data: '{"type":"out","data":"a"}' }],
+    'RESUME(op1) вымывает только очередь op1');
+});
+
+test('W-C2: closeOp(op1) изолирует op1 (адаптеры/ждущий answer/приказ мосту) и не трогает op2', async () => {
+  const { relay, sends } = makeRelay();
+  relay.markReady();
+  const pc1 = relay.getPcLike('op-1');
+  const pc2 = relay.getPcLike('op-2');
+  let ch1 = null;
+  let ch1Closed = false;
+  let ch2 = null;
+  pc1.ondatachannel = (e) => { ch1 = e.channel; ch1.onclose = () => { ch1Closed = true; }; };
+  pc2.ondatachannel = (e) => { ch2 = e.channel; };
+  relay.handleMessage(BRIDGE_IPC.DC_OPEN, { op: 'op-1', label: 'term' });
+  relay.handleMessage(BRIDGE_IPC.DC_OPEN, { op: 'op-2', label: 'term' });
+  await pc1.setRemoteDescription({ type: 'offer', sdp: 'v=0 o1' });
+  const pending1 = pc1.createAnswer(); // ждёт answer моста
+
+  relay.closeOp('op-1');
+  await assert.rejects(pending1, /pc оператора закрыт/);
+  assert.equal(ch1Closed, true, 'адаптер op1 закрыт');
+  assert.equal(ch2.readyState, 'open', 'канал op2 жив');
+  assert.deepEqual(sends.at(-1), [BRIDGE_IPC.DC_TO, { op: 'op-1', close: true }],
+    'closeOp приказывает мосту закрыть pc оператора (расширение payload DC_TO)');
+  assert.deepEqual(relay.ops().sort(), ['op-2']);
+
+  // op2 продолжает работать после ухода op1
+  let got = null;
+  ch2.onmessage = (m) => { got = m.data; };
+  relay.handleMessage(BRIDGE_IPC.DC_FROM, { op: 'op-2', label: 'term', data: 'still-here' });
+  assert.equal(got, 'still-here');
+});
+
+test('W-C2: hasAdapter/hasTermAdapter учитывают все op; легаси-формат payload трактуется как primary', () => {
+  const { relay } = makeRelay();
+  let primaryCh = null;
+  relay.pcLike.ondatachannel = (e) => { primaryCh = e.channel; };
+  // легаси: DC_OPEN строкой, ANSWER строкой, PAUSE без payload
+  relay.handleMessage(BRIDGE_IPC.DC_OPEN, 'term');
+  assert.ok(primaryCh, 'легаси DC_OPEN открыл канал primary');
+  assert.equal(relay.hasTermAdapter(), true);
+  relay.handleMessage(BRIDGE_IPC.DC_CLOSED, 'term');
+  assert.equal(relay.hasAdapter(), false);
+});
+
+// bridge.mjs — DOM-страница (юнит-тест невозможен): структурный контракт по
+// исходнику защищает регресс N-pc-механики моста (живая приёмка — MANUAL-QA).
+test('W-C2/W-C5: страница моста держит N pc (peers Map), per-op видео-кап и close-приказ', () => {
+  const bridgePath = path.join(path.dirname(fileURLToPath(import.meta.url)), '..', 'agent-bridge', 'bridge.mjs');
+  const src = fs.readFileSync(bridgePath, 'utf8');
+  assert.match(src, /const peers = new Map\(\)/, 'мост держит Map<op, peer> вместо одного pc');
+  assert.match(src, /api\.sendAnswer\(pc\.localDescription\.sdp, op\)/, 'answer уходит с op');
+  assert.match(src, /payload\?\.close === true/, 'мост понимает приказ closeOp (DC_TO {op, close:true})');
+  assert.match(src, /MULTIOP_VIDEO_CAP|videoAllowed\(/, 'мост соблюдает cap видеослотов (W-C5)');
+  assert.match(src, /direction = 'inactive'/, 'сверх cap видеотрансивер inactive (W-C5)');
+  assert.match(src, /video-slots-full/, 'честный session-info о занятых слотах (W-C5)');
 });
 
 // Паритет каналов моста: единый источник имён — BRIDGE_IPC в relay.mjs. preload.cjs
