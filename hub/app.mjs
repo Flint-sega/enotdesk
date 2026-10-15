@@ -2,7 +2,7 @@ import http from 'node:http';
 import fs from 'node:fs';
 import crypto from 'node:crypto';
 import { WebSocketServer } from 'ws';
-import { openHubDb } from './db.mjs';
+import { openHubDb, runHubRetention } from './db.mjs';
 import { createAuth } from './auth.mjs';
 import { createThreadsStore, sanitizeText, sanitizeEmail, sanitizeTags, sanitizeShortcut } from './threads.mjs';
 import { createSettingsStore } from './settings.mjs';
@@ -1260,6 +1260,13 @@ export function createHub(opts = {}) {
     }
   }, cfg.wsPingMs);
   pingTimer.unref();
+
+  // Дом-уборщик хаба (аудит 12.10, P2): истёкшие hub_sessions и старые
+  // email_seen — раз в час, по образцу серверного housekeeper.
+  const hubHousekeeper = setInterval(() => {
+    try { runHubRetention(db); } catch { /* БД закрывается — интервал снимется в close() */ }
+  }, 3_600_000);
+  hubHousekeeper.unref();
   attachUpgrade();
 
   async function start() {
@@ -1274,6 +1281,7 @@ export function createHub(opts = {}) {
   // graceful close: WS-сокеты (и их close-обработчики), затем HTTP-сервер, затем БД
   async function close() {
     clearInterval(pingTimer);
+    clearInterval(hubHousekeeper);
     emailChannel.stop();
     for (const ws of [...guestMeta.keys(), ...consoleMeta.keys()]) {
       try { ws.terminate(); } catch { /* уже мёртв */ }

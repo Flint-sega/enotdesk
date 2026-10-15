@@ -1,6 +1,9 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { startServer, api, adminLogin, tmpDb, wsConnect, wsAuth } from './util.mjs';
+import fs from 'node:fs';
+import path from 'node:path';
+import os from 'node:os';
 
 test('relay: upload по hostToken → 201, скачивание по ссылке, битый токен → 403', async (t) => {
   const dbPath = tmpDb(t);
@@ -143,5 +146,81 @@ test('relay: chunked (без Content-Length) → 411 (ревью 10.10), вал�
     body: Buffer.from('нормально'),
   });
   assert.equal(fine.status, 201, 'валидный путь не задет');
+  inst.close();
+});
+
+// Аудит 12.10 (P1/P2): ошибки fs-стримов релея не должны ронять сервер.
+// До фикса: 'error' у WriteStream/ReadStream без слушателя → uncaughtException
+// → крах процесса со всеми живыми сеансами (ENOSPC/ENOTDIR/EISDIR/TOCTOU).
+
+test('relay: ошибка записи (ENOTDIR) → честный 400, сервер жив (P1)', async (t) => {
+  const dbPath = tmpDb(t);
+  const relayDir = path.join(os.tmpdir(), `enot-relay-err-${Date.now()}`);
+  const { base, port, inst } = await startServer(t, { dbPath, relayDir });
+  const admin = await adminLogin(dbPath, base);
+  const reg = await api(base, 'POST', '/sessions');
+  const { sessionId, password, hostToken } = reg.json;
+  const host = wsConnect(port);
+  await wsAuth(host, { type: 'auth', role: 'host', sessionId, token: hostToken });
+  await api(base, 'POST', `/sessions/${sessionId}/claim`, { token: admin.token, body: { password } });
+
+  // каталог релея превращаем в файл: createWriteStream(<файл>/x.bin) → ENOTDIR
+  t.after(() => { try { fs.rmSync(relayDir, { force: true }); } catch { /* нет */ } });
+  fs.rmSync(relayDir, { recursive: true, force: true });
+  fs.writeFileSync(relayDir, 'now a file');
+
+  const up = await fetch(base + '/api/v1/relay', {
+    method: 'POST',
+    headers: {
+      authorization: `Bearer ${hostToken}`,
+      'content-type': 'application/octet-stream',
+      'x-file-name': 'boom.bin',
+    },
+    body: Buffer.from('данные, которым некуда писаться'),
+  });
+  assert.equal(up.status, 400, 'ошибка записи — честный отказ, не крах процесса');
+
+  // главный критерий: сервер пережил ошибку стрима
+  const health = await fetch(base + '/api/v1/health');
+  assert.equal(health.status, 200, 'процесс жив после ошибки WriteStream');
+  inst.close();
+});
+
+test('relay: ошибка чтения (EISDIR/TOCTOU) при скачивании → обрыв ответа, сервер жив (P2)', async (t) => {
+  const dbPath = tmpDb(t);
+  const relayDir = path.join(os.tmpdir(), `enot-relay-dl-${Date.now()}`);
+  t.after(() => { try { fs.rmSync(relayDir, { recursive: true, force: true }); } catch { /* нет */ } });
+  const { base, port, inst } = await startServer(t, { dbPath, relayDir });
+  const admin = await adminLogin(dbPath, base);
+  const reg = await api(base, 'POST', '/sessions');
+  const { sessionId, password, hostToken } = reg.json;
+  const host = wsConnect(port);
+  await wsAuth(host, { type: 'auth', role: 'host', sessionId, token: hostToken });
+  await api(base, 'POST', `/sessions/${sessionId}/claim`, { token: admin.token, body: { password } });
+
+  const up = await fetch(base + '/api/v1/relay', {
+    method: 'POST',
+    headers: {
+      authorization: `Bearer ${hostToken}`,
+      'content-type': 'application/octet-stream',
+      'x-file-name': 'ok.txt',
+    },
+    body: Buffer.from('нормальная загрузка'),
+  }).then((r) => r.json());
+  assert.ok(up?.id, 'загрузка прошла');
+
+  // подменяем путь на каталог: existsSync(dir)=true, createReadStream(dir) → EISDIR.
+  // stream.on('error') рвёт ответ (res.destroy()) — сам fetch может упасть с
+  // UND_ERR_SOCKET ДО чтения заголовков: обрыв на любом этапе = ожидаемый
+  // результат, критерий один — сервер жив.
+  inst.db.prepare('UPDATE relay_files SET path = ? WHERE id = ?').run(relayDir, up.id);
+  try {
+    const dl = await fetch(base + `/api/v1/relay/${up.id}?token=${up.token}`);
+    await dl.arrayBuffer().catch(() => { /* обрыв тела — ожидаемо */ });
+  } catch { /* сокет оборван до ответа — тоже ожидаемо */ }
+
+  // главный критерий: сервер пережил 'error' у ReadStream
+  const health = await fetch(base + '/api/v1/health');
+  assert.equal(health.status, 200, 'процесс жив после ошибки ReadStream');
   inst.close();
 });
