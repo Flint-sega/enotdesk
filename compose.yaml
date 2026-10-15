@@ -63,9 +63,13 @@ services:
     # EnotDesk Hub — тикет-система + чат-виджет (ADR 0023), тот же образ, своя БД.
     # Включается профилем: COMPOSE_PROFILES=hub в .env (quick-setup пишет сам при HUB=1).
     # Наружу порт НЕ публикуется — /hub/, /widget.js, /w, /join, /api/hub/* отдаёт Caddy.
+    # ВАЖНО (волна A, найдено живым прогоном): command обязателен — без него образ
+    # стартует своим дефолтным CMD (server/main.mjs), и в hub-контейнере поднимался
+    # второй экземпляр СЕРВЕРА на 8080 вместо хаба на 8090 → Caddy отдавал 502.
     profiles: ["hub"]
     build: .
     image: enotdesk-server:local
+    command: ["node", "hub/main.mjs"]
     restart: unless-stopped
     <<: *hardening
     tmpfs:

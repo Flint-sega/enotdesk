@@ -1171,10 +1171,12 @@ docker_install() {
   if [ "$FETCH_BUILDS" = "1" ]; then
     info "$(M "скачиваю клиентские сборки в /downloads (внутри контейнера)" "downloading client builds to /downloads (inside the container)")"
     cat > "$SETUP_TMP/docker-fetch.mjs" <<'NODEEOF'
+import { createHash } from "node:crypto";
+import fs from "node:fs";
 const repo = process.env.ENOT_SETUP_REPO || "Flint-sega/enotdesk";
 const dist = process.env.ENOT_DIST_DIR || "/data/dist";
 const api = `https://api.github.com/repos/${repo}/releases/latest`;
-const sha = (buf) => require("node:crypto").createHash("sha256").update(buf).digest("hex");
+const sha = (buf) => createHash("sha256").update(buf).digest("hex");
 try {
   const meta = await (await fetch(api)).json();
   const tag = meta.tag_name;
@@ -1187,7 +1189,6 @@ try {
   }).filter(Boolean));
   const want = ["EnotDesk-win-x64.exe", "EnotDesk-win-x64-setup.exe", "EnotDesk-mac-arm64.zip",
     ...[...sums.keys()].filter((n) => /^EnotDesk-[0-9][0-9.a-z_-]*-linux-x86_64\.AppImage$/.test(n))];
-  const fs = require("node:fs");
   fs.mkdirSync(dist, { recursive: true });
   const ok = [];
   for (const name of want) {
@@ -1203,7 +1204,7 @@ try {
   console.log(`builds fetch failed: ${e.message}`);
 }
 NODEEOF
-    if ( cd "$DOCKER_DIR" && docker compose exec -T -e ENOT_SETUP_REPO="$REPO" enotdesk node - < "$SETUP_TMP/docker-fetch.mjs" ); then
+    if ( cd "$DOCKER_DIR" && docker compose exec -T -e ENOT_SETUP_REPO="$REPO" enotdesk node --input-type=module - < "$SETUP_TMP/docker-fetch.mjs" ); then
       info "$(M "сборки — в /downloads" "builds are in /downloads")"
     else
       info "$(M "ВНИМАНИЕ: не удалось скачать сборки — /downloads пустая, доберите вручную" "WARNING: could not download builds — /downloads stays empty")"
