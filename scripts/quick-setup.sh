@@ -883,7 +883,8 @@ verify_sha256() { # $1=file $2=checksums $3=name
     die "$(M "checksums-sha256.txt не скачался — установить без проверки SHA256 нельзя (доступность github.com обязательна)" "checksums-sha256.txt could not be downloaded — installing without a SHA256 check is refused (github.com must be reachable)")"
   fi
   local want got
-  want="$(grep " $3\$" "$2" 2>/dev/null | awk '{print $1}' | tail -n 1 || true)"
+  # релизные checksums пишут имена как './<name>', и голым '<name>' — берём оба
+  want="$(grep -E "[ /]$3\$" "$2" 2>/dev/null | awk '{print $1}' | tail -n 1 || true)"
   if [ -z "$want" ]; then
     die "$(M "в checksums-sha256.txt нет строки для $3 — установить без проверки SHA256 нельзя (релиз не полон?)" "checksums-sha256.txt has no line for $3 — installing without a SHA256 check is refused (incomplete release?)")"
   fi
@@ -1184,7 +1185,7 @@ try {
   const base = `https://github.com/${repo}/releases/download/${tag}`;
   const sumsText = await (await fetch(`${base}/checksums-sha256.txt`)).text();
   const sums = new Map(sumsText.split(/\r?\n/).map((l) => {
-    const m = /^([0-9a-f]{64})\s+\.\/(.+)$/.exec(l.trim());
+    const m = /^\s*([0-9a-f]{64})\s+(?:\.\/)?(.+?)\s*$/.exec(l);
     return m ? [m[2], m[1]] : null;
   }).filter(Boolean));
   const want = ["EnotDesk-win-x64.exe", "EnotDesk-win-x64-setup.exe", "EnotDesk-mac-arm64.zip",
