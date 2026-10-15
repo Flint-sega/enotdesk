@@ -502,13 +502,26 @@ export function createServer(opts = {}) {
           resolve();
           return;
         }
-        out.write(chunk);
+        // backpressure: без drain медленный диск буферизует до relayMax в ОЗУ
+        // на каждый запрос (аудит 12.10, P3)
+        if (!out.write(chunk)) {
+          req.pause();
+          out.once('drain', () => req.resume());
+        }
       });
       // 201 отдаём только когда данные ДОШЛИ до диска: resolve по 'end' запроса
       // гонял флаш стрима с ответом — мгновенный download ловил 410/частичный
       // файл (флейк relay-теста, найден 30.09); честная точка — 'close' стрима
       req.on('end', () => out.end());
       req.on('error', () => { failed = true; out.destroy(); });
+      // ошибка записи (ENOSPC/EACCES/ENOTDIR) без слушателя — uncaughtException
+      // и крах всего сервера со всеми сеансами (аудит 12.10, P1)
+      out.on('error', () => {
+        failed = true;
+        try { fs.unlinkSync(filePath); } catch { /* уже не существует */ }
+        try { out.destroy(); } catch { /* уже уничтожен */ }
+        resolve();
+      });
       out.on('close', () => resolve());
     });
     if (aborted || failed || total === 0) {
@@ -754,6 +767,10 @@ export function createServer(opts = {}) {
       });
       const stream = fs.createReadStream(row.path);
       res.on('close', () => stream.destroy());
+      // файл мог удалиться sweep'ером между existsSync и open (TOCTOU), или
+      // путь — каталог: 'error' без слушателя ронял весь сервер (аудит 12.10, P2;
+      // парный /downloads-files это делает в streamOut — тут забыли)
+      stream.on('error', () => res.destroy());
       stream.pipe(res);
       return;
     }

@@ -166,6 +166,19 @@ function migrate(db) {
   }
 }
 
+// Ретенция хаба (аудит 12.10, P2): hub_sessions (внутри AES-GCM-шифротекст
+// bearer) и email_seen росли бесконечно — брошенные сессии и старые
+// Message-ID не чистились никогда. Сессии сносим после истечения + грэйс
+// (по умолчанию сутки, чтобы живой 12-часовой логин не снёсся на стыке часа);
+// email_seen — окно дедупа на рестарты поллера (IMAP и так отдаёт только unseen).
+export function runHubRetention(db, { nowMs = Date.now(), sessionGraceMs = 86_400_000, emailDays = 90 } = {}) {
+  const sessionCut = new Date(nowMs - sessionGraceMs).toISOString();
+  const sessions = db.prepare('DELETE FROM hub_sessions WHERE expires_at < ?').run(sessionCut).changes;
+  const emailCut = new Date(nowMs - emailDays * 86_400_000).toISOString();
+  const emails = db.prepare('DELETE FROM email_seen WHERE created_at < ?').run(emailCut).changes;
+  return { sessions, emails };
+}
+
 export function openHubDb(dbPath) {
   const db = new DatabaseSync(dbPath);
   db.exec('PRAGMA journal_mode = WAL; PRAGMA foreign_keys = ON;');

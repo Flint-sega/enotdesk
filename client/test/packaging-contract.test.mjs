@@ -198,3 +198,11 @@ test('packaging: видео вне Windows — честный video-unsupported-
   assert.match(mainJs, /firstUpdateCheck = setTimeout/, 'первый чек апдейтов уходит с критического пути старта');
   assert.match(mainJs, /}, 10_000\);/, 'задержка первого чека — 10 с');
 });
+
+// Аудит 12.10 (P3): svc-diag в видео-канале писал ТЕЛА событий ввода (JSON с
+// клавишами — оператор мог набирать пароль на удалённой машине) в
+// %ProgramData%/EnotDesk/svc-diag.log. Контракт: только тип события.
+test('packaging: svc-diag не пишет тела ввода — только тип события', () => {
+  assert.ok(!mainJs.includes('input msg: ${m.data'), 'логирование сырого тела ввода запрещено');
+  assert.match(mainJs, /input msg: type=/, 'логируется только ev.type');
+});

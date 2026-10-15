@@ -1523,9 +1523,11 @@ function startAgentMode() {
       if (!videoHost) return; // платформа без видео: каналы честно игнорируются
       ch.onmessage = (m) => {
         if (typeof m?.data !== 'string') return;
-        svcDiag.write('video', `input msg: ${m.data.slice(0, 60)}`);
         let ev;
         try { ev = JSON.parse(m.data); } catch { return; }
+        // svc-diag: только тип события, без тела — в JSON ввода бывают пароли,
+        // набираемые оператором на удалённой машине (аудит 12.10, P3)
+        svcDiag.write('video', `input msg: type=${typeof ev?.type === 'string' ? ev.type : 'unknown'}`);
         // privacy MVP: управление дисплеем через тот же канал (v0.6)
         if (ev?.display === 'off' || ev?.display === 'on') {
           videoHost.sendCommand({ cmd: ev.display === 'off' ? 'sleep' : 'wake' });
