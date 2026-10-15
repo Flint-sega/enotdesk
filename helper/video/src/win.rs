@@ -156,6 +156,10 @@ impl PipeServer {
         // NAMED_PIPE_MODE (metadata quirk).
         let sa = pipe_security_attributes()?;
         unsafe {
+            // Приёмка 16.10 (Соня): стабильно WIN32_ERROR(87). GetLastError
+            // обязан читаться НЕМЕДЛЕННО после CreateNamedPipeW — до него
+            // стоял LocalFree(SD), который перезаписывает last-error ячейку
+            // потока, и реальный код (мог быть ACCESS_DENIED) замывался в 87.
             let h = CreateNamedPipeW(
                 PCWSTR(PIPE_NAME_WIDE.as_ptr()),
                 PIPE_ACCESS_DUPLEX | FILE_FLAGS_AND_ATTRIBUTES(PIPE_REJECT_REMOTE_CLIENTS.0),
@@ -166,12 +170,16 @@ impl PipeServer {
                 0,
                 Some(&sa),
             );
+            let create_err = if h.is_invalid() { Some(GetLastError()) } else { None };
             // The kernel copied the SD inside CreateNamedPipeW; the process
             // copy is not needed past that point (no child inherits handles).
             let _ = LocalFree(HLOCAL(sa.lpSecurityDescriptor));
-            if h.is_invalid() {
-                let e = GetLastError();
-                return Err(format!("CreateNamedPipeW failed, GetLastError={e:?}"));
+            if let Some(e) = create_err {
+                return Err(format!(
+                    "CreateNamedPipeW failed, GetLastError={e:?} (sddl-len={}, openMode=0x{:X})",
+                    std::mem::size_of::<SECURITY_ATTRIBUTES>(),
+                    (PIPE_ACCESS_DUPLEX | FILE_FLAGS_AND_ATTRIBUTES(PIPE_REJECT_REMOTE_CLIENTS.0)).0
+                ));
             }
             Ok(PipeServer {
                 raw: h,
