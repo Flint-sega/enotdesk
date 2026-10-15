@@ -1348,6 +1348,49 @@ tarball волны через --tarball; установка non-interactive: --a
   кастомный ENOT_TRUSTED_PROXY пережил обновление (merge, дедуп ключей).
 - D8 снос стека — docker compose down (задокументировано).
 
+### 15.10.2026 — волна E «хаб и хвосты живой приёмки»: хаб-консоль, виджет на чужом сайте, join TTL/Linux, терминал-audit, bat-идемпотентность — PASS + 2 живые баги закрыты
+
+Стенд: staging VM100 (:8080 сервер, :8081 комбинированный фронт сервер+хаб), виджет-страница
+«чужого» сайта http://192.168.100.50:8099/ (хост лабы), origins allowlist = 192.168.100.50:8099.
+
+- **H-C1 TOTP-passthrough (live)**: включение 2FA на staging-админе (enable→confirm кодом RFC6238) →
+  хаб-логин без кода = 401 `totp_required` насквозь; с кодом = 200 (полный 2FA-путь через SSO);
+  disable → без кода снова 200; прочие сессии честно умирают при disable (endOperatorSessions).
+- **H-C2/C5 фильтры/поиск/пагинация** (REST /api/hub/threads): status=open 2/2; q=«Кофе» → 1 тред;
+  limit=1 offset 0/1 → разные треды, total=2.
+- **H-C3 canned**: POST /canned #fresh shared → листинг; #-расширение в консоли — hub/web/app.mjs
+  (applyCanned/filter по префиксу).
+- **H-C4 presence**: консоль-WS открывает online (agentsOnline=1), закрытие сокета → offline — честно.
+- **H-S1/S2/S3 виджет на чужом сайте (live)**: loader.js кнопка+iframe; настройки/присутствие по REST
+  с Origin-эхом из allowlist; pre-chat Name/Email; consent-гейт честно блокировал без чекбокса.
+  **БАГА-1 (закрыта 353fe43)**: `w.mjs` рисовал consent-строку ДО применения настроек из ready →
+  при consentRequired=true гость видел требование согласия без чекбокса и застревал навсегда.
+  После фикса: чекбокс виден, согласие → чат (presence online), сообщение гостя → тред с профилем
+  из pre-chat (Виктор Посетитель/victor@demo.coffee), ответ агента доставлен гостю live (WS msg).
+- **H-J1 join TTL 10 мин (live)**: после истечения /join → 404 «Ссылка недействительна»,
+  report → 410 `gone`.
+- **H-J4 enotdesk://join на Linux (live, VM103)**: GUI-клиент (тот же бинарник, что агент) запущен
+  со ссылкой в argv: сеанс 551639879 создан, хаб авто-claim, диалог «Запрос подключения» на рабочем
+  столе (скриншот .local/lab/hj4-vm103.png), закрытие хоста → system «Сеанс завершён (host-lost)».
+  Грабли: ссылка обязана вести на комбинированный фронт (:8081 лабы), не на голый :8080 —
+  report идёт на `{server}/api/hub/*`; .desktop на VM103 поправлен (Exec + %u).
+- **W-U11 терминал-хвосты**: term-busy/idle — юнит-тесты client/test/term.test.mjs (живой терминал
+  доказан ранее, волна 0.6.19); **audit term.open/close live** (WS-скрипт .local/lab/wu11-term-audit.mjs):
+  heartbeat-переходы termActive → ровно по одной записи term.open/term.close, дубль состояния не
+  дублирует, актёр = машина, unattended=true.
+- **windows-install.bat идемпотентность (live, VM101, 3 прогона)**: повторный запуск по живой службе
+  идёт веткой sc config (лог: «уже установлена… обновлена конфигурация»), rc=0, дублей службы нет.
+  **БАГА-2 (закрыта 353fe43)**: bat писал settings.json без allowInsecureHttp → для http://-серверов
+  клиент отвергал serverUrl и молча уходил на дефолт 127.0.0.1:8080 (агент ECONNREFUSED).
+  Фикс: allowInsecureHttp=true для http://-адресов; прогоны 3×rc=0, агент online, файл
+  содержит serverUrl+allowInsecureHttp:true.
+- Попутно (лаба): VM101 зависла в WinRE («Startup Repair couldn't repair») — откат на clean-снапшот
+  06.10, агент 0.6.19 (sha256 по релизным checksums), переприписка машины (токен снапшота был
+  отозван при жизни VM): новая запись enotdesk-win10-a1-v2, код через Environment службы.
+  Флот: win11 0.6.18, linux 0.6.19, win10-a1-v2 0.6.19 — все online.
+
+Гейт: npm test 679/680 pass (1 skip — win32 koffi-гвард), lint чисто. Серверный код не менялся.
+
 **Живьём найдено и закрыто в этой волне (5 дыр установки):** web/assets/renderer не
 COPY'ились в docker-образ (/operator 500); docker-контекст не содержал код приложения
 (build на чистой машине падал); hub-сервис без command запускал сервер (502 /hub);
