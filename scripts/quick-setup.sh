@@ -413,12 +413,22 @@ preflight_docker() {
   fi
   if ! docker compose version >/dev/null 2>&1; then
     # compose-плагин: имя пакета зависит от дистрибутива (Ubuntu: docker-compose-v2;
-    # Debian: docker-compose-plugin). Пробуем по порядку, неуспех — честный отказ.
+    # Debian: docker-compose-plugin в сторонних репо НЕ поставляем — ставим
+    # дистрибутивный docker-compose (standalone v2) и подключаем его как
+    # CLI-плагин симлинком в cli-plugins — официальный протокол compose v2).
     if command -v apt-get >/dev/null 2>&1; then
       info "$(M "compose-плагин не найден — ставлю из пакетов дистрибутива" "compose plugin not found — installing from distro packages")"
       DEBIAN_FRONTEND=noninteractive apt-get install -y docker-compose-v2 >/dev/null 2>&1 \
-        || DEBIAN_FRONTEND=noninteractive apt-get install -y docker-compose-plugin >/dev/null 2>&1 \
         || true
+      if ! docker compose version >/dev/null 2>&1; then
+        if DEBIAN_FRONTEND=noninteractive apt-get install -y docker-compose >/dev/null 2>&1 \
+           && command -v docker-compose >/dev/null 2>&1 \
+           && docker-compose version >/dev/null 2>&1; then
+          mkdir -p /usr/local/lib/docker/cli-plugins
+          ln -sfn "$(command -v docker-compose)" /usr/local/lib/docker/cli-plugins/docker-compose
+          info "$(M "docker-compose (v2) подключён как CLI-плагин" "docker-compose (v2) wired as the CLI plugin")"
+        fi
+      fi
     fi
     if ! docker compose version >/dev/null 2>&1; then
       die "$(M "docker compose (v2) не найден и пакет не поставился — нужен плагин compose: docker compose version" "docker compose (v2) not found and the package did not install — the compose plugin is required: docker compose version")"
