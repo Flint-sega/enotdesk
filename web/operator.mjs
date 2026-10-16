@@ -259,6 +259,7 @@ function showConnectForm() {
   state.connect = null;
   pendingClip = null;
   hide($('btn-op-clip-paste')); // текст сеанса не переживает сеанс
+  hideJoinCard(); // G1: пароль сеанса для коллег не переживает сеанс
   showOnly('view-connect');
   hide($('op-term')); // панель терминала живёт только внутри сеанса
   hide($('btn-term-retry'));
@@ -432,7 +433,7 @@ async function doOperatorAnswer(offerSdp) {
     } else if (ch.label === 'chat') {
       ch.onmessage = (m) => {
         const msg = parseChatMessage(m.data);
-        if (msg) appendChat('client', msg.text);
+        if (msg) appendIncomingChat(msg);
       };
     } else if (ch.label === 'clip') {
       ch.onmessage = (m) => {
@@ -470,7 +471,7 @@ async function machineOffer() {
     const chatCh = pc.createDataChannel('chat');
     chatCh.onmessage = (m) => {
       const msg = parseChatMessage(m.data);
-      if (msg) appendChat('client', msg.text);
+      if (msg) appendIncomingChat(msg);
     };
     const fileCh = pc.createDataChannel('file');
     fileCh.binaryType = 'arraybuffer';
@@ -712,16 +713,27 @@ async function onSignal(msg) {
 
 // ---- чат / буфер / файлы (операторская сторона session-services.js) ----
 
-function appendChat(whoKey, value) {
+function appendChat(whoKey, value, opName) {
   const log = $('op-chat-log');
   const line = document.createElement('p');
   line.className = `chat-line chat-${whoKey === 'you' ? 'me' : 'them'}`;
   const name = document.createElement('strong');
-  name.textContent = `${t(`chat.${whoKey}`)}: `;
+  // G2: сообщения другого оператора подписаны хостом («Оператор {name}»);
+  // без имени (старый сервер не передал) — прежний ключ chat.operator
+  const label = whoKey === 'operator' && opName ? t('op.messageBy', { name: opName }) : t(`chat.${whoKey}`);
+  name.textContent = `${label}: `;
   line.appendChild(name);
   line.appendChild(document.createTextNode(value));
   log.appendChild(line);
   log.scrollTop = log.scrollHeight;
+}
+
+// Входящее сообщение чата: метка автора от хоста (G2) — 'operator' значит
+// коллега-оператор, 'host' или отсутствие поля — хост (старые хосты поле
+// не ставят, подпись остаётся прежней «Клиент»).
+function appendIncomingChat(msg) {
+  if (msg.from === 'operator') appendChat('operator', msg.text, typeof msg.name === 'string' ? msg.name : '');
+  else appendChat('client', msg.text);
 }
 
 function sendChat() {
@@ -1169,6 +1181,39 @@ function closeMachineClaim() {
   hide($('machines-claim'));
 }
 
+// G1 (мультиоператор машинных сеансов): после успешного claim сервер отдаёт
+// пароль сеанса — карточка «Подключение коллег» показывает ID и пароль, чтобы
+// передать их коллеге для обычной join-формы (ID + пароль). Значения
+// выделяются кликом целиком (user-select:all + Range) — копирование без
+// clipboard-API, чтобы не размножать точки записи буфера (SEC-002).
+function showJoinCard(sessionId, password) {
+  if (typeof sessionId !== 'string' || !sessionId) return;
+  if (typeof password !== 'string' || !password) return;
+  text($('op-join-id'), sessionId);
+  text($('op-join-pass'), password);
+  $('op-join-id').title = t('web.machines.joinCopyHint');
+  $('op-join-pass').title = t('web.machines.joinCopyHint');
+  show($('op-join-card'));
+}
+
+function hideJoinCard() {
+  text($('op-join-id'), '');
+  text($('op-join-pass'), '');
+  hide($('op-join-card'));
+}
+
+function selectNodeContents(el) {
+  const range = document.createRange();
+  range.selectNodeContents(el);
+  const sel = document.getSelection();
+  sel.removeAllRanges();
+  sel.addRange(range);
+}
+
+for (const id of ['op-join-id', 'op-join-pass']) {
+  $(id)?.addEventListener('click', (e) => selectNodeContents(e.currentTarget));
+}
+
 function showTeam() {
   showOnly('view-team');
   void teamRoute({ api, t });
@@ -1367,12 +1412,14 @@ function wire() {
         text($('machines-claim-error'), res.body?.error?.message ?? t('common.serverError'));
         return;
       }
-      const { sessionId, claimId, machineId } = res.body;
+      const { sessionId, claimId, machineId, password } = res.body;
       closeMachineClaim();
       text($('machines-error'), '');
       // дальше — существующий flow machine-сеанса: approved → терминал
       state.connect = { sessionId, claimId, machineId: machineId ?? claimMachine.id };
       text($('op-chat-log'), ''); // лог чата не переживает сеанс (приёмка C+D, minor UI)
+      // G1: пароль сеанса — коллега подключается join-формой по ID+паролю
+      showJoinCard(sessionId, password);
       showOnly('op-waiting');
       openSignal();
     } finally {

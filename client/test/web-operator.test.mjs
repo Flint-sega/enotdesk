@@ -220,3 +220,16 @@ test('C+D (minor UI): лог чата чистится в обеих точка�
   assert.ok(points.length >= 2,
     `лог чата (#op-chat-log) обязан очищаться при старте нового сеанса — форма подключения и claim машины (найдено ${points.length})`);
 });
+
+// ---- G1 (волна G, 16.10): карточка «Подключение коллег» машинного сеанса ----
+test('G1: машинный claim показывает карточку «Подключение коллег» (ID+пароль); пароль не переживает сеанс', () => {
+  for (const id of ['op-join-card', 'op-join-id', 'op-join-pass']) {
+    assert.ok(new RegExp(`id="${id}"`).test(html), `нет id «${id}» в web/operator.html`);
+  }
+  assert.match(operatorJs, /showJoinCard\(sessionId, password\)/, 'карточка наполняется паролем из claim-ответа');
+  assert.match(operatorJs, /function showConnectForm\(\)[\s\S]{0,400}hideJoinCard\(\)/, 'карточка гасится при разборе сеанса (пароль не переживает сеанс)');
+  // копирование без clipboard-API (SEC-002: writeText на странице ровно один):
+  // клик выделяет значение целиком — user-select:all + Range
+  assert.match(operatorJs, /selectNodeContents/, 'выделение кликом вместо clipboard-API');
+  assert.match(html, /user-select:all/, 'значение карточки выделяется целиком стилем');
+});

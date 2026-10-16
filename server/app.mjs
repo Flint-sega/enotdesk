@@ -1277,7 +1277,9 @@ export function createServer(opts = {}) {
         auditLog(db, user.id, 'session.join', s.id, {});
         const rt = live.get(s.id);
         if (rt?.hostWs) send(rt.hostWs, { type: 'operator-joined', claimId, operator: op });
-        return ok(res, 201, { sessionId: s.id, claimId, operator: op, state: s.state, joined: true });
+        // G1: machineId — чтобы присоединившийся web-оператор знал, что сеанс
+        // машинный (офферит оператор), как в /sessions/:id/connect
+        return ok(res, 201, { sessionId: s.id, claimId, operator: op, state: s.state, joined: true, machineId: s.machine_id ?? null });
       }
       const claimId = newClaimId();
       const now = new Date().toISOString();
@@ -1499,15 +1501,21 @@ export function createServer(opts = {}) {
       const claimId = newClaimId();
       const nowIso = new Date().toISOString();
       const lease = new Date(Date.now() + cfg.leaseMs).toISOString();
+      // G1 (мультиоператор машинных сеансов, решение владельца 16.10): пароль
+      // уходит claim-нувшему оператору один раз — коллега подключается обычным
+      // join-путём attended (POST /sessions/:id/claim {password}). В аудит пароль
+      // не пишется (как и у attended), в БД — только хеш.
+      const password = sessionPassword(8);
       db.prepare(`INSERT INTO sessions (id, password_hash, host_token_hash, state, operator_id, claim_id, machine_id, created_at, started_at, lease_expires_at)
                   VALUES (?,?,?,?,?,?,?,?,?,?)`)
-        .run(sessionId, hashPassword(sessionPassword(8)), machine.agent_token_hash, 'pending-consent',
+        .run(sessionId, hashPassword(password), machine.agent_token_hash, 'pending-consent',
              user.id, claimId, machine.id, nowIso, nowIso, lease);
       auditLog(db, machine.id, 'machine.claim', sessionId, { unattended: true, reason, operatorId: user.id });
       // W1: водяной знак «недавние сверху» для панели машин оператора
       machinesStore.markClaimed(machine.id, user.id);
       return ok(res, 201, {
         sessionId, claimId, machineId: machine.id,
+        password,
         operator: { id: user.id, name: user.name },
         state: 'pending-consent',
       });

@@ -11,6 +11,7 @@ import nodeDgram from 'node:dgram';
 import { createInputGate } from './protocol.mjs';
 import { createInputArbiter } from './input-arbiter.mjs';
 import { createWakeSender } from './wol.mjs';
+import { parseChatMessage, chatMessage } from './chat.mjs';
 
 // HTTP-клиент агента: /agent/* плюс host-решение по сеансу. Токен машины
 // передаётся в каждый вызов и нигде не кэшируется здесь — им владеет цикл.
@@ -279,6 +280,29 @@ export function createAgent({ api, signal, native, policy, termHost, rtc, notify
     const pendingIce = new Map(); // op → [candidate] — ранние кандидаты до offer (чужой op не трогает pc)
     const ICE_QUEUE_CAP = 64; // потолок раннего буфера: мусорный op не копит память (сигнал-лимит сервера — 150/окно)
     let rtcObj = null; // {getPcLike(op,{claim}), closeOp(op), ops()} — мост волны C или легаси-обёртка одного pcLike
+    // G2 (мультиоператор machine-сеанса): чат-каналы операторов для релея их
+    // сообщений друг другу + отображаемые имена (из claim/operator-joined).
+    const opChats = new Map(); // op → chat-канал оператора
+    const opNames = new Map(); // op → имя оператора (подпись автора в релее)
+    const opName = (op) => {
+      const nm = opNames.get(op);
+      return typeof nm === 'string' && nm ? nm : '';
+    };
+    // Релей сообщения оператора остальным (G2): метку автора ставит хост —
+    // оператор не может подписаться чужим именем или «хостом» сам; старые
+    // получатели (≤0.6.20) лишние поля from/name игнорируют и видят текст.
+    const relayOperatorChat = (op, m) => {
+      const msg = parseChatMessage(typeof m?.data === 'string' ? m.data : '');
+      if (!msg) return;
+      const name = opName(op);
+      const wire = chatMessage(msg.text, { from: 'operator', ...(name ? { name } : {}) });
+      if (!wire) return;
+      for (const [other, ch] of opChats) {
+        if (other === op) continue; // отправителю не эхаем
+        if (ch.readyState !== 'open') continue;
+        try { ch.send(wire); } catch { /* канал закрывается */ }
+      }
+    };
     // Ответ/ICE адресуются владельцу (to=op): fan-out'ом answer уходил бы ВСЕМ
     // операторам и чужие pc пытались бы применить его (W-C1).
     const signalTo = (op) => (op !== 'primary' ? { to: op } : {});
@@ -318,8 +342,25 @@ export function createAgent({ api, signal, native, policy, termHost, rtc, notify
         video?.handleInputChannel?.(gated);
         return;
       }
-      // W-U6 (v0.5): чат/файлы machine-сеанса — обработка в main (тост/запись
-      // файла); нет services — как раньше, неизвестные каналы закрываются.
+      // W-U6 (v0.5) + G2: чат machine-сеанса — релей сообщения оператора
+      // остальным с меткой автора + тост консольному пользователю сервисом
+      // (v0.5), если сервис есть; файлы — сервисом, как раньше. Нет services —
+      // chat-канал всё равно живёт релеем, неизвестные каналы закрываются.
+      if (ch.label === 'chat') {
+        opChats.set(op, ch);
+        const svcHandled = services?.handleChannel?.('chat', ch) === true;
+        if (svcHandled) {
+          // сервисный обработчик (тост) уже на канале — составляем релей поверх
+          const svcOnMessage = ch.onmessage;
+          ch.onmessage = (m) => {
+            if (typeof svcOnMessage === 'function') svcOnMessage(m);
+            relayOperatorChat(op, m);
+          };
+        } else {
+          ch.onmessage = (m) => relayOperatorChat(op, m);
+        }
+        return;
+      }
       if (services?.handleChannel?.(ch.label, ch)) return;
       try { ch.close(); } catch { /* уже закрыт */ }
     };
@@ -395,6 +436,8 @@ const unsubscribe = client.onMessage((msg) => {
       gate.onSignal(msg);
       if (gate.needInputReset()) native.end();
       if (msg.type === 'claim' && msg.claimId) {
+        // G2: имя автора claim'а — для подписи его сообщений чата в релее
+        if (typeof msg.operator?.name === 'string' && msg.operator.name) opNames.set(msg.claimId, msg.operator.name);
         // причина/PIN уже проверены сервером до claim — агент соглашается
         api.decision({ sessionId: body.sessionId, token, claimId: msg.claimId, allow: true })
           .then((r) => {
@@ -413,6 +456,9 @@ const unsubscribe = client.onMessage((msg) => {
         // W-C2: pc поднимется по offer самого оператора (офферит оператор);
         // участник фиксируется для арбитража ввода (W-C4) и аудита.
         arbiter.attach(msg.claimId);
+        // G2: отображаемое имя присоединившегося — для подписи его чата
+        const joinedName = msg.operator?.name ?? msg.operator?.login;
+        if (typeof joinedName === 'string' && joinedName) opNames.set(msg.claimId, joinedName);
         log.info(`Агент: оператор ${msg.operator?.name ?? msg.operator?.login ?? msg.claimId} присоединился (${msg.claimId})`);
       }
       if (msg.type === 'operator-left' && msg.claimId) {
@@ -421,6 +467,7 @@ const unsubscribe = client.onMessage((msg) => {
         // ввод ушедшего освобождается без автопередачи (W-C4)
         arbiter.drop(msg.claimId);
         opInputs.delete(msg.claimId);
+        opChats.delete(msg.claimId); // G2: чат-канал ушедшего не участвует в релее
         const slot = slots.get(msg.claimId);
         // Ревью 16.10 P3-2: буфер ранних кандидатов чистится и без слота —
         // цикл claim/ICE/left без offer больше не копит Map вечно.

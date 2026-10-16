@@ -436,6 +436,61 @@ test('полный цикл: код → регистрация → claim с пр
   assert.equal(m.os, 'linux');
 });
 
+// G1 (волна G, 16.10): машинный claim отдаёт пароль сеанса один раз — коллега
+// подключается СУЩЕСТВУЮЩИМ join-путём attended (POST /sessions/:id/claim
+// {password}); пароль не попадает в аудит (в БД — только хеш).
+test('G1: машинный claim отдаёт password; второй оператор подключается по ID+паролю; пароля нет в аудите', async (t) => {
+  const { base, port, admin } = await setup(t);
+  const op1 = await makeUser(base, admin, 'operator', 'op-g1-first');
+  const op2 = await makeUser(base, admin, 'operator', 'op-g1-second');
+  const { created, reg } = await onboardAndRegister(base, admin);
+
+  const claimed = await api(base, 'POST', `/machines/${created.machine.id}/claim`, { token: op1.token, body: { reason: 'Обслуживание кассы' } });
+  assert.equal(claimed.status, 201);
+  const { sessionId, claimId, password } = claimed.json;
+  assert.ok(typeof password === 'string' && password.length >= 8, 'claim-ответ несёт пароль сеанса для передачи коллеге');
+
+  // пароль не утекает в аудит: ни в detail machine.claim, ни куда-либо в журнал
+  const audit = await api(base, 'GET', '/audit?limit=100', { token: admin.token });
+  const claimEntry = audit.json.items.find((a) => a.action === 'machine.claim' && a.targetId === sessionId);
+  assert.ok(claimEntry, 'успешный claim в аудите');
+  assert.equal(claimEntry.detail.password, undefined, 'в detail записи machine.claim нет пароля');
+  assert.ok(!JSON.stringify(audit.json).includes(password), 'пароля нет нигде в ответе аудита');
+
+  // агент-хост на связи: получит claim, approve, а после join — operator-joined
+  const host = wsConnect(port);
+  await wsAuth(host, { type: 'auth', role: 'host', sessionId, token: reg.token });
+  await host.wait((m) => m.type === 'claim');
+  const op1ws = wsConnect(port);
+  await wsAuth(op1ws, { type: 'auth', role: 'operator', sessionId, token: op1.token, claimId });
+  await api(base, 'POST', `/sessions/${sessionId}/decision`, { token: reg.token, body: { claimId, allow: true } });
+  await host.wait((m) => m.type === 'approved');
+
+  // неверный пароль — честный отказ join (generic, без подсказок)
+  const badJoin = await api(base, 'POST', `/sessions/${sessionId}/claim`, { token: op2.token, body: { password: 'не-тот-пароль' } });
+  assert.equal(badJoin.status, 400);
+
+  // коллега подключается существующим join-путём по паролю из claim-ответа
+  const joined = await api(base, 'POST', `/sessions/${sessionId}/claim`, { token: op2.token, body: { password } });
+  assert.equal(joined.status, 201);
+  assert.equal(joined.json.joined, true, 'это присоединение к живому сеансу, не новый claim');
+  assert.equal(joined.json.sessionId, sessionId);
+  assert.ok(joined.json.claimId && joined.json.claimId !== claimId, 'у коллеги свой claimId');
+  assert.equal(joined.json.machineId, created.machine.id, 'join-ответ знает machineId (офферит оператор)');
+
+  // хост узнаёт о втором операторе с его именем (G2: подпись автора чата);
+  // operator-joined приходит и на WS-auth op1, поэтому ждём именно claimId коллеги
+  const joinedMsg = await host.wait((m) => m.type === 'operator-joined' && m.claimId === joined.json.claimId);
+  assert.equal(joinedMsg.operator.name, op2.user.name);
+
+  // join второго оператора — в аудите; пароль и туда не попал
+  const audit2 = await api(base, 'GET', '/audit?limit=100', { token: admin.token });
+  const joinEntry = audit2.json.items.find((a) => a.action === 'session.join' && a.targetId === sessionId);
+  assert.ok(joinEntry, 'session.join коллеги в аудите');
+  assert.equal(joinEntry.actorId, op2.user.id);
+  assert.ok(!JSON.stringify(audit2.json).includes(password), 'пароля нет в аудите и после join');
+});
+
 test('политика PIN: без PIN не войти, неверный — отказ, верный — впускает; PIN не утекает в аудит', async (t) => {
   const { base, admin } = await setup(t);
   const operator = await makeUser(base, admin, 'operator', 'op-pin');
