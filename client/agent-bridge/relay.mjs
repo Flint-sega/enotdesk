@@ -28,7 +28,7 @@ export const BRIDGE_IPC = Object.freeze({
   ANSWER: 'enot:rtc-answer', // мост → main: {op, sdp} | sdp (legacy=primary)
   DC_OPEN: 'enot:term-dc-open', // мост → main: {op, label} | label (legacy=primary)
   DC_FROM: 'enot:term-dc-from', // мост → main: {op, label, data} — сообщение от оператора (string | Uint8Array)
-  DC_TO: 'enot:term-dc-to', // main → мост: {op, label, data} | {op, close:true} — сообщение оператору / закрыть pc оператора
+  DC_TO: 'enot:term-dc-to', // main → мост: {op, label, data} | {op, close:true} — закрыть pc оператора | {op, label, close:true} — закрыть один канал
   DC_CLOSED: 'enot:term-dc-closed', // мост → main: {op, label} | label (legacy=primary)
   VIDEO_FRAME: 'enot:video-frame', // main → мост: jpeg-кадр хелпера (Uint8Array) — общий, ADR 0027
   PAUSE: 'enot:term-dc-pause', // мост → main: приостановить отправку (op)
@@ -149,8 +149,16 @@ export function createBridgeRelay({ send, log = console, onClosed = null, fetchI
         send(BRIDGE_IPC.DC_TO, { op, label, data });
       },
       close() {
-        if (closed) return;
-        send(BRIDGE_IPC.DC_CLOSED, { op, label });
+        if (closed || ch.readyState !== 'open') return;
+        // Волна G (баг-2): host закрыл канал (term после idle/«Закрыть», сервисы).
+        // Раньше адаптер оставался трупом в st.adapters: новый DC_OPEN того же
+        // label отбрасывался как «дубликат», а реальный DataChannel страницы
+        // никто не закрывал — его поздний onclose убивал уже переоткрытый канал.
+        // Теперь: чистим слот и приказываем мосту закрыть его сторону канала
+        // (расширение payload DC_TO — close одного канала, не pc оператора).
+        const st = opState(op);
+        if (st?.adapters.get(label) === ch) st.adapters.delete(label);
+        send(BRIDGE_IPC.DC_TO, { op, label, close: true });
         ch.markClosed();
       },
       // внутреннее: мост умер или релей закрыт — честно закрыть канал
@@ -302,7 +310,14 @@ export function createBridgeRelay({ send, log = console, onClosed = null, fetchI
         const label = typeof payload === 'string' ? payload : payload?.label;
         if (typeof label !== 'string' || !BRIDGE_DC_LABELS.includes(label)) return;
         const st = opState(op, true);
-        if (st.adapters.has(label)) return; // дубликат открытия — канал уже жив
+        const existing = st.adapters.get(label);
+        if (existing) {
+          // живой канал уже есть — дубль игнорируем; труп канала, закрытого
+          // host-сторокой (term после idle/«Закрыть»), замещаем новым
+          // поколением (волна G, баг-2: раньше труп навсегда блокировал label)
+          if (existing.readyState === 'open') return;
+          st.adapters.delete(label);
+        }
         const adapter = makeAdapter(op, label);
         st.adapters.set(label, adapter);
         const pcLike = pcLikes.get(op);
