@@ -154,38 +154,49 @@ impl PipeServer {
         // local (and with SMB enabled, remote) process. PIPE_REJECT_REMOTE_
         // CLIENTS is an open-mode flag even though the crate types it as
         // NAMED_PIPE_MODE (metadata quirk).
-        let sa = pipe_security_attributes()?;
-        unsafe {
-            // Приёмка 16.10 (Соня): стабильно WIN32_ERROR(87). GetLastError
-            // обязан читаться НЕМЕДЛЕННО после CreateNamedPipeW — до него
-            // стоял LocalFree(SD), который перезаписывает last-error ячейку
-            // потока, и реальный код (мог быть ACCESS_DENIED) замывался в 87.
-            let h = CreateNamedPipeW(
-                PCWSTR(PIPE_NAME_WIDE.as_ptr()),
-                PIPE_ACCESS_DUPLEX | FILE_FLAGS_AND_ATTRIBUTES(PIPE_REJECT_REMOTE_CLIENTS.0),
-                PIPE_TYPE_BYTE | PIPE_READMODE_BYTE,
-                1,
-                64 * 1024,
-                64 * 1024,
-                0,
-                Some(&sa),
-            );
-            let create_err = if h.is_invalid() { Some(GetLastError()) } else { None };
-            // The kernel copied the SD inside CreateNamedPipeW; the process
-            // copy is not needed past that point (no child inherits handles).
-            let _ = LocalFree(HLOCAL(sa.lpSecurityDescriptor));
-            if let Some(e) = create_err {
-                return Err(format!(
-                    "CreateNamedPipeW failed, GetLastError={e:?} (sddl-len={}, openMode=0x{:X})",
-                    std::mem::size_of::<SECURITY_ATTRIBUTES>(),
-                    (PIPE_ACCESS_DUPLEX | FILE_FLAGS_AND_ATTRIBUTES(PIPE_REJECT_REMOTE_CLIENTS.0)).0
-                ));
+        // Две попытки: полный SDDL (SY+BA+OW), затем без OWNER-RIGHTS (SY+BA).
+        // Никогда не падаем до варианта «без SA» — дефолтный DACL отдаёт
+        // пайп на чтение Everyone (аудит P1-1), лучше честный отказ.
+        let mut sa = pipe_security_attributes(1)?;
+        let mut variant_used = 1u8;
+        let mut last_err = None;
+        let h = loop {
+            unsafe {
+                let h = CreateNamedPipeW(
+                    PCWSTR(PIPE_NAME_WIDE.as_ptr()),
+                    PIPE_ACCESS_DUPLEX | FILE_FLAGS_AND_ATTRIBUTES(PIPE_REJECT_REMOTE_CLIENTS.0),
+                    PIPE_TYPE_BYTE | PIPE_READMODE_BYTE,
+                    1,
+                    64 * 1024,
+                    64 * 1024,
+                    0,
+                    Some(&sa),
+                );
+                if !h.is_invalid() {
+                    break h;
+                }
+                last_err = Some(GetLastError());
             }
-            Ok(PipeServer {
-                raw: h,
-                io_taken: std::cell::Cell::new(false),
-            })
-        }
+            if variant_used == 1 {
+                variant_used = 2;
+                sa = pipe_security_attributes(2)?;
+                continue;
+            }
+            return Err(format!(
+                "CreateNamedPipeW failed, GetLastError={:?} (sddl-len={}, openMode=0x{:X}, variant={})",
+                last_err,
+                std::mem::size_of::<SECURITY_ATTRIBUTES>(),
+                (PIPE_ACCESS_DUPLEX | FILE_FLAGS_AND_ATTRIBUTES(PIPE_REJECT_REMOTE_CLIENTS.0)).0,
+                variant_used
+            ));
+        };
+        // The kernel copied the SD inside CreateNamedPipeW; the process
+        // copy is not needed past that point (no child inherits handles).
+        unsafe { let _ = LocalFree(HLOCAL(sa.lpSecurityDescriptor)); }
+        Ok(PipeServer {
+            raw: h,
+            io_taken: std::cell::Cell::new(false),
+        })
     }
 
     /// Blocks until a client connects. ERROR_PIPE_CONNECTED (231) is the race
@@ -223,23 +234,23 @@ impl PipeServer {
 }
 
 /// SECURITY_ATTRIBUTES carrying the pipe DACL, built from SDDL by
-/// ConvertStringSecurityDescriptorToSecurityDescriptorW. `D:P(A;;GA;;;SY)
-/// (A;;GA;;;BA)(A;;GA;;;OW)`: a protected DACL (P -- no inherited ACEs) giving
-/// SYSTEM and Administrators GENERIC_ALL plus an Owner-Rights GENERIC_ALL --
-/// the owner of a pipe created by this process is whatever its token names
-/// (the user SID for a standard token, Administrators for a full admin token),
-/// so the console user keeps access and Everyone/anonymous have no entry at
-/// all. The legitimate pipe client is the SYSTEM service that spawned us.
-fn pipe_security_attributes() -> Result<SECURITY_ATTRIBUTES, String> {
+/// ConvertStringSecurityDescriptorToSecurityDescriptorW. Вариант 1:
+/// `D:P(A;;GA;;;SY)(A;;GA;;;BA)(A;;GA;;;OW)` — SYSTEM, Administrators и
+/// Owner-Rights GA, Everyone/anonymous записей нет. Приёмка pre.2: с OW
+/// CreateNamedPipeW стабильно отвергает SD с 87 (openMode=0xB и nLength=24
+/// легальны — виноват дескриптор), поэтому вариант 2 без OWNER-RIGHTS:
+/// легитимный клиент пайпа — SYSTEM-служба, SY+BA покрывают её; владелец-
+/// консольный пользователь читателем пайпа быть не обязан.
+fn pipe_security_attributes(variant: u8) -> Result<SECURITY_ATTRIBUTES, String> {
     unsafe {
+        let sddl = if variant == 1 {
+            windows::core::w!("D:P(A;;GA;;;SY)(A;;GA;;;BA)(A;;GA;;;OW)")
+        } else {
+            windows::core::w!("D:P(A;;GA;;;SY)(A;;GA;;;BA)")
+        };
         let mut sd = PSECURITY_DESCRIPTOR::default();
-        ConvertStringSecurityDescriptorToSecurityDescriptorW(
-            windows::core::w!("D:P(A;;GA;;;SY)(A;;GA;;;BA)(A;;GA;;;OW)"),
-            SDDL_REVISION_1,
-            &mut sd,
-            None,
-        )
-        .map_err(|e| format!("pipe sddl: {e}"))?;
+        ConvertStringSecurityDescriptorToSecurityDescriptorW(sddl, SDDL_REVISION_1, &mut sd, None)
+            .map_err(|e| format!("pipe sddl: {e}"))?;
         Ok(SECURITY_ATTRIBUTES {
             nLength: std::mem::size_of::<SECURITY_ATTRIBUTES>() as u32,
             lpSecurityDescriptor: sd.0,
