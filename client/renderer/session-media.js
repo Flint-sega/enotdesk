@@ -349,11 +349,11 @@ export async function startHostRtc() {
 // очередь инъекции — last-write-wins (input-pipeline).
 // ---------------------------------------------------------------------------
 
-const pendingAttaches = new Set(); // claimId: operator-joined до готовности захвата
+const pendingAttaches = new Map(); // claimId → имя: operator-joined до готовности захвата (ревью G P3-3: имя не терять)
 const reattachTimers = new Map(); // claimId → таймер пере-оффера
 
 function flushPendingAttaches() {
-  for (const claimId of [...pendingAttaches]) attachOperator(claimId).catch(() => {});
+  for (const [claimId, name] of [...pendingAttaches]) attachOperator(claimId, name).catch(() => {});
   pendingAttaches.clear();
 }
 
@@ -395,7 +395,7 @@ export async function attachOperator(claimId, name = '') {
   if (!claimId || typeof claimId !== 'string') return;
   if (state.operators.has(claimId)) return; // уже подключён (upsert не нужен)
   if (!state.localStream || !state.session) {
-    pendingAttaches.add(claimId); // захват ещё не готов — доиграем после
+    pendingAttaches.set(claimId, name); // захват ещё не готов — доиграем после (с именем)
     return;
   }
   try {

@@ -468,6 +468,7 @@ const unsubscribe = client.onMessage((msg) => {
         arbiter.drop(msg.claimId);
         opInputs.delete(msg.claimId);
         opChats.delete(msg.claimId); // G2: чат-канал ушедшего не участвует в релее
+        opNames.delete(msg.claimId); // ревью G P3-1: имя ушедшего не копится в карте
         const slot = slots.get(msg.claimId);
         // Ревью 16.10 P3-2: буфер ранних кандидатов чистится и без слота —
         // цикл claim/ICE/left без offer больше не копит Map вечно.
