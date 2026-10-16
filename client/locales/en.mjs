@@ -133,6 +133,7 @@ export default {
   "op.viewOnly": "View only",
   "op.hasControl": "Controlling",
   "op.videoSlotsFull": "Video slots are full — chat, files and control are available",
+  "op.messageBy": "Operator {name}",
   "op.fitFill": "Fill",
   "op.fitFit": "Fit",
   "op.fullscreen": "Fullscreen",
@@ -496,6 +497,10 @@ export default {
   "web.machines.wolNoConfirm": "The request reached a neighboring machine, but no confirmation",
   "web.machines.wolFailed": "Wake-up failed ({reason})",
   "web.machines.claimCancel": "Cancel",
+  // G1: machine-session "colleague connection" card (password from the claim response)
+  "web.machines.joinTitle": "Colleague connection",
+  "web.machines.joinHint": "To let a second operator join, send them this session's ID and password — the colleague enters them in the connection form.",
+  "web.machines.joinCopyHint": "Click selects the whole value — copy it and send to your colleague",
   "op.twofa": "2FA",
   "op.totpCode": "Verification code",
   "op.totpPlaceholder": "6 digits or a backup code",

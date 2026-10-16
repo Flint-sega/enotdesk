@@ -783,6 +783,94 @@ test('W-C4: ввод не-активного оператора не доход�
   }
 });
 
+// ---- G2 (волна G, 16.10): автор чата в machine-сеансе ----
+
+test('G2: чат оператора machine-сеанса релеется коллеге с меткой автора (from+name); тост сервиса жив; подделка from перезаписывается', async () => {
+  const { api } = fakeApi({
+    session: () => ({ status: 200, body: { sessionId: 98, state: 'pending-consent', claimId: 'cl-50' } }),
+  });
+  const store = memoryStore();
+  store.save('tok-g2');
+  const sig = fakeSignalFactory();
+  const pcs = new Map();
+  const makePc = (op) => ({
+    op,
+    onicecandidate: null,
+    ondatachannel: null,
+    async setRemoteDescription(d) { this.remote = d; },
+    async createAnswer() { return { type: 'answer', sdp: `v=0-a-${op}` }; },
+    async setLocalDescription(d) { this.localDescription = d; },
+    async addIceCandidate() {},
+    close() { pcs.delete(op); },
+  });
+  const rtcFactory = () => ({
+    getPcLike: (op) => pcs.get(op) ?? (pcs.set(op, makePc(op)), pcs.get(op)),
+    closeOp: (op) => pcs.get(op)?.close(),
+    ops: () => [...pcs.keys()],
+  });
+  // сервис как настоящий machine-services.wireChat: onmessage ставится синхронно
+  const toasts = [];
+  const services = {
+    handleChannel(label, ch) {
+      if (label !== 'chat') return false;
+      ch.onmessage = (m) => { toasts.push(String(m?.data)); };
+      return true;
+    },
+  };
+  const agent = createAgent({
+    api,
+    signal: sig.factory,
+    native: createNativeInput({ adapter: inertAdapter() }),
+    policy: { name: 'mk-g2', os: 'test', version: '9.9', tokenStore: store, heartbeatMs: 5, backoffBaseMs: 10, backoffMaxMs: 40 },
+    termHost: fakeTermHost(),
+    rtc: rtcFactory,
+    services,
+  });
+  try {
+    assert.equal(agent.start({}).ok, true);
+    await sleep(30);
+    const client = sig.clients[0];
+    client.emit({ type: 'approved' });
+    client.emit({ type: 'operator-joined', claimId: 'op-a', operator: { name: 'Анна' } });
+    client.emit({ type: 'operator-joined', claimId: 'op-b', operator: { name: 'Борис' } });
+    client.emit({ type: 'signal', from: 'op-a', data: { description: { type: 'offer', sdp: 'v=0-a' } } });
+    client.emit({ type: 'signal', from: 'op-b', data: { description: { type: 'offer', sdp: 'v=0-b' } } });
+    await sleep(20);
+    const mkChat = () => ({
+      label: 'chat', readyState: 'open', onmessage: null, sent: [],
+      send(obj) { this.sent.push(String(obj)); },
+      close() { this.readyState = 'closed'; },
+    });
+    const chA = mkChat();
+    const chB = mkChat();
+    pcs.get('op-a').ondatachannel({ channel: chA });
+    pcs.get('op-b').ondatachannel({ channel: chB });
+
+    const wire1 = JSON.stringify({ type: 'chat', text: 'привет от Анны' });
+    chA.onmessage({ data: wire1 });
+    assert.deepEqual(chB.sent, [JSON.stringify({ type: 'chat', text: 'привет от Анны', from: 'operator', name: 'Анна' })],
+      'сообщение оператора дошло коллеге с меткой автора (G2: from+name)');
+    assert.deepEqual(chA.sent, [], 'отправителю не эхаем его же сообщение');
+    assert.deepEqual(toasts, [wire1], 'сервисный тост (machine-services) по-прежнему получает сообщение');
+
+    // G2: метку ставит ТОЛЬКО хост — подделка from:'host'/чужого имени в релее
+    // перезаписывается реальным автором
+    chB.onmessage({ data: JSON.stringify({ type: 'chat', text: 'ответ', from: 'host', name: 'Клиент' }) });
+    assert.deepEqual(chA.sent, [JSON.stringify({ type: 'chat', text: 'ответ', from: 'operator', name: 'Борис' })],
+      'подделка from/name оператором перезаписывается: автор определяет хост');
+
+    // уход коллеги исключает его чат-канал из релея
+    client.emit({ type: 'operator-left', claimId: 'op-b' });
+    await sleep(10);
+    chA.onmessage({ data: JSON.stringify({ type: 'chat', text: 'ещё' }) });
+    assert.equal(chB.sent.length, 1, 'ушедшему коллеге релей не идёт (opChats вычищен)');
+    assert.equal(chB.readyState, 'open', 'готовность канала релей не трогает');
+  } finally {
+    agent.stop();
+    await sleep(10);
+  }
+});
+
 // ---- W-C2 (волна C): N pc в одном мосту машины ----
 
 test('W-C2: два оператора — оба получают адресный answer; operator-left(op1) закрывает только его pc; re-offer op2 жив', async () => {

@@ -133,6 +133,7 @@ export default {
   "op.viewOnly": "Просмотр",
   "op.hasControl": "Управление",
   "op.videoSlotsFull": "Видеослоты заняты — доступны чат, файлы и управление",
+  "op.messageBy": "Оператор {name}",
   "op.fitFill": "Заполнить",
   "op.fitFit": "Вписать",
   "op.fullscreen": "Во весь экран",
@@ -496,6 +497,10 @@ export default {
   "web.machines.wolNoConfirm": "Запрос ушёл соседней машине, подтверждения нет",
   "web.machines.wolFailed": "Пробуждение не удалось ({reason})",
   "web.machines.claimCancel": "Отмена",
+  // G1: карточка «Подключение коллег» машинного сеанса (пароль из claim-ответа)
+  "web.machines.joinTitle": "Подключение коллег",
+  "web.machines.joinHint": "Чтобы подключился второй оператор, передайте ему ID и пароль этого сеанса — коллега введёт их в форме подключения.",
+  "web.machines.joinCopyHint": "Клик выделяет значение целиком — скопируйте и отправьте коллеге",
   "op.twofa": "2FA",
   "op.totpCode": "Код подтверждения",
   "op.totpPlaceholder": "6 цифр или резервный код",

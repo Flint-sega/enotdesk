@@ -17,12 +17,15 @@ import {
 let unreadChat = 0;
 // whoKey: 'you' | 'operator' | 'client' | 'system' — подпись берётся из словаря,
 // а класс строки (me/them) определяется ключом, не переведённым текстом.
-export function appendChat(logId, whoKey, value) {
+// opName (G2): имя автора для сообщений операторов («Оператор {name}»); без
+// имени (старый сервер не прислал) — прежний ключ chat.operator.
+export function appendChat(logId, whoKey, value, opName) {
   const log = $(logId);
   const line = document.createElement('p');
   line.className = `chat-line chat-${whoKey === 'you' ? 'me' : 'them'}`;
   const name = document.createElement('strong');
-  name.textContent = `${t(`chat.${whoKey}`)}: `;
+  const label = whoKey === 'operator' && opName ? t('op.messageBy', { name: opName }) : t(`chat.${whoKey}`);
+  name.textContent = `${label}: `;
   line.appendChild(name);
   line.appendChild(document.createTextNode(value));
   log.appendChild(line);
@@ -43,7 +46,9 @@ function sendChat(side) {
   const logId = side === 'client' ? 'client-chat-log' : 'op-chat-log';
   const value = input.value.trim();
   if (!value) return;
-  const wire = chatMessage(value);
+  // G2: исходящие хоста помечаются from:'host' — операторы-получатели отличают
+  // его от сообщений других операторов (старые клиенты поле молча игнорируют)
+  const wire = chatMessage(value, side === 'client' ? { from: 'host' } : undefined);
   if (!wire) { input.value = ''; return; }
   if (side === 'client') {
     // Мультиоператор: сообщение клиента уходит ВСЕМ присоединённым операторам
@@ -118,16 +123,22 @@ export function wireHostChannel(ch, opKey = 'primary') {
     ch.onmessage = (m) => {
       const msg = parseChatMessage(m.data);
       if (!msg) return;
-      appendChat('client-chat-log', 'operator', msg.text);
+      const opName = state.operators.get(opKey)?.name ?? '';
+      appendChat('client-chat-log', 'operator', msg.text, opName);
       // чат-виджет в углу (спека владельца 02.10): показываем сообщение оператора
       enot.chatWidgetMsg?.(msg.text);
       // Мультиоператор: хост — точка fan-out и для операторов: сообщение
       // одного оператора релеется чат-каналам остальных (исходящие хоста уже
       // уходят всем — sendChat/sendWidgetChat). Приёмка C+D (16.10): раньше
       // сообщения операторов видел только хост, операторы — друг друга нет.
+      // G2 (16.10): релей подписан автором (from:'operator', name) — хост
+      // единственный, кто может ставить метку, оператор не подделает «хоста»;
+      // старые клиенты (≤0.6.20) лишние поля игнорируют и видят текст как раньше.
+      const wire = chatMessage(msg.text, { from: 'operator', ...(opName ? { name: opName } : {}) });
+      if (!wire) return;
       for (const dc of hostOperatorChannels('chat')) {
         if (dc === ch) continue; // отправителю не эхаем
-        try { dc.send(m.data); } catch { /* канал закрывается */ }
+        try { dc.send(wire); } catch { /* канал закрывается */ }
       }
     };
   } else if (ch.label === 'clip') {
@@ -157,8 +168,9 @@ function hostOperatorChannels(label) {
 
 // Ответ клиента из чат-виджета: отправка в DC чата + лог основного окна
 // (маршрут: виджет → main → onChatWidgetOut). Вызывается из session-media.
+// G2: исходящие хоста — from:'host' (паритет с sendChat клиентской стороны).
 export function sendWidgetChat(text) {
-  const wire = chatMessage(text);
+  const wire = chatMessage(text, { from: 'host' });
   if (!wire) return;
   let sent = false;
   for (const dc of hostOperatorChannels('chat')) {
@@ -297,8 +309,14 @@ export function operatorFileMessage(ch, data) {
 }
 
 // Операторские приёмники чата и буфера (каналы создаёт operatorAnswer).
+// G2: хост подписывает релей сообщений других операторов (from:'operator',
+// name) — показываем «Оператор {name}»; host/старые хосты без поля — «Клиент».
 export function operatorChatMessage(value) {
-  appendChat('op-chat-log', 'client', value);
+  if (value && typeof value === 'object' && value.from === 'operator') {
+    appendChat('op-chat-log', 'operator', value.text, typeof value.name === 'string' ? value.name : '');
+    return;
+  }
+  appendChat('op-chat-log', 'client', typeof value === 'string' ? value : String(value?.text ?? ''));
 }
 
 // SEC-002 (desktop, зеркально web-оператору): входящий текст НЕ пишется в буфер

@@ -71,6 +71,11 @@ video.fit-cover{object-fit:cover}
 .machines-page{color:var(--text-3);font:500 13px var(--font-mono)}
 .machines-claim{margin-top:16px;display:flex;flex-direction:column;gap:10px}
 .machines-claim-row{display:flex;gap:10px;flex-wrap:wrap}
+/* G1: карточка «Подключение коллег» — ID/пароль машинного сеанса; клик по
+   значению выделяет его целиком (user-select:all) для копирования без
+   clipboard-API (SEC-002: writeText на странице ровно один — у буфера сеанса) */
+.join-creds{display:flex;flex-direction:column;gap:6px}
+.join-code{font:600 14px/1.4 var(--font-mono);color:var(--accent);background:var(--accent-dim);border:1px dashed var(--accent-line);border-radius:8px;padding:4px 10px;cursor:copy;-webkit-user-select:all;user-select:all;overflow-wrap:anywhere}
 .op-foot{border-top:1px solid var(--line);padding:14px 24px;color:var(--text-3);font-size:12.5px;font-family:var(--font-mono)}
 .wait-note{color:var(--text-2)}
 @media (max-width:900px){.session{grid-template-columns:1fr}.connect-grid{grid-template-columns:1fr}.op-head{flex-wrap:wrap}}
@@ -266,6 +271,14 @@ video.fit-cover{object-fit:cover}
         <p class="note" data-i18n="web.files.drop"></p>
         <p id="file-op-status" aria-live="polite"></p>
         <div id="op-file-list"></div>
+      </div>
+      <div class="card hidden" id="op-join-card">
+        <h2 data-i18n="web.machines.joinTitle">Подключение коллег</h2>
+        <p class="note" data-i18n="web.machines.joinHint"></p>
+        <div class="join-creds">
+          <div class="row"><span class="note" data-i18n="client.idLabel"></span> <code id="op-join-id" class="join-code" title=""></code></div>
+          <div class="row"><span class="note" data-i18n="client.passLabel"></span> <code id="op-join-pass" class="join-code" title=""></code></div>
+        </div>
       </div>
       <div class="card hidden" id="op-term">
         <h2 data-i18n="term.title">Терминал машины</h2>

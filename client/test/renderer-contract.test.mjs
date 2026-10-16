@@ -427,7 +427,7 @@ test('вход оператора: запоминание кредов на ме
 // верхнего уровня вешает листенеры — фейк их просто принимает), wireHostChannel
 // гоняется на фейковых DataChannel двух операторов.
 
-test('C+D: сообщение оператора релеится чат-каналам остальных операторов (host fan-out)', async () => {
+test('C+D/G2: сообщение оператора релеится чат-каналам остальных операторов (host fan-out, метка автора)', async () => {
   const el = () => ({
     value: '', textContent: '', className: '', innerHTML: '', dataset: {},
     classList: { add() {}, remove() {} },
@@ -457,19 +457,78 @@ test('C+D: сообщение оператора релеится чат-кан�
     });
     state.operators.clear();
     state.inputActiveClaimId = null;
-    state.operators.set('op1', { dcs: {} });
+    // G2: у op1 есть имя (operator-joined принёс), у op2 — нет (старый формат)
+    state.operators.set('op1', { dcs: {}, name: 'Макс' });
     state.operators.set('op2', { dcs: {} });
     const op1chat = mkCh('chat'); const op2chat = mkCh('chat');
     wireHostChannel(op1chat, 'op1');
     wireHostChannel(op2chat, 'op2');
     op1chat.onmessage({ data: JSON.stringify({ type: 'chat', text: 'привет от op1' }) });
-    assert.deepEqual(op2chat.sent, [JSON.stringify({ type: 'chat', text: 'привет от op1' })],
-      'сообщение op1 дошло op2 (регресс C+D: раньше видел только хост)');
+    assert.deepEqual(op2chat.sent, [JSON.stringify({ type: 'chat', text: 'привет от op1', from: 'operator', name: 'Макс' })],
+      'сообщение op1 дошло op2 с меткой автора from+name (G2)');
     assert.deepEqual(op1chat.sent, [], 'отправителю не эхаем его же сообщение');
     assert.deepEqual(widgetMsgs, ['привет от op1'], 'чат-виджет хоста по-прежнему получает сообщение');
     op2chat.onmessage({ data: JSON.stringify({ type: 'chat', text: 'ответ op2' }) });
-    assert.deepEqual(op1chat.sent, [JSON.stringify({ type: 'chat', text: 'ответ op2' })],
-      'ответ op2 дошёл op1');
+    assert.deepEqual(op1chat.sent, [JSON.stringify({ type: 'chat', text: 'ответ op2', from: 'operator' })],
+      'ответ op2 дошёл op1; без имени поле name не ставится (старый operator-joined)');
+    // G2: метку ставит ТОЛЬКО хост — попытка оператора подписаться «хостом»
+    // перезаписывается: в провод уходит from:'operator', не 'host'
+    op1chat.onmessage({ data: JSON.stringify({ type: 'chat', text: 'спуф', from: 'host' }) });
+    assert.deepEqual(op2chat.sent[1], JSON.stringify({ type: 'chat', text: 'спуф', from: 'operator', name: 'Макс' }),
+      'подделка from:host оператором перезаписывается меткой operator (метку ставит хост)');
+  } finally {
+    delete globalThis.document;
+    delete globalThis.window;
+  }
+});
+
+// G2 (приёмная сторона): оператор различает сообщения коллеги (from:'operator'
+// → «Оператор {имя}») и хоста/старых хостов (без поля или from:'host' → «Клиент»).
+test('G2: оператор-получатель подписывает коллегу «Оператор {имя}», хоста и легаси — «Клиент»', async () => {
+  const logs = []; // строки op-chat-log: [{tag, children:[strong|text…]}]
+  const makeEl = (tag) => ({
+    tag, textContent: '', className: '', children: [],
+    appendChild(c) { this.children.push(c); return c; },
+    classList: { add() {}, remove() {} },
+    addEventListener() {}, removeEventListener() {},
+    scrollTop: 0, scrollHeight: 0,
+  });
+  globalThis.document = {
+    getElementById: (id) => {
+      const e = makeEl('div');
+      if (id === 'op-chat-log') logs.push(e);
+      return e;
+    },
+    createElement: (tag) => makeEl(tag),
+    createTextNode: (text) => ({ tag: '#text', text }),
+    querySelector: () => makeEl('div'),
+    addEventListener() {}, removeEventListener() {},
+    getSelection: () => '',
+  };
+  globalThis.window = { enot: {} };
+  try {
+    const { operatorChatMessage } = await import(pathToFileURL(path.join(dir, 'session-services.js')).href);
+    const { t } = await import(pathToFileURL(path.join(dir, '..', 'lib', 'i18n.mjs')).href);
+    const lastLine = () => {
+      const line = logs.at(-1)?.children.at(-1); // log → последняя строка <p>
+      const strong = line?.children.find((c) => c.tag === 'strong');
+      const text = line?.children.find((c) => c.tag === '#text');
+      return { label: strong?.textContent ?? '', text: text?.text ?? '' };
+    };
+    operatorChatMessage({ from: 'operator', name: 'Анна', text: 'коллеге привет' });
+    assert.equal(lastLine().label, `${t('op.messageBy', { name: 'Анна' })}: `, 'коллега подписан «Оператор {имя}»');
+    assert.equal(lastLine().text, 'коллеге привет');
+    // хост с новой меткой from:'host' — по-прежнему «Клиент»
+    operatorChatMessage({ from: 'host', text: 'ответ хоста' });
+    assert.equal(lastLine().label, `${t('chat.client')}: `, 'хост подписан «Клиент»');
+    // старые хосты поля не ставят; исторический вызов строкой — тоже «Клиент»
+    operatorChatMessage({ text: 'легаси-объект' });
+    assert.equal(lastLine().label, `${t('chat.client')}: `, 'легаси-сообщение без поля — «Клиент»');
+    operatorChatMessage('легаси-строка');
+    assert.equal(lastLine().label, `${t('chat.client')}: `, 'строчный вызов — «Клиент» (старый контракт)');
+    // оператор без имени (старый operator-joined) — прежний ключ chat.operator
+    operatorChatMessage({ from: 'operator', text: 'без имени' });
+    assert.equal(lastLine().label, `${t('chat.operator')}: `, 'оператор без имени — «Оператор» без вставки');
   } finally {
     delete globalThis.document;
     delete globalThis.window;

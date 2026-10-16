@@ -336,11 +336,17 @@ test('агент: approved → RTCPeerConnection без медиа → offer о�
   await new Promise((r) => setTimeout(r, 25)); // ждём тик wsBeat (10 мс) с живым терминалом
   assert.ok(heartbeats.some((h) => h?.termActive === true), 'termActive не дошёл до heartbeat');
 
-  // посторонний канал не открывает терминал
+  // посторонний канал не открывает терминал; G2 (16.10): chat-канал без
+  // services больше НЕ закрывается — он живёт релеем сообщений операторов
   const rogue = fakeChannel();
-  rogue.label = 'chat';
+  rogue.label = 'garbage';
   pcs[0].ondatachannel({ channel: rogue });
   assert.ok(rogue.closed >= 1);
+  const chatCh = fakeChannel();
+  chatCh.label = 'chat';
+  pcs[0].ondatachannel({ channel: chatCh });
+  assert.equal(chatCh.closed, 0, 'G2: chat без services живёт (релей операторам)');
+  assert.equal(host.isActive(), true, 'чат-канал терминал не трогает');
 
   } finally {
     // гарантируем остановку: иначе интервалы агента держат процесс тестов живым

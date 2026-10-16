@@ -640,7 +640,9 @@ async function doOperatorAnswer(offerSdp) {
     } else if (ch.label === 'chat') {
       ch.onmessage = (m) => {
         const msg = parseChatMessage(m.data);
-        if (msg) operatorChatMessage(msg.text);
+        // G2: объект целиком — оператор-получатель различает сообщения
+        // второго оператора (from:'operator') и хоста/старых хостов
+        if (msg) operatorChatMessage(msg);
       };
     } else if (ch.label === 'clip') {
       ch.onmessage = (m) => {
