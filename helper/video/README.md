@@ -27,10 +27,11 @@ proven `spike/video-dxgi`).
    line (v0.6: DETACHED spawn has no stdin; the command line is visible only
    within the same trust domain as the pipe DACL — same session/user).
 2. No/empty `--token` -> exit code 1.
-3. Helper creates the pipe server with an explicit protected DACL
-   (`D:P(A;;GA;;;SY)(A;;GA;;;BA)(A;;GA;;;OW)` — SYSTEM, Administrators and the
-   pipe owner only; Everyone has no entry) and `PIPE_REJECT_REMOTE_CLIENTS`,
-   then blocks in `ConnectNamedPipe`.
+3. Helper creates the pipe server with an explicit protected DACL granting
+   GENERIC_ALL only to SYSTEM (S-1-5-18) and Administrators (S-1-5-32-544);
+   Everyone and anonymous have no entry — plus `PIPE_REJECT_REMOTE_CLIENTS` —
+   then blocks in `ConnectNamedPipe`. The DACL is built the canonical ABSOLUTE
+   way (see "Pipe security" below).
 4. Service connects, then MUST send `hello` (type 0) with the same token as the
    first message, within 5 seconds of connecting. Mismatch -> session torn
    down, exit code 3. Silence past the 5 s hello timeout -> session torn down
@@ -59,12 +60,28 @@ Binary messages in both directions, byte-mode duplex named pipe
 ```
 
 Pipe security: the server end is created with an explicit **protected DACL**
-`D:P(A;;GA;;;SY)(A;;GA;;;BA)(A;;GA;;;OW)` — SYSTEM, Administrators and the
-pipe owner (the console-user token the helper runs under) get full access,
-Everyone and anonymous have no entry — plus `PIPE_REJECT_REMOTE_CLIENTS`, so
-the default named-pipe DACL (which granted Everyone read) is no longer in
-play. Frames and status documents are sent only after the hello token is
-verified; before that, zero bytes leave the helper.
+built as a canonical **absolute** security descriptor — no SDDL, no
+self-relative SD. History: both SDDL variants
+(`D:P(A;;GA;;;SY)(A;;GA;;;BA)(A;;GA;;;OW)` and the SY+BA form) produced by
+`ConvertStringSecurityDescriptorToSecurityDescriptorW` were rejected by
+`CreateNamedPipeW` with `ERROR_INVALID_PARAMETER` (87) on a live Windows 10
+while openMode and SECURITY_ATTRIBUTES were legal — the known
+self-relative-SD quirk — so the whole SDDL path was replaced by the
+canonical ABSOLUTE construction:
+`AllocateAndInitializeSid` (SYSTEM `S-1-5-18` — note: 18, not 19, which is
+LOCAL_SERVICE; Administrators `S-1-5-32-544`) → hand-built ACL
+(`InitializeAcl` + two `AddAccessAllowedAce` entries with `GENERIC_ALL`;
+`FreeSid` right after, the ACEs embed SID copies; a hand-built ACL has no
+inherited ACEs, which is exactly the protected-DACL `P` semantics) → absolute
+SD (`InitializeSecurityDescriptor` + `SetSecurityDescriptorDacl(TRUE, acl,
+FALSE)`) in a `sizeof(SECURITY_DESCRIPTOR)` buffer, passed via
+`SECURITY_ATTRIBUTES` (`bInheritHandle = FALSE`). Everyone and anonymous have
+no entry; there is deliberately no fallback to the default SA (the default
+named-pipe DACL granted Everyone read). Plus `PIPE_REJECT_REMOTE_CLIENTS`, so
+remote opens are refused at the open-mode level as well. Frames and status
+documents are sent only after the hello token is verified; before that, zero
+bytes leave the helper. Any stage failing yields an honest error naming the
+stage (windows-rs captures `GetLastError` immediately after the failed call).
 
 | type | direction        | payload                                              |
 |------|------------------|------------------------------------------------------|
@@ -266,13 +283,15 @@ Every switch emits exactly one log line
 
 ## v1 limitations (honest list)
 
-- **Pipe security**: explicit protected DACL — SYSTEM + Administrators + the
-  pipe owner (the console-user token the helper runs as) hold full access;
-  Everyone/anonymous have no entry, `PIPE_REJECT_REMOTE_CLIENTS` rejects
-  remote opens. Frames and statuses are sent only after a verified hello
-  (5 s hello timeout otherwise tears the session down). The pre-hardening
-  default (Everyone-read DACL, streaming before hello) was closed in the
-  2026-10-15 audit fixes.
+- **Pipe security**: explicit protected DACL — only SYSTEM (S-1-5-18) and
+  Administrators (S-1-5-32-544) hold full access; Everyone/anonymous have no
+  entry, `PIPE_REJECT_REMOTE_CLIENTS` rejects remote opens. Built as a
+  canonical absolute security descriptor (hand-built ACL, SDDL/self-relative
+  path removed after ERROR_INVALID_PARAMETER(87) on live Windows 10). Frames
+  and statuses are sent only after a verified hello (5 s hello timeout
+  otherwise tears the session down). The pre-hardening default
+  (Everyone-read DACL, streaming before hello) was closed in the 2026-10-15
+  audit fixes; the SDDL-to-absolute-SD rework is the P1-1 follow-up.
 - Single client, single instance of the pipe.
 - Blocking writes: a slow reader stalls capture (that is the backpressure
   story); blocking reads are unblocked via `CancelIoEx` on teardown.

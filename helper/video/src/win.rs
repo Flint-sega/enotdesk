@@ -6,7 +6,7 @@
 
 use windows::core::{Interface, PCWSTR, PWSTR, VARIANT};
 use windows::Win32::Foundation::{
-    CloseHandle, GetLastError, GENERIC_READ, HANDLE, HGLOBAL, HLOCAL, HMODULE, LPARAM, LocalFree,
+    CloseHandle, GetLastError, GENERIC_ALL, GENERIC_READ, HANDLE, HGLOBAL, HMODULE, LPARAM,
     POINT, WPARAM,
 };
 use windows::Win32::Graphics::Direct3D::{D3D_DRIVER_TYPE_UNKNOWN, D3D_FEATURE_LEVEL};
@@ -53,10 +53,14 @@ use windows::Win32::System::Pipes::{
 use windows::Win32::System::RemoteDesktop::{
     ProcessIdToSessionId, WTSGetActiveConsoleSessionId,
 };
-use windows::Win32::Security::Authorization::{
-    ConvertStringSecurityDescriptorToSecurityDescriptorW, SDDL_REVISION_1,
+// SECURITY_DESCRIPTOR_REVISION for InitializeSecurityDescriptor (1).
+use windows::Win32::System::SystemServices::SECURITY_DESCRIPTOR_REVISION;
+use windows::Win32::Security::{
+    AddAccessAllowedAce, AllocateAndInitializeSid, FreeSid, GetLengthSid, InitializeAcl,
+    InitializeSecurityDescriptor, SetSecurityDescriptorDacl, ACL, ACL_REVISION,
+    ACCESS_ALLOWED_ACE, PSID, PSECURITY_DESCRIPTOR, SECURITY_ATTRIBUTES, SECURITY_DESCRIPTOR,
+    SECURITY_NT_AUTHORITY,
 };
-use windows::Win32::Security::{PSECURITY_DESCRIPTOR, SECURITY_ATTRIBUTES};
 use windows::Win32::System::Variant::VT_R4;
 use windows::Win32::System::StationsAndDesktops::{
     CloseDesktop, GetUserObjectInformationW, GetThreadDesktop, OpenInputDesktop, SetThreadDesktop,
@@ -154,45 +158,38 @@ impl PipeServer {
         // local (and with SMB enabled, remote) process. PIPE_REJECT_REMOTE_
         // CLIENTS is an open-mode flag even though the crate types it as
         // NAMED_PIPE_MODE (metadata quirk).
-        // Две попытки: полный SDDL (SY+BA+OW), затем без OWNER-RIGHTS (SY+BA).
-        // Никогда не падаем до варианта «без SA» — дефолтный DACL отдаёт
-        // пайп на чтение Everyone (аудит P1-1), лучше честный отказ.
-        let mut sa = pipe_security_attributes(1)?;
-        let mut variant_used = 1u8;
-        let mut last_err = None;
-        let h = loop {
-            unsafe {
-                let h = CreateNamedPipeW(
-                    PCWSTR(PIPE_NAME_WIDE.as_ptr()),
-                    PIPE_ACCESS_DUPLEX | FILE_FLAGS_AND_ATTRIBUTES(PIPE_REJECT_REMOTE_CLIENTS.0),
-                    PIPE_TYPE_BYTE | PIPE_READMODE_BYTE,
-                    1,
-                    64 * 1024,
-                    64 * 1024,
-                    0,
-                    Some(&sa),
-                );
-                if !h.is_invalid() {
-                    break h;
-                }
-                last_err = Some(GetLastError());
+        // Канонический ABSOLUTE security descriptor (P1-1, доработка):
+        // SDDL-путь убран целиком — оба self-relative варианта
+        // ConvertStringSecurityDescriptorToSecurityDescriptorW CreateNamedPipeW
+        // отвергал с ERROR_INVALID_PARAMETER(87) на живой Windows 10 (openMode
+        // и nLength при этом легальны). Один канонический путь, никаких
+        // попыток «без SA» — дефолтный DACL отдаёт пайп Everyone-read, честный
+        // отказ лучше дыры. Любая стадия сборки SD — честный Err с именем
+        // стадии (windows-rs сам читает GetLastError немедленно после вызова).
+        let pipe_sa = pipe_security_attributes()?;
+        let h = unsafe {
+            let h = CreateNamedPipeW(
+                PCWSTR(PIPE_NAME_WIDE.as_ptr()),
+                PIPE_ACCESS_DUPLEX | FILE_FLAGS_AND_ATTRIBUTES(PIPE_REJECT_REMOTE_CLIENTS.0),
+                PIPE_TYPE_BYTE | PIPE_READMODE_BYTE,
+                1,
+                64 * 1024,
+                64 * 1024,
+                0,
+                Some(&pipe_sa.sa),
+            );
+            if h.is_invalid() {
+                return Err(format!(
+                    "CreateNamedPipeW failed, GetLastError={:?} (openMode=0x{:X}, absolute SD)",
+                    GetLastError(),
+                    (PIPE_ACCESS_DUPLEX | FILE_FLAGS_AND_ATTRIBUTES(PIPE_REJECT_REMOTE_CLIENTS.0)).0,
+                ));
             }
-            if variant_used == 1 {
-                variant_used = 2;
-                sa = pipe_security_attributes(2)?;
-                continue;
-            }
-            return Err(format!(
-                "CreateNamedPipeW failed, GetLastError={:?} (sddl-len={}, openMode=0x{:X}, variant={})",
-                last_err,
-                std::mem::size_of::<SECURITY_ATTRIBUTES>(),
-                (PIPE_ACCESS_DUPLEX | FILE_FLAGS_AND_ATTRIBUTES(PIPE_REJECT_REMOTE_CLIENTS.0)).0,
-                variant_used
-            ));
+            h
         };
-        // The kernel copied the SD inside CreateNamedPipeW; the process
-        // copy is not needed past that point (no child inherits handles).
-        unsafe { let _ = LocalFree(HLOCAL(sa.lpSecurityDescriptor)); }
+        // The kernel copied the SD (and the ACL it points at) inside
+        // CreateNamedPipeW; pipe_sa owns only plain heap buffers and drops
+        // here. Unlike the SDDL LocalAlloc output, nothing needs LocalFree.
         Ok(PipeServer {
             raw: h,
             io_taken: std::cell::Cell::new(false),
@@ -233,28 +230,96 @@ impl PipeServer {
     }
 }
 
-/// SECURITY_ATTRIBUTES carrying the pipe DACL, built from SDDL by
-/// ConvertStringSecurityDescriptorToSecurityDescriptorW. Вариант 1:
-/// `D:P(A;;GA;;;SY)(A;;GA;;;BA)(A;;GA;;;OW)` — SYSTEM, Administrators и
-/// Owner-Rights GA, Everyone/anonymous записей нет. Приёмка pre.2: с OW
-/// CreateNamedPipeW стабильно отвергает SD с 87 (openMode=0xB и nLength=24
-/// легальны — виноват дескриптор), поэтому вариант 2 без OWNER-RIGHTS:
-/// легитимный клиент пайпа — SYSTEM-служба, SY+BA покрывают её; владелец-
-/// консольный пользователь читателем пайпа быть не обязан.
-fn pipe_security_attributes(variant: u8) -> Result<SECURITY_ATTRIBUTES, String> {
+/// SECURITY_ATTRIBUTES + the buffers its lpSecurityDescriptor points into,
+/// for the explicit pipe DACL built the canonical ABSOLUTE way (no SDDL, no
+/// self-relative intermediate):
+/// `AllocateAndInitializeSid` → `InitializeAcl`/`AddAccessAllowedAce` →
+/// `InitializeSecurityDescriptor`/`SetSecurityDescriptorDacl`.
+/// DACL: GENERIC_ALL только для SYSTEM (S-1-5-18) и Administrators
+/// (S-1-5-32-544); Everyone/anonymous записей нет; ACL собран вручную —
+/// наследуемых ACE не существует, это и есть protected-DACL (P) семантика.
+/// Варианта «без SA» нет: дефолтный DACL отдаёт пайп Everyone-read (P1-1).
+/// Легитимный клиент пайпа — SYSTEM-служба, поэтому SYSTEM обязателен.
+/// Фейл любой стадии — честный Err с именем стадии (windows-rs сам захватывает
+/// GetLastError немедленно после отказавшего вызова). Буферы живут до выхода
+/// из CreateNamedPipeW: ядро копирует дескриптор внутрь вызова.
+struct PipeSa {
+    sa: SECURITY_ATTRIBUTES,
+    // Ordering of these fields does not matter: they only keep the backing
+    // allocations alive while `sa` is handed to CreateNamedPipeW.
+    #[allow(dead_code)]
+    sd_buf: Vec<u64>, // SECURITY_DESCRIPTOR_MIN_LENGTH, 8-byte aligned
+    #[allow(dead_code)]
+    acl_buf: Vec<u32>, // ACL + 2 ACEs + both SIDs, 4-byte aligned
+}
+
+fn pipe_security_attributes() -> Result<PipeSa, String> {
     unsafe {
-        let sddl = if variant == 1 {
-            windows::core::w!("D:P(A;;GA;;;SY)(A;;GA;;;BA)(A;;GA;;;OW)")
-        } else {
-            windows::core::w!("D:P(A;;GA;;;SY)(A;;GA;;;BA)")
-        };
-        let mut sd = PSECURITY_DESCRIPTOR::default();
-        ConvertStringSecurityDescriptorToSecurityDescriptorW(sddl, SDDL_REVISION_1, &mut sd, None)
-            .map_err(|e| format!("pipe sddl: {e}"))?;
-        Ok(SECURITY_ATTRIBUTES {
-            nLength: std::mem::size_of::<SECURITY_ATTRIBUTES>() as u32,
-            lpSecurityDescriptor: sd.0,
-            bInheritHandle: false.into(),
+        // S-1-5-18 (SECURITY_NT_AUTHORITY + SECURITY_LOCAL_SYSTEM_RID = 18).
+        // Внимание: 18, а не 19 — S-1-5-19 это LOCAL_SERVICE, не SYSTEM.
+        let mut sid_sys = PSID::default();
+        AllocateAndInitializeSid(
+            &SECURITY_NT_AUTHORITY,
+            1,
+            18, // SECURITY_LOCAL_SYSTEM_RID -> S-1-5-18
+            0, 0, 0, 0, 0, 0, 0,
+            &mut sid_sys,
+        )
+        .map_err(|e| format!("pipe DACL: AllocateAndInitializeSid(SYSTEM): {e}"))?;
+
+        // S-1-5-32-544 (SECURITY_BUILTIN_DOMAIN_RID + DOMAIN_ALIAS_RID_ADMINS).
+        let mut sid_admin = PSID::default();
+        AllocateAndInitializeSid(
+            &SECURITY_NT_AUTHORITY,
+            2,
+            32,  // SECURITY_BUILTIN_DOMAIN_RID
+            544, // DOMAIN_ALIAS_RID_ADMINS
+            0, 0, 0, 0, 0, 0,
+            &mut sid_admin,
+        )
+        .map_err(|e| format!("pipe DACL: AllocateAndInitializeSid(Administrators): {e}"))?;
+
+        // Standard capacity formula (with slack: sizeof(ACCESS_ALLOWED_ACE)
+        // already includes the 4-byte SidStart, so the buffer is a few bytes
+        // larger than the used ACL — InitializeAcl takes it as capacity).
+        let cb_acl = std::mem::size_of::<ACL>() as u32
+            + 2 * std::mem::size_of::<ACCESS_ALLOWED_ACE>() as u32
+            + GetLengthSid(sid_sys)
+            + GetLengthSid(sid_admin);
+        let mut acl_buf: Vec<u32> = vec![0; (cb_acl as usize + 3) / 4];
+        let acl = acl_buf.as_mut_ptr() as *mut ACL;
+        InitializeAcl(acl, cb_acl, ACL_REVISION)
+            .map_err(|e| format!("pipe DACL: InitializeAcl: {e}"))?;
+        AddAccessAllowedAce(acl, ACL_REVISION, GENERIC_ALL.0, sid_sys)
+            .map_err(|e| format!("pipe DACL: AddAccessAllowedAce(SYSTEM): {e}"))?;
+        AddAccessAllowedAce(acl, ACL_REVISION, GENERIC_ALL.0, sid_admin)
+            .map_err(|e| format!("pipe DACL: AddAccessAllowedAce(Administrators): {e}"))?;
+        // AddAccessAllowedAce embedded copies of the SIDs into the ACEs, so
+        // the allocator-owned originals can be freed right away (canonical
+        // FreeSid-after-AddAccessAllowedAce).
+        let _ = FreeSid(sid_sys);
+        let _ = FreeSid(sid_admin);
+
+        // Absolute SD in a SECURITY_DESCRIPTOR_MIN_LENGTH buffer (windows 0.58
+        // does not export that constant; sizeof(SECURITY_DESCRIPTOR) IS its
+        // definition in the Win32 headers): owner/group and SACL stay null,
+        // DACL present = our two ACEs only, non-defaulted (no inheritance from
+        // the process token's default ACL).
+        let mut sd_buf: Vec<u64> = vec![0; std::mem::size_of::<SECURITY_DESCRIPTOR>() / 8];
+        let sd = PSECURITY_DESCRIPTOR(sd_buf.as_mut_ptr() as *mut core::ffi::c_void);
+        InitializeSecurityDescriptor(sd, SECURITY_DESCRIPTOR_REVISION)
+            .map_err(|e| format!("pipe DACL: InitializeSecurityDescriptor: {e}"))?;
+        SetSecurityDescriptorDacl(sd, true, Some(acl), false)
+            .map_err(|e| format!("pipe DACL: SetSecurityDescriptorDacl: {e}"))?;
+
+        Ok(PipeSa {
+            sa: SECURITY_ATTRIBUTES {
+                nLength: std::mem::size_of::<SECURITY_ATTRIBUTES>() as u32,
+                lpSecurityDescriptor: sd.0,
+                bInheritHandle: false.into(),
+            },
+            sd_buf,
+            acl_buf,
         })
     }
 }
