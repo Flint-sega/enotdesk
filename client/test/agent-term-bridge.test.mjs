@@ -82,27 +82,38 @@ function fakeBridge(relay) {
 }
 
 // Фейковая оболочка терминала (spawn инъекцией createTermHost): пишем/читаем
-// без процессов, контекст — честная пометка.
+// без процессов, контекст — честная пометка. Волна G (баг-2): переоткрытие
+// терминала спавнит НОВУЮ оболочку — фабрика считает их (shells).
 function fakeTermHost() {
-  const written = [];
-  const outputs = [];
-  let exitCb = null;
-  const term = {
-    write(data) { written.push(data); return true; },
-    onData(cb) { outputs.push(cb); },
-    onExit(cb) { exitCb = cb; },
-    resize() { return true; },
-    kill() { return true; },
-    buffer() { return ''; },
-    size: () => ({ cols: 80, rows: 24 }),
-    isAlive: () => true,
-  };
+  const shells = [];
   const host = createTermHost({
     platform: 'test',
     spawnShellFor: () => ({ file: 'fakesh', args: [], context: 'FAKE-CTX' }),
-    createTerm: () => term,
+    createTerm: () => {
+      const written = [];
+      const outputs = [];
+      let exitCb = null;
+      const term = {
+        write(data) { written.push(data); return true; },
+        onData(cb) { outputs.push(cb); },
+        onExit(cb) { exitCb = cb; },
+        resize() { return true; },
+        kill() { return true; },
+        buffer() { return ''; },
+        size: () => ({ cols: 80, rows: 24 }),
+        isAlive: () => true,
+      };
+      shells.push({ term, written, outputs, exit: (info) => exitCb?.(info) });
+      return term;
+    },
   });
-  return { host, written, emitOutput: (data) => { for (const cb of outputs) cb(data); }, emitExit: (info) => exitCb?.(info) };
+  return {
+    host,
+    shells,
+    get written() { return shells[0]?.written ?? []; },
+    emitOutput: (data) => { for (const s of shells) for (const cb of s.outputs) cb(data); },
+    emitExit: (info) => shells.at(-1)?.exit(info),
+  };
 }
 
 const inertNative = {
@@ -117,7 +128,7 @@ async function makeMachineSession() {
   const store = memoryStore();
   store.save('tok-term');
   const sig = fakeSignalClient();
-  const { host: termHost, written, emitOutput } = fakeTermHost();
+  const th = fakeTermHost();
 
   let relay = null;
   const bridgeOf = () => fakeBridge(relay);
@@ -145,7 +156,7 @@ async function makeMachineSession() {
     signal: () => sig,
     native: inertNative,
     policy: { name: 'mk-term', os: 'test', version: '9.9', tokenStore: store, heartbeatMs: 5, backoffBaseMs: 10, backoffMaxMs: 40 },
-    termHost,
+    termHost: th.host,
     rtc: rtcFactory,
   });
   await agent.start({});
@@ -160,7 +171,9 @@ async function makeMachineSession() {
       await sleep(15); // offer → relay → фейк-мост → answer → сигнал оператору
     },
     teardown: async () => { agent.stop(); await sleep(10); },
-    written, emitOutput,
+    // written — живой геттер: оболочки спавнятся после открытия term-канала
+    get written() { return th.shells[0]?.written ?? []; },
+    emitOutput: th.emitOutput,
   };
 }
 
@@ -282,25 +295,57 @@ function makeFakeDc(sentLog) {
   return ch;
 }
 
-async function loadRealBridgePage(relay) {
+// opts: { video } — оффер несёт recvonly-видеотрансивер (machine-сеанс с видео,
+// ADR 0027); { deferNegotiation } — createAnswer/setLocalDescription в макротаске
+// (окно гонки «кадр до setLocalDescription», волна G баг-1). Возвращает pcs —
+// все созданные фейк-pc (onicecandidate тест дёргает руками) и delivered —
+// лог payload'ов main→мост.
+async function loadRealBridgePage(relay, opts = {}) {
   // операторская сторона: каналы, «пришедшие» из оффера, и всё, что мост в них отправил
   const operatorChannels = [];
   const sentToOperator = [];
+  const replaceTrackCalls = []; // {op, signalingState} — инвариант волны G (баг-1)
+  const pcs = [];
+  const delivered = [];
   class FakePc {
     constructor() {
       this.onicecandidate = null;
       this.ondatachannel = null;
       this.onconnectionstatechange = null;
       this.connectionState = 'new';
+      this.signalingState = 'stable';
       this.localDescription = null;
       this.remoteDescription = null;
       this._pending = [];
+      this._video = null;
+      pcs.push(this);
+    }
+    getTransceivers() {
+      // трансиверы появляются применением оффера (как в живом WebRTC)
+      if (!this.remoteDescription) return [];
+      if (!this._video) return [];
+      if (!this._video.vt) {
+        this._video.vt = {
+          direction: 'recvonly',
+          receiver: { track: { kind: 'video' } },
+          sender: {
+            track: null,
+            replaceTrack: async (track) => {
+              replaceTrackCalls.push({ pcIndex: pcs.indexOf(this), signalingState: this.signalingState, track });
+              this._video.vt.sender.track = track;
+            },
+          },
+        };
+      }
+      return [this._video.vt];
     }
     async setRemoteDescription(d) {
       this.remoteDescription = d;
+      this.signalingState = 'have-remote-offer';
       if (d.type === 'offer') {
         // «sdp» фейка несёт метки каналов оператора: v=0 labels=term,chat,file,input
         const labels = (d.sdp.match(/labels=([a-z,]+)/)?.[1] ?? '').split(',').filter(Boolean);
+        if (opts.video) this._video = { vt: null };
         for (const label of labels) {
           const ch = makeFakeDc(sentToOperator);
           ch.label = label;
@@ -310,22 +355,29 @@ async function loadRealBridgePage(relay) {
         }
       }
     }
-    async createAnswer() { return { type: 'answer', sdp: 'v=0-fake-answer' }; }
+    async createAnswer() {
+      if (opts.deferNegotiation) await new Promise((r) => setTimeout(r, 0));
+      return { type: 'answer', sdp: `v=0-fake-answer-${pcs.indexOf(this)}` };
+    }
     async setLocalDescription(a) {
+      if (opts.deferNegotiation) await new Promise((r) => setTimeout(r, 0));
       this.localDescription = a;
+      this.signalingState = 'stable';
       // ICE «соединился»: каналы открываются (обе стороны получают onopen)
       queueMicrotask(() => {
         this.connectionState = 'connected';
+        this.onconnectionstatechange?.();
         for (const { ch } of this._pending) {
+          if (ch.readyState === 'closed') continue;
           ch.readyState = 'open';
           ch.onopen?.();
         }
       });
     }
-    getTransceivers() { return []; } // term-only сценарий: видеотрансивера нет
     async addIceCandidate() {}
     close() {
       this.connectionState = 'closed';
+      this.signalingState = 'closed';
       for (const { ch } of this._pending) ch.close();
     }
   }
@@ -338,7 +390,7 @@ async function loadRealBridgePage(relay) {
     onIce: (cb) => { subs[BRIDGE_IPC.ICE] = cb; },
     onIceConfig: (cb) => { subs[BRIDGE_IPC.ICE_CONFIG] = cb; },
     onToDc: (cb) => { subs[BRIDGE_IPC.DC_TO] = cb; },
-    onVideoFrame: () => {},
+    onVideoFrame: (cb) => { subs[BRIDGE_IPC.VIDEO_FRAME] = cb; },
     onVideoMode: () => {},
     sendAnswer: (sdp, op) => relay.handleMessage(BRIDGE_IPC.ANSWER, op ? { op, sdp } : sdp),
     gdmStatus: () => {},
@@ -352,6 +404,22 @@ async function loadRealBridgePage(relay) {
   };
   globalThis.window = { agentRtc: api };
 
+  // DOM/bitmap-фейки для кадров видео (ADR 0027): canvas.captureStream-трек
+  let prevDocument = globalThis.document;
+  globalThis.document = {
+    createElement(tag) {
+      if (tag !== 'canvas') throw new Error(`fake document: unexpected <${tag}>`);
+      const canvas = {
+        width: 0, height: 0,
+        getContext: () => ({ drawImage() {} }),
+        captureStream: () => ({ getVideoTracks: () => [{ kind: 'video' }] }),
+      };
+      return canvas;
+    },
+  };
+  let prevBitmap = globalThis.createImageBitmap;
+  globalThis.createImageBitmap = async (_blob) => ({ width: 64, height: 48, close() {} });
+
   const bridgeUrl = pathToFileURL(path.join(path.dirname(fileURLToPath(import.meta.url)), '..', 'agent-bridge', 'bridge.mjs'));
   bridgeUrl.search = `?repro=${Date.now()}-${Math.random().toString(36).slice(2)}`; // свежий экземпляр на тест
   await import(bridgeUrl.href);
@@ -359,10 +427,18 @@ async function loadRealBridgePage(relay) {
   return {
     operatorChannels,
     sentToOperator,
+    pcs,
+    replaceTrackCalls,
+    delivered,
     // main → мост (webContents.send): раздаём подписчикам preload
     deliver: (channel, payload) => {
+      delivered.push([channel, payload]);
       const cb = subs[channel];
       if (cb) cb(payload);
+    },
+    restoreGlobals() {
+      globalThis.document = prevDocument;
+      globalThis.createImageBitmap = prevBitmap;
     },
   };
 }
@@ -405,7 +481,157 @@ test('РЕПРО C+D: НАСТОЯЩИЙ bridge.mjs — offer(op) → канал
   } finally {
     agent.stop();
     await sleep(10);
+    page.restoreGlobals?.();
     delete globalThis.window;
     delete globalThis.RTCPeerConnection;
+  }
+});
+
+// ---- Волна G: живая приёмка (Соня, 16.10) — баг-2 и гипотезы баг-1 ----
+
+// Общее окружение: настоящий bridge.mjs + настоящий relay + настоящий createAgent,
+// оффер оператора эмулируется сигналом с from=claimId (как тегирует сервер).
+async function makeRealBridgeEnv(opts = {}) {
+  const store = memoryStore();
+  store.save('tok-wave-g');
+  const sig = fakeSignalClient();
+  const { host: termHost, shells, emitExit } = fakeTermHost();
+  let page = null;
+  const relay = createBridgeRelay({
+    send: (channel, payload) => page?.deliver(channel, payload),
+    log: { warn() {} },
+  });
+  relay.markReady();
+  page = await loadRealBridgePage(relay, opts);
+  const agent = createAgent({
+    api: fakeApi(),
+    signal: () => sig,
+    native: inertNative,
+    policy: { name: 'mk-g', os: 'test', version: '9.9', tokenStore: store, heartbeatMs: 5, backoffBaseMs: 10, backoffMaxMs: 40 },
+    termHost,
+    rtc: () => relay,
+  });
+  await agent.start({});
+  await sleep(30);
+  sig.emit({ type: 'approved' });
+  return {
+    agent, sig, relay, page, shells, emitExit,
+    offerOf: async (op, labels) => {
+      sig.emit({ type: 'signal', from: op, data: { description: { type: 'offer', sdp: `v=0 labels=${labels}` } } });
+      await sleep(30); // offer → мост → answer → сигнал оператору → каналы открыты
+    },
+    teardown: async () => {
+      agent.stop();
+      await sleep(10);
+      page.restoreGlobals?.();
+      delete globalThis.window;
+      delete globalThis.RTCPeerConnection;
+    },
+  };
+}
+
+const openedCount = (page, label = 'term') => page.sentToOperator
+  .filter((s) => s.label === label)
+  .filter((s) => { try { return JSON.parse(s.data).type === 'opened'; } catch { return false; } })
+  .length;
+
+test('ВОЛНА G (баг-2): терминал переоткрывается после idle-timeout — новый {opened}, вторая оболочка', async () => {
+  const env = await makeRealBridgeEnv();
+  try {
+    await env.offerOf('cl-op1', 'term');
+    assert.equal(openedCount(env.page), 1, 'первый терминал открылся');
+    assert.equal(env.shells.length, 1, 'первая оболочка заспавнена');
+
+    // idle-timeout: оболочка умирает — termHost шлёт {exit} и закрывает канал
+    env.emitExit({ reason: 'idle-timeout' });
+    await sleep(15);
+    const exits = env.page.sentToOperator.filter((s) => s.label === 'term')
+      .filter((s) => { try { return JSON.parse(s.data).type === 'exit'; } catch { return false; } });
+    assert.equal(exits.length, 1, '{exit} дошёл оператору');
+    // фикс: мост ПРИКАЗАНО закрыть свой реальный DC (host закрыл адаптер)
+    const chClose = env.page.delivered.filter(([ch, p]) => ch === BRIDGE_IPC.DC_TO && p?.close === true && p.label === 'term');
+    assert.equal(chClose.length, 1, 'DC_TO {op,label,close:true} ушёл мосту — реальный DC закрывается');
+    assert.equal(env.page.operatorChannels[0].readyState, 'closed', 'страница закрыла свой DataChannel');
+
+    // повторное открытие (ренеготиация того же оператора — как retryTerm веб-оператора)
+    await env.offerOf('cl-op1', 'term');
+    assert.equal(openedCount(env.page), 2, `второй {opened} дошёл оператору (сейчас ${openedCount(env.page)})`);
+    assert.equal(env.shells.length, 2, 'вторая оболочка заспавнена — слот освободился');
+  } finally {
+    await env.teardown();
+  }
+});
+
+test('ВОЛНА G (баг-2): терминал переоткрывается после ручного «Закрыть» ({type:close})', async () => {
+  const env = await makeRealBridgeEnv();
+  try {
+    await env.offerOf('cl-op1', 'term');
+    assert.equal(openedCount(env.page), 1, 'терминал открылся');
+
+    // оператор жмёт «Закрыть»: {type:'close'} по каналу, свой DC НЕ закрывает
+    const opTerm = env.page.operatorChannels.find((ch) => ch.label === 'term');
+    opTerm.onmessage({ data: JSON.stringify({ type: 'close' }) });
+    await sleep(15);
+    assert.equal(env.page.operatorChannels[0].readyState, 'closed', 'мост закрыл свой DC по приказу host-стороны');
+
+    // «Повторить»: старый dc оператора закрыт, новый канал — ренеготиация
+    await env.offerOf('cl-op1', 'term');
+    assert.equal(openedCount(env.page), 2, `повторное открытие живо (сейчас ${openedCount(env.page)})`);
+    assert.equal(env.shells.length, 2, 'оболочка №2 поднята');
+  } finally {
+    await env.teardown();
+  }
+});
+
+test('ВОЛНА G (баг-1): replaceTrack НЕ трогает pc до setLocalDescription — кадровый насос в окне неготиации', async () => {
+  const env = await makeRealBridgeEnv({ video: true, deferNegotiation: true });
+  try {
+    // первый кадр ДО всякого оффера: canvas+track создаются (win-хелпер шлёт сразу)
+    env.page.deliver(BRIDGE_IPC.VIDEO_FRAME, new Uint8Array([1, 2, 3]));
+    await sleep(5);
+
+    await env.offerOf('cl-op1', 'term');
+    await env.page.deliver(BRIDGE_IPC.VIDEO_FRAME, new Uint8Array([4, 5, 6])); // op1 уже stable
+    await sleep(25);
+
+    // op2 joins: кадры продолжают литься СРАЗУ за его offer (окно have-remote-offer)
+    env.sig.emit({ type: 'signal', from: 'cl-op2', data: { description: { type: 'offer', sdp: 'v=0 labels=term' } } });
+    await env.page.deliver(BRIDGE_IPC.VIDEO_FRAME, new Uint8Array([7, 8, 9]));
+    await sleep(5); // SRD применился, createAnswer/setLocalDescription отложены — кадр в окне гонки
+    await env.page.deliver(BRIDGE_IPC.VIDEO_FRAME, new Uint8Array([10, 11, 12]));
+    await sleep(30); // неготиация op2 докрутилась до stable
+
+    // ИНВАРИАНТ: replaceTrack выполняется только на стабильном (уже согласованном) pc
+    const bad = env.page.replaceTrackCalls.filter((c) => c.signalingState !== 'stable');
+    assert.deepEqual(bad.map((c) => c.signalingState), [], 'replaceTrack дёрнули до setLocalDescription — гонка баг-1');
+    // видео при этом доезжает ОБЕИМ операторам (гейт не убил видео — кадры повторяют)
+    assert.deepEqual([...new Set(env.page.replaceTrackCalls.map((c) => c.pcIndex))].sort(), [0, 1],
+      'трек цепляется к pc обоих операторов');
+    // ответ второго оператора ушёл адресно
+    const answer2 = env.sig.sentSignals.find((m) => m.type === 'signal' && m.to === 'cl-op2' && m.data?.description?.type === 'answer');
+    assert.ok(answer2, 'answer op2 ушёл (setLocalDescription завершён до отправки)');
+  } finally {
+    await env.teardown();
+  }
+});
+
+test('ВОЛНА G (баг-1, гипотеза c): исходящие ICE второго pc адресуются его op, не primary и не op1', async () => {
+  const env = await makeRealBridgeEnv();
+  try {
+    await env.offerOf('cl-op1', 'term');
+    await env.offerOf('cl-op2', 'term');
+    // страница собрала кандидаты pc ОБОИХ операторов (onicecandidate per-pc)
+    env.page.pcs[0].onicecandidate?.({ candidate: { candidate: 'host pc1' } });
+    env.page.pcs[1].onicecandidate?.({ candidate: { candidate: 'host pc2' } });
+    await sleep(10);
+    const iceTo = env.sig.sentSignals.filter((m) => m.type === 'signal' && m.data?.candidate);
+    assert.ok(iceTo.some((m) => m.to === 'cl-op2' && m.data.candidate.candidate === 'host pc2'),
+      'кандидат pc2 ушёл адресно op2');
+    assert.ok(iceTo.some((m) => m.to === 'cl-op1' && m.data.candidate.candidate === 'host pc1'),
+      'кандидат pc1 ушёл адресно op1');
+    assert.ok(!iceTo.some((m) => m.data.candidate.candidate === 'host pc2' && m.to !== 'cl-op2'),
+      'кандидат pc2 утёк чужому оператору');
+  } finally {
+    await env.teardown();
   }
 });

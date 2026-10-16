@@ -76,6 +76,14 @@ if (!api) {
   async function attachVideoTrack(op) {
     const peer = peers.get(op);
     if (!peer || peer.videoAttached || peer.videoDenied || !videoTrack) return;
+    // Волна G (баг-1, win-агент): кадры хелпера льются непрерывно, и
+    // replaceTrack выполнялся на трансивере ВТОРОГО pc ДО его
+    // setLocalDescription (signalingState 'have-remote-offer'): answer
+    // формируется и уходит, а ICE-агент pc молчит — проверки оператора
+    // доходят до порта pc в одну сторону (живая приёмка G, 5/5; на linux
+    // gdm-кадры стартуют позже и гонка не ловилась). Трек цепляем только к
+    // УЖЕ согласованному pc — следующий кадр (≤40 мс) повторит попытку.
+    if (!peer.pc.localDescription || peer.pc.signalingState !== 'stable') return;
     const vt = peer.pc.getTransceivers().find((t) => t.receiver.track?.kind === 'video' || t.sender.track?.kind === 'video');
     if (!vt) return; // offer ещё не применён — повторим на следующем кадре
     try {
@@ -182,7 +190,9 @@ if (!api) {
           const renegotiatingWithVideo = !peer.videoDenied && vt.direction !== 'inactive';
           if (renegotiatingWithVideo || videoAllowed(videoPeerCount())) {
             vt.direction = 'sendonly';
-            void attachVideoTrack(op); // кадры могли прийти раньше offer'а (гонка)
+            // attachVideoTrack НЕ зовём: здесь signalingState 'have-remote-offer'
+            // (до setLocalDescription) — гейт волны G его отверг бы; трек цепляет
+            // ближайший кадр (helper ≤40 мс / gdm rVFC) уже на стабильном pc.
           } else {
             peer.videoDenied = true;
             vt.direction = 'inactive';
@@ -244,8 +254,13 @@ if (!api) {
         } catch { /* канал закрывается — кусок теряется, передача честно не сойдётся */ }
       };
       ch.onclose = () => {
-        peer.dcs.delete(ch.label);
-        api.dcClosed(ch.label, op);
+        // Волна G (баг-2): закрывается СТАРОЕ поколение канала, а новое уже
+        // зарегистрировано — молчим: поздний DC_CLOSED в релее dropAdapter'ом
+        // убил бы живой переоткрытый канал. Текущее поколение — честно наружу.
+        if (peer.dcs.get(ch.label) === ch) {
+          peer.dcs.delete(ch.label);
+          api.dcClosed(ch.label, op);
+        }
       };
       ch.bufferedAmountLowThreshold = LOW_WATER;
       ch.onbufferedamountlow = () => {
@@ -274,10 +289,19 @@ if (!api) {
   });
   api.onToDc((payload) => {
     const { label, data } = payload ?? {};
-    // приказ main закрыть pc оператора (W-C2 closeOp): расширение payload DC_TO,
-    // отдельного close-канала в BRIDGE_IPC нет (имена менять нельзя)
+    // Приказ main закрыть (W-C2 closeOp + волна G баг-2): с label — один
+    // канал оператора (host закрыл свой адаптер: term после idle/«Закрыть» —
+    // раньше реальный DC страницы оставался открытым и его поздний onclose
+    // убивал уже переоткрытый канал), без label — весь pc оператора.
     if (payload?.close === true) {
-      closePeer(opOf(payload.op));
+      const targetOp = opOf(payload.op);
+      if (typeof label === 'string') {
+        const peer = peers.get(targetOp);
+        const ch = peer?.dcs.get(label);
+        if (ch && ch.readyState !== 'closed') { try { ch.close(); } catch { /* уже закрыт */ } }
+        return;
+      }
+      closePeer(targetOp);
       return;
     }
     // Фикс регрессии волны C (живая приёмка C+D, 16.10): локальный opOf(v) ждёт
