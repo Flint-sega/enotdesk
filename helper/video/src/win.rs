@@ -32,7 +32,7 @@ use windows::Win32::Graphics::Imaging::{
     WICBitmapEncoderNoCache,
 };
 use windows::Win32::Storage::FileSystem::{
-    FILE_FLAGS_AND_ATTRIBUTES, PIPE_ACCESS_DUPLEX,
+    PIPE_ACCESS_DUPLEX,
 };
 use windows::Win32::System::Com::StructuredStorage::{IPropertyBag2, PROPBAG2};
 use windows::Win32::System::Com::{
@@ -48,7 +48,7 @@ use windows::Win32::System::Diagnostics::ToolHelp::{
 };
 use windows::Win32::System::Pipes::{
     ConnectNamedPipe, CreateNamedPipeW, DisconnectNamedPipe, PeekNamedPipe, PIPE_READMODE_BYTE,
-    PIPE_REJECT_REMOTE_CLIENTS, PIPE_TYPE_BYTE,
+    PIPE_TYPE_BYTE,
 };
 use windows::Win32::System::RemoteDesktop::{
     ProcessIdToSessionId, WTSGetActiveConsoleSessionId,
@@ -167,10 +167,15 @@ impl PipeServer {
         // отказ лучше дыры. Любая стадия сборки SD — честный Err с именем
         // стадии (windows-rs сам читает GetLastError немедленно после вызова).
         let pipe_sa = pipe_security_attributes()?;
+        // Приёмка 16.10 (P/Invoke-проба на живой Win10, 4 комбинации {0x3,0xB}×
+        // {SA,None}): PIPE_REJECT_REMOTE_CLIENTS (0x8) в dwOpenMode стабильно
+        // даёт ERROR_INVALID_PARAMETER(87) даже без SA — флаг не ставим, если
+        // 0x3 без него пайп создаётся. Удалённых SMB-клиентов отсекает сам
+        // DACL: сетевые учётки — не SYSTEM и не локальные Администраторы.
         let h = unsafe {
             let h = CreateNamedPipeW(
                 PCWSTR(PIPE_NAME_WIDE.as_ptr()),
-                PIPE_ACCESS_DUPLEX | FILE_FLAGS_AND_ATTRIBUTES(PIPE_REJECT_REMOTE_CLIENTS.0),
+                PIPE_ACCESS_DUPLEX,
                 PIPE_TYPE_BYTE | PIPE_READMODE_BYTE,
                 1,
                 64 * 1024,
@@ -182,7 +187,7 @@ impl PipeServer {
                 return Err(format!(
                     "CreateNamedPipeW failed, GetLastError={:?} (openMode=0x{:X}, absolute SD)",
                     GetLastError(),
-                    (PIPE_ACCESS_DUPLEX | FILE_FLAGS_AND_ATTRIBUTES(PIPE_REJECT_REMOTE_CLIENTS.0)).0,
+                    PIPE_ACCESS_DUPLEX.0,
                 ));
             }
             h
