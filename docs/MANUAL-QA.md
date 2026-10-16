@@ -1421,10 +1421,14 @@ coturn-бинарь отдаёт 420 на Allocate, обход прямыми IC
 4. Лог чата web-оператора переживал сеанс — чистится.
 5. CI-грабля: динамические import в тестах без pathToFileURL падали только на Windows.
 
-**OPEN (в работе): Windows видеохелпер после DACL-фикса аудита** — CreateNamedPipeW 87
-на self-relative SD (SDDL-варианты SY+BA+OW и SY+BA отвергнуты одинаково; openMode/nLength
-легальны). Итоговое решение — канонический absolute-SD (InitializeSecurityDescriptor+
-SetSecurityDescriptorDacl+AddAccessAllowedAce), статус см. ниже в релизной секции.
+**CLOSED (v0.6.20-pre.5): Windows видеохелпер после DACL-фикса аудита.** Сага ошибки 87:
+SDDL-варианты (SY+BA+OW, SY+BA) и канонический absolute-SD отвергались одинаково —
+P/Invoke-проба на живой Win10 (4 комбинации {openMode 0x3/0xB}×{SA/None}) показала:
+виноват PIPE_REJECT_REMOTE_CLIENTS (0x8) в dwOpenMode (87 даже с SA=None), SD был
+невиновен. Флаг снят (SMB-клиентов отсекает DACL: сетевые учётки не SY/BA), absolute-SD
+(S-1-5-18 SYSTEM + S-1-5-32-544 Admins, GENERIC_ALL) остался. Живое доказательство pre.5
+(VM101, claim 300702971): лог хелпера start → input attach ok → tick state=live mode=dxgi —
+пайп с явным DACL создан, сеанс жив (кадры на BDA-ВМ — прежняя экология дисплея, вне волны).
 
 **GAP (решение владельца): мультиоп МАШИННЫХ сеансов** — второй оператор не может join
 machine-сеанса: claim эксклюзивен, пароль machine-сеанса не выдаётся никому, join-ветка
