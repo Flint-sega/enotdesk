@@ -32,6 +32,8 @@ windows = { version = "0.58", features = [
   "Win32_System_Diagnostics_ToolHelp",
   # FormatMessageW: LastError text for the rev-3b injection diagnostics.
   "Win32_System_Diagnostics_Debug",
+  # SECURITY_DESCRIPTOR_REVISION (absolute SD for the pipe DACL).
+  "Win32_System_SystemServices",
   # CancelIoEx / OVERLAPPED live in System::IO.
   "Win32_System_IO",
   # ProcessIdToSessionId (helper self-report for diagnostics).
@@ -43,10 +45,11 @@ windows = { version = "0.58", features = [
   "Win32_System_Power",
   # Named pipe server: CreateNamedPipeW / ConnectNamedPipe / DisconnectNamedPipe.
   "Win32_System_Pipes",
-  # Gates CreateNamedPipeW (SECURITY_ATTRIBUTES parameter type).
+  # SECURITY_ATTRIBUTES + the whole explicit pipe DACL: AllocateAndInitializeSid
+  # / FreeSid / GetLengthSid / InitializeAcl / AddAccessAllowedAce /
+  # InitializeSecurityDescriptor / SetSecurityDescriptorDacl (absolute SD path;
+  # the old SDDL Win32_Security_Authorization feature is gone with it).
   "Win32_Security",
-  # ConvertStringSecurityDescriptorToSecurityDescriptorW: the explicit pipe DACL.
-  "Win32_Security_Authorization",
   # OpenInputDesktop / CloseDesktop / DESKTOP_* (stations-and-desktops group).
   "Win32_System_StationsAndDesktops",
   # Gates IPropertyBag2::Write (VARIANT parameter).
