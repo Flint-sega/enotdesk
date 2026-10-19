@@ -444,13 +444,18 @@ test('term: defaultSpawn (реальный адаптер) нормализуе�
   const shell = { file: node, args: ['-e', 'process.stdin.on("data",d=>process.stdout.write(JSON.stringify(d.toString())))'] };
   const term = createTerm({ shell });
   term.write('x\r');
-  await new Promise((r) => setTimeout(r, 250));
+  // ждём эха по условию, а не 250 мс: под нагрузкой полного прогона старт
+  // дочернего node дольше (флейк 19.10); дедлайн — верхняя граница
+  const until = async (cond) => {
+    for (const deadline = Date.now() + 5000; !cond() && Date.now() < deadline;) await new Promise((r) => setTimeout(r, 20));
+  };
+  await until(() => term.buffer().includes('"x\\n"'));
   const got = term.buffer();
   assert.ok(got.includes('"x\\n"'), `до процесса должен дойти x\n (нормализовано), факт: ${got}`);
   assert.ok(!got.includes('\r'), 'голый \r до процесса не доходит');
   let exitSeen = false;
   term.onExit(() => { exitSeen = true; });
   term.kill('closed');
-  await new Promise((r) => setTimeout(r, 200));
+  await until(() => exitSeen);
   assert.ok(exitSeen, 'группа процессов убита — close дошёл');
 });

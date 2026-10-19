@@ -16,6 +16,8 @@
 // видеотрансивер inactive и честный session-info по input-каналу.
 
 import { videoAllowed } from '../lib/multiop-limits.mjs';
+import { summarizeStats } from '../lib/rtc-stats.mjs';
+import { nextTarget, TOP_BITRATE } from '../lib/adaptive-bitrate.mjs';
 
 const api = window.agentRtc;
 if (!api) {
@@ -52,10 +54,62 @@ if (!api) {
   // «видеослоты заняты» — деградация видна, а не выглядит чёрным экраном-загадкой.
   const SESSION_INFO_VIDEO_FULL = JSON.stringify({ type: 'session-info', video: false, reason: 'video-slots-full' });
 
+  // Адаптивный битрейт машинного видео (ADR 0030/0031 обещали потолок, 19.10 —
+  // решение владельца: «умная подстройка»): та же лестница и та же чистая
+  // политика, что у attended-хоста (session-media.js), — у КАЖДОГО pc своя
+  // ступень по его же статистике (per-viewer). Старт — TOP_BITRATE при
+  // привязке трека; дальше раз в ABR_INTERVAL_MS решает nextTarget.
+  // api.abrIntervalMs задаёт только тестовый фейк preload (боевой не задаёт).
+  const ABR_INTERVAL_MS = Number(api.abrIntervalMs) > 0 ? Number(api.abrIntervalMs) : 2000;
+  let abrTimer = null;
+
+  async function applyVideoCap(peer, maxBitrate) {
+    const sender = peer.videoSender;
+    if (!sender || typeof sender.getParameters !== 'function' || typeof sender.setParameters !== 'function') return;
+    try {
+      const p = sender.getParameters();
+      p.encodings = p.encodings?.length ? p.encodings : [{}];
+      p.encodings[0].maxBitrate = maxBitrate;
+      await sender.setParameters(p);
+    } catch (e) {
+      // не применилось (pc закрывается/ренеготиация) — следующий тик повторит
+      console.warn(`agent-bridge: setParameters отказал (${e?.message ?? e})`);
+    }
+  }
+
+  async function adaptTick() {
+    const now = Date.now();
+    for (const peer of peers.values()) {
+      if (!peer.videoAttached || typeof peer.pc.getStats !== 'function') continue;
+      try {
+        const summary = summarizeStats(await peer.pc.getStats());
+        if (!summary) continue;
+        const { target, changed } = nextTarget(summary, peer.adaptive.target, peer.adaptive.lastChangeAt, now);
+        if (!changed) continue;
+        peer.adaptive = { target, lastChangeAt: now };
+        await applyVideoCap(peer, target);
+      } catch { /* pc закрывается — не критично */ }
+    }
+  }
+
+  function ensureAdaptive() {
+    if (abrTimer) return;
+    abrTimer = setInterval(() => { void adaptTick(); }, ABR_INTERVAL_MS);
+    abrTimer?.unref?.(); // вне браузера (тесты) таймер не держит процесс
+  }
+
+  function stopAdaptiveIfIdle() {
+    if (abrTimer && peers.size === 0) {
+      clearInterval(abrTimer);
+      abrTimer = null;
+    }
+  }
+
   function closePeer(op) {
     const peer = peers.get(op);
     if (!peer) return;
     peers.delete(op);
+    stopAdaptiveIfIdle();
     for (const ch of peer.dcs.values()) {
       try { ch.close(); } catch { /* уже закрыт */ }
     }
@@ -89,6 +143,10 @@ if (!api) {
     try {
       await vt.sender.replaceTrack(videoTrack);
       peer.videoAttached = true;
+      // потолок с первой секунды: верхняя ступень, дальше ведёт adaptTick
+      peer.videoSender = vt.sender;
+      await applyVideoCap(peer, peer.adaptive.target);
+      ensureAdaptive();
     } catch (e) {
       console.warn(`agent-bridge: replaceTrack отказал (${e?.message ?? e}) — повторим`);
     }
@@ -222,7 +280,7 @@ if (!api) {
     // iceServers приходят до offer (ICE_CONFIG, общий); TURN нужен в NAT-сетях,
     // LAN работает и без него. Живые сети — MANUAL-QA.
     const pc = new RTCPeerConnection({ iceServers });
-    peer = { pc, dcs: new Map(), videoAttached: false, videoDenied: false, paused: false };
+    peer = { pc, dcs: new Map(), videoAttached: false, videoDenied: false, paused: false, videoSender: null, adaptive: { target: TOP_BITRATE, lastChangeAt: 0 } };
     peers.set(op, peer);
     pc.onicecandidate = (e) => {
       if (e.candidate) api.sendIce(e.candidate.toJSON ? e.candidate.toJSON() : e.candidate, op);

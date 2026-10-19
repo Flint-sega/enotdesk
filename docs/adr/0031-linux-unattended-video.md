@@ -49,7 +49,7 @@ attended-окна), а без хендлера getDisplayMedia в скрытой
    установок `install-linux.sh` документирует Environment=DISPLAY=:0
    и XAUTHORITY (запуск под реальным пользователем консоли — рекомендуемый
    путь юнита, как у терминала: консольный пользователь, не root).
-5. **Bitrate**: статический потолок TOP_BITRATE на senders моста (как в
+5. **Bitrate**: (19.10 — заменено адаптивной подстройкой per-viewer, см. ADR 0030 addendum) статический потолок TOP_BITRATE на senders моста (как в
    ADR 0030) — JPEG/canvas-путь един, per-viewer adaptive — вне волны.
 
 ## Альтернативы

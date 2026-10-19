@@ -305,6 +305,8 @@ async function loadRealBridgePage(relay, opts = {}) {
   const operatorChannels = [];
   const sentToOperator = [];
   const replaceTrackCalls = []; // {op, signalingState} — инвариант волны G (баг-1)
+  const bitrateCalls = []; // {pcIndex, maxBitrate} — адаптивный битрейт моста (19.10)
+  const statsByPc = new Map(); // pcIndex → массив RTCStats-подобных записей
   const pcs = [];
   const delivered = [];
   class FakePc {
@@ -333,6 +335,13 @@ async function loadRealBridgePage(relay, opts = {}) {
             replaceTrack: async (track) => {
               replaceTrackCalls.push({ pcIndex: pcs.indexOf(this), signalingState: this.signalingState, track });
               this._video.vt.sender.track = track;
+            },
+            // адаптивный битрейт моста (19.10): параметры энкодера и их история
+            _params: { encodings: [] },
+            getParameters() { return structuredClone(this._params); },
+            setParameters: async (prm) => {
+              this._video.vt.sender._params = structuredClone(prm);
+              bitrateCalls.push({ pcIndex: pcs.indexOf(this), maxBitrate: prm.encodings?.[0]?.maxBitrate });
             },
           },
         };
@@ -375,6 +384,8 @@ async function loadRealBridgePage(relay, opts = {}) {
       });
     }
     async addIceCandidate() {}
+    // статистика pc для адаптивного битрейта: тест задаёт её через setStats(pcIndex, …)
+    async getStats() { return statsByPc.get(pcs.indexOf(this)) ?? []; }
     close() {
       this.connectionState = 'closed';
       this.signalingState = 'closed';
@@ -392,6 +403,7 @@ async function loadRealBridgePage(relay, opts = {}) {
     onToDc: (cb) => { subs[BRIDGE_IPC.DC_TO] = cb; },
     onVideoFrame: (cb) => { subs[BRIDGE_IPC.VIDEO_FRAME] = cb; },
     onVideoMode: () => {},
+    ...(opts.abrIntervalMs ? { abrIntervalMs: opts.abrIntervalMs } : {}),
     sendAnswer: (sdp, op) => relay.handleMessage(BRIDGE_IPC.ANSWER, op ? { op, sdp } : sdp),
     gdmStatus: () => {},
     sendIce: (candidate, op) => relay.handleMessage(BRIDGE_IPC.ICE, op ? { op, candidate } : candidate),
@@ -429,6 +441,8 @@ async function loadRealBridgePage(relay, opts = {}) {
     sentToOperator,
     pcs,
     replaceTrackCalls,
+    bitrateCalls,
+    setStats: (pcIndex, stats) => statsByPc.set(pcIndex, stats),
     delivered,
     // main → мост (webContents.send): раздаём подписчикам preload
     deliver: (channel, payload) => {
@@ -640,6 +654,42 @@ test('ВОЛНА G (баг-1, гипотеза c): исходящие ICE вто
       'кандидат pc1 ушёл адресно op1');
     assert.ok(!iceTo.some((m) => m.data.candidate.candidate === 'host pc2' && m.to !== 'cl-op2'),
       'кандидат pc2 утёк чужому оператору');
+  } finally {
+    await env.teardown();
+  }
+});
+
+// ---- 19.10: адаптивный битрейт машинного видео (решение владельца «умная подстройка») ----
+test('мост: per-viewer адаптивный битрейт — старт 2.5 Мбит/с, плохая сеть одного оператора снижает только его', async () => {
+  const env = await makeRealBridgeEnv({ video: true, abrIntervalMs: 20 });
+  const poor = [
+    { type: 'remote-inbound-rtp', kind: 'video', packetsLost: 10, fractionLost: 0.1 },
+    { type: 'candidate-pair', state: 'succeeded', currentRoundTripTime: 0.05 },
+  ];
+  const good = [
+    { type: 'remote-inbound-rtp', kind: 'video', packetsLost: 10, fractionLost: 0 }, // реальная форма: потери в прошлом, интервал чистый
+    { type: 'candidate-pair', state: 'succeeded', currentRoundTripTime: 0.02 },
+  ];
+  const capsOf = (i) => env.page.bitrateCalls.filter((c) => c.pcIndex === i).map((c) => c.maxBitrate);
+  try {
+    env.page.deliver(BRIDGE_IPC.VIDEO_FRAME, new Uint8Array([1]));
+    await env.offerOf('cl-op1', 'term');
+    await env.offerOf('cl-op2', 'term');
+    env.page.setStats(0, poor);
+    env.page.setStats(1, good);
+    // кадры льются, пока оба pc не получили трек и op1 не спустился на ступень
+    for (const deadline = Date.now() + 5000; !(capsOf(0).includes(1_200_000) && capsOf(1).length) && Date.now() < deadline;) {
+      await env.page.deliver(BRIDGE_IPC.VIDEO_FRAME, new Uint8Array([2]));
+      await sleep(10);
+    }
+    assert.equal(capsOf(0)[0], 2_500_000, 'op1: потолок с первой секунды — верхняя ступень');
+    assert.equal(capsOf(1)[0], 2_500_000, 'op2: потолок с первой секунды — верхняя ступень');
+    assert.ok(capsOf(0).includes(1_200_000), `op1 при 10% потерь спустился на 1.2 Мбит/с (было ${capsOf(0)})`);
+    assert.ok(!capsOf(1).includes(1_200_000), 'op2 с хорошей сетью не тронут — ступень своя у каждого pc');
+    // подъём не раньше 15 с после смены: короткий период теста не должен вернуть 2.5 сразу
+    env.page.setStats(0, good);
+    await sleep(80);
+    assert.equal(capsOf(0).at(-1), 1_200_000, 'без выдержки 15 с ступень не поднимается');
   } finally {
     await env.teardown();
   }

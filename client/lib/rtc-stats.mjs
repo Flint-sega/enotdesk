@@ -5,6 +5,7 @@ export function summarizeStats(report) {
   let rttMs = null;
   let packetsLost = 0;
   let packetsReceived = 0;
+  let remoteFraction = null; // отправитель: доля потерь за последний интервал RTCP
   const each = (fn) => {
     if (typeof report?.forEach === 'function') report.forEach(fn);
     else for (const stat of Object.values(report ?? {})) fn(stat);
@@ -18,12 +19,17 @@ export function summarizeStats(report) {
       packetsReceived += stat.packetsReceived ?? 0;
     }
     // Отправитель не получает видео: потери своего потока он видит только в
-    // remote-inbound-rtp — отчёте приёмника (использует адаптивный битрейт).
-    if (stat.type === 'remote-inbound-rtp' && stat.kind === 'video') {
-      packetsLost += stat.packetsLost ?? 0;
-      packetsReceived += stat.packetsReceived ?? 0;
+    // remote-inbound-rtp — отчёте приёмника (им питается адаптивный битрейт).
+    // Берём fractionLost — долю потерь за ПОСЛЕДНИЙ интервал RTCP. Накопительный
+    // packetsLost здесь не годится: packetsReceived в remote-inbound-rtp по
+    // стандарту нет, и формула давала 100% после первого же потерянного пакета —
+    // лестница падала на нижнюю ступень и не поднималась до конца сеанса
+    // (живой замер 19.10 на VM103). Нет fractionLost — потерь не выдумываем.
+    if (stat.type === 'remote-inbound-rtp' && stat.kind === 'video' && Number.isFinite(stat.fractionLost)) {
+      remoteFraction = Math.max(remoteFraction ?? 0, stat.fractionLost);
     }
   });
+  if (remoteFraction !== null) return { rttMs, lossPct: Math.round(remoteFraction * 100) };
   const total = packetsLost + packetsReceived;
   if (rttMs === null && total === 0) return null;
   return { rttMs, lossPct: total > 0 ? Math.round((packetsLost / total) * 100) : 0 };

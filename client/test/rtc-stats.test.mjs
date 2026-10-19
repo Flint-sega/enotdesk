@@ -18,11 +18,29 @@ test('качество: Map-подобный report (настоящий RTCStats
   assert.deepEqual(summarizeStats(map), { rttMs: 45, lossPct: 1 });
 });
 
-test('host-сторона: потери своего исходящего видео — из remote-inbound-rtp (отчёт приёмника)', () => {
+// Реальная форма отчёта отправителя (Chrome): remote-inbound-rtp несёт
+// накопительный packetsLost и fractionLost за последний интервал RTCP, но НЕ
+// packetsReceived. Прежний тест подкладывал packetsReceived и прятал дефект:
+// после первой потери lossPct навсегда становился 100% (замер 19.10, VM103).
+test('host-сторона: потери своего видео — fractionLost последнего интервала из remote-inbound-rtp', () => {
   assert.deepEqual(summarizeStats({
     pair: { type: 'candidate-pair', state: 'succeeded', currentRoundTripTime: 0.045 },
-    rin: { type: 'remote-inbound-rtp', kind: 'video', packetsLost: 10, packetsReceived: 90 },
+    rin: { type: 'remote-inbound-rtp', kind: 'video', packetsLost: 838, fractionLost: 0.1 },
   }), { rttMs: 45, lossPct: 10 });
+});
+
+test('host-сторона (регресс 19.10): потери в прошлом при чистом текущем интервале — 0%, а не 100%', () => {
+  assert.deepEqual(summarizeStats({
+    pair: { type: 'candidate-pair', state: 'succeeded', currentRoundTripTime: 0.002 },
+    rin: { type: 'remote-inbound-rtp', kind: 'video', packetsLost: 838, fractionLost: 0 },
+  }), { rttMs: 2, lossPct: 0 });
+});
+
+test('host-сторона: remote-inbound-rtp без fractionLost — потерь не выдумываем', () => {
+  assert.deepEqual(summarizeStats({
+    pair: { type: 'candidate-pair', state: 'succeeded', currentRoundTripTime: 0.01 },
+    rin: { type: 'remote-inbound-rtp', kind: 'video', packetsLost: 5 },
+  }), { rttMs: 10, lossPct: 0 });
 });
 
 test('качество: пустой/кривой отчёт → null, без потерь → 0%', () => {
