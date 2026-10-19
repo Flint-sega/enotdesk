@@ -17,9 +17,13 @@ import {
 import { summarizeStats, formatQuality } from '../client/lib/rtc-stats.mjs';
 import { wireBrowserInput } from './input-source.mjs';
 import { bindTeam, teamRoute } from './team.js';
+import { bindRecords } from './records.js';
 
 const COOKIE = 'enot_op';
-const ALLOWED_ROLES = ['admin', 'operator'];
+// Роли страницы (B6 этап 1): аудитор входит в режим «только журнал» — история и
+// журнал действий без подключения; права всё равно проверяет сервер (RBAC).
+const ALLOWED_ROLES = ['admin', 'operator', 'auditor'];
+const CONNECT_ROLES = ['admin', 'operator'];
 
 // SEC-008: bearer-токен живёт только в памяти страницы — ни в cookie, ни в
 // sessionStorage. Cookie enot_op несёт только роль (для выбора варианта HTML
@@ -247,7 +251,7 @@ function resetKeyboardMode() {
 
 // ---- состояния страницы ----
 
-const VIEWS = ['view-login', 'view-denied', 'view-connect', 'view-machines', 'view-team', 'op-waiting', 'op-reconnect', 'op-remote'];
+const VIEWS = ['view-login', 'view-denied', 'view-connect', 'view-machines', 'view-team', 'view-contacts', 'view-history', 'view-audit', 'op-waiting', 'op-reconnect', 'op-remote'];
 function showOnly(...ids) {
   for (const id of VIEWS) (ids.includes(id) ? show : hide)($(id));
 }
@@ -1226,6 +1230,26 @@ function showMachines() {
   void renderMachines();
 }
 
+// ---- роли: видимость разделов как у серверных прав ----
+// адресная книга — admin/operator, история — все, журнал — admin/auditor,
+// машины и команда — admin; «К подключению» — тем, кто подключается.
+let records = null;
+function applyRoleUi(role) {
+  const staff = CONNECT_ROLES.includes(role);
+  for (const id of ['btn-nav-machines', 'btn-nav-team', 'btn-nav-audit']) (role === 'admin' ? show : hide)($(id));
+  for (const id of ['btn-nav-contacts', 'btn-nav-history', 'conn-contact-field', 'btn-history-back', 'btn-audit-back', 'btn-contacts-back']) (staff ? show : hide)($(id));
+  (role === 'admin' || role === 'auditor' ? show : hide)($('btn-history-audit'));
+  if (staff) void records.loadContactsIntoSelect();
+}
+function showLanding(role) {
+  if (CONNECT_ROLES.includes(role)) {
+    showOnly('view-connect');
+    showStatus(t('web.status.idle'));
+  } else {
+    records.showHistory(); // аудитор: подключения нет, стартовый экран — история
+  }
+}
+
 // ---- действия страницы ----
 
 function wire() {
@@ -1253,7 +1277,7 @@ function wire() {
       }
       if (!ALLOWED_ROLES.includes(res.body.user.role)) {
         forgetSession();
-        show($('login-auditor'));
+        showOnly('view-denied');
         return;
       }
       // SEC-008: токен — только в памяти этой страницы, потому после входа
@@ -1262,13 +1286,12 @@ function wire() {
       saveRoleCookie(res.body.user.role);
       text($('op-user-name'), res.body.user.name);
       text($('op-user-role'), roleName(res.body.user.role));
-      if (res.body.user.role === 'admin') { show($('btn-nav-machines')); show($('btn-nav-team')); }
+      applyRoleUi(res.body.user.role);
       text($('login-error'), '');
       // одноразовый код не должен пережить вход (повторный вход начнёт с чистого поля)
       $('login-totp').value = '';
       hide($('field-login-totp'));
-      showOnly('view-connect');
-      showStatus(t('web.status.idle'));
+      showLanding(res.body.user.role);
     } finally {
       setBusy(btn, false);
     }
@@ -1286,7 +1309,9 @@ function wire() {
       // Чужой/несуществующий ID — честный отказ сервера.
       let res;
       if (password) {
-        res = await api('POST', `/sessions/${encodeURIComponent(id)}/claim`, { password });
+        // контакт из адресной книги (необязателен, как в desktop)
+        const contactId = $('conn-contact').value || undefined;
+        res = await api('POST', `/sessions/${encodeURIComponent(id)}/claim`, { password, ...(contactId ? { contactId } : {}) });
       } else {
         res = await api('GET', `/sessions/${encodeURIComponent(id)}/connect`);
       }
@@ -1453,6 +1478,17 @@ function wire() {
   // Панель команды: монтируем один раз (формы/кнопки внутри view-team).
   bindTeam({ api, t, showOnly, onOpenMachines: () => showMachines() });
 
+  // B6 этап 1: адресная книга, история, журнал (паритет с desktop)
+  records = bindRecords({ api, t, getLocale, showOnly, $ });
+  $('btn-nav-contacts')?.addEventListener('click', () => records.showContacts());
+  $('btn-nav-history')?.addEventListener('click', () => records.showHistory());
+  $('btn-nav-audit')?.addEventListener('click', () => records.showAudit());
+  $('btn-history-audit')?.addEventListener('click', () => records.showAudit());
+  $('btn-audit-history')?.addEventListener('click', () => records.showHistory());
+  $('btn-contacts-back')?.addEventListener('click', () => showConnectForm());
+  $('btn-history-back')?.addEventListener('click', () => showConnectForm());
+  $('btn-audit-back')?.addEventListener('click', () => showConnectForm());
+
   // Drag&drop файла на экран сеанса, как в desktop.
   const zone = $('op-remote');
   zone?.addEventListener('dragover', (e) => { e.preventDefault(); zone.classList.add('drop-hover'); });
@@ -1510,9 +1546,8 @@ function wire() {
       return;
     }
     // Панель машин — только admin (spec §UI машин); оператор её не видит.
-    if (user.role === 'admin') { show($('btn-nav-machines')); show($('btn-nav-team')); }
-    showOnly('view-connect');
-    showStatus(t('web.status.idle'));
+    applyRoleUi(user.role);
+    showLanding(user.role);
     return;
   }
   // Токена в памяти нет (перезагрузка страницы) или он истёк. Cookie хранит

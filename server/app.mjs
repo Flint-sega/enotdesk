@@ -143,7 +143,7 @@ const OPERATOR_ASSETS = {
     dir: '../web/',
     files: {
       'operator.mjs': 'text/javascript', 'input-source.mjs': 'text/javascript',
-      'team.js': 'text/javascript', 'invite.js': 'text/javascript',
+      'team.js': 'text/javascript', 'invite.js': 'text/javascript', 'records.js': 'text/javascript',
       'theme.css': 'text/css',
     },
   },
@@ -153,6 +153,7 @@ const OPERATOR_ASSETS = {
       'i18n.mjs': 'text/javascript', 'protocol.mjs': 'text/javascript', 'keymap.mjs': 'text/javascript',
       'chat.mjs': 'text/javascript', 'clipboard-sync.mjs': 'text/javascript', 'file-transfer.mjs': 'text/javascript',
       'media-toggle.mjs': 'text/javascript', 'rtc-stats.mjs': 'text/javascript',
+      'csv.mjs': 'text/javascript', // экспорт CSV истории/журнала (web/records.js)
     },
   },
   'client/renderer': {
@@ -1895,8 +1896,9 @@ export function createServer(opts = {}) {
       let cookieRole = null;
       if (cookie) { try { cookieRole = decodeURIComponent(cookie[1]); } catch { cookieRole = cookie[1]; } }
       const opRole = user?.role ?? (['admin', 'operator', 'auditor'].includes(cookieRole) ? cookieRole : null);
-      const status = opRole === 'admin' || opRole === 'operator' ? 200
-        : opRole === 'auditor' ? 403 : 401;
+      // B6 этап 1: аудитор получает страницу (режим «только журнал»); данных
+      // страница не несёт, а /history и /audit проверяют роль сами.
+      const status = opRole === 'admin' || opRole === 'operator' || opRole === 'auditor' ? 200 : 401;
       return operatorPage(res, status, locale, t('web.title', {}, locale), cfg.version);
     }
 

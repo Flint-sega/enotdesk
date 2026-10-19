@@ -34,7 +34,8 @@ test('/operator: без аутентификации — 401 и форма вх�
   assert.match(admin.csp ?? '', /connect-src 'self'/, 'same-origin fetch и WS');
   assert.doesNotMatch(admin.body, /<script(?![^>]*\bsrc=)/, 'без inline-скриптов');
 
-  // аудитору страница оператора не отдаётся — только чтение, как в desktop
+  // B6 этап 1: аудитору страница отдаётся — режим «только журнал» (история и
+  // журнал действий); рабочие данные и подключение сервер ему по-прежнему не даёт
   const invite = await api(base, 'POST', '/invites', { token, body: { role: 'auditor' } });
   const reg = await fetch(base + '/api/v1/invites/accept', {
     method: 'POST', headers: { 'Content-Type': 'application/json' },
@@ -43,14 +44,18 @@ test('/operator: без аутентификации — 401 и форма вх�
   assert.equal(reg.status, 200);
   const audLogin = await api(base, 'POST', '/auth/login', { body: { login: 'aud-one', password: 'Пароль-аудита-123' } });
   const aud = await html(base, '/operator', { token: audLogin.json.token });
-  assert.equal(aud.status, 403);
+  assert.equal(aud.status, 200, 'аудитор получает страницу оператора');
+  const audToken = audLogin.json.token;
+  assert.equal((await api(base, 'GET', '/history', { token: audToken })).status, 200, 'история аудитору доступна');
+  assert.equal((await api(base, 'GET', '/audit', { token: audToken })).status, 200, 'журнал аудитору доступен');
+  assert.equal((await api(base, 'GET', '/contacts', { token: audToken })).status, 403, 'адресная книга аудитору закрыта (RBAC сервера)');
 
   // cookie (как её ставит страница) несёт только роль для выбора варианта HTML
-  // (SEC-008): admin/operator → 200, аудитор → 403, мусор → 401. Токен в cookie
+  // (SEC-008): admin/operator/auditor → 200, мусор → 401. Токен в cookie
   // не живёт — каждый /api и WS всё равно за Bearer-RBAC.
   assert.equal((await html(base, '/operator', { cookie: 'enot_op=admin' })).status, 200);
   assert.equal((await html(base, '/operator', { cookie: 'enot_op=operator' })).status, 200);
-  assert.equal((await html(base, '/operator', { cookie: 'enot_op=auditor' })).status, 403);
+  assert.equal((await html(base, '/operator', { cookie: 'enot_op=auditor' })).status, 200);
   assert.equal((await html(base, '/operator', { cookie: 'enot_op=garbage' })).status, 401);
 });
 
@@ -58,6 +63,9 @@ test('статика страницы оператора: модули и сло
   const { base } = await startServer(t);
   const mod = await fetch(`${base}/web/operator.mjs`);
   assert.equal(mod.status, 200);
+  // B6 этап 1: модуль записей и CSV-хелпер — в allowlist статики
+  assert.equal((await fetch(`${base}/web/records.js`)).status, 200, 'web/records.js отдаётся');
+  assert.equal((await fetch(`${base}/client/lib/csv.mjs`)).status, 200, 'client/lib/csv.mjs отдаётся');
   assert.match(mod.headers.get('content-type') ?? '', /text\/javascript/);
   assert.match(await mod.text(), /wireBrowserInput/);
   assert.equal((await fetch(`${base}/web/input-source.mjs`)).status, 200);

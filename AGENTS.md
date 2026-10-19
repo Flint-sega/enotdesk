@@ -24,12 +24,12 @@ client/lib/  модули без Electron: protocol, input-pipeline, input-arbit
 client/renderer/  UI клиента и desktop-оператора (app.js, session-media.js, session-services.js, views/)
 client/locales/   ru.mjs, en.mjs (паритет ключей проверяет тест)
 client/agent-service/  службы агента: Windows (sc.exe), Linux (systemd), macOS (LaunchDaemon) + install/remove
-web/         браузерный оператор /operator (operator.html, operator.mjs, input-source.mjs, team.js)
+web/         браузерный оператор /operator (operator.html, operator.mjs, input-source.mjs, team.js, records.js — контакты/история/журнал/CSV; единая программа оператора, ADR 0033)
 helper/video/  Rust-хелпер Windows: захват DXGI/GDI и ввод в консольной сессии, named pipe (ADR 0027)
 docker/ Dockerfile compose.yaml   серверный стек
 scripts/     quick-setup.sh, install-server.sh, deploy-server.sh, smoke-local.mjs, smoke-remote.mjs, make-icons.mjs, make-mascot.mjs
 site/        публичная витрина (GitHub Pages)
-docs/        SESSION_PROTOCOL, SERVER, AGENT, WEB-OPERATOR, BUILD, MANUAL-QA, ROADMAP, LAB, adr/0001–0032
+docs/        SESSION_PROTOCOL, SERVER, AGENT, WEB-OPERATOR, BUILD, MANUAL-QA, ROADMAP, LAB, adr/0001–0033
 ```
 
 ## Архитектура (кратко; подробности в docs/ и ADR)
@@ -48,7 +48,7 @@ docs/        SESSION_PROTOCOL, SERVER, AGENT, WEB-OPERATOR, BUILD, MANUAL-QA, RO
 - Всё входящее проходит allowlist и лимиты. Недоступная платформа честно сообщает код причины (`native-unavailable`, `wayland-unsupported-control`, `video-unsupported-platform`, `no-active-session`, `term-busy`…), фейковый успех запрещён.
 - Токены, пароли и коды в БД — только хешами; шифруемые секреты — AES-256-GCM от `ENOT_SECRET_KEY`; токены не попадают в рендерер; секреты не идут в argv и логи.
 - Пользовательские тексты — через словари `client/locales/{ru,en}.mjs` (ключи совпадают, `error.code` не локализуется).
-- ADR в `docs/adr/`: следующий номер — 0033.
+- ADR в `docs/adr/`: следующий номер — 0034.
 - README.md (en) ↔ README.ru.md. Лицензия AGPL-3.0.
 
 ## Окружение

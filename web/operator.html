@@ -71,6 +71,14 @@ video.fit-cover{object-fit:cover}
 .machines-page{color:var(--text-3);font:500 13px var(--font-mono)}
 .machines-claim{margin-top:16px;display:flex;flex-direction:column;gap:10px}
 .machines-claim-row{display:flex;gap:10px;flex-wrap:wrap}
+/* B6 этап 1: адресная книга, история, журнал — те же карточки, что у машин */
+.records-search{display:flex;gap:10px;align-items:flex-end;flex-wrap:wrap;margin-top:14px}
+.records-search input{flex:1;min-width:180px}
+.records-list{display:flex;flex-direction:column;gap:10px;margin-top:14px}
+.record-row{display:flex;gap:12px;align-items:flex-start;justify-content:space-between;border:1px solid var(--line);border-radius:var(--r-md);padding:14px 16px;flex-wrap:wrap;background:var(--panel);box-shadow:var(--top-hl)}
+.record-main{min-width:0;flex:1;display:flex;flex-direction:column;gap:4px;overflow-wrap:anywhere}
+.record-row .tag{font:500 12px var(--font-mono);color:var(--accent);background:var(--accent-dim);border-radius:6px;padding:2px 8px}
+.records-pager{display:flex;align-items:center;gap:10px;margin-top:14px;flex-wrap:wrap;color:var(--text-3);font:500 13px var(--font-mono)}
 /* G1: карточка «Подключение коллег» — ID/пароль машинного сеанса; клик по
    значению выделяет его целиком (user-select:all) для копирования без
    clipboard-API (SEC-002: writeText на странице ровно один — у буфера сеанса) */
@@ -134,7 +142,6 @@ video.fit-cover{object-fit:cover}
       <button id="btn-login" class="btn wide" type="submit" data-i18n="web.login.submit">Войти</button>
     </form>
     <p class="form-error" id="login-error" aria-live="polite"></p>
-    <p class="note hidden" id="login-auditor" data-i18n="web.login.auditor"></p>
   </section>
 
   <section id="view-denied" class="card center-card hidden">
@@ -177,11 +184,77 @@ video.fit-cover{object-fit:cover}
         <label for="conn-password" data-i18n="web.connect.password">Пароль сеанса</label>
         <input id="conn-password" type="password" autocomplete="off">
       </div>
+      <div class="field" id="conn-contact-field">
+        <label for="conn-contact" data-i18n="op.contactLabel">Клиент из адресной книги</label>
+        <select id="conn-contact"></select>
+      </div>
       <button id="btn-claim" class="btn" type="submit" data-i18n="web.connect.submit">Подключиться</button>
     </form>
     <p class="form-error" id="conn-error" aria-live="polite"></p>
     <button id="btn-nav-machines" class="btn ghost hidden" type="button" data-i18n="web.machines.open">Машины</button>
     <button id="btn-nav-team" class="btn ghost hidden" type="button" data-i18n="web.team.open">Команда</button>
+    <button id="btn-nav-contacts" class="btn ghost hidden" type="button" data-i18n="op.paneContacts">Адресная книга</button>
+    <button id="btn-nav-history" class="btn ghost hidden" type="button" data-i18n="op.paneHistory">История</button>
+    <button id="btn-nav-audit" class="btn ghost hidden" type="button" data-i18n="op.paneAudit">Журнал</button>
+  </section>
+
+  <!-- B6 этап 1: записи оператора (паритет с desktop). Права — как у сервера:
+       адресная книга — admin/operator, история — все роли, журнал — admin/auditor. -->
+  <section id="view-contacts" class="card hidden">
+    <h1 data-i18n="contacts.title">Адресная книга</h1>
+    <button id="btn-contacts-back" class="btn ghost" type="button" data-i18n="web.team.backConnect">К подключению</button>
+    <form id="form-contact-search" class="records-search">
+      <label for="contact-search" data-i18n="contacts.searchLabel">Поиск</label>
+      <input id="contact-search" data-i18n-placeholder="contacts.searchPlaceholder">
+      <button class="btn ghost" type="submit" data-i18n="contacts.find">Найти</button>
+      <button id="btn-contact-add" class="btn" type="button" data-i18n="contacts.add">Добавить</button>
+    </form>
+    <div class="card hidden" id="contact-editor">
+      <h2 id="contact-editor-title" data-i18n="contacts.newTitle">Новый контакт</h2>
+      <form id="form-contact">
+        <div class="field"><label for="contact-name" data-i18n="contacts.nameLabel">Имя</label><input id="contact-name" maxlength="120"></div>
+        <div class="field"><label for="contact-notes" data-i18n="contacts.notesLabel">Заметки</label><textarea id="contact-notes" maxlength="2000"></textarea></div>
+        <div class="field"><label for="contact-tags" data-i18n="contacts.tagsLabel">Теги</label><input id="contact-tags" data-i18n-placeholder="contacts.tagsPlaceholder"></div>
+        <p class="form-error" id="contact-error" aria-live="polite"></p>
+        <button id="btn-contact-save" class="btn" type="submit" data-i18n="contacts.save">Сохранить</button>
+        <button id="btn-contact-cancel" class="btn ghost" type="button" data-i18n="common.cancel">Отмена</button>
+      </form>
+    </div>
+    <p class="note" id="contacts-status" aria-live="polite"></p>
+    <div id="contacts-list" class="records-list"></div>
+    <div class="records-pager">
+      <button id="contacts-prev" class="btn ghost" type="button" data-i18n="web.machines.prev">← Назад</button>
+      <span id="contacts-page"></span>
+      <button id="contacts-next" class="btn ghost" type="button" data-i18n="web.machines.next">Вперёд →</button>
+    </div>
+  </section>
+
+  <section id="view-history" class="card hidden">
+    <h1 data-i18n="history.title">История сеансов</h1>
+    <button id="btn-history-back" class="btn ghost" type="button" data-i18n="web.team.backConnect">К подключению</button>
+    <button id="btn-history-audit" class="btn ghost hidden" type="button" data-i18n="op.paneAudit">Журнал</button>
+    <button id="history-csv" class="btn ghost" type="button" data-i18n="common.downloadCsv">Скачать CSV</button>
+    <p class="note" id="history-status" aria-live="polite"></p>
+    <div id="history-list" class="records-list"></div>
+    <div class="records-pager">
+      <button id="history-prev" class="btn ghost" type="button" data-i18n="web.machines.prev">← Назад</button>
+      <span id="history-page"></span>
+      <button id="history-next" class="btn ghost" type="button" data-i18n="web.machines.next">Вперёд →</button>
+    </div>
+  </section>
+
+  <section id="view-audit" class="card hidden">
+    <h1 data-i18n="audit.title">Журнал действий</h1>
+    <button id="btn-audit-back" class="btn ghost" type="button" data-i18n="web.team.backConnect">К подключению</button>
+    <button id="btn-audit-history" class="btn ghost" type="button" data-i18n="op.paneHistory">История</button>
+    <button id="audit-csv" class="btn ghost" type="button" data-i18n="common.downloadCsv">Скачать CSV</button>
+    <p class="note" id="audit-status" aria-live="polite"></p>
+    <div id="audit-list" class="records-list"></div>
+    <div class="records-pager">
+      <button id="audit-prev" class="btn ghost" type="button" data-i18n="web.machines.prev">← Назад</button>
+      <span id="audit-page"></span>
+      <button id="audit-next" class="btn ghost" type="button" data-i18n="web.machines.next">Вперёд →</button>
+    </div>
   </section>
 
   <section id="view-machines" class="card hidden">

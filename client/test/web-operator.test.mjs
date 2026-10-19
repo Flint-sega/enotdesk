@@ -16,7 +16,8 @@ const html = readSrc('operator.html');
 const operatorJs = readSrc('operator.mjs');
 const inputJs = readSrc('input-source.mjs');
 const teamJs = readSrc('team.js'); // UI команды (admin): свои id/кнопки в operator.html
-const allJs = `${operatorJs}\n${inputJs}\n${teamJs}`;
+const recordsJs = readSrc('records.js'); // B6 этап 1: адресная книга, история, журнал, CSV
+const allJs = `${operatorJs}\n${inputJs}\n${teamJs}\n${recordsJs}`;
 
 import ru from '../locales/ru.mjs';
 import en from '../locales/en.mjs';
@@ -133,7 +134,8 @@ test('web/operator.html: панель машин скрыта для не-admin 
 });
 
 test('web/*.mjs: панель машин показывается только admin и ходит в machines API (включая toast R08)', () => {
-  assert.match(operatorJs, /user\.role === 'admin'/, 'кнопку «Машины» показывает только роль admin');
+  // B6 этап 1: видимость разделов собрана в applyRoleUi — «Машины» только admin
+  assert.match(operatorJs, /\['btn-nav-machines', 'btn-nav-team', 'btn-nav-audit'\]\) \(role === 'admin' \? show : hide\)/, 'кнопку «Машины» показывает только роль admin');
   const paths = [...operatorJs.matchAll(/api\('(?:GET|POST|DELETE)',\s*(`[^`]*`|'[^']*')/g)].map((m) => m[1]);
   const machinePaths = paths.filter((p) => p.includes('/machines'));
   assert.ok(machinePaths.length >= 5, 'панель машин должна использовать machines API (список, claim, pin, revoke, delete, toast)');
@@ -244,4 +246,37 @@ test('B2: форма входа держит скрытое поле TOTP и ш�
   assert.match(code, /\$\('field-login-totp'\)\.classList\.contains\('hidden'\) \? '' :/, 'пока поле скрыто, код не отправляется');
   assert.match(code, /\.\.\.\(totp \? \{ totp \} : \{\}\)/, 'поле totp в теле запроса — только когда код введён');
   assert.match(code, /\$\('login-totp'\)\.value = '';\s*\n\s*hide\(\$\('field-login-totp'\)\)/, 'после входа одноразовый код стирается и поле прячется');
+});
+
+// ---- B6 этап 1 (19.10): паритет web с desktop — записи и режим аудитора ----
+test('B6: разделы адресной книги, истории и журнала есть в разметке и в списке экранов', () => {
+  for (const id of ['view-contacts', 'view-history', 'view-audit']) {
+    assert.match(html, new RegExp(`<section id="${id}" class="card hidden">`), `раздел ${id} в разметке`);
+    assert.match(operatorJs, new RegExp(`'${id}'`), `${id} в VIEWS — showOnly умеет его прятать`);
+  }
+  assert.match(html, /<select id="conn-contact"><\/select>/, 'выбор контакта в форме подключения (как desktop)');
+});
+
+test('B6: права разделов — как у сервера (контакты admin/operator, журнал admin/auditor, машины/команда admin)', () => {
+  const code = operatorJs.replace(/\/\/[^\n]*/g, '');
+  assert.match(code, /const ALLOWED_ROLES = \['admin', 'operator', 'auditor'\]/, 'аудитор допускается на страницу');
+  assert.match(code, /const CONNECT_ROLES = \['admin', 'operator'\]/, 'подключаются только admin/operator');
+  assert.match(code, /\['btn-nav-machines', 'btn-nav-team', 'btn-nav-audit'\]\) \(role === 'admin' \? show : hide\)/, 'машины/команда/журнал из подключения — только admin');
+  assert.match(code, /'btn-nav-contacts', 'btn-nav-history', 'conn-contact-field'/, 'адресная книга/история/выбор контакта — тем, кто подключается');
+  assert.match(code, /\(role === 'admin' \|\| role === 'auditor' \? show : hide\)\(\$\('btn-history-audit'\)\)/, 'переход в журнал — admin и auditor');
+  assert.match(code, /records\.showHistory\(\); \/?/, 'стартовый экран аудитора — история');
+});
+
+test('B6: подключение передаёт contactId из адресной книги только когда он выбран', () => {
+  assert.match(operatorJs, /const contactId = \$\('conn-contact'\)\.value \|\| undefined;/);
+  assert.match(operatorJs, /\{ password, \.\.\.\(contactId \? \{ contactId \} : \{\}\) \}/);
+});
+
+test('B6: модуль записей строит DOM через textContent и ходит в те же REST, что desktop', () => {
+  const code = recordsJs.replace(/\/\/[^\n]*/g, '');
+  assert.ok(!/innerHTML/.test(code), 'пользовательские строки не попадают в HTML');
+  for (const route of ["'/contacts'", "'/history'", "'/audit'"]) assert.ok(code.includes(route), `маршрут ${route}`);
+  assert.match(code, /api\('PATCH', `\/contacts\/\$\{encodeURIComponent\(editing\.id\)\}`, \{ \.\.\.base, revision: editing\.revision \}\)/, 'правка с revision (409 — конфликт)');
+  assert.match(code, /api\('DELETE', `\/contacts\/\$\{encodeURIComponent\(c\.id\)\}`, \{ revision: c\.revision \}\)/, 'удаление с revision');
+  assert.match(code, /window\.confirm\(t\('contacts\.deleteConfirm'/, 'удаление — с явным подтверждением');
 });
