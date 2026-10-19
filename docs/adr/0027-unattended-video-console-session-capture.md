@@ -140,7 +140,7 @@ DXGI-пути — downscale, WIC-энкодер и протокол пайпа �
 ### Факты живого прогона (07.10, VM 101 enotdesk-win10-a1, Microsoft Basic Display Adapter)
 
 Метод: standalone-хелпер в консольном сеансе (`schtasks /IT`), PS-клиент пайпа
-(`scripts/lab/gdi-test.ps1` + `scripts/lab/gdi-run.cmd`); детали и артефакты —
+(`.local/lab/scripts/gdi-test.ps1` + `.local/lab/scripts/gdi-run.cmd`); детали и артефакты —
 MANUAL-QA, раздел 07.10.2026.
 
 - Прогон 1 (rev-1, 45 с): DDA создаётся и отдаёт 34 кадра (~0.75 fps); статусы
@@ -260,3 +260,7 @@ MANUAL-QA, раздел 07.10.2026.
 (QEMU/virtio-vga-специфика; sess/десктопы/IL проверены корректными). Если
 калибровка C2–C4 покажет, что healthy-машины инъецируют и без attach,
 дефолт можно перевернуть на off+fallback и убрать флаг.
+
+## Addendum (19.10.2026)
+
+Каталог спайка `spike/video-dxgi/` и лабовые скрипты (`scripts/lab/gdi-*`) вынесены из публичного репозитория (волна «гигиена», B4): код в git-истории до v0.6.22 и в локальном складе мейнтейнера (`.local/`). Ссылки выше — исторические.

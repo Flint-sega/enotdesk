@@ -126,6 +126,11 @@ video.fit-cover{object-fit:cover}
         <label for="login-password" data-i18n="web.login.password">Пароль</label>
         <input id="login-password" name="password" type="password" autocomplete="current-password" required>
       </div>
+      <!-- Второй фактор: поле скрыто, пока сервер не ответит totp_required (как в desktop) -->
+      <div class="field hidden" id="field-login-totp">
+        <label for="login-totp" data-i18n="op.totpCode">Код подтверждения</label>
+        <input id="login-totp" name="totp" inputmode="numeric" autocomplete="one-time-code" data-i18n-placeholder="op.totpPlaceholder" placeholder="6 цифр или резервный код">
+      </div>
       <button id="btn-login" class="btn wide" type="submit" data-i18n="web.login.submit">Войти</button>
     </form>
     <p class="form-error" id="login-error" aria-live="polite"></p>

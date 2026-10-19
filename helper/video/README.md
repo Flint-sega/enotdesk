@@ -18,7 +18,7 @@ sends commands (JSON)          --------> SendInput / monitor power / quality
 ```
 
 Runtime dependencies: none beyond the `windows` crate (0.58, same major as the
-proven `spike/video-dxgi`).
+proven `spike/video-dxgi` — removed from the repo on 2026-10-19, see git history up to v0.6.22).
 
 ## Launch contract
 

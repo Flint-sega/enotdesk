@@ -5,6 +5,13 @@ import fs from 'node:fs';
 import path from 'node:path';
 import os from 'node:os';
 
+// Дедлайн ожидания события, которое ОБЯЗАНО прийти (wait/closeCode без явного ms).
+// Это верхняя граница, а не окно: больше значение — только позже падение при
+// настоящем дефекте, проверки не ослабляются. 2 с хватало на тихой машине, но под
+// нагрузкой (load avg 100+, гигиена 19.10) давало ложные «не дождались сообщения».
+// Отрицательные проверки («сообщения НЕ будет») обязаны передавать ms явно.
+export const WAIT_MS = Number(process.env.ENOT_TEST_WAIT_MS) || 6000;
+
 export function tmpDb(t) {
   const file = path.join(os.tmpdir(), `enot-test-${Date.now()}-${Math.random().toString(36).slice(2)}.db`);
   t.after(() => { try { fs.rmSync(file, { force: true }); } catch { /* удалять нечего */ } });
@@ -16,7 +23,10 @@ export async function startServer(t, extra = {}) {
     dbPath: extra.dbPath ?? tmpDb(t),
     heartbeatMs: extra.heartbeatMs ?? 200,
     leaseMs: extra.leaseMs ?? 800,
-    authTimeoutMs: extra.authTimeoutMs ?? 500,
+    // 2 с, как в host-id/session-flow/operator-page: 500 мс под нагрузкой рвали
+    // сокет 4001 раньше, чем тест успевал прислать auth (сам auth-таймаут ни
+    // один тест по умолчанию не проверяет)
+    authTimeoutMs: extra.authTimeoutMs ?? 2000,
     ...extra,
   });
   const port = await inst.start();
@@ -52,7 +62,7 @@ export function wsConnect(port) {
     ws.once('error', reject);
     ws.once('unexpected-response', (_req, res) => reject(new Error('unexpected response ' + res.statusCode)));
   });
-  ws.wait = (pred, ms = 2000) => new Promise((resolve, reject) => {
+  ws.wait = (pred, ms = WAIT_MS) => new Promise((resolve, reject) => {
     const check = (m) => m && pred(m);
     const buffered = ws.log.find(check);
     if (buffered) return resolve(buffered);
@@ -71,7 +81,7 @@ export function wsConnect(port) {
     };
     ws.on('message', on);
   });
-  ws.closeCode = (ms = 2000) => new Promise((resolve, reject) => {
+  ws.closeCode = (ms = WAIT_MS) => new Promise((resolve, reject) => {
     const timer = setTimeout(() => reject(new Error('timeout: сокет не закрылся')), ms);
     ws.once('close', (code) => { clearTimeout(timer); resolve(code); });
   });

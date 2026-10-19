@@ -48,16 +48,16 @@
 ## Фаза 3 — Linux, unattended
 
 Прогон лабы enot-lab 05.10.2026 (v0.6.3 релиз + локальная сборка, VM 103 `enotdesk-linux-a1`,
-Debian 13 + GNOME, staging `http://198.51.100.10:8080`; инфраструктура VM — `scripts/lab/linux-vm.sh`,
-glue — `scripts/lab/enot-xauth-sync.sh`, runbook — `docs/LAB.md`).
+Debian 13 + GNOME, staging `http://198.51.100.10:8080`; инфраструктура VM — `.local/lab/scripts/linux-vm.sh`,
+glue — `.local/lab/scripts/enot-xauth-sync.sh`, runbook — `docs/LAB.md`).
 
 | ID | Проверка | Ожидаемо | Результат |
 |----|----------|----------|-----------|
 | L1 | `install-linux.sh` | пользователь/профиль/env/unit созданы, служба enabled, машина online | ✅ 05.10.2026 (v0.6.3, релизный AppImage с GitHub, sha256 сверен): пользователь `enotdesk-agent`, профиль, `agent.env`, unit созданы, enabled, машина online (регистрация по onboarding-коду из env, после подтверждения код удалён). Найдены продуктовые швы: (а) **скрипт пишет профиль в `~/.config/EnotDesk/agent`, а packaged Electron на Linux резолвит `~/.config/enotdesk/agent`** (name, не productName) — settings.json не подхватывается, агент стартует с дефолтом 127.0.0.1 и самозаписывает его в settings.json (продукт-фикс: путь в install-linux.sh; лаба обходила записью settings.json в фактический путь + `allowInsecureHttp:true`); (б) `install -d` создаёт промежуточный `~/.config` от root → Electron падает «Failed to get 'userData' path», нужен `chown -R` агенту (продукт-фикс в скрипте); (в) после `--appimage-extract` каталог имеет 700 — нужен `chmod a+rX` перед установкой. Бинарник называется `enotdesk` (lowercase) — ожидание скрипта совпало |
-| L2 | Хардненинг unit | `systemd-analyze security enotdesk-agent` без критичных оверрайдов; агент пишет только в ReadWritePaths | ✅ 05.10.2026: выпущенный unit — **8.3 EXPOSED (70 unsafe)**. Лабовый drop-in (`scripts/lab/vm103-unit-dropin.sh`: UMask=0077, PrivateDevices, ProtectKernelTunables/Modules/Logs, ProtectControlGroups/Clock/Hostname, RestrictSUIDSGID, CapabilityBoundingSet=) → **4.5 OK**, агент жив (online, X-доступ, XTest-адаптер). Не применялось как ломающее Electron/Chromium: MemoryDenyWriteExecute (JIT), SystemCallFilter, RestrictAddressFamilies (netlink). Запись — только в ReadWritePaths (journal без EROFS/EPERM). Рекомендация: захарднить юнит в продукте тем же безопасным набором |
+| L2 | Хардненинг unit | `systemd-analyze security enotdesk-agent` без критичных оверрайдов; агент пишет только в ReadWritePaths | ✅ 05.10.2026: выпущенный unit — **8.3 EXPOSED (70 unsafe)**. Лабовый drop-in (`.local/lab/scripts/vm103-unit-dropin.sh`: UMask=0077, PrivateDevices, ProtectKernelTunables/Modules/Logs, ProtectControlGroups/Clock/Hostname, RestrictSUIDSGID, CapabilityBoundingSet=) → **4.5 OK**, агент жив (online, X-доступ, XTest-адаптер). Не применялось как ломающее Electron/Chromium: MemoryDenyWriteExecute (JIT), SystemCallFilter, RestrictAddressFamilies (netlink). Запись — только в ReadWritePaths (journal без EROFS/EPERM). Рекомендация: захарднить юнит в продукте тем же безопасным набором |
 | L3 | Ребут и убийство процесса | Restart=always поднимает; машина online после ребута | ✅ 05.10.2026: `kill -9` MainPID → служба активна снова ≤12 с (новый PID), машина online; `systemctl reboot` ×2 — служба/gdm/autologin/glue поднялись сами, машина online. Нюанс лабы: glue `enot-xauth-sync` на ребуте стартует раньше autologin-сессии — исправлен поллингом активной сессии (до 180 с), после чего ребут проходит без ручных действий |
 | L4 | Ввод в X11-сессию (DISPLAY/XAUTHORITY настроены) | клавиатура/скролл доходят до консоли | ✅ **ПРОЙДЕН 06.10.2026 (v0.6.5, живая инъекция, браузерный оператор → machine-сеанс VM 103)**: мышь — курсор на госте сдвинулся инъекцией (xdotool getmouselocation до/после); клик — указатель точно в целевой точке, окно диалога под курсором; клавиатура — текст «enot l4 ok» набран инъекцией в focused-диалог zenity, Enter закрыл диалог, текст в файле на госте (полная цепочка оператор-страница → DC `input` → inputSink → X11/XTest). Ловушка среды: GNOME-сессия самозалачивается при простое — локскрин перехватывает ввод; в лабе лок/затухание отключены (gsettings lock-enabled false, idle-delay 0) — включить в фабрику VM. История: фикс v0.6.4 (inputSink + X11 size/bounds), ревизия 06.10 (честный no-bounds) |
-| L5 | Wayland-сессия | агент работает, ввод честно `wayland-unsupported-control` (не падает) | ✅ 05.10.2026: GNOME Wayland — агент работает (online, клейм, сеанс «Подключено · 6–8 мс · 0%»), попытки ввода не роняют его (0 крашей). Отказ адаптера: в env агента выставлен `XDG_SESSION_TYPE=wayland` (лабовый glue) → `waylandAdapterProbe` честно возвращает `wayland-unsupported-control` (код-путь подтверждён; surface-статус в machine-сеансе не отображается — тот же разрыв, что L4). Лабовый нюанс: Electron сам выбирает ozone-wayland и падает без XDG_RUNTIME_DIR (`ELECTRON_OZONE_PLATFORM_HINT` Electron 44 игнорирует) — lab drop-in `--ozone-platform=x11` (`scripts/lab/vm103-ozone-dropin.sh`); рекомендация в docs/юнит продукта |
+| L5 | Wayland-сессия | агент работает, ввод честно `wayland-unsupported-control` (не падает) | ✅ 05.10.2026: GNOME Wayland — агент работает (online, клейм, сеанс «Подключено · 6–8 мс · 0%»), попытки ввода не роняют его (0 крашей). Отказ адаптера: в env агента выставлен `XDG_SESSION_TYPE=wayland` (лабовый glue) → `waylandAdapterProbe` честно возвращает `wayland-unsupported-control` (код-путь подтверждён; surface-статус в machine-сеансе не отображается — тот же разрыв, что L4). Лабовый нюанс: Electron сам выбирает ozone-wayland и падает без XDG_RUNTIME_DIR (`ELECTRON_OZONE_PLATFORM_HINT` Electron 44 игнорирует) — lab drop-in `--ozone-platform=x11` (`.local/lab/scripts/vm103-ozone-dropin.sh`); рекомендация в docs/юнит продукта |
 | L6 | Обновление сборки (stop → заменить → start) | машина возвращается online, токен сохранён | ✅ 05.10.2026: первая Linux-сборка (BUILD.md прогнан впервые): на VM 103 (node 24 tarball с nodejs.org, `npm ci`, `pack:linux`) → `EnotDesk-linux-x86_64.AppImage` 96 МБ; обновление stop → замена APP_DIR → start: машина online, **токен сохранён** (agent-token.json mtime не изменился, журнал без повторной регистрации, id/createdAt машины неизменны) |
 | L7 | `remove-linux.sh [--purge-data]` | служба/файлы/пользователь удалены согласно флагам | ✅ 05.10.2026: `--purge-data` — unit/профиль/пользователь//etc/enotdesk-agent удалены (проверка по списку), машина ушла offline; APP_DIR остаётся (по докам). Переустановка из локальной сборки → свежая регистрация (id 65568399), код удалён из env, online. Найдено: lab drop-ins (hardening/ozone) продуктовый скрипт не знает — снимаются руками (описаны в LAB.md); см. также L1-б (root-владелец .config при переустановке) |
 
@@ -481,8 +481,8 @@ privacy mode, удалённая печать, запись сеанса.
 x86_64-pc-windows-gnu: mingw-w64 + RUSTFLAGS crt-static → статический PE32+
 ~1.8 МБ, без VC++-рантайма) запускался в консольном сеансе VM 101
 (enotdesk-win10-a1, `Microsoft Basic Display Adapter`) через
-`schtasks /IT` (`scripts/lab/gdi-run.cmd`); кадры и статусы читал PS-клиент
-пайпа `scripts/lab/gdi-test.ps1` (hello → кадры → статусы; ранние прогоны
+`schtasks /IT` (`.local/lab/scripts/gdi-run.cmd`); кадры и статусы читал PS-клиент
+пайпа `.local/lab/scripts/gdi-test.ps1` (hello → кадры → статусы; ранние прогоны
 сохраняли кадр №1, финальный — все кадры подряд). Артефакты на VM 101:
 `C:\Users\enotadmin\gditest\{frame.jpg, frame-001..043.jpg, stdout.log}` +
 тик-лог `C:\ProgramData\EnotDesk\enotdesk-video.log`. Замер пикселей: JPEG
@@ -1448,3 +1448,11 @@ docker-режим без домена не отдавал TURN. Дополнит
 
 VM 105 удалена после приёмки. Флаги: --fetch-builds/--no-fetch-builds (вопрос default Y),
 --no-backup-timer; ENOT_SETUP_NO_DOCKER_INSTALL=1 отключает авто-docker.
+
+### 19.10.2026 — волна «гигиена»: вход в `/operator` с 2FA (B2)
+
+Локальный сервер 0.6.22 на временной БД (`ENOT_SECRET_KEY` задан), тестовый админ, 2FA включена через API (`/auth/totp/enable` → подтверждение первым кодом). Браузерный оператор `/operator`, встроенный Chromium:
+- логин + пароль → форма **не** входит, показывает поле «Код подтверждения» (фокус в нём) и подсказку «Введите код двухфакторной аутентификации» — PASS;
+- неверный код `000000` → «Неверный логин, пароль или код», вход не выполнен — PASS;
+- верный TOTP-код → вход админом, панель «Подключение к клиенту», поле кода скрыто и очищено — PASS.
+Не проверено: резервный код через web-форму (серверный путь покрыт `server/test/totp.test.mjs`), прод.

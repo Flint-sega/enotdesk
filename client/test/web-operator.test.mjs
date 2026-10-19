@@ -233,3 +233,15 @@ test('G1: машинный claim показывает карточку «Под�
   assert.match(operatorJs, /selectNodeContents/, 'выделение кликом вместо clipboard-API');
   assert.match(html, /user-select:all/, 'значение карточки выделяется целиком стилем');
 });
+
+// ---- Гигиена 19.10 (B2): вход в /operator с 2FA, паритет с desktop-оператором ----
+test('B2: форма входа держит скрытое поле TOTP и шлёт код только после totp_required', () => {
+  assert.match(html, /<div class="field hidden" id="field-login-totp">/, 'поле кода скрыто до ответа сервера');
+  assert.match(html, /<input id="login-totp" name="totp" inputmode="numeric" autocomplete="one-time-code"/, 'поле кода — числовое, автозаполнение одноразового кода');
+  const code = operatorJs.replace(/\/\/[^\n]*/g, '');
+  assert.match(code, /res\.status === 401 && res\.body\?\.error\?\.code === 'totp_required'/, 'ответ totp_required обрабатывается отдельно от прочих ошибок');
+  assert.match(code, /show\(\$\('field-login-totp'\)\)/, 'по totp_required поле кода показывается');
+  assert.match(code, /\$\('field-login-totp'\)\.classList\.contains\('hidden'\) \? '' :/, 'пока поле скрыто, код не отправляется');
+  assert.match(code, /\.\.\.\(totp \? \{ totp \} : \{\}\)/, 'поле totp в теле запроса — только когда код введён');
+  assert.match(code, /\$\('login-totp'\)\.value = '';\s*\n\s*hide\(\$\('field-login-totp'\)\)/, 'после входа одноразовый код стирается и поле прячется');
+});

@@ -599,7 +599,16 @@ test('ВОЛНА G (баг-1): replaceTrack НЕ трогает pc до setLocal
     await env.page.deliver(BRIDGE_IPC.VIDEO_FRAME, new Uint8Array([7, 8, 9]));
     await sleep(5); // SRD применился, createAnswer/setLocalDescription отложены — кадр в окне гонки
     await env.page.deliver(BRIDGE_IPC.VIDEO_FRAME, new Uint8Array([10, 11, 12]));
-    await sleep(30); // неготиация op2 докрутилась до stable
+    // Насос кадров до стабилизации op2 (живой хелпер шлёт кадры непрерывно).
+    // Раньше тут был sleep(30): под нагрузкой op2 становился stable позже
+    // последнего кадра, гейт верно его пропускал, и тест видел [0] вместо [0,1]
+    // (флейк 18.10). Дедлайн — верхняя граница, инвариант ниже не ослаблен.
+    const answered = () => env.sig.sentSignals.some((m) => m.type === 'signal' && m.to === 'cl-op2' && m.data?.description?.type === 'answer');
+    const attached = () => env.page.replaceTrackCalls.some((c) => c.pcIndex === 1);
+    for (const deadline = Date.now() + 5000; !(answered() && attached()) && Date.now() < deadline;) {
+      await env.page.deliver(BRIDGE_IPC.VIDEO_FRAME, new Uint8Array([13, 14, 15]));
+      await sleep(10);
+    }
 
     // ИНВАРИАНТ: replaceTrack выполняется только на стабильном (уже согласованном) pc
     const bad = env.page.replaceTrackCalls.filter((c) => c.signalingState !== 'stable');

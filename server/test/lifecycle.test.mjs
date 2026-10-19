@@ -2,7 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import net from 'node:net';
 import crypto from 'node:crypto';
-import { startServer, api, adminLogin, tmpDb, wsConnect, wsAuth } from './util.mjs';
+import { startServer, api, adminLogin, tmpDb, wsConnect, wsAuth, WAIT_MS } from './util.mjs';
 
 // Raw WS-клиент БЕЗ авто-pong: библиотеки ws/undici отвечают на ping сами, а для
 // terminate-ветки свипера нужен «тихо мёртвый» сокет, который ping игнорирует.
@@ -426,7 +426,8 @@ test('свипер: pong не пришёл за hostPingGraceMs — terminate, �
   await raw.opened;
   raw.send({ type: 'auth', role: 'host', sessionId: s.sessionId, token: s.hostToken }); // хелпер сам строкует
   const readyP = (async () => {
-    for (let i = 0; i < 40; i++) {
+    // дедлайн, а не 40×25 мс: ready обязан прийти, под нагрузкой 1 с не хватало
+    for (const deadline = Date.now() + WAIT_MS; Date.now() < deadline;) {
       const m = raw.log.find((x) => x.type === 'ready');
       if (m) return m;
       await new Promise((r) => setTimeout(r, 25));
@@ -581,15 +582,15 @@ test('multi-operator: join по ID+паролю в approved, свой claimId, W
 
   // fan-out: host сигнал получают оба оператора
   host.send(JSON.stringify({ type: 'signal', data: { candidate: { candidate: 'c', sdpMid: '0' } } }));
-  const got1 = await op1.wait((m) => m.type === 'signal', 2000).catch(() => null);
-  const got2 = await op2ws.wait((m) => m.type === 'signal', 2000).catch(() => null);
+  const got1 = await op1.wait((m) => m.type === 'signal', WAIT_MS).catch(() => null);
+  const got2 = await op2ws.wait((m) => m.type === 'signal', WAIT_MS).catch(() => null);
   assert.ok(got1, 'первый оператор получил сигнал');
   assert.ok(got2, 'второй оператор получил сигнал');
 
   // end основным оператором: обе стороны и оба оператора получили ended
   await api(base, 'POST', `/sessions/${sessionId}/end`, { token: hostToken, body: {} });
-  const e1 = await op1.wait((m) => m.type === 'ended', 2000).catch(() => null);
-  const e2 = await op2ws.wait((m) => m.type === 'ended', 2000).catch(() => null);
+  const e1 = await op1.wait((m) => m.type === 'ended', WAIT_MS).catch(() => null);
+  const e2 = await op2ws.wait((m) => m.type === 'ended', WAIT_MS).catch(() => null);
   assert.ok(e1 && e2, 'ended доставлен обоим операторам');
   host.close(); op1.close(); op2ws.close();
 });
@@ -614,17 +615,17 @@ test('idle-warning: релей host→операторам, санитизаци
 
   // санитизация: мусорный remainingSec → честный дефолт 60
   host.send(JSON.stringify({ type: 'idle-warning', remainingSec: 999999 }));
-  const warn = await op.wait((m) => m.type === 'idle-warning', 2000).catch(() => null);
+  const warn = await op.wait((m) => m.type === 'idle-warning', WAIT_MS).catch(() => null);
   assert.ok(warn, 'оператор получил idle-warning');
   assert.equal(warn.remainingSec, 60);
 
   host.send(JSON.stringify({ type: 'idle-warning', remainingSec: 42 }));
-  const warn2 = await op.wait((m) => m.type === 'idle-warning' && m.remainingSec === 42, 2000).catch(() => null);
+  const warn2 = await op.wait((m) => m.type === 'idle-warning' && m.remainingSec === 42, WAIT_MS).catch(() => null);
   assert.ok(warn2, 'оператор получил честный remainingSec');
 
   // idle-clear релеится симметрично: баннер оператора снимается по сети
   host.send(JSON.stringify({ type: 'idle-clear' }));
-  const cleared = await op.wait((m) => m.type === 'idle-clear', 2000).catch(() => null);
+  const cleared = await op.wait((m) => m.type === 'idle-clear', WAIT_MS).catch(() => null);
   assert.ok(cleared, 'оператор получил idle-clear');
 
   // оператору такой тип запрещён: сервер рвёт сокет 4002 (как file-link)
@@ -644,7 +645,7 @@ test('idle-warning: релей host→операторам, санитизаци
   await new Promise((r) => setTimeout(r, 150));
   assert.equal(host2ClosedCode, null, 'host2 не закрыт после idle-warning до approved');
   host2.send(JSON.stringify({ type: 'heartbeat' }));
-  const beat = await host2.wait((m) => m.type === 'heartbeat', 2000).catch(() => null);
+  const beat = await host2.wait((m) => m.type === 'heartbeat', WAIT_MS).catch(() => null);
   assert.ok(beat, 'heartbeat жив — гейт не оборвал соединение');
   host2.close();
   host.close(); op.close();

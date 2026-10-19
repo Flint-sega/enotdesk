@@ -1234,9 +1234,19 @@ function wire() {
     const btn = $('btn-login');
     setBusy(btn, true, t('web.login.busy'));
     try {
+      // 2FA: код уходит, только когда поле уже показано (сервер ответил
+      // totp_required) — тот же контракт, что у desktop-оператора.
+      const totp = $('field-login-totp').classList.contains('hidden') ? '' : $('login-totp').value.trim();
       const res = await api('POST', '/auth/login', {
         login: $('login-login').value, password: $('login-password').value,
+        ...(totp ? { totp } : {}),
       });
+      if (res.status === 401 && res.body?.error?.code === 'totp_required') {
+        show($('field-login-totp'));
+        $('login-totp').focus();
+        text($('login-error'), t('op.totpRequired'));
+        return;
+      }
       if (res.status !== 200) {
         text($('login-error'), res.body?.error?.message ?? t('common.serverError'));
         return;
@@ -1254,6 +1264,9 @@ function wire() {
       text($('op-user-role'), roleName(res.body.user.role));
       if (res.body.user.role === 'admin') { show($('btn-nav-machines')); show($('btn-nav-team')); }
       text($('login-error'), '');
+      // одноразовый код не должен пережить вход (повторный вход начнёт с чистого поля)
+      $('login-totp').value = '';
+      hide($('field-login-totp'));
       showOnly('view-connect');
       showStatus(t('web.status.idle'));
     } finally {

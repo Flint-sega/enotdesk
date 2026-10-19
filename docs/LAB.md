@@ -4,7 +4,7 @@
 «как разные люди», агенты зарегистрированы сами, откат деструктивных тестов —
 снапшотом `clean`. Всё переживает перезагрузку хоста без ручных команд.
 
-Построено тикетами T01–T04 (скрипты `scripts/lab/*.sh` в репо — источник истины;
+Построено тикетами T01–T04 (скрипты `.local/lab/scripts/*.sh` — источник истины; с 19.10 вне публичного репо, в локальном складе мейнтейнера `.local/`, в git-истории до v0.6.22 — `scripts/lab/`;
 копии на хосте в `/root/enot-lab/`).
 
 ## Схема сети
@@ -23,7 +23,7 @@
 
 - Хост: `192.0.2.50`, исходящий интерфейс `wlx-WIFI-IFACE` (Wi-Fi, конфиг
   сети хоста не трогается скриптами — `enot-wifi.service` переживает ребут сам).
-- IP-адреса и имена интерфейсов в этом документе и в `scripts/lab/` —
+- IP-адреса и имена интерфейсов в этом документе и в `.local/lab/scripts/` —
   документационные диапазоны (192.0.2.0/24, 198.51.100.0/24, RFC 5737).
   Реальные значения стенда живут только на хосте (`/root/enot-lab`,
   `/root/enot-lab-secrets`); скрипты лабы на конкретном стенде правятся
@@ -39,7 +39,7 @@
   + `aic_load_fw` и снова up-скрипт (не чаще раза в 5 минут). Логи —
   `journalctl -t enot-wifi-watchdog`. Прожито живьём: смерть wpa-демона
   восстановлена за ~1,7 мин; перезагрузка модулей — интерфейс вернулся за 2 с.
-  Источник истины — `scripts/lab/enot-wifi-watchdog.sh` + `.service`. При
+  Источник истины — `.local/lab/scripts/enot-wifi-watchdog.sh` + `.service`. При
   работающем watchdog руками связь не чинить — он сам; смотреть его журнал.
 - Панель Proxmox: `https://192.0.2.50:8006`.
 
@@ -151,7 +151,7 @@ qm snapshot 102 clean --description "…"   # переснять (сначала
 
 ## Деблоат Windows-VM (G01+G02)
 
-Обе клиентские VM дeблоачены скриптом `scripts/lab/win-debloat.ps1` (репо — источник
+Обе клиентские VM дeблоачены скриптом `.local/lab/scripts/win-debloat.ps1` (репо — источник
 истины; копия на гостях `%USERPROFILE%\win-debloat.ps1`, на хосте `/tmp/win-debloat.ps1`).
 Снапшот `clean` переснят ПОСЛЕ полного деблоата G01+G02 включая отключение WU
 (2026-10-05 12:46): откат `qm rollback <vmid> clean` возвращает это состояние.
@@ -295,7 +295,7 @@ hub assets web client/{lib,renderer,locales}` → распаковка тарб�
 
 ## Агенты на Windows-VM (установка/переустановка)
 
-Канон — `scripts/lab/lab-finalize.sh --stage agents` (на хосте) + `scripts/lab/agent-setup.ps1`
+Канон — `.local/lab/scripts/lab-finalize.sh --stage agents` (на хосте) + `.local/lab/scripts/agent-setup.ps1`
 (в VM, гоняется через SSH stdin после env-прелюдии — код не попадает в argv/на диск).
 
 Сценарий: админ создаёт машину (`POST /api/v1/machines` → одноразовый
@@ -334,21 +334,21 @@ powershell -NoProfile -ExecutionPolicy Bypass -File .\agent-setup.ps1
 
 ## Как добавить резервную VM
 
-- **103 enotdesk-linux-a1 — СОЗДАНА 05.10.2026** (см. секцию ниже); фабрика — `scripts/lab/linux-vm.sh`.
+- **103 enotdesk-linux-a1 — СОЗДАНА 05.10.2026** (см. секцию ниже); фабрика — `.local/lab/scripts/linux-vm.sh`.
 - **104 enotdesk-win10-a2** (не создана): фабрика `win-vm.sh` + `autounattend-win10.xml`
   с правками (VMID 104, IP .14); ISO Win10 уже на хосте
   (`/var/lib/vz/template/iso/`); далее агент — как у 101.
 
 ## VM 103 enotdesk-linux-a1 (Linux-клиент, создана 05.10.2026)
 
-Фабрика `scripts/lab/linux-vm.sh` (на хосте; Debian 13 cloud-image, cloud-init
+Фабрика `.local/lab/scripts/linux-vm.sh` (на хосте; Debian 13 cloud-image, cloud-init
 `enotadmin`+ключ лабы, 4 vCPU/6144/balloon 2048/64G, thin). Внутри: gdm3+gnome-core+xorg,
 autologin `enotadmin` в **X11**-сессию (AccountsService `Session=gnome-xorg`);
 переключение на **Wayland**: `Session=gnome` в `/var/lib/AccountsService/users/enotadmin`
 → `systemctl restart accounts-daemon && systemctl restart gdm3` (обратно — `gnome-xorg`).
 Пароль enotadmin — `/root/enot-lab-secrets/linux-vms.env` (0600).
 
-**Glue `enot-xauth-sync.sh`** (`scripts/lab/`, на госте `/usr/local/sbin/`; юнит
+**Glue `enot-xauth-sync.sh`** (`.local/lab/scripts/`, на госте `/usr/local/sbin/`; юнит
 `enot-xauth-sync.service` дергает на каждом ребуте): приводит `/etc/enotdesk-agent/agent.env`
 к типу активной консольной сессии — X11: DISPLAY + XAUTHORITY (cookie из `-auth` Xorg,
 display из /tmp/.X11-unix); Wayland: `XDG_SESSION_TYPE=wayland` (адаптер ввода честно
@@ -358,11 +358,11 @@ display из /tmp/.X11-unix); Wayland: `XDG_SESSION_TYPE=wayland` (адапте�
 Самоустановка свежей копии: положить скрипт в `/home/enotadmin/` и запустить оттуда.
 
 **Drop-ins юнита агента на 103** (лабовые, переживают reinstall? НЕТ — снимаются
-purge'ем, накладывать заново): `scripts/lab/vm103-unit-dropin.sh` (hardening →
-systemd-analyze 4.5 OK) и `scripts/lab/vm103-ozone-dropin.sh` (`--ozone-platform=x11`,
+purge'ем, накладывать заново): `.local/lab/scripts/vm103-unit-dropin.sh` (hardening →
+systemd-analyze 4.5 OK) и `.local/lab/scripts/vm103-ozone-dropin.sh` (`--ozone-platform=x11`,
 т.к. Electron 44 игнорирует `ELECTRON_OZONE_PLATFORM_HINT` и падает на Wayland-сессии).
 
-**Сборка на 103** (`scripts/lab/vm103-build.sh`): node 24 tarball → `/opt/node24`,
+**Сборка на 103** (`.local/lab/scripts/vm103-build.sh`): node 24 tarball → `/opt/node24`,
 исходники — tar worktree в `/var/tmp/enotdesk/`, `npm ci` + `pack:linux` →
 `/var/tmp/enotdesk/EnotDesk-built.AppImage` (первый прогон Linux-сборки, 05.10.2026).
 
