@@ -587,3 +587,18 @@ test('C+D (P3-1): при открытии input-канала оператору 
     delete globalThis.window;
   }
 });
+
+// ADR 0033, этап 2: вкладка «Оператор» открывает программу оператора с сервера
+// в отдельном окне; прежний встроенный оператор скрыт до удаления на этапе 3.
+test('программа оператора: карточка окна, мост openOperatorWindow, прежний UI скрыт', () => {
+  const preload = readFileSync(path.join(dir, '..', 'preload.cjs'), 'utf8');
+  assert.match(html, /<div id="op-legacy" class="hidden">/, 'прежний встроенный оператор не показывается');
+  assert.ok(html.indexOf('id="op-window"') < html.indexOf('id="op-legacy"'), 'карточка окна — первой во вкладке');
+  assert.ok(html.indexOf('id="op-login"') > html.indexOf('id="op-legacy"'), 'старый вход — внутри скрытого блока');
+  for (const m of ['openOperatorWindow', 'onOperatorWindow']) assert.ok(preload.includes(m), `preload выставляет ${m}`);
+  assert.match(mainJs, /ipcMain\.handle\('enot:openOperatorWindow', \(e\) => \{ guard\(e\); return openOperatorWindow\(\); \}\);/);
+  const app = readFileSync(path.join(dir, 'app.js'), 'utf8');
+  assert.match(app, /\$\('btn-op-window'\)\.addEventListener\('click'/);
+  assert.match(app, /'opwin\.outdated'/, 'старый сервер — честное «обновите сервер»');
+  assert.match(app, /'opwin\.unreachable'/);
+});

@@ -29,6 +29,7 @@ import { createTermHost } from './lib/term.mjs';
 import { showToast } from './lib/notify.mjs';
 import { createMachineServices } from './lib/machine-services.mjs';
 import { createOpCredentialsStore } from './lib/op-credentials.mjs';
+import { operatorWindowUrls, isAllowedNavigation, probeOperatorServer, isTrustedOperatorFrame, rememberAllowed } from './lib/operator-window.mjs';
 import { onIncoming as chatWidgetOnIncoming, shouldNotify as chatWidgetShouldNotify } from './lib/chat-widget.mjs';
 import { createSessionSpawner } from './lib/session-spawn.mjs';
 import { createVideoHost } from './lib/video-host.mjs';
@@ -257,7 +258,10 @@ function flushPendingInvite() {
   if (!win || win.isDestroyed() || !winLoaded) return;
   const token = pendingInviteToken;
   pendingInviteToken = null;
+  // ADR 0033 этап 2: форма принятия приглашения — серверная страница /invite в
+  // окне оператора; рендерер по событию только переключается на вкладку «Оператор».
   win.webContents.send('enot:invite-prefill', token);
+  void openOperatorWindow({ inviteToken: token });
 }
 
 function flushPendingJoin() {
@@ -871,6 +875,133 @@ function chatWidgetIncoming(text) {
   }
 }
 
+// ---------- окно оператора (ADR 0033, этап 2) ----------
+// Desktop-оператор = браузерная программа /operator С СЕРВЕРА в отдельном окне.
+// Закалка: sandbox + contextIsolation, своя сессия в памяти (partition без
+// persist: cookie и storage не переживают выход — модель SEC-008 браузерного
+// оператора), навигация только внутри origin сервера, новые окна запрещены,
+// из разрешений — только запись буфера и полноэкранный режим. Мост preload —
+// только «запомнить меня» (operator-preload.cjs).
+let operatorWin = null;
+let operatorOrigin = null;     // origin сервера, чью страницу показывает окно
+let operatorCredsLoaded = false; // креды отдаются странице один раз за загрузку
+const OPERATOR_PARTITION = 'enot-operator';
+let operatorSessionReady = false;
+
+function operatorStatus(payload) { sendToRenderer('enot:operator-window', payload); }
+
+function prepareOperatorSession() {
+  const ses = session.fromPartition(OPERATOR_PARTITION);
+  if (operatorSessionReady) return ses;
+  operatorSessionReady = true;
+  const allowed = (permission) => permission === 'clipboard-sanitized-write' || permission === 'fullscreen';
+  ses.setPermissionRequestHandler((_wc, permission, callback) => callback(allowed(permission)));
+  ses.setPermissionCheckHandler((_wc, permission) => allowed(permission));
+  // захват экрана оператору не нужен — отказ без вопросов
+  ses.setDisplayMediaRequestHandler((_req, callback) => callback({}));
+  // CSV-экспорт и принятые файлы: системный диалог «Сохранить как», как в главном окне
+  ses.on('will-download', (_event, item) => {
+    const parent = operatorWin && !operatorWin.isDestroyed() ? operatorWin : null;
+    if (!parent) { item.cancel(); return; }
+    dialog.showSaveDialog(parent, { title: item.getFilename(), defaultPath: item.getFilename() })
+      .then(({ canceled, filePath }) => {
+        if (!canceled && filePath) item.setSavePath(filePath);
+        else item.cancel();
+      });
+  });
+  return ses;
+}
+
+function closeOperatorWindow() {
+  if (operatorWin && !operatorWin.isDestroyed()) operatorWin.destroy();
+  operatorWin = null;
+  operatorOrigin = null;
+}
+
+// Открыть (или поднять) окно оператора. inviteToken — deep-link
+// enotdesk://invite#token=…: окно открывает серверную форму принятия.
+async function openOperatorWindow({ inviteToken } = {}) {
+  const urls = operatorWindowUrls(settings.serverUrl);
+  if (!urls) {
+    const res = { ok: false, reason: 'server-unreachable' };
+    operatorStatus({ state: 'error', ...res });
+    return res;
+  }
+  if (operatorWin && !operatorWin.isDestroyed() && operatorOrigin === urls.origin) {
+    if (inviteToken) operatorWin.loadURL(urls.invite(inviteToken));
+    if (operatorWin.isMinimized()) operatorWin.restore();
+    operatorWin.focus();
+    operatorStatus({ state: 'open' });
+    return { ok: true };
+  }
+  closeOperatorWindow(); // адрес сервера сменился — старое окно не держим
+  operatorStatus({ state: 'checking' });
+  const probe = await probeOperatorServer(settings.serverUrl);
+  bootLog.write('operator', `проба сервера: ${probe.ok ? 'ok' : probe.reason}${probe.version ? ` (версия ${probe.version})` : ''}`);
+  if (!probe.ok) {
+    operatorStatus({ state: 'error', ...probe });
+    return probe;
+  }
+  const ses = prepareOperatorSession();
+  // язык страницы — язык приложения (сервер выбирает его по Accept-Language)
+  const lang = settings.locale === 'en' ? 'en-US,en' : (settings.locale === 'ru' ? 'ru-RU,ru' : app.getLocale());
+  ses.setUserAgent(ses.getUserAgent(), lang);
+  operatorOrigin = urls.origin;
+  operatorCredsLoaded = false;
+  operatorWin = new BrowserWindow({
+    width: 1280,
+    height: 820,
+    minWidth: 360,
+    minHeight: 480,
+    title: 'EnotDesk',
+    backgroundColor: '#0B1020',
+    autoHideMenuBar: true,
+    webPreferences: {
+      preload: path.join(import.meta.dirname, 'operator-preload.cjs'),
+      partition: OPERATOR_PARTITION,
+      contextIsolation: true,
+      nodeIntegration: false,
+      sandbox: true,
+      webviewTag: false,
+      spellcheck: false,
+    },
+  });
+  const wc = operatorWin.webContents;
+  wc.setWindowOpenHandler(() => ({ action: 'deny' }));
+  const guardNav = (e, url) => { if (!isAllowedNavigation(url, operatorOrigin)) e.preventDefault(); };
+  wc.on('will-navigate', guardNav);
+  wc.on('will-redirect', guardNav);
+  wc.on('will-attach-webview', (e) => e.preventDefault());
+  // новая загрузка страницы — новая разовая выдача сохранённых кредов
+  wc.on('did-navigate', () => { operatorCredsLoaded = false; });
+  wc.on('did-fail-load', (_e, code, desc, _url, isMainFrame) => {
+    if (!isMainFrame || code === -3) return; // -3 ABORTED: отменённая нами навигация
+    bootLog.write('operator', `did-fail-load ${code} ${desc}`);
+    operatorStatus({ state: 'error', reason: 'server-unreachable' });
+    closeOperatorWindow();
+  });
+  wc.on('render-process-gone', (_e, details) => {
+    bootLog.write('operator', `render-process-gone ${JSON.stringify(details)}`);
+  });
+  wc.on('context-menu', (_e, params) => {
+    if (!params.isEditable) return;
+    Menu.buildFromTemplate([
+      { label: t('menu.copy'), role: 'copy', enabled: params.editFlags.canCopy },
+      { label: t('menu.paste'), role: 'paste', enabled: params.editFlags.canPaste },
+      { type: 'separator' },
+      { label: t('menu.selectAll'), role: 'selectAll' },
+    ]).popup({ window: operatorWin });
+  });
+  const thisWin = operatorWin;
+  operatorWin.on('closed', () => {
+    if (operatorWin === thisWin) { operatorWin = null; operatorOrigin = null; }
+    operatorStatus({ state: 'closed' });
+  });
+  operatorWin.loadURL(inviteToken ? urls.invite(inviteToken) : urls.operator).catch(() => { /* did-fail-load уже сообщил */ });
+  operatorStatus({ state: 'open', version: probe.version });
+  return { ok: true, version: probe.version };
+}
+
 function registerIpc() {
   const fromOurRenderer = (e) => win !== null && !win.isDestroyed() && e.sender === win.webContents;
   const guard = (e) => {
@@ -946,6 +1077,40 @@ function registerIpc() {
   ipcMain.handle('enot:opCredentialsLoad', (e) => { guard(e); return opCredsConsumed ? Promise.resolve(null) : opCreds.load(); });
   ipcMain.handle('enot:opCredentialsClear', (e) => { guard(e); return opCreds.clear(); });
 
+  // Окно оператора (ADR 0033, этап 2): главное окно просит открыть программу
+  // оператора с сервера; ответ {ok, reason?, version?}, статус — enot:operator-window.
+  ipcMain.handle('enot:openOperatorWindow', (e) => { guard(e); return openOperatorWindow(); });
+  // Мост «запомнить меня» окна оператора: только главный фрейм окна оператора со
+  // страницы origin сервера; креды привязаны к этому origin; выдача — один раз за
+  // загрузку страницы и не после входа (save/clear вызывает страница после входа).
+  const operatorGuard = (e) => {
+    const ok = isTrustedOperatorFrame({
+      isOperatorWindow: operatorWin !== null && !operatorWin.isDestroyed() && e.sender === operatorWin.webContents,
+      isMainFrame: e.senderFrame != null && e.senderFrame === e.sender.mainFrame,
+      frameUrl: e.senderFrame?.url,
+      origin: operatorOrigin,
+    });
+    if (!ok) throw new Error('Доступ запрещён: недоверенный отправитель');
+  };
+  ipcMain.handle('enot-op:credentials-available', (e) => {
+    operatorGuard(e);
+    return rememberAllowed(operatorOrigin) ? opCreds.available() : false;
+  });
+  ipcMain.handle('enot-op:credentials-load', (e) => {
+    operatorGuard(e);
+    if (operatorCredsLoaded || !rememberAllowed(operatorOrigin)) return null;
+    operatorCredsLoaded = true;
+    return opCreds.load({ origin: operatorOrigin });
+  });
+  ipcMain.handle('enot-op:credentials-save', (e, creds) => {
+    operatorGuard(e);
+    operatorCredsLoaded = true;
+    if (!rememberAllowed(operatorOrigin)) return { ok: false, reason: 'insecure-origin' };
+    const { login, password } = creds && typeof creds === 'object' ? creds : {};
+    return opCreds.save({ login, password, origin: operatorOrigin });
+  });
+  ipcMain.handle('enot-op:credentials-clear', (e) => { operatorGuard(e); operatorCredsLoaded = true; return opCreds.clear(); });
+
   // Выбор языка интерфейса (R08.2): только известные локали, null снимает выбор.
   ipcMain.handle('enot:setLocale', (e, locale) => {
     guard(e);
@@ -970,6 +1135,8 @@ function registerIpc() {
     settings.allowInsecureHttp = allowInsecureHttp;
     const saved = saveSettings();
     api = makeApi();
+    // окно оператора показывает страницу прежнего сервера — закрываем
+    if (operatorOrigin && operatorWindowUrls(settings.serverUrl)?.origin !== operatorOrigin) closeOperatorWindow();
     return { ...saved, serverUrl: settings.serverUrl };
   });
 
@@ -1316,7 +1483,7 @@ function createWindow() {
 
   win.on('minimize', () => { svcDiag.write('win', 'minimize'); });
   win.on('restore', () => { svcDiag.write('win', 'restore'); });
-  win.on('closed', () => { win = null; winLoaded = false; });
+  win.on('closed', () => { win = null; winLoaded = false; closeOperatorWindow(); });
   // «Окно не молчит» (лаба 05.10): packaged-отказ рендерера раньше был немым —
   // пустое окно без единой строки в логах, дефект искали неделю. Все жизненные
   // события главного окна идут в svc-diag; краш рендерера — один честный

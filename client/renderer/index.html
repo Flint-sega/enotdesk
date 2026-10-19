@@ -182,6 +182,17 @@
 
     <!-- ======================= ОПЕРАТОР ======================= -->
     <section id="view-operator" class="view hidden" data-i18n-aria-label="app.aria.operatorMode" aria-label="Режим оператора">
+      <!-- Программа оператора (ADR 0033, этап 2): отдельное окно со страницей сервера -->
+      <div id="op-window" class="card narrow center">
+        <img class="mascot-mini" src="../../assets/mascot-mini.webp" alt="" aria-hidden="true">
+        <h2 data-i18n="opwin.title">Программа оператора</h2>
+        <p class="muted" data-i18n="opwin.intro">Программа оператора открывается в отдельном окне прямо с вашего сервера: подключение к клиентам и машинам, контакты, история, команда.</p>
+        <button type="button" id="btn-op-window" class="cta wide" data-i18n="opwin.open">Открыть программу оператора</button>
+        <p id="op-window-status" class="note" role="status"></p>
+        <p id="op-window-error" class="err-text" role="alert"></p>
+      </div>
+      <!-- Прежний встроенный оператор: не показывается с этапа 2, удаляется на этапе 3 -->
+      <div id="op-legacy" class="hidden">
       <!-- Вход -->
       <div id="op-login" class="card narrow center">
         <img class="mascot-mini" src="../../assets/mascot-mini.webp" alt="" aria-hidden="true">
@@ -412,6 +423,7 @@
             </div>
           </div>
         </div>
+      </div>
       </div>
     </section>
 

@@ -6,6 +6,12 @@
 // не бросает исключений наверх: форма входа не должна падать из-за хранилища).
 const LOGIN_MAX = 120;
 const PASSWORD_MAX = 256;
+const ORIGIN_MAX = 200;
+// Окно оператора (ADR 0033, этап 2) грузит страницу С СЕРВЕРА: креды
+// привязываются к origin сервера и отдаются только странице того же origin —
+// смена адреса сервера не уносит пароль на чужой сервер. Запись без origin
+// (старый встроенный оператор) такой странице не отдаётся.
+const validOrigin = (o) => typeof o === 'string' && o.length > 0 && o.length <= ORIGIN_MAX;
 
 export function createOpCredentialsStore({
   readText, writeText, unlink, exists, safeStorage, file,
@@ -24,13 +30,14 @@ export function createOpCredentialsStore({
     } catch { return false; }
   }
 
-  async function save({ login, password } = {}) {
+  async function save({ login, password, origin } = {}) {
     if (typeof login !== 'string' || !login.trim() || login.length > LOGIN_MAX) return { ok: false, reason: 'bad_login' };
+    if (origin !== undefined && !validOrigin(origin)) return { ok: false, reason: 'bad_origin' };
     if (typeof password !== 'string' || !password || password.length > PASSWORD_MAX) return { ok: false, reason: 'bad_password' };
     if (!(await available())) return { ok: false, reason: 'encryption-unavailable' };
     let enc;
     try { enc = safeStorage.encryptString(password); } catch { return { ok: false, reason: 'encryption-unavailable' }; }
-    const payload = JSON.stringify({ v: 1, login: login.trim(), passwordEnc: toB64(enc) });
+    const payload = JSON.stringify({ v: 1, login: login.trim(), passwordEnc: toB64(enc), ...(origin ? { origin } : {}) });
     try {
       await writeText(file, payload);
       return { ok: true };
@@ -39,12 +46,16 @@ export function createOpCredentialsStore({
     }
   }
 
-  async function load() {
+  // origin задан — отдаём только запись, сохранённую для этого же origin
+  // (чужая или старая запись без origin — null, файл не трогаем).
+  async function load({ origin } = {}) {
     try {
       if (!exists(file)) return null;
       const raw = JSON.parse(await readText(file));
       if (raw?.v !== 1 || typeof raw.login !== 'string' || typeof raw.passwordEnc !== 'string') throw new Error('shape');
       if (!raw.login || raw.login.length > LOGIN_MAX) throw new Error('shape');
+      if (raw.origin !== undefined && !validOrigin(raw.origin)) throw new Error('shape');
+      if (origin !== undefined && raw.origin !== origin) return null;
       const password = safeStorage.decryptString(fromB64(raw.passwordEnc));
       if (typeof password !== 'string' || !password || password.length > PASSWORD_MAX) throw new Error('decrypt');
       return { login: raw.login, password };

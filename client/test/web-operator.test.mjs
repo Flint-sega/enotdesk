@@ -280,3 +280,17 @@ test('B6: модуль записей строит DOM через textContent и
   assert.match(code, /api\('DELETE', `\/contacts\/\$\{encodeURIComponent\(c\.id\)\}`, \{ revision: c\.revision \}\)/, 'удаление с revision');
   assert.match(code, /window\.confirm\(t\('contacts\.deleteConfirm'/, 'удаление — с явным подтверждением');
 });
+
+test('B6 этап 2: «запомнить меня» — только через мост окна desktop, в браузере поле скрыто', () => {
+  assert.match(html, /<label class="check hidden" id="field-login-remember"><input type="checkbox" id="login-remember">/, 'поле скрыто по умолчанию');
+  assert.match(html, /data-i18n="op.remember"/);
+  assert.match(operatorJs, /const desk = typeof window\.enotOperator === 'object' && window\.enotOperator \? window\.enotOperator : null;/);
+  // креды сохраняются только после успешного входа (в ветке успеха, после токена)
+  const success = operatorJs.indexOf('token = res.body.token;');
+  const remember = operatorJs.indexOf('rememberAfterLogin();');
+  assert.ok(success > 0 && remember > success, 'rememberAfterLogin — после получения токена');
+  assert.equal((operatorJs.match(/desk\.credentialsSave\(/g) ?? []).length, 1, 'одна точка сохранения');
+  assert.match(operatorJs, /if \(!desk\) return;/, 'без моста — ничего не делаем');
+  // в браузере window.enotOperator нет — страница не трогает storage ради паролей
+  assert.ok(!/localStorage\.setItem\([^)]*(password|login)/i.test(allJs), 'пароли не в localStorage');
+});

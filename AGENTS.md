@@ -18,7 +18,7 @@
 ```
 server/      app.mjs (REST /api/v1, WS /signal, страницы, статика, relay файлов, WoL, /rtc-config), machines.mjs, totp.mjs, webhooks.mjs, pages.mjs, db.mjs (SCHEMA_VERSION=9), crypto.mjs, backup.mjs, bootstrap.mjs, main.mjs, test/
 hub/         опциональный сервис: app.mjs, auth.mjs (SSO через EnotDesk), threads.mjs, settings.mjs, email.mjs, join.mjs, db.mjs (свой hub.db, SCHEMA_VERSION=5), web/ (консоль), widget/, test/
-client/      main.mjs (окно, токены, WS, ворота ввода, агент-режим, SCM-родитель, мост RTC, updater), preload.cjs (window.enot)
+client/      main.mjs (окно, токены, WS, ворота ввода, агент-режим, SCM-родитель, мост RTC, updater, окно оператора), preload.cjs (window.enot), operator-preload.cjs (window.enotOperator — «запомнить меня» в окне оператора)
 client/agent-bridge/  скрытое окно с RTCPeerConnection для машинного сеанса: relay.mjs, bridge.mjs, page.html, preload.cjs
 client/lib/  модули без Electron: protocol, input-pipeline, input-arbiter, native-input (koffi), notify, term, agent, video-host, session-spawn, win-service, adaptive-bitrate, rtc-stats, i18n, first-run, updater, join и др.
 client/renderer/  UI клиента и desktop-оператора (app.js, session-media.js, session-services.js, views/)

@@ -139,6 +139,9 @@ video.fit-cover{object-fit:cover}
         <label for="login-totp" data-i18n="op.totpCode">Код подтверждения</label>
         <input id="login-totp" name="totp" inputmode="numeric" autocomplete="one-time-code" data-i18n-placeholder="op.totpPlaceholder" placeholder="6 цифр или резервный код">
       </div>
+      <!-- «Запомнить меня» — только в окне оператора desktop-приложения (мост
+           window.enotOperator, шифрование ОС); в обычном браузере поле скрыто -->
+      <label class="check hidden" id="field-login-remember"><input type="checkbox" id="login-remember"><span data-i18n="op.remember">Запомнить меня</span></label>
       <button id="btn-login" class="btn wide" type="submit" data-i18n="web.login.submit">Войти</button>
     </form>
     <p class="form-error" id="login-error" aria-live="polite"></p>

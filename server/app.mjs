@@ -784,6 +784,10 @@ export function createServer(opts = {}) {
       return ok(res, 200, {
         ok: true,
         version: cfg.version,
+        // уровень страницы /operator (ADR 0033): desktop открывает программу
+        // оператора с сервера, только если уровень не ниже своего; 1 — паритет
+        // с desktop (контакты, история, журнал, CSV, аудитор «только журнал»)
+        operatorUi: 1,
         activeSessions: live.size,
         uptimeSec: Math.round(process.uptime()),
       });

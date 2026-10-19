@@ -10,6 +10,8 @@ test('smoke: сервер стартует, /health отвечает без ав
   assert.match(res.json.version, /^\d+\.\d+\.\d+$/);
   assert.equal(typeof res.json.activeSessions, 'number', 'health показывает число живых сеансов');
   assert.ok(res.json.uptimeSec >= 0, 'health показывает аптайм');
+  // ADR 0033 этап 2: desktop сверяет уровень страницы оператора, а не номер версии
+  assert.equal(res.json.operatorUi, 1, 'health объявляет уровень страницы /operator');
 });
 
 test('неизвестный маршрут — 404 в формате {error:{code,message}} на русском', async (t) => {

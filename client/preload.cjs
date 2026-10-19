@@ -24,6 +24,15 @@ contextBridge.exposeInMainWorld('enot', {
   opCredentialsSave: (creds) => ipcRenderer.invoke('enot:opCredentialsSave', creds),
   opCredentialsLoad: () => ipcRenderer.invoke('enot:opCredentialsLoad'),
   opCredentialsClear: () => ipcRenderer.invoke('enot:opCredentialsClear'),
+  // Программа оператора (ADR 0033, этап 2): отдельное окно со страницей сервера
+  // <сервер>/operator; ответ {ok, reason?, version?}, статус окна — onOperatorWindow.
+  openOperatorWindow: () => ipcRenderer.invoke('enot:openOperatorWindow'),
+  onOperatorWindow: (callback) => {
+    if (typeof callback !== 'function') return () => {};
+    const listener = (_event, payload) => callback(payload);
+    ipcRenderer.on('enot:operator-window', listener);
+    return () => ipcRenderer.removeListener('enot:operator-window', listener);
+  },
   // Чат-виджет (спека владельца 02.10): рендерер отдаёт сообщения оператора в
   // main, обратно получает ответы из виджета и события жизненного цикла.
   chatWidgetMsg: (text) => ipcRenderer.send('enot:chat-widget-msg', String(text ?? '')),

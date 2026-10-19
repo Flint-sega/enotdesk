@@ -119,3 +119,24 @@ test('op-credentials: гигантский login из подменённого �
   assert.equal(await store.load(), null, 'login длиннее лимита — файл стирается');
   assert.equal(fsx.files.has(FILE), false);
 });
+
+test('op-credentials: привязка к origin сервера (окно оператора, ADR 0033 этап 2)', async () => {
+  const fsx = memoryFs();
+  const store = createOpCredentialsStore({ ...fsx, safeStorage: fakeSafeStorage(), file: FILE });
+  // старая запись без origin странице сервера не отдаётся, но и не стирается
+  await store.save({ login: 'op', password: 'p1' });
+  assert.equal(await store.load({ origin: 'https://a.example' }), null);
+  assert.ok(fsx.files.has(FILE));
+  assert.deepEqual(await store.load(), { login: 'op', password: 'p1' }, 'встроенный оператор читает как раньше');
+  // запись для origin A отдаётся только A
+  assert.deepEqual(await store.save({ login: 'op', password: 'p2', origin: 'https://a.example' }), { ok: true });
+  assert.deepEqual(await store.load({ origin: 'https://a.example' }), { login: 'op', password: 'p2' });
+  assert.equal(await store.load({ origin: 'https://evil.example' }), null, 'другой сервер не получает пароль');
+  assert.ok(fsx.files.has(FILE), 'чужой origin не стирает запись');
+  // мусорный origin — отказ на записи и чистка при чтении
+  assert.equal((await store.save({ login: 'op', password: 'p', origin: 'x'.repeat(201) })).reason, 'bad_origin');
+  assert.equal((await store.save({ login: 'op', password: 'p', origin: 42 })).reason, 'bad_origin');
+  fsx.files.set(FILE, JSON.stringify({ v: 1, login: 'op', passwordEnc: Buffer.from('enc:p').toString('base64'), origin: 7 }));
+  assert.equal(await store.load({ origin: 'https://a.example' }), null);
+  assert.ok(!fsx.files.has(FILE), 'битый origin — файл стёрт');
+});

@@ -24,7 +24,34 @@ function switchView(role) {
   hide($(role === 'client' ? 'view-operator' : 'view-client'));
 }
 $('tab-client').addEventListener('click', () => switchView('client'));
-$('tab-operator').addEventListener('click', () => switchView('operator'));
+$('tab-operator').addEventListener('click', () => { switchView('operator'); void openOperatorWindow(); });
+
+// ---------- программа оператора (ADR 0033, этап 2) ----------
+// Оператор работает в отдельном окне со страницей сервера <сервер>/operator;
+// здесь — только кнопка и честный статус: проверка сервера, сервер не отвечает,
+// сервер старый («обновите сервер»), окно открыто/закрыто.
+async function showOperatorWindowState(st) {
+  text($('op-window-error'), '');
+  text($('op-window-status'), '');
+  if (st.state === 'checking') text($('op-window-status'), t('opwin.checking'));
+  else if (st.state === 'open') text($('op-window-status'), t('opwin.opened'));
+  else if (st.state === 'closed') text($('op-window-status'), t('opwin.closed'));
+  else if (st.state === 'error') {
+    const server = (await enot.getSettings().catch(() => null))?.serverUrl ?? '';
+    text($('op-window-error'), st.reason === 'server-outdated'
+      ? t('opwin.outdated', { server, version: st.version ?? '?' })
+      : t('opwin.unreachable', { server }));
+  }
+}
+enot.onOperatorWindow((st) => { if (st && typeof st === 'object') void showOperatorWindowState(st); });
+async function openOperatorWindow() {
+  const btn = $('btn-op-window');
+  btn.disabled = true;
+  try { await enot.openOperatorWindow(); } catch { /* статус уже пришёл событием */ } finally { btn.disabled = false; }
+}
+$('btn-op-window').addEventListener('click', () => { void openOperatorWindow(); });
+// deep-link enotdesk://invite#…: main открывает /invite в окне оператора, мы — вкладку
+enot.onInvitePrefill?.(() => switchView('operator'));
 
 // ---------- сигналинг: единая точка входа событий ----------
 

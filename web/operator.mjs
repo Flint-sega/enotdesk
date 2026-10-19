@@ -1250,6 +1250,36 @@ function showLanding(role) {
   }
 }
 
+// ---- «запомнить меня» (только окно оператора desktop, ADR 0033 этап 2) ----
+// Мост window.enotOperator даёт preload desktop-приложения: пароль хранится
+// шифротекстом ОС (DPAPI/Keychain/keyring) и привязан к адресу этого сервера.
+// В обычном браузере моста нет — поле скрыто, страница работает как раньше.
+const desk = typeof window.enotOperator === 'object' && window.enotOperator ? window.enotOperator : null;
+
+async function initRemember() {
+  if (!desk) return;
+  try {
+    if (!(await desk.credentialsAvailable())) return;
+    show($('field-login-remember'));
+    const saved = await desk.credentialsLoad();
+    if (saved && typeof saved.login === 'string' && typeof saved.password === 'string') {
+      $('login-login').value = saved.login;
+      $('login-password').value = saved.password;
+      $('login-remember').checked = true;
+    }
+  } catch { /* хранилище недоступно — вход без «запомнить меня» */ }
+}
+
+function rememberAfterLogin() {
+  if (!desk || $('field-login-remember').classList.contains('hidden')) return;
+  const op = $('login-remember').checked
+    ? desk.credentialsSave({ login: $('login-login').value.trim(), password: $('login-password').value })
+    : desk.credentialsClear();
+  Promise.resolve(op).catch(() => {});
+  // пароль не задерживается в поле после входа
+  $('login-password').value = '';
+}
+
 // ---- действия страницы ----
 
 function wire() {
@@ -1291,6 +1321,7 @@ function wire() {
       // одноразовый код не должен пережить вход (повторный вход начнёт с чистого поля)
       $('login-totp').value = '';
       hide($('field-login-totp'));
+      rememberAfterLogin();
       showLanding(res.body.user.role);
     } finally {
       setBusy(btn, false);
@@ -1557,4 +1588,5 @@ function wire() {
   forgetSession();
   showOnly('view-login');
   if (hadRole) text($('login-error'), t('web.session.expired'));
+  void initRemember();
 })();
