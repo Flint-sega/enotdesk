@@ -3,34 +3,25 @@
 import { t } from '../lib/i18n.mjs';
 
 export const state = {
-  role: 'client',
-  me: null, // {name, role} оператора
+  role: 'client', // активная вкладка окна: 'client' | 'operator' (карточка окна оператора)
   // клиент помощи
   session: null, // {sessionId, password}
   pendingClaim: null, // {sessionId, claimId}
-  // оператор
-  connect: null, // {sessionId, claimId}
-  pc: null, dc: null, localStream: null,
-  dcs: null, // {input, chat, clip, file} — каналы сессии (ADR 0014)
-  // синхронизация буфера ВКЛЮЧЕНА по умолчанию (решение владельца 27.09), тогглом отключается:
-  // флаги включают только ОТПРАВКУ своего буфера; входящий текст оператора на десктопе
-  // пишется в буфер автоматически, у веб-оператора — по кнопке «Вставить из сеанса» (SEC-002)
-  clip: { client: true, operator: true },
-  fileRx: null, // приём файла {rx, dc, prog}
-  iceQueue: [],
+  localStream: null, // захват экрана хоста — один на всех операторов
+  dcs: null, // каналы сессии (ADR 0014); у хоста ключ `${label}:${claimId}`
+  // синхронизация буфера ВКЛЮЧЕНА по умолчанию (решение владельца 27.09), тогглом отключается
+  clip: { client: true },
   // Мультиоператор (модель RustDesk: N подписчиков на один поток): персональный
   // pc и каналы на каждого присоединённого оператора, ключ — claimId.
-  // localStream (захват) на хосте один и расшаривается во все pc.
   operators: new Map(), // claimId → {pc, iceQueue: [], dcs: {label: channel}}
   // Арбитраж (W-C4): последний активный вводчик из main (enot:input-active) —
   // нужен wireHostChannel'у для начального input-grant при открытии канала:
   // событие смены могло прийти до готовности канала и потеряться (P3-1).
   inputActiveClaimId: null,
-  busy: false,
-  graceMs: null, // из ready сервера (ENOT_GRACE_MS) — окно hold №15 у оператора
-  pages: { contacts: 0, history: 0, audit: 0 },
-  query: { contacts: '' },
-  activePane: 'connect', // активная боковая вкладка оператора (для счётчика чата)
+  // Состояние операторской стороны браузерной программы оператора (web/operator.mjs
+  // импортирует этот модуль): {sessionId, claimId}, pc/каналы/приём файла/очередь ICE.
+  connect: null,
+  pc: null, dc: null, fileRx: null, iceQueue: [],
 };
 
 // Коды причин из протокола; человекочитаемый текст берётся из словаря по ключу end.<код>.

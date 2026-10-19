@@ -21,10 +21,10 @@ hub/         опциональный сервис: app.mjs, auth.mjs (SSO че�
 client/      main.mjs (окно, токены, WS, ворота ввода, агент-режим, SCM-родитель, мост RTC, updater, окно оператора), preload.cjs (window.enot), operator-preload.cjs (window.enotOperator — «запомнить меня» в окне оператора)
 client/agent-bridge/  скрытое окно с RTCPeerConnection для машинного сеанса: relay.mjs, bridge.mjs, page.html, preload.cjs
 client/lib/  модули без Electron: protocol, input-pipeline, input-arbiter, native-input (koffi), notify, term, agent, video-host, session-spawn, win-service, adaptive-bitrate, rtc-stats, i18n, first-run, updater, join и др.
-client/renderer/  UI клиента и desktop-оператора (app.js, session-media.js, session-services.js, views/)
+client/renderer/  UI клиента помощи (host) и карточка окна оператора (app.js, session-media.js, session-services.js, views/client-view.js); dom.js/state.js импортирует и /operator
 client/locales/   ru.mjs, en.mjs (паритет ключей проверяет тест)
 client/agent-service/  службы агента: Windows (sc.exe), Linux (systemd), macOS (LaunchDaemon) + install/remove
-web/         браузерный оператор /operator (operator.html, operator.mjs, input-source.mjs, team.js, records.js — контакты/история/журнал/CSV; единая программа оператора, ADR 0033)
+web/         единственная программа оператора /operator, её же показывает desktop (operator.html, operator.mjs, input-source.mjs, team.js, records.js — контакты/история/журнал/CSV, account.js — пароль и 2FA; ADR 0033)
 helper/video/  Rust-хелпер Windows: захват DXGI/GDI и ввод в консольной сессии, named pipe (ADR 0027)
 docker/ Dockerfile compose.yaml   серверный стек
 scripts/     quick-setup.sh, install-server.sh, deploy-server.sh, smoke-local.mjs, smoke-remote.mjs, make-icons.mjs, make-mascot.mjs

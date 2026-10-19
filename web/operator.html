@@ -73,6 +73,8 @@ video.fit-cover{object-fit:cover}
 .machines-claim-row{display:flex;gap:10px;flex-wrap:wrap}
 /* B6 этап 1: адресная книга, история, журнал — те же карточки, что у машин */
 .records-search{display:flex;gap:10px;align-items:flex-end;flex-wrap:wrap;margin-top:14px}
+#view-account h2{margin:26px 0 6px;font-size:18px}
+#view-account h1+.btn{margin-bottom:4px}
 .records-search input{flex:1;min-width:180px}
 .records-list{display:flex;flex-direction:column;gap:10px;margin-top:14px}
 .record-row{display:flex;gap:12px;align-items:flex-start;justify-content:space-between;border:1px solid var(--line);border-radius:var(--r-md);padding:14px 16px;flex-wrap:wrap;background:var(--panel);box-shadow:var(--top-hl)}
@@ -118,6 +120,7 @@ video.fit-cover{object-fit:cover}
       <option value="ru">Русский</option>
       <option value="en">English</option>
     </select>
+    <button id="btn-nav-account" class="btn ghost hidden" type="button" data-i18n="web.account.open">Аккаунт</button>
     <button id="btn-logout" class="btn ghost" type="button" data-i18n="web.logout">Выйти</button>
   </div>
 </header>
@@ -257,6 +260,76 @@ video.fit-cover{object-fit:cover}
       <button id="audit-prev" class="btn ghost" type="button" data-i18n="web.machines.prev">← Назад</button>
       <span id="audit-page"></span>
       <button id="audit-next" class="btn ghost" type="button" data-i18n="web.machines.next">Вперёд →</button>
+    </div>
+  </section>
+
+  <!-- Аккаунт (ADR 0033, этап 3 — перенос из desktop): смена пароля и 2FA -->
+  <section id="view-account" class="card hidden">
+    <h1 data-i18n="web.account.title">Мой аккаунт</h1>
+    <button id="btn-account-back" class="btn ghost" type="button" data-i18n="common.back">← Назад</button>
+
+    <h2 data-i18n="password.title">Сменить пароль</h2>
+    <form id="form-password" novalidate>
+      <div class="field">
+        <label for="password-old" data-i18n="password.oldLabel">Текущий пароль</label>
+        <input id="password-old" type="password" autocomplete="current-password" required>
+      </div>
+      <div class="field">
+        <label for="password-new" data-i18n="password.newLabel">Новый пароль (от 8 символов)</label>
+        <input id="password-new" type="password" autocomplete="new-password" minlength="8" required>
+      </div>
+      <button id="btn-password-save" class="btn" type="submit" data-i18n="password.save">Сменить</button>
+    </form>
+    <p class="form-error" id="password-error" aria-live="polite"></p>
+    <p class="note" id="password-status" aria-live="polite"></p>
+
+    <h2 data-i18n="totp.title">Двухфакторная аутентификация</h2>
+    <p class="note" id="totp-status" aria-live="polite"></p>
+    <!-- 2FA выключена: настройка по текущему паролю -->
+    <div id="totp-off">
+      <p class="lead" data-i18n="totp.offLead">Второй фактор: одноразовый код из приложения-аутентификатора при каждом входе.</p>
+      <form id="form-totp-enable" novalidate>
+        <div class="field">
+          <label for="totp-enable-password" data-i18n="totp.passwordLabel">Текущий пароль</label>
+          <input id="totp-enable-password" type="password" autocomplete="current-password" required>
+        </div>
+        <button id="btn-totp-enable" class="btn" type="submit" data-i18n="totp.enableBtn">Настроить 2FA</button>
+      </form>
+      <p class="form-error" id="totp-enable-error" aria-live="polite"></p>
+      <!-- otpauth-ссылка, секрет и резервные коды показываются один раз -->
+      <div id="totp-setup" class="hidden">
+        <p class="lead" data-i18n="totp.setupLead">Добавьте аккаунт в приложение-аутентификатор:</p>
+        <div class="field">
+          <label for="totp-uri" data-i18n="totp.uriLabel">Ссылка otpauth (вставьте в приложение-аутентификатор)</label>
+          <input id="totp-uri" readonly>
+        </div>
+        <div class="field">
+          <label for="totp-secret" data-i18n="totp.secretLabel">Секрет для ручного ввода</label>
+          <input id="totp-secret" readonly>
+        </div>
+        <p class="lead" data-i18n="totp.backupLead">Резервные коды (показаны один раз — сохраните):</p>
+        <p class="note" id="totp-backup-codes"></p>
+        <form id="form-totp-confirm" novalidate>
+          <div class="field">
+            <label for="totp-confirm-code" data-i18n="totp.codeLabel">Код из приложения для подтверждения</label>
+            <input id="totp-confirm-code" inputmode="numeric" autocomplete="one-time-code" required>
+          </div>
+          <button id="btn-totp-confirm" class="btn" type="submit" data-i18n="totp.confirmBtn">Подтвердить и включить</button>
+        </form>
+        <p class="form-error" id="totp-confirm-error" aria-live="polite"></p>
+      </div>
+    </div>
+    <!-- 2FA включена: отключение по текущему паролю -->
+    <div id="totp-on" class="hidden">
+      <p class="lead" data-i18n="totp.onLead">Вход требует код из приложения-аутентификатора или одноразовый резервный код.</p>
+      <form id="form-totp-disable" novalidate>
+        <div class="field">
+          <label for="totp-disable-password" data-i18n="totp.passwordLabel">Текущий пароль</label>
+          <input id="totp-disable-password" type="password" autocomplete="current-password" required>
+        </div>
+        <button id="btn-totp-disable" class="btn danger" type="submit" data-i18n="totp.disableBtn">Отключить 2FA</button>
+      </form>
+      <p class="form-error" id="totp-disable-error" aria-live="polite"></p>
     </div>
   </section>
 

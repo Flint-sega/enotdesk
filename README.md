@@ -63,7 +63,7 @@ npm run bootstrap    # first admin (interactive; never overwrites an existing on
 npm start            # EnotDesk desktop app (Electron)
 ```
 
-Then in the app: sign in as operator (or press “Get help” on the client side) → default server address `http://127.0.0.1:8080`. Plain HTTP must be explicitly allowed in client settings and is meant for testing only; use HTTPS for anything reachable from the internet. A full control-plane smoke run (bootstrap → login → invite → session → claim → consent → signaling): `npm run smoke:local`.
+Then in the app: the “Operator” tab opens the operator console from the server (`<server>/operator`; the same page works in any browser), “Get help” is the client side → default server address `http://127.0.0.1:8080`. Plain HTTP must be explicitly allowed in client settings and is meant for testing only; use HTTPS for anything reachable from the internet. A full control-plane smoke run (bootstrap → login → invite → session → claim → consent → signaling): `npm run smoke:local`.
 
 Downloads page: a deployed server serves built installers at `/downloads` — it lists only artifacts that actually exist in `dist/` (name-allowlisted), never fake links.
 

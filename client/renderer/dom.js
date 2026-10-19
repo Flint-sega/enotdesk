@@ -1,4 +1,5 @@
-// Общие DOM-хелперы рендерера: поиск элементов, статусы, списки, роли, i18n-разметка.
+// Общие DOM-хелперы рендерера и браузерной программы оператора: поиск
+// элементов, статусы, роли, i18n-разметка.
 
 import { t } from '../lib/i18n.mjs';
 
@@ -17,12 +18,6 @@ export function setBusyAll(container, busy) {
   for (const btn of container.querySelectorAll('button')) btn.disabled = busy;
 }
 export function text(el, value) { el.textContent = value; }
-
-export async function fetchList(op, params) {
-  const res = await enot.request(op, params);
-  if (res.status !== 200) throw new Error(res.body?.error?.message ?? t('common.httpError', { status: res.status }));
-  return res.body;
-}
 
 export function roleName(r) {
   const label = t(`role.${r}`);

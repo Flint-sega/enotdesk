@@ -1,15 +1,18 @@
-// Медиа сеанса: RTCPeerConnection, выбор и смена источника, качество,
-// пауза трансляции, таймер, запуск/приём WebRTC-соединения.
+// Медиа сеанса клиента помощи (host): захват экрана, выбор и смена источника,
+// пауза трансляции, персональные pc операторов, адаптивный битрейт.
+// Операторская сторона — программа оператора с сервера (ADR 0033, этап 3).
 
 import { $, enot, text, setBusyAll } from './dom.js';
-import { state, endReasonText } from './state.js';
+import { state } from './state.js';
 import { t } from '../lib/i18n.mjs';
-import { wireOperatorInput } from './operator-input.js';
-import { wireHostChannel, resetFileReceivers, wireOperatorControlChannel, resetOperatorControl } from './session-services.js';
+import { wireHostChannel, resetFileReceivers } from './session-services.js';
 import { videoAllowed } from '../lib/multiop-limits.mjs';
 import { setVideoEnabled } from '../lib/media-toggle.mjs';
-import { summarizeStats, formatQuality } from '../lib/rtc-stats.mjs';
+import { summarizeStats } from '../lib/rtc-stats.mjs';
 import { nextTarget, TOP_BITRATE } from '../lib/adaptive-bitrate.mjs';
+// Цикл client-view ↔ session-media безопасен: client-view берёт cleanupSession
+// только во время исполнения, здесь clientShow — тоже.
+import { clientShow } from './views/client-view.js';
 
 // Пауза трансляции: чёрные кадры оператору, явный статус у клиента.
 let streamPaused = false;
@@ -20,40 +23,6 @@ $('btn-pause-stream').addEventListener('click', () => {
   text($('btn-pause-stream'), streamPaused ? t('client.showScreen') : t('client.hideScreen'));
   text($('client-live-note'), streamPaused ? t('client.pausedNote') : '');
 });
-
-// Таймер длительности сеанса у оператора.
-let sessionTimer = null;
-function startSessionTimer() {
-  // re-offer (грейс-переподключение хоста) пересобирает pc, но НЕ сбрасывает
-  // счётчик длительности сеанса (ревью v0.4.3)
-  if (sessionTimer) return;
-  const startedAt = Date.now();
-  sessionTimer = setInterval(() => {
-    const sec = Math.floor((Date.now() - startedAt) / 1000);
-    text($('session-timer'), `${String(Math.floor(sec / 60)).padStart(2, '0')}:${String(sec % 60).padStart(2, '0')}`);
-  }, 1000);
-}
-function stopSessionTimer() {
-  clearInterval(sessionTimer);
-  sessionTimer = null;
-  text($('session-timer'), '');
-}
-
-// Индикатор качества соединения у оператора (rtt/потери видео).
-let qualityTimer = null;
-function startQualityPolling(pc) {
-  stopQualityPolling();
-  qualityTimer = setInterval(async () => {
-    try {
-      const summary = summarizeStats(await pc.getStats());
-      text($('remote-status'), formatQuality(t('status.connected'), summary));
-    } catch { /* соединение закрывается — не критично */ }
-  }, 2000);
-}
-function stopQualityPolling() {
-  clearInterval(qualityTimer);
-  qualityTimer = null;
-}
 
 // Адаптивный битрейт (A3): решение по тем же rtc-stats принимает чистая
 // политика (adaptive-bitrate.mjs), применяет — host-сторона, потому что
@@ -86,135 +55,26 @@ function stopAdaptive() {
   adaptiveTimer = null;
 }
 
-// №15 (ретест 28–29.09): по peer-reconnecting оператор не рвёт видео-сеанс по
-// 10с rtc-таймеру — держим до server-grace + запас, чтобы новый оффер
-// вернувшегося клиента дошёл до живого operatorAnswer. Клиент-роль (host) hold
-// не берёт: его восстановление требует пере-оффера хоста (v0.5), честный
-// локальный конец честнее замороженного экрана. Метка времени, а не таймер —
-// меньше швов на чистку.
-let rtcLinkHoldUntil = 0;
-export function holdRtcLink(ms) {
-  if (!(ms > 0)) return;
-  rtcLinkHoldUntil = Math.max(rtcLinkHoldUntil, Date.now() + ms);
-}
-export function rtcLinkHoldActive() { return Date.now() < rtcLinkHoldUntil; }
-function rtcLinkHoldRemainMs() { return Math.max(0, rtcLinkHoldUntil - Date.now()); }
-
 export function cleanupSession() {
   stopMedia();
   enot.chatWidgetEnd?.(); // чат-виджет сессионный — закрываем вместе с сеансом
   removeCaptureCard(); // карточка ретрая не переживает сеанс (ревью GLM-5.3 v0.3.0)
-  rtcLinkHoldUntil = 0; // hold №15 не переживает сеанс
   enot.closeSignal().catch(() => {});
   streamPaused = false;
   text($('btn-pause-stream'), t('client.hideScreen'));
   state.session = null;
   state.pendingClaim = null;
-  state.connect = null;
   state.inputActiveClaimId = null; // арбитраж сеанса не протекает в следующий (P3-1)
 }
 
 export function stopMedia() {
-  inputDetach?.detach?.(); // pointer-слушатели оператора не переживают сеанс
-  inputDetach = null;
-  resetOperatorControl(); // статус управления/видео не протекает в следующий сеанс
   stopAllOperators(); // персональные pc всех операторов закрываются вместе с сеансом
   try { state.localStream?.getTracks().forEach((track) => track.stop()); } catch { /* треки уже остановлены */ }
-  try { state.dc?.close(); } catch { /* уже закрыт */ }
   for (const ch of Object.values(state.dcs ?? {})) { try { ch.close(); } catch { /* уже закрыт */ } }
-  try { state.pc?.close(); } catch { /* уже закрыт */ }
-  state.localStream = null; state.dc = null; state.pc = null;
-  state.dcs = null; state.fileRx = null;
-  state.iceQueue = [];
-  $('remote-video').srcObject = null;
-  stopSessionTimer();
-  stopQualityPolling();
+  state.localStream = null;
+  state.dcs = null;
   stopAdaptive();
   adaptive = { target: TOP_BITRATE, lastChangeAt: 0 };
-}
-
-export function makePc(iceServers) {
-  const pc = new RTCPeerConnection({ iceServers });
-  pc.onicecandidate = (e) => {
-    if (e.candidate) enot.sendSignal({ type: 'signal', data: { candidate: e.candidate.toJSON() } }).catch(() => {});
-  };
-  // Host-сторона: принимает каналы оператора; сырой ввод уходит в main,
-  // где парс/валидация/ворота/диспетчер — единый код (input-pipeline.mjs).
-  pc.ondatachannel = (e) => wireHostChannel(e.channel);
-  // Краткое дрожание сети ('disconnected') часто самовосстанавливается — даём
-  // 10с грейс; 'failed' рвёт сразу (R15.2: не висим в вечном connected).
-  // Гвард `state.pc !== pc`: pc заменён (reconnect в грейсе, новый оффер) — его
-  // события и осиротевший 10с-таймер не должны убивать НОВОЕ подключение
-  // (ревью v0.4.3, high: таймер стрелял в новый pc и ронял свежий сеанс).
-  let rtcGrace = null;
-  pc.onconnectionstatechange = () => {
-    if (state.pc !== pc) { if (rtcGrace) { clearTimeout(rtcGrace); rtcGrace = null; } return; }
-    if (pc.connectionState === 'disconnected') {
-      // Тик самовозобновляется, пока активен hold №15: по его истечении
-      // застрявший 'disconnected'/'failed' честно разрывается (ревью v0.4.4)
-      const tick = () => {
-        rtcGrace = null;
-        if (state.pc !== pc) return; // pc уже заменён — таймер чужой
-        if (rtcLinkHoldActive()) { rtcGrace = setTimeout(tick, 10_000); return; }
-        rtcLinkLost();
-      };
-      // Гонка №15 (ревью v0.4.6): серверный peer-reconnecting при тихой
-      // заморозке приходит позже (~20-26 с), чем выстрелил бы локальный 10с-тик
-      // — hold взводим уже здесь по известному серверному graceMs. Только
-      // оператор (state.connect): клиент-роль hold не берёт — его честный
-      // локальный конец через 10с ценнее замороженного экрана (инвариант №15)
-      if (state.connect && !rtcLinkHoldActive() && (state.graceMs ?? 0) > 0) holdRtcLink(state.graceMs + 10_000);
-      rtcGrace ??= setTimeout(tick, 10000);
-      return;
-    }
-    if (pc.connectionState === 'connected') {
-      if (rtcGrace) { clearTimeout(rtcGrace); rtcGrace = null; }
-      rtcLinkHoldUntil = 0; // связь вернулась — hold №15 больше не нужен
-      return;
-    }
-    if (['failed', 'closed'].includes(pc.connectionState) && (state.session || state.connect)) {
-      // failed ПРЯМО под hold (свежий pc от re-offer минует 'disconnected'):
-      // hold-тик не взведён — назначаем проверку на конец hold, иначе мёртвое
-      // видео висело бы бессрочно (ревью v0.4.6, medium; паритет web)
-      if (rtcLinkHoldActive()) {
-        // Перепроверяем rtcLinkHoldActive() и при продлении hold
-        // (peer-reconnecting пришёл позже) ждём уже НОВЫЙ конец — иначе рвали
-        // бы сеанс до истечения продлённого hold (ревью v0.4.6, доводка)
-        const recheck = () => {
-          rtcGrace = null;
-          if (state.pc !== pc) return; // pc уже заменён — таймер чужой
-          if (rtcLinkHoldActive()) { rtcGrace = setTimeout(recheck, rtcLinkHoldRemainMs() + 100); return; }
-          rtcLinkLost();
-        };
-        rtcGrace ??= setTimeout(recheck, rtcLinkHoldRemainMs() + 100);
-        return;
-      }
-      rtcLinkLost();
-    }
-  };
-  return pc;
-}
-
-// Слушатели ввода оператора текущего сеанса: снимаются при конце сеанса и при
-// перепроводке канала (re-offer) — иначе накапливаются на единственном видео.
-let inputDetach = null;
-
-export function rtcLinkLost() {
-  if (!state.session && !state.connect) return;
-  const wasClient = state.role === 'client' || !!state.session;
-  cleanupSession();
-  if (wasClient) { text($('ended-reason'), endReasonText('rtc')); clientShow('ended'); }
-  else { showConnectForm(); text($('conn-error'), endReasonText('rtc')); }
-}
-
-// Импорт в конце: представления импортируют cleanupSession из этого модуля,
-// здесь же нужны только их функции времени исполнения — цикл безопасен.
-import { clientShow } from './views/client-view.js';
-import { showConnectForm } from './views/operator-view.js';
-
-export function drainIce(pc) {
-  for (const c of state.iceQueue) pc.addIceCandidate(c).catch(() => {});
-  state.iceQueue = [];
 }
 
 // Версия клиента: лениво, для диагностики в текстах ошибок.
@@ -244,7 +104,7 @@ function captureFailureUi() {
   btn.textContent = t('client.retryCapture');
   btn.addEventListener('click', async () => {
     // сеанс мог закончиться, пока карточка висела — призрачный захват не запускаем
-    if (!state.session || state.pc) { removeCaptureCard(); return; }
+    if (!state.session || state.localStream) { removeCaptureCard(); return; }
     btn.disabled = true;
     try {
       removeCaptureCard();
@@ -593,94 +453,7 @@ export function resetHostRtcState() {
   removeCaptureCard();
 }
 
-// Ответы на офферы строго последовательно: два конкурентных вызова (гонка
-// офферов при быстрых reconnect'ах) оставляли зомби-pc, таймеры на мёртвом pc
-// и устаревший answer (ревью v0.4.3, medium — воспроизведено на web-твине).
-let answerChain = Promise.resolve();
-
-export function operatorAnswer(offerSdp) {
-  const run = answerChain.catch(() => {}).then(() => doOperatorAnswer(offerSdp));
-  answerChain = run.catch(() => {});
-  return run;
-}
-
-async function doOperatorAnswer(offerSdp) {
-  // Чистку старого pc/каналов делаем ДО await (ревью v0.4.3): в окне
-  // await rtc.config кандидаты нового оффера уходили в СТАРЫЙ pc и терялись
-  // безвозвратно. Очередь кандидатов НЕ чистим: чужая генерация отбрасывается
-  // новым pc по ufrag нативно, своя — доезжает через drainIce (wipe стирал
-  // кандидаты «своего» оффера в гонке — ревью v0.4.3 доводка).
-  try { state.pc?.close(); } catch { /* уже закрыт */ }
-  for (const ch of Object.values(state.dcs ?? {})) { try { ch.close(); } catch { /* уже закрыт */ } }
-  state.pc = null; state.dc = null; state.dcs = {}; state.fileRx = null;
-  const connect = state.connect; // эпоха оператора: 'ended' во время await обнуляет её
-  if (!connect) return; // сеанс уже мёртв на входе — pc и таймеры не создаём
-  const cfg = await enot.request('rtc.config', {});
-  if (state.connect !== connect) {
-    // сеанс завершился, пока мы получали конфиг: не воскрешаем pc и таймеры.
-    // (Старый pc закрыт выше, закрывать здесь нечего — только не создаём новый.)
-    return;
-  }
-  const pc = makePc(cfg.body?.iceServers ?? []);
-  state.pc = pc;
-  // Каналы приходят от клиента-офферера (ADR 0014): answer не может добавлять
-  // новые m=секции, поэтому createDataChannel здесь не согласуется никогда.
-  pc.ondatachannel = (e) => {
-    const ch = e.channel;
-    state.dcs ??= {};
-    state.dcs[ch.label] = ch;
-    if (ch.label === 'input') {
-      state.dc = ch;
-      // #remote-video один на все сеансы страницы: прежние pointer-слушатели
-      // снимаем, иначе каждый re-offer/сеанс навсегда добавлял бы по четыре
-      // (паритет web-твину inputDetach, ревью v0.4.6 доводка)
-      inputDetach?.detach?.();
-      inputDetach = wireOperatorInput(ch);
-      wireOperatorControlChannel(ch); // гранты арбитража и честный статус видео (W-C4/W-C5)
-    } else if (ch.label === 'chat') {
-      ch.onmessage = (m) => {
-        const msg = parseChatMessage(m.data);
-        // G2: объект целиком — оператор-получатель различает сообщения
-        // второго оператора (from:'operator') и хоста/старых хостов
-        if (msg) operatorChatMessage(msg);
-      };
-    } else if (ch.label === 'clip') {
-      ch.onmessage = (m) => {
-        const msg = parseClipMessage(m.data);
-        if (msg) operatorClipMessage(msg.text);
-      };
-    } else if (ch.label === 'file') {
-      ch.binaryType = 'arraybuffer';
-      ch.onmessage = (m) => operatorFileMessage(ch, m.data);
-    }
-  };
-  // Фолбэк как в web-панели (web/operator.mjs): replaceTrack без трека даёт
-  // answer без msid — e.streams пуст и без обёртки MediaStream([e.track])
-  // настольный оператор смотрел в чёрный экран (приёмка 03.10, V8-находка)
-  pc.ontrack = (e) => { $('remote-video').srcObject = e.streams[0] ?? new MediaStream([e.track]); };
-  startSessionTimer();
-  startQualityPolling(pc);
-  await pc.setRemoteDescription({ type: 'offer', sdp: offerSdp });
-  drainIce(pc);
-  const answer = await pc.createAnswer();
-  await pc.setLocalDescription(answer);
-  await enot.sendSignal({ type: 'signal', data: { description: { type: 'answer', sdp: pc.localDescription.sdp } } });
-}
-
-// Операторские обработчики сервисов — в session-services (без циклов импорта).
-import { operatorChatMessage, operatorClipMessage, operatorFileMessage } from './session-services.js';
-import { parseChatMessage } from '../lib/chat.mjs';
-import { parseClipMessage } from '../lib/clipboard-sync.mjs';
-
-// Видео-UX: полноэкранный режим, заполнение кадра, смена источника на ходу.
-$('btn-fullscreen').addEventListener('click', () => {
-  $('remote-video').requestFullscreen?.().catch(() => { /* пользователь отказал */ });
-});
-$('btn-fit').addEventListener('click', () => {
-  const video = $('remote-video');
-  const cover = video.classList.toggle('fit-cover');
-  text($('btn-fit'), cover ? t('op.fitFit') : t('op.fitFill'));
-});
+// Смена источника трансляции на ходу (без ренегоциации).
 $('btn-switch-source').addEventListener('click', () => {
   if (!state.localStream) return;
   showSourcePicker(async (id, pickEl) => {

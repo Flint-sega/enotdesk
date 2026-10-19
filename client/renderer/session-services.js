@@ -1,7 +1,8 @@
-// Сессионные сервисы поверх DataChannel (ADR 0014): чат, буфер обмена,
-// передача файлов. Вся сетевая логика — через window.enot и state.
+// Сессионные сервисы клиента помощи (host) поверх DataChannel (ADR 0014):
+// чат, буфер обмена, передача файлов операторам. Вся сетевая логика — через
+// window.enot и state. Операторская сторона — программа оператора с сервера.
 
-import { $, enot, text, show, hide } from './dom.js';
+import { $, enot, text } from './dom.js';
 import { state } from './state.js';
 import { t } from '../lib/i18n.mjs';
 import { parseChatMessage, chatMessage } from '../lib/chat.mjs';
@@ -14,8 +15,7 @@ import {
   fileMeta, fileAccept, fileReject, makeFileId,
 } from '../lib/file-transfer.mjs';
 
-let unreadChat = 0;
-// whoKey: 'you' | 'operator' | 'client' | 'system' — подпись берётся из словаря,
+// whoKey: 'you' | 'operator' | 'system' — подпись берётся из словаря,
 // а класс строки (me/them) определяется ключом, не переведённым текстом.
 // opName (G2): имя автора для сообщений операторов («Оператор {name}»); без
 // имени (старый сервер не прислал) — прежний ключ chat.operator.
@@ -30,50 +30,29 @@ export function appendChat(logId, whoKey, value, opName) {
   line.appendChild(document.createTextNode(value));
   log.appendChild(line);
   log.scrollTop = log.scrollHeight;
-  // оператор в другой вкладке — честный счётчик непрочитанного на вкладке «Подключение»
-  if (logId === 'op-chat-log' && whoKey !== 'you' && state.activePane !== 'connect') {
-    unreadChat += 1;
-    text(document.querySelector('.side-tab[data-pane="connect"]'), t('op.paneConnectUnread', { count: unreadChat }));
-  }
 }
 
-export function resetUnreadChat() {
-  unreadChat = 0;
-}
-
-function sendChat(side) {
-  const input = $(side === 'client' ? 'client-chat-input' : 'op-chat-input');
-  const logId = side === 'client' ? 'client-chat-log' : 'op-chat-log';
+function sendChat() {
+  const input = $('client-chat-input');
   const value = input.value.trim();
   if (!value) return;
   // G2: исходящие хоста помечаются from:'host' — операторы-получатели отличают
   // его от сообщений других операторов (старые клиенты поле молча игнорируют)
-  const wire = chatMessage(value, side === 'client' ? { from: 'host' } : undefined);
+  const wire = chatMessage(value, { from: 'host' });
   if (!wire) { input.value = ''; return; }
-  if (side === 'client') {
-    // Мультиоператор: сообщение клиента уходит ВСЕМ присоединённым операторам
-    let sent = false;
-    for (const dc of hostOperatorChannels('chat')) {
-      try { dc.send(wire); sent = true; } catch { /* канал закрывается */ }
-    }
-    if (!sent) return;
-    appendChat(logId, 'you', value);
-    input.value = '';
-    return;
+  // Мультиоператор: сообщение клиента уходит ВСЕМ присоединённым операторам
+  let sent = false;
+  for (const dc of hostOperatorChannels('chat')) {
+    try { dc.send(wire); sent = true; } catch { /* канал закрывается */ }
   }
-  const dc = state.dcs?.chat;
-  if (!dc || dc.readyState !== 'open') return;
-  try { dc.send(wire); } catch { /* канал закрывается */ return; }
-  appendChat(logId, 'you', value);
+  if (!sent) return;
+  appendChat('client-chat-log', 'you', value);
   input.value = '';
 }
-$('client-chat-send').addEventListener('click', () => sendChat('client'));
-$('op-chat-send').addEventListener('click', () => sendChat('op'));
-for (const id of ['client-chat-input', 'op-chat-input']) {
-  $(id).addEventListener('keydown', (e) => {
-    if (e.key === 'Enter') { e.preventDefault(); sendChat(id === 'client-chat-input' ? 'client' : 'op'); }
-  });
-}
+$('client-chat-send').addEventListener('click', sendChat);
+$('client-chat-input').addEventListener('keydown', (e) => {
+  if (e.key === 'Enter') { e.preventDefault(); sendChat(); }
+});
 
 // Host-сторона: приём каналов оператора. opKey (claimId) различает операторов —
 // каналы keyed `${label}:${opKey}`; ввод ЛЮБОГО оператора идёт в одну очередь
@@ -184,26 +163,18 @@ export function listenChatWidgetOut() {
   enot.onChatWidgetOut?.((text) => sendWidgetChat(String(text ?? '').slice(0, 2000)));
 }
 
-// Исходящий буфер: событие copy уходит в канал, только если синхронизация включена.
+// Исходящий буфер: событие copy на вкладке клиента уходит всем присоединённым
+// операторам, только если синхронизация включена.
 document.addEventListener('copy', () => {
-  const on = state.role === 'client' ? state.clip.client : state.clip.operator;
-  if (!on) return;
+  if (state.role !== 'client' || !state.clip.client) return;
   const selected = String(document.getSelection?.() ?? '');
   const wire = clipMessage(selected);
   if (!wire) return;
-  if (state.role === 'client') {
-    // Мультиоператор: буфер уходит всем присоединённым операторам
-    for (const dc of hostOperatorChannels('clip')) {
-      try { dc.send(wire); } catch { /* канал закрывается */ }
-    }
-    return;
+  for (const dc of hostOperatorChannels('clip')) {
+    try { dc.send(wire); } catch { /* канал закрывается */ }
   }
-  const dc = state.dcs?.clip;
-  if (!dc || dc.readyState !== 'open') return;
-  try { dc.send(wire); } catch { /* канал закрывается */ }
 });
 $('clip-client-toggle').addEventListener('change', (e) => { state.clip.client = e.target.checked; });
-$('clip-op-toggle').addEventListener('change', (e) => { state.clip.operator = e.target.checked; });
 
 // Приём файлов per-оператор (key = claimId): файловые каналы независимы.
 const fileRxs = new Map(); // opKey → {rx, dc, prog}
@@ -284,78 +255,15 @@ function hostFileMessage(ch, data, opKey) {
   if (rx?.push(data)) showFileProgress(rx)();
 }
 
-// Оператор: клиент шлёт файл только по своему явному действию — принимаем сами.
-export function operatorFileMessage(ch, data) {
-  if (typeof data === 'string') {
-    const ctl = parseFileControl(data);
-    if (!ctl) return;
-    if (ctl.kind === 'meta') {
-      state.fileRx = { rx: createFileReceiver(ctl), dc: ch, prog: null };
-      try { ch.send(fileAccept(ctl.id)); } catch { /* канал закрыт */ }
-      text($('file-op-status'), t('files.clientSending', { name: ctl.name }));
-    } else if (ctl.kind === 'done') {
-      const { rx } = state.fileRx ?? {};
-      if (!rx) return;
-      const blob = rx.complete();
-      const name = rx.meta.name;
-      state.fileRx = null;
-      text($('file-op-status'), '');
-      if (!blob) { text($('file-op-status'), t('files.brokenShort')); return; }
-      saveReceivedBlob(blob, name, $('op-file-list'));
-    } else if (ctl.kind === 'reject') {
-      text($('file-op-status'), t('files.clientRejected'));
-    }
-  }
-}
-
-// Операторские приёмники чата и буфера (каналы создаёт operatorAnswer).
-// G2: хост подписывает релей сообщений других операторов (from:'operator',
-// name) — показываем «Оператор {name}»; host/старые хосты без поля — «Клиент».
-export function operatorChatMessage(value) {
-  if (value && typeof value === 'object' && value.from === 'operator') {
-    appendChat('op-chat-log', 'operator', value.text, typeof value.name === 'string' ? value.name : '');
-    return;
-  }
-  appendChat('op-chat-log', 'client', typeof value === 'string' ? value : String(value?.text ?? ''));
-}
-
-// SEC-002 (desktop, зеркально web-оператору): входящий текст НЕ пишется в буфер
-// оператора автоматически — вредоносный клиент мог бы молча подменять буфер.
-// Текст держится в памяти и попадает в буфер только по явному клику
-// «Вставить из сеанса»; новый текст заменяет ожидающий.
-let pendingClip = null;
-
-export function operatorClipMessage(value) {
-  pendingClip = value;
-  show($('btn-op-clip-paste'));
-}
-
-export function resetOperatorClip() {
-  pendingClip = null;
-  hide($('btn-op-clip-paste')); // текст сеанса не переживает сеанс
-}
-
-$('btn-op-clip-paste').addEventListener('click', () => {
-  const value = pendingClip;
-  if (!value) return;
-  pendingClip = null;
-  hide($('btn-op-clip-paste'));
-  // единственное место записи буфера оператора — явное действие человека
-  enot.copy(value).catch(() => { /* буфер недоступен */ });
-});
-
-// Отправка файла (обе стороны): meta + чанки через один file-канал.
-// Файл приходит и из input, и из drag&drop — общий путь один.
-// Обе стороны видят передачу: отправителю — прогресс, получателю — «Принять»/прогресс/ссылку.
-export async function sendFileFrom(side, file) {
+// Отправка файла оператору: meta + чанки через file-канал. Файл приходит и из
+// input, и из drag&drop — общий путь один; получатель видит прогресс/ссылку.
+export async function sendFileFrom(file) {
   if (!file) return;
-  let dc = state.dcs?.file;
-  if (!dc && side === 'client') {
-    // Мультиоператор: файловые каналы keyed `file:<claimId>`. Волна 1 шлёт
-    // первому открытому каналу (адресная передача нескольким — волна 2).
-    for (const key of Object.keys(state.dcs ?? {})) {
-      if (key.startsWith('file:') && state.dcs[key]?.readyState === 'open') { dc = state.dcs[key]; break; }
-    }
+  // Мультиоператор: файловые каналы keyed `file:<claimId>`. Волна 1 шлёт
+  // первому открытому каналу (адресная передача нескольким — волна 2).
+  let dc = null;
+  for (const key of Object.keys(state.dcs ?? {})) {
+    if (key.startsWith('file:') && state.dcs[key]?.readyState === 'open') { dc = state.dcs[key]; break; }
   }
   if (!dc || dc.readyState !== 'open') {
     // Фолбэк: резервный релей сервера (TTL 3 суток) — файл уходит ссылкой получателю
@@ -363,81 +271,27 @@ export async function sendFileFrom(side, file) {
       const buf = new Uint8Array(await file.arrayBuffer());
       const up = await enot.relayUpload(file.name, buf);
       await enot.sendFileLink({ name: up.name, size: up.size, url: up.url });
-      if (side === 'client') text($('client-live-note'), t('files.relayLink', { name: up.name }));
-      else text($('file-op-status'), t('files.relayLink', { name: up.name }));
+      text($('client-live-note'), t('files.relayLink', { name: up.name }));
     } catch { /* релей недоступен — честно молчим, канал всё равно мёртв */ }
     return;
   }
   const id = makeFileId();
-  const noteEl = side === 'client' ? $('client-live-note') : null;
-  const statusEl = side === 'op' ? $('file-op-status') : null;
-  const show = (el, s) => { if (el) text(el, s); };
   try {
     dc.send(fileMeta(id, file.name, file.size));
-    createFileSender({
-      file, dc, id,
-      onProgress: (sent) => show(statusEl, t('files.sendingProgress', { name: file.name, pct: Math.round((sent / file.size) * 100) })),
-      onSent: () => show(statusEl, t('files.sentWaiting', { name: file.name })),
-    }).start();
+    createFileSender({ file, dc, id }).start();
   } catch { /* канал закрыт */ return; }
-  show(statusEl, t('files.sending', { name: file.name }));
-  show(noteEl, t('files.sending', { name: file.name }));
-}
-function sendFile(side) {
-  const input = $(side === 'client' ? 'client-file-input' : 'op-file-input');
-  const file = input.files?.[0];
-  input.value = '';
-  sendFileFrom(side, file);
+  text($('client-live-note'), t('files.sending', { name: file.name }));
 }
 $('btn-client-file').addEventListener('click', () => $('client-file-input').click());
-$('client-file-input').addEventListener('change', () => sendFile('client'));
-$('btn-op-file').addEventListener('click', () => $('op-file-input').click());
-$('op-file-input').addEventListener('change', () => sendFile('op'));
+$('client-file-input').addEventListener('change', () => {
+  const input = $('client-file-input');
+  const file = input.files?.[0];
+  input.value = '';
+  sendFileFrom(file);
+});
 
-// ---------- Арбитраж ввода (W-C4): статус и кнопки оператора ----------
-// Кнопки не гейтят отправку событий (хост сам отбрасывает не-активного) —
-// они показывают честный статус и шлют служебные claim/release по input-каналу.
-
-function setOperatorControl(granted) {
-  const statusEl = $('op-control-status');
-  if (granted !== true && granted !== false) { // null — сеанс кончился/грантов нет
-    text(statusEl, '');
-    hide($('btn-op-take-control'));
-    hide($('btn-op-give-control'));
-    return;
-  }
-  text(statusEl, granted ? t('op.hasControl') : t('op.viewOnly'));
-  (granted ? show : hide)($('btn-op-give-control'));
-  (granted ? hide : show)($('btn-op-take-control'));
-}
-
-// input-канал оператора: гранты хоста и честные session-info (W-C5)
-export function wireOperatorControlChannel(ch) {
-  ch.onmessage = (m) => {
-    if (typeof m.data !== 'string') return;
-    let msg = null;
-    try { msg = JSON.parse(m.data); } catch { /* мусор игнорируется */ }
-    if (!msg || typeof msg !== 'object') return;
-    if (msg.type === 'input-grant') setOperatorControl(msg.granted === true);
-    else if (msg.type === 'session-info' && msg.video === false) text($('op-video-note'), t('op.videoSlotsFull'));
-  };
-}
-
-export function resetOperatorControl() {
-  setOperatorControl(null);
-  text($('op-video-note'), '');
-}
-
-function sendControlMessage(type) {
-  const dc = state.dcs?.input ?? state.dc;
-  if (!dc || dc.readyState !== 'open') return;
-  try { dc.send(JSON.stringify({ type })); } catch { /* канал закрывается */ }
-}
-$('btn-op-take-control').addEventListener('click', () => sendControlMessage('claim-input'));
-$('btn-op-give-control').addEventListener('click', () => sendControlMessage('release-input'));
-
-// Drag&drop файла на карточки сеанса, у обеих сторон.
-function wireFileDrop(zone, side) {
+// Drag&drop файла на карточку живого сеанса клиента.
+function wireFileDrop(zone) {
   zone.addEventListener('dragover', (e) => {
     e.preventDefault();
     zone.classList.add('drop-hover');
@@ -446,8 +300,7 @@ function wireFileDrop(zone, side) {
   zone.addEventListener('drop', (e) => {
     e.preventDefault();
     zone.classList.remove('drop-hover');
-    sendFileFrom(side, e.dataTransfer?.files?.[0]);
+    sendFileFrom(e.dataTransfer?.files?.[0]);
   });
 }
-wireFileDrop($('client-connected'), 'client');
-wireFileDrop($('op-remote'), 'op');
+wireFileDrop($('client-connected'));

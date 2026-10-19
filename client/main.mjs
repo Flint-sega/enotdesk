@@ -258,9 +258,10 @@ function flushPendingInvite() {
   if (!win || win.isDestroyed() || !winLoaded) return;
   const token = pendingInviteToken;
   pendingInviteToken = null;
-  // ADR 0033 этап 2: форма принятия приглашения — серверная страница /invite в
-  // окне оператора; рендерер по событию только переключается на вкладку «Оператор».
-  win.webContents.send('enot:invite-prefill', token);
+  // ADR 0033: форма принятия приглашения — серверная страница /invite в окне
+  // оператора; рендерер по событию только переключается на вкладку «Оператор»
+  // (токен приглашения в главный рендерер не уходит).
+  win.webContents.send('enot:invite-prefill');
   void openOperatorWindow({ inviteToken: token });
 }
 
@@ -670,7 +671,7 @@ function wireSignal(client, auth, role) {
 }
 
 function startSignal(params) {
-  const { role, sessionId, claimId } = params;
+  const { role, sessionId } = params;
   if (signal && signalRole && signalRole !== role) {
     throw new Error('В этом окне уже идёт сеанс помощи. Одно окно EnotDesk работает только в одной роли — завершите текущий сеанс или используйте второе устройство.');
   }
@@ -679,9 +680,7 @@ function startSignal(params) {
   lastInputAt = Date.now();
   if (role === 'host') nativeInput.load(); // подготовка нативного ввода к реальному сеансу
   signal = createSignalClient({ url: new URL('/signal', settings.serverUrl).toString().replace(/^http/, 'ws') });
-  const auth = role === 'host'
-    ? { role, sessionId, hostToken: api.hostToken }
-    : { role, sessionId, claimId, token: api.authToken };
+  const auth = { role, sessionId, hostToken: api.hostToken };
   wireSignal(signal, auth, role);
   return signal.open(auth).then((ready) => {
     gate.onSignal(ready);
@@ -1068,14 +1067,9 @@ function registerIpc() {
     safeStorage,
     file: path.join(app.getPath('userData'), 'op-credentials.json'),
   });
-  // Креды нужны рендереру только ДО первого успешного входа; дальше load отдаёт
-  // null — будущий XSS в рендерере не получает постоянный канал к паролю (P2-2).
-  let opCredsConsumed = false;
+  // Хранилищем пользуется только окно оператора (мост enot-op:*, ниже); главный
+  // рендерер к кредам доступа не имеет (ADR 0033, этап 3).
   opCreds.available().then((ok) => { if (!ok) opCreds.clear(); });
-  ipcMain.handle('enot:opCredentialsAvailable', (e) => { guard(e); return opCreds.available(); });
-  ipcMain.handle('enot:opCredentialsSave', (e, creds) => { guard(e); return opCreds.save(creds); });
-  ipcMain.handle('enot:opCredentialsLoad', (e) => { guard(e); return opCredsConsumed ? Promise.resolve(null) : opCreds.load(); });
-  ipcMain.handle('enot:opCredentialsClear', (e) => { guard(e); return opCreds.clear(); });
 
   // Окно оператора (ADR 0033, этап 2): главное окно просит открыть программу
   // оператора с сервера; ответ {ok, reason?, version?}, статус — enot:operator-window.
@@ -1224,15 +1218,15 @@ function registerIpc() {
     // до его завершения; на не-Windows/без koffi — no-op внутри либы.
     if (operation === 'session.create' && result.status === 201) keepAwake.acquire();
     if (operation === 'session.end') keepAwake.release();
-    // Успешный вход оператора закрывает окно потребности в сохранённых кредах
-    if (operation === 'login' && result.status === 200) opCredsConsumed = true;
     // Ошибки HTTP приходят рендереру как {status, body:{error}} — честно, без выдуманных данных
     return result;
   });
 
   ipcMain.handle('enot:openSignal', (e, params) => {
     guard(e);
-    if (!params || typeof params !== 'object' || (params.role !== 'host' && params.role !== 'operator')) {
+    // Окно ведёт сигналинг только клиента помощи: операторская сторона —
+    // программа оператора с сервера в своём окне (ADR 0033, этап 3)
+    if (!params || typeof params !== 'object' || params.role !== 'host') {
       throw new Error('Некорректные параметры сигналинга');
     }
     return startSignal(params);
@@ -1895,7 +1889,6 @@ function cleanupAndQuit() {
   stopSignal();
   nativeInput.end();
   api.clearSessionTokens();
-  api.clearAuth();
 }
 // Подтверждённое обновление: в will-quit (после before-quit-очистки) тихо
 // ставим и просим установщик перезапустить приложение (--force-run). Это

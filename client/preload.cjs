@@ -18,12 +18,6 @@ contextBridge.exposeInMainWorld('enot', {
   relayUpload: (name, buffer) => ipcRenderer.invoke('enot:relayUpload', { name, buffer }),
   sendFileLink: (link) => ipcRenderer.invoke('enot:sendFileLink', link),
   permissions: () => ipcRenderer.invoke('enot:permissions'),
-  // «Запомнить меня» на входе оператора: креды только в шифротекстах safeStorage
-  // (DPAPI/Keychain/keyring), на диск в открытом виде не попадают никогда.
-  opCredentialsAvailable: () => ipcRenderer.invoke('enot:opCredentialsAvailable'),
-  opCredentialsSave: (creds) => ipcRenderer.invoke('enot:opCredentialsSave', creds),
-  opCredentialsLoad: () => ipcRenderer.invoke('enot:opCredentialsLoad'),
-  opCredentialsClear: () => ipcRenderer.invoke('enot:opCredentialsClear'),
   // Программа оператора (ADR 0033, этап 2): отдельное окно со страницей сервера
   // <сервер>/operator; ответ {ok, reason?, version?}, статус окна — onOperatorWindow.
   openOperatorWindow: () => ipcRenderer.invoke('enot:openOperatorWindow'),
@@ -85,7 +79,8 @@ contextBridge.exposeInMainWorld('enot', {
     ipcRenderer.on('enot:onJoinStart', listener);
     return () => ipcRenderer.removeListener('enot:onJoinStart', listener);
   },
-  // Deep-link enotdesk://invite#token=…: main просит префиллить форму принятия
+  // Deep-link enotdesk://invite#token=…: main открыл /invite в окне оператора,
+  // главное окно переключается на вкладку «Оператор» (без токена)
   onInvitePrefill: (callback) => {
     if (typeof callback !== 'function') return () => {};
     const listener = (_event, token) => callback(token);

@@ -17,7 +17,8 @@ const operatorJs = readSrc('operator.mjs');
 const inputJs = readSrc('input-source.mjs');
 const teamJs = readSrc('team.js'); // UI команды (admin): свои id/кнопки в operator.html
 const recordsJs = readSrc('records.js'); // B6 этап 1: адресная книга, история, журнал, CSV
-const allJs = `${operatorJs}\n${inputJs}\n${teamJs}\n${recordsJs}`;
+const accountJs = readSrc('account.js'); // B6 этап 3: смена пароля и 2FA (перенос из desktop)
+const allJs = `${operatorJs}\n${inputJs}\n${teamJs}\n${recordsJs}\n${accountJs}`;
 
 import ru from '../locales/ru.mjs';
 import en from '../locales/en.mjs';
@@ -293,4 +294,28 @@ test('B6 этап 2: «запомнить меня» — только через
   assert.match(operatorJs, /if \(!desk\) return;/, 'без моста — ничего не делаем');
   // в браузере window.enotOperator нет — страница не трогает storage ради паролей
   assert.ok(!/localStorage\.setItem\([^)]*(password|login)/i.test(allJs), 'пароли не в localStorage');
+});
+
+// G2 (приёмная сторона, перенесено из удалённого desktop-оператора, этап 3):
+// сообщения коллеги (from:'operator') — «Оператор {имя}», хост и старые хосты
+// без поля — «Клиент»; без имени — прежний ключ chat.operator.
+test('G2: оператор-получатель подписывает коллегу «Оператор {имя}», хоста и легаси — «Клиент»', () => {
+  assert.match(operatorJs, /if \(msg\.from === 'operator'\) appendChat\('operator', msg\.text, typeof msg\.name === 'string' \? msg\.name : ''\);\s*else appendChat\('client', msg\.text\);/);
+  assert.match(operatorJs, /whoKey === 'operator' && opName \? t\('op\.messageBy', \{ name: opName \}\) : t\(`chat\.\$\{whoKey\}`\)/);
+  for (const k of ['op.messageBy', 'chat.client', 'chat.operator']) assert.ok(k in ru && k in en, `ключ ${k}`);
+});
+
+test('B6 этап 3: раздел «Аккаунт» — смена пароля и 2FA тем же REST, что был у desktop', () => {
+  assert.match(html, /<section id="view-account" class="card hidden">/);
+  assert.match(operatorJs, /'view-account'/, 'раздел в списке экранов');
+  assert.match(operatorJs, /show\(\$\('btn-nav-account'\)\); \/\/ аккаунт — у любой вошедшей роли/);
+  assert.match(accountJs, /api\('PATCH', '\/auth\/password', \{ oldPassword: \$\('password-old'\)\.value, newPassword: \$\('password-new'\)\.value \}\)/);
+  assert.match(accountJs, /api\('POST', '\/auth\/totp\/enable', \{ password \}\)/, 'шаг 1: секрет по паролю');
+  assert.match(accountJs, /api\('POST', '\/auth\/totp\/enable', \{ password: totpSetupPassword, code:/, 'шаг 2: подтверждение кодом');
+  assert.match(accountJs, /api\('POST', '\/auth\/totp\/disable', \{ password: \$\('totp-disable-password'\)\.value \}\)/);
+  // пароль настройки и секрет не переживают уход из раздела
+  assert.match(accountJs, /btn-account-back'\)\.addEventListener\('click', \(\) => \{\s*resetPassword\(\);\s*resetTotp\(\);/);
+  assert.ok(!/innerHTML/.test(accountJs), 'DOM — только через textContent/value');
+  assert.match(operatorJs, /account\.setUser\(res\.body\.user\)/, 'флаг 2FA — из ответа входа');
+  assert.match(operatorJs, /account\.setUser\(user\)/, 'и из /auth/me после перезагрузки');
 });

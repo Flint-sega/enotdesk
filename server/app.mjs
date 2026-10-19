@@ -144,6 +144,7 @@ const OPERATOR_ASSETS = {
     files: {
       'operator.mjs': 'text/javascript', 'input-source.mjs': 'text/javascript',
       'team.js': 'text/javascript', 'invite.js': 'text/javascript', 'records.js': 'text/javascript',
+      'account.js': 'text/javascript',
       'theme.css': 'text/css',
     },
   },

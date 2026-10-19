@@ -18,6 +18,7 @@ import { summarizeStats, formatQuality } from '../client/lib/rtc-stats.mjs';
 import { wireBrowserInput } from './input-source.mjs';
 import { bindTeam, teamRoute } from './team.js';
 import { bindRecords } from './records.js';
+import { bindAccount } from './account.js';
 
 const COOKIE = 'enot_op';
 // Роли страницы (B6 этап 1): аудитор входит в режим «только журнал» — история и
@@ -47,6 +48,7 @@ function saveRoleCookie(role) {
 
 function forgetSession() {
   token = null;
+  $('btn-nav-account')?.classList.add('hidden'); // без входа раздел аккаунта недоступен
   document.cookie = `${COOKIE}=; path=/operator; Max-Age=0; SameSite=Strict`;
 }
 
@@ -251,7 +253,7 @@ function resetKeyboardMode() {
 
 // ---- состояния страницы ----
 
-const VIEWS = ['view-login', 'view-denied', 'view-connect', 'view-machines', 'view-team', 'view-contacts', 'view-history', 'view-audit', 'op-waiting', 'op-reconnect', 'op-remote'];
+const VIEWS = ['view-login', 'view-denied', 'view-connect', 'view-machines', 'view-team', 'view-contacts', 'view-history', 'view-audit', 'view-account', 'op-waiting', 'op-reconnect', 'op-remote'];
 function showOnly(...ids) {
   for (const id of VIEWS) (ids.includes(id) ? show : hide)($(id));
 }
@@ -1234,8 +1236,12 @@ function showMachines() {
 // адресная книга — admin/operator, история — все, журнал — admin/auditor,
 // машины и команда — admin; «К подключению» — тем, кто подключается.
 let records = null;
+let account = null; // смена пароля и 2FA (ADR 0033, этап 3)
+let currentRole = null;
 function applyRoleUi(role) {
+  currentRole = role;
   const staff = CONNECT_ROLES.includes(role);
+  show($('btn-nav-account')); // аккаунт — у любой вошедшей роли
   for (const id of ['btn-nav-machines', 'btn-nav-team', 'btn-nav-audit']) (role === 'admin' ? show : hide)($(id));
   for (const id of ['btn-nav-contacts', 'btn-nav-history', 'conn-contact-field', 'btn-history-back', 'btn-audit-back', 'btn-contacts-back']) (staff ? show : hide)($(id));
   (role === 'admin' || role === 'auditor' ? show : hide)($('btn-history-audit'));
@@ -1316,6 +1322,7 @@ function wire() {
       saveRoleCookie(res.body.user.role);
       text($('op-user-name'), res.body.user.name);
       text($('op-user-role'), roleName(res.body.user.role));
+      account.setUser(res.body.user);
       applyRoleUi(res.body.user.role);
       text($('login-error'), '');
       // одноразовый код не должен пережить вход (повторный вход начнёт с чистого поля)
@@ -1511,6 +1518,8 @@ function wire() {
 
   // B6 этап 1: адресная книга, история, журнал (паритет с desktop)
   records = bindRecords({ api, t, getLocale, showOnly, $ });
+  account = bindAccount({ api, t, showOnly, $, onBack: () => showLanding(currentRole) });
+  $('btn-nav-account').addEventListener('click', () => account.show());
   $('btn-nav-contacts')?.addEventListener('click', () => records.showContacts());
   $('btn-nav-history')?.addEventListener('click', () => records.showHistory());
   $('btn-nav-audit')?.addEventListener('click', () => records.showAudit());
@@ -1577,6 +1586,7 @@ function wire() {
       return;
     }
     // Панель машин — только admin (spec §UI машин); оператор её не видит.
+    account.setUser(user);
     applyRoleUi(user.role);
     showLanding(user.role);
     return;

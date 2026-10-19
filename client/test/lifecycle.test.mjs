@@ -9,6 +9,17 @@ import { createSignalClient } from '../lib/signal.mjs';
 // Шов: «Lifecycle and WS behavior tested against real service» — через собственные
 // сетевые модули client (api.mjs/signal.mjs), как их использует main-процесс.
 
+// Операторская сторона — программа оператора с сервера (ADR 0033): main её
+// запросы больше не проксирует, тест ходит в REST напрямую.
+async function rest(base, method, path, body, token) {
+  const res = await fetch(`${base}/api/v1${path}`, {
+    method,
+    headers: { 'Content-Type': 'application/json', ...(token ? { Authorization: `Bearer ${token}` } : {}) },
+    body: body ? JSON.stringify(body) : undefined,
+  });
+  return { status: res.status, body: await res.json().catch(() => null) };
+}
+
 async function setup(t) {
   const dbPath = tmpDb(t);
   const { inst, port, base } = await startServer(t, { dbPath });
@@ -20,9 +31,9 @@ test('полный жизненный цикл через модули client: r
   bootstrapAdmin(dbPath, { login: ADMIN.login, name: 'Главный Енот', password: ADMIN.password });
   const api = createApi({ baseUrl: base });
 
-  const login = await api.request('login', { login: ADMIN.login, password: ADMIN.password });
+  const login = await rest(base, 'POST', '/auth/login', { login: ADMIN.login, password: ADMIN.password });
   assert.equal(login.status, 200, JSON.stringify(login.body));
-  const operator = { token: api.authToken, name: login.body.user.name };
+  const operator = { token: login.body.token, name: login.body.user.name };
 
   // 1. Клиент регистрирует сеанс (main делает это сам, токен остаётся в main)
   const created = await api.request('session.create', {});
@@ -34,9 +45,7 @@ test('полный жизненный цикл через модули client: r
   
 
   // 2. Оператор подключается по ID+паролю
-  const claim = await api.request('session.claim', {
-    token: operator.token, sessionId, password,
-  });
+  const claim = await rest(base, 'POST', `/sessions/${sessionId}/claim`, { password }, operator.token);
   assert.equal(claim.status, 201);
   const claimId = claim.body.claimId;
 
@@ -87,7 +96,7 @@ test('полный жизненный цикл через модули client: r
 
   host.close();
   op.close();
-  await api.request('logout', { token: operator.token });
+  await rest(base, 'POST', '/auth/logout', undefined, operator.token);
 
   // Повторное подключение со старым hostToken невозможно (R16: старые сокеты не работают)
   const stale = createSignalClient({ url: `ws://127.0.0.1:${port}/signal`, wsFactory: (u) => new WebSocket(u) });
