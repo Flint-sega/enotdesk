@@ -1522,3 +1522,11 @@ Mac, dev-Electron 44.3.0 с отдельным профилем, локальн�
 Выпуск 20.10: CI main `67e46db` зелёный на 3 ОС (по пути исправлен флейк теста PIN машины: `includes('1357')` в случайном hex → проверка формата scrypt). Прод: бэкапы enotdesk+hub, гейт хаба, `deploy-server.sh` → health 0.6.23 (`operatorUi: 1`), хаб ok, `/web/account.js`, `/invite`, `/downloads` — 200, `smoke-remote` PASS. Релиз `v0.6.23` (release run 39348367459): mac zip, Windows portable + установщик, Linux AppImage, server tarball, checksums; фиды `latest*.yml` = 0.6.23.
 
 Ждёт живых проверок: машинное видео с первых секунд в полном разрешении (Windows-хелпер и Linux gdm), холодный старт `enotdesk://invite` на Windows/Linux, ввод через koffi 3.3.3 на Windows (SendInput) и Linux (XTest), упакованные сборки 0.6.23 на трёх ОС, этап 3 на Windows.
+
+### 20.10.2026 — v0.6.24: редизайн «Neon Emerald» по макету владельца + чистка мёртвого кода
+
+Визуал по макету и арту владельца на всех поверхностях: витрина (GitHub Pages), /downloads и /invite, /operator, консоль и виджет хаба, Electron-клиент. Реальные требования ОС на карточках (Windows 10/11 x64, macOS 13+ Apple Silicon, Linux x86_64). В выпуск входит и чистка мёртвого кода (`a3bf8e4`: мост без `quit`/`openExternal`, WoL без `broadcastsFor`, 8 мёртвых ключей словарей).
+
+Автоматически и локально (Mac): `npm test` 731/0, lint; вёрстка 1440 и 375 px — без горизонтальной прокрутки (витрина, /downloads, /operator, /invite, консоль хаба); `EDESK_SMOKE` dev и упакованный `pack:mac` — SMOKE OK, `app.asar` 3,45 МБ (Inter в сборке). Скриншоты одобрены владельцем.
+
+Ждёт живых проверок (вместе со списком 0.6.23): внешний вид клиента на Windows и Linux (шрифт Inter из asar, радиальная маска арта), окно чата клиента в новой палитре, виджет хаба на стороннем сайте.
