@@ -17,7 +17,7 @@ dist/                        результат сборки (EnotDesk-mac-arm64
 ## Общие требования
 
 - Node.js ≥ 24.12 и npm (проверка: `node -v`).
-- `npm ci` из корня репозитория — ставит `electron` 44.3.0 и `electron-builder` 26.15.3 по lockfile.
+- `npm ci` из корня репозитория — ставит `electron` 44.9.0 и `electron-builder` 26.15.3 по lockfile.
 - Сборка идёт на целевой ОС: macOS-артефакты — на macOS, Windows — на Windows, Linux — на Linux.
 - При первой сборке electron-builder скачивает Electron и свои инструменты — нужен интернет.
 - Необязательно, но полезно перед сборкой: `npm test` (84 теста: серверные HTTP/WS + client-швы; фактически зелёные).

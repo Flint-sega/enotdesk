@@ -38,7 +38,7 @@
 Маскоты вырезаются из эталонов редизайна (Electron `nativeImage`, без зависимостей):
 
 ```sh
-npx electron@44.3.0 scripts/make-mascot.mjs
+npx electron@44.9.0 scripts/make-mascot.mjs
 ```
 
 Иконка приложения и её форматы (macOS: sips/iconutil, `sips` входит в систему):

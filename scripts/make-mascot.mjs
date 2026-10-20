@@ -1,5 +1,5 @@
 // Вырезает маскот-ассеты из эталонов редизайна (Electron nativeImage, без зависимостей).
-// Запуск: npx electron@44.3.0 scripts/make-mascot.mjs
+// Запуск: npx electron@44.9.0 scripts/make-mascot.mjs
 //
 // Координаты кропов подобраны вручную по эталонам; при смене эталонов — перепроверить глазами.
 import { app, nativeImage } from 'electron';

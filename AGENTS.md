@@ -9,7 +9,7 @@
 - `npm test` — node:test по `server/test`, `client/test`, `hub/test` (~724 теста, Electron не нужен). Один файл: `node --test server/test/lifecycle.test.mjs`.
 - `npm run lint` — ESLint. `npm run smoke:local` — полный цикл bootstrap → login → invite → session → claim → consent → WS relay → end на временной БД.
 - `npm run server` — сервер на `127.0.0.1:8080`, `GET /api/v1/health` → `{ok,version,activeSessions,uptimeSec}`. `npm run bootstrap` — первый админ. `node hub/main.mjs` — Hub на `127.0.0.1:8090`.
-- `npm start` — Electron-клиент. Смоук: `EDESK_SMOKE=1 npx electron@44.3.0 client/main.mjs --no-sandbox`. Второй экземпляр — `EDESK_ALLOW_MULTI=1`, профиль первого запуска — `EDESK_SMOKE_FIRSTRUN=1`.
+- `npm start` — Electron-клиент. Смоук: `EDESK_SMOKE=1 npx electron@44.9.0 client/main.mjs --no-sandbox`. Второй экземпляр — `EDESK_ALLOW_MULTI=1`, профиль первого запуска — `EDESK_SMOKE_FIRSTRUN=1`.
 - `npm run pack:mac|pack:win|pack:linux` — electron-builder (`build/electron-builder.yml`). Релизы собирает `.github/workflows/release.yml` по тегу `v*`.
 - Сервер: `sudo bash scripts/quick-setup.sh` (мастер: bare-metal или `--docker`, `--update`, `--dry-run`, `--hub/--no-hub`), `scripts/install-server.sh`, `compose.yaml` (сервер + coturn + Caddy, профиль `hub`), `node server/backup.mjs <db> <dir> [keep]` (VACUUM INTO).
 - Внешний цикл против живого сервера: `ENOT_BASE_URL=… ENOT_ADMIN_LOGIN=… ENOT_ADMIN_PASSWORD=… node scripts/smoke-remote.mjs`.
@@ -43,7 +43,7 @@ docs/        SESSION_PROTOCOL, SERVER, AGENT, WEB-OPERATOR, BUILD, MANUAL-QA, RO
 - Платформенный слой (Electron, WebRTC, koffi, службы, docker) подробно описан в проектном скилле `enotdesk-platform`, если он установлен локально.
 
 ## Конвенции
-- Сервер — чистый ESM `.mjs`, node:sqlite (experimental warning — норма), без фреймворков. Пины точные: electron 44.3.0, koffi 3.2.1, electron-updater 6.8.9, ws 8.21.3, imapflow 2.0.5, nodemailer 10.0.10. Не бампать и не добавлять зависимости без решения мейнтейнера.
+- Сервер — чистый ESM `.mjs`, node:sqlite (experimental warning — норма), без фреймворков. Пины точные: electron 44.9.0, koffi 3.3.3, electron-updater 6.8.9, ws 8.22.0, imapflow 2.5.8, nodemailer 10.1.7. Не бампать и не добавлять зависимости без решения мейнтейнера.
 - Electron: `contextIsolation: true`, `sandbox: true`, `nodeIntegration: false`; рендерер — только через мост `window.enot`, каждый IPC проверяет отправителя.
 - Всё входящее проходит allowlist и лимиты. Недоступная платформа честно сообщает код причины (`native-unavailable`, `wayland-unsupported-control`, `video-unsupported-platform`, `no-active-session`, `term-busy`…), фейковый успех запрещён.
 - Токены, пароли и коды в БД — только хешами; шифруемые секреты — AES-256-GCM от `ENOT_SECRET_KEY`; токены не попадают в рендерер; секреты не идут в argv и логи.

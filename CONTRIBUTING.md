@@ -5,7 +5,7 @@ Thank you for considering a contribution. EnotDesk is a remote-support tool that
 ## Development setup
 
 - Node.js ≥ 24.12 (the server uses `node:sqlite`; its experimental warning is normal).
-- `npm install` — dependencies are `ws` and `koffi` (exact-pinned), dev deps include Electron 44.3.0 (exact-pinned) and ESLint.
+- `npm install` — dependencies are `ws` and `koffi` (exact-pinned), dev deps include Electron 44.9.0 (exact-pinned) and ESLint.
 - `npm test` — the full `node:test` suite (no Electron required).
 - `npm run lint` — must be clean.
 - `npm run smoke:local` — full control-plane cycle (bootstrap → login → invite → session → claim → consent → signaling) on a temp DB.
@@ -13,7 +13,7 @@ Thank you for considering a contribution. EnotDesk is a remote-support tool that
 ## Ground rules
 
 - **Pure ESM `.mjs`** on the server; no frameworks — only `ws` + `koffi`. Do not add dependencies without discussing it in an issue first.
-- **Exact pins are intentional**: `electron 44.3.0` and `koffi 3.2.1` are pinned; do not bump them casually, and keep `asarUnpack` for koffi in the build config.
+- **Exact pins are intentional**: `electron 44.9.0` and `koffi 3.3.3` are pinned; do not bump them casually, and keep `asarUnpack` for koffi in the build config.
 - **Honest status everywhere**: an unavailable platform feature reports `native-unavailable` / `wayland-unsupported-control` — never fake success. Koffi adapters load lazily and fall back to inert adapters instead of throwing.
 - **Allowlists and bounds**: keys, buttons, scroll deltas, SDP sizes and served filenames are allowlisted and size-bounded. New protocol input must go through validation in `client/lib/protocol.mjs` (or the server equivalent), never raw pass-through.
 - **Input decisions belong to the main process** behind the WS-state gate (`gate.isOpen()`); renderer claims are never trusted.
