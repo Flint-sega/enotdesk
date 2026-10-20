@@ -1371,12 +1371,15 @@ function registerIpc() {
 function createWindow() {
   bootLog.write('win', 'создаётся главное окно');
   win = new BrowserWindow({
-    width: 1120,
-    height: 760,
+    // Компактное окно клиента помощи: весь путь (кнопка → ID/пароль → согласие)
+    // помещается без прокрутки; размер — по содержимому, без рамки ОС
+    width: 760,
+    height: 580,
+    useContentSize: true,
     minWidth: 360,
     minHeight: 480,
     title: 'EnotDesk',
-    backgroundColor: '#0B1020',
+    backgroundColor: '#020D0B',
     autoHideMenuBar: true,
     webPreferences: {
       preload: path.join(import.meta.dirname, 'preload.cjs'),

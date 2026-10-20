@@ -10,6 +10,15 @@ export function clientShow(section) {
     hide($(id));
   }
   show($('client-' + section));
+  // Компактный экран: шаги 1–3 подсвечиваются по состоянию (CSS по data-state)
+  $('view-client').dataset.state = section;
+  // До нажатия ID и пароль — прочерки: старый пароль после отмены уже недействителен
+  if (section === 'idle') {
+    text($('client-id'), '—');
+    text($('client-password'), '—');
+    text($('copy-status'), '');
+    text($('join-status'), '');
+  }
 }
 
 $('btn-start').addEventListener('click', startHelp);
