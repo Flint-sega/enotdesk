@@ -44,6 +44,9 @@ TURN_PASSWORD="${ENOT_TURN_PASSWORD:-}"
 TURN_SECRET=""
 TURN_CONF="/etc/turnserver.conf"
 CADDYFILE="/etc/caddy/Caddyfile"
+# Дополнительные сайты на этом же Caddy (не EnotDesk): по файлу <имя>.caddy;
+# управляемый Caddyfile их импортирует и при деплое не трогает.
+CADDY_SITES_DIR="/etc/caddy/sites.d"
 SETUP_TURN=1
 SETUP_TLS=1
 RESET_TURN=0
@@ -550,6 +553,7 @@ ensure_caddy() {
     apt-get update -qq || die "apt-get update не удался после подключения репозитория Caddy"
     DEBIAN_FRONTEND=noninteractive apt-get install -y caddy >/dev/null || die "не удалось установить пакет caddy"
   fi
+  mkdir -p "$CADDY_SITES_DIR" # пустая папка — glob-импорт просто ничего не подключает
   if [ -f "$CADDYFILE" ] && ! grep -q ENOTDESK_MANAGED "$CADDYFILE"; then
     local bak="$CADDYFILE.bak-$(date -u +%Y%m%d%H%M%S)"
     cp -a "$CADDYFILE" "$bak"
@@ -566,6 +570,9 @@ ensure_caddy() {
     fi
     echo "    reverse_proxy 127.0.0.1:$PORT"
     echo "}"
+    echo ""
+    echo "# Другие сайты этого сервера — файлами в $CADDY_SITES_DIR (переживают деплой EnotDesk)"
+    echo "import $CADDY_SITES_DIR/*.caddy"
   } > "$CADDYFILE"
   caddy validate --config "$CADDYFILE" >/dev/null 2>&1 || die "Caddyfile не прошёл проверку (caddy validate --config $CADDYFILE)"
   systemctl enable --now caddy >/dev/null 2>&1 || die "не удалось включить службу caddy"
