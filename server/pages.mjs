@@ -262,7 +262,8 @@ function inviteHtml(version, locale, insecure = false) {
     `<main class="wrap invite-page"><section class="invite-card rise">` +
     `<p class="eyebrow">${esc(t('server.invite.eyebrow', {}, locale))}</p>` +
     `<h1>${esc(t('server.invite.title', {}, locale))}</h1>` +
-    `<p class="lead">${esc(t('server.invite.lead', {}, locale))}</p>` +
+    `<p class="lead" id="invite-lead">${esc(t('server.invite.lead', {}, locale))}</p>` +
+    `<p class="lead" id="invite-lead-form" hidden>${esc(t('server.invite.leadForm', {}, locale))}</p>` +
     `<section id="invite-accept" hidden>
       <h2>${esc(t('server.invite.acceptTitle', {}, locale))}</h2>
       <form id="invite-accept-form">
@@ -275,10 +276,13 @@ function inviteHtml(version, locale, insecure = false) {
         <button class="btn" type="submit">${esc(t('server.invite.submit', {}, locale))}</button>
       </form>
       <p class="form-error" id="invite-error" aria-live="polite"></p>
-      <p class="note hidden" id="invite-ok">${esc(t('server.invite.ok', {}, locale))}</p>
+      <div id="invite-ok" hidden>
+        <p class="note">${esc(t('server.invite.ok', {}, locale))}</p>
+        <p class="cta"><a class="btn" href="/operator">${icon('play')}<span>${esc(t('server.invite.signIn', {}, locale))}</span></a></p>
+      </div>
     </section>` +
-    `<p class="cta"><a class="btn" href="/downloads">${icon('download')}<span>${esc(t('server.invite.open', {}, locale))}</span></a></p>` +
-    `<p class="meta">${esc(t('server.invite.note', {}, locale))}</p>` +
+    `<div id="invite-landing"><p class="cta"><a class="btn" href="/downloads">${icon('download')}<span>${esc(t('server.invite.open', {}, locale))}</span></a></p>` +
+    `<p class="meta">${esc(t('server.invite.note', {}, locale))}</p></div>` +
     `</section></main>` +
     `<script src="/web/invite.js" type="module"></script>` +
     siteFooter(version, locale);

@@ -630,6 +630,8 @@ test('ВОЛНА G (баг-1): replaceTrack НЕ трогает pc до setLocal
     // видео при этом доезжает ОБЕИМ операторам (гейт не убил видео — кадры повторяют)
     assert.deepEqual([...new Set(env.page.replaceTrackCalls.map((c) => c.pcIndex))].sort(), [0, 1],
       'трек цепляется к pc обоих операторов');
+    // экранный контент: кодер держит разрешение, а не стартует с 320×200 (19.10)
+    assert.ok(env.page.replaceTrackCalls.every((c) => c.track?.contentHint === 'detail'), 'contentHint трека = detail');
     // ответ второго оператора ушёл адресно
     const answer2 = env.sig.sentSignals.find((m) => m.type === 'signal' && m.to === 'cl-op2' && m.data?.description?.type === 'answer');
     assert.ok(answer2, 'answer op2 ушёл (setLocalDescription завершён до отправки)');

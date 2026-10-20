@@ -184,6 +184,11 @@ if (!api) {
       videoCanvas.height = h;
       videoCtx = videoCanvas.getContext('2d');
       videoTrack = videoCanvas.captureStream(24).getVideoTracks()[0] ?? null;
+      // Canvas-трек для WebRTC — не «экран»: без подсказки кодер при низкой
+      // стартовой оценке канала режет разрешение (приёмка 19.10: старт 320×200,
+      // до 960×600 за ~12 с). 'detail' = держать разрешение, жертвовать fps —
+      // как у настоящего screencast в attended-сеансе.
+      if (videoTrack) videoTrack.contentHint = 'detail';
     } else if (videoCanvas.width !== w || videoCanvas.height !== h) {
       videoCanvas.width = w;
       videoCanvas.height = h;

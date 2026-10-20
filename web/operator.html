@@ -40,6 +40,11 @@ video{display:block;width:100%;aspect-ratio:16/9;object-fit:contain;background:#
 video.fit-cover{object-fit:cover}
 .stage-bar{display:flex;align-items:center;gap:8px;flex-wrap:wrap}
 .status{color:var(--text-3);font:500 13px/1.5 var(--font-mono);min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;flex:1}
+/* полоса сеанса: статусов до четырёх — делить строку поровну и резать «…»
+   нельзя (приёмка 19.10: на ~1260 px подписи обрезались); длинный текст
+   переносится, пустой статус не занимает места */
+.stage-bar .status{flex:1 1 auto;white-space:normal;overflow:visible;text-overflow:clip;overflow-wrap:anywhere}
+.stage-bar .status:empty{display:none}
 .timer{font:500 14px/1 var(--font-mono);color:var(--text-2);font-variant-numeric:tabular-nums}
 .side{display:flex;flex-direction:column;gap:16px;min-width:0}
 .side h2{font-size:15px;margin-bottom:10px}

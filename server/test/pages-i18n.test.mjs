@@ -83,3 +83,23 @@ test('isInsecurePage: http наружу — да; https, loopback, https из pu
   assert.equal(isInsecurePage(req('example.com'), 'https://demo.example.com'), false); // publicUrl https
   assert.equal(isInsecurePage(req('example.com'), 'http://demo.example.com'), true); // publicUrl http
 });
+
+test('/invite: invite.js находит все свои элементы, «Готово» прячется атрибутом, а не классом .hidden', async () => {
+  const { readFile } = await import('node:fs/promises');
+  const js = await readFile(new URL('../../web/invite.js', import.meta.url), 'utf8');
+  const html = inviteHtml('1.0.0', 'ru');
+  const ids = [...js.matchAll(/getElementById\('([^']+)'\)/g)].map((m) => m[1]);
+  assert.ok(ids.length >= 8, `invite.js обращается к элементам: ${ids}`);
+  for (const id of ids) assert.match(html, new RegExp(`id="${id}"`), `в разметке /invite нет #${id}`);
+  // theme.css: .hidden { display:none !important } — снять его можно только классом,
+  // а invite.js снимает атрибут hidden: элемент с классом остался бы невидим навсегда
+  for (const id of ids) {
+    const tag = html.match(new RegExp(`<[^>]*id="${id}"[^>]*>`))[0];
+    assert.doesNotMatch(tag, /class="[^"]*\bhidden\b/, `#${id} прячется классом .hidden — invite.js его не снимет`);
+  }
+  // с токеном путь — форма: советы «откройте приложение» и скачивание прячутся,
+  // после успеха есть «Войти» на /operator (в т.ч. в окне оператора desktop)
+  assert.match(js, /'invite-landing'\)\.hidden = true/);
+  assert.match(html, /<div id="invite-ok" hidden>[\s\S]*href="\/operator"[\s\S]*Войти/);
+  assert.match(inviteHtml('1.0.0', 'en'), /Sign in/);
+});
