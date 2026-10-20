@@ -49,7 +49,7 @@ function saveRoleCookie(role) {
 function forgetSession() {
   token = null;
   $('btn-nav-account')?.classList.add('hidden'); // без входа раздел аккаунта недоступен
-  $('btn-logout')?.classList.add('hidden'); // «Выйти» — только для вошедшего
+  // «Выйти» видна всегда: до входа она уводит на главную (/downloads), владелец 20.10
   document.cookie = `${COOKIE}=; path=/operator; Max-Age=0; SameSite=Strict`;
 }
 
@@ -1279,7 +1279,6 @@ function applyRoleUi(role) {
   currentRole = role;
   const staff = CONNECT_ROLES.includes(role);
   show($('btn-nav-account')); // аккаунт — у любой вошедшей роли
-  show($('btn-logout'));
   for (const id of ['btn-nav-machines', 'btn-nav-team', 'btn-nav-audit']) (role === 'admin' ? show : hide)($(id));
   for (const id of ['btn-nav-contacts', 'btn-nav-history', 'conn-contact-field', 'btn-history-back', 'btn-audit-back', 'btn-contacts-back']) (staff ? show : hide)($(id));
   (role === 'admin' || role === 'auditor' ? show : hide)($('btn-history-audit'));
@@ -1590,7 +1589,13 @@ function wire() {
     text($('btn-fit'), cover ? t('web.session.fitFit') : t('web.session.fitFill'));
   });
 
+  // До входа «Выйти» — уход с панели на главную; после входа — завершение
+  // сессии на сервере и возврат к форме входа.
   $('btn-logout')?.addEventListener('click', async () => {
+    if (!token) {
+      location.assign('/downloads');
+      return;
+    }
     await api('POST', '/auth/logout').catch(() => {});
     forgetSession();
     location.replace('/operator');

@@ -20,7 +20,10 @@ body{display:flex;flex-direction:column}
 .grad{background:var(--grad-text);-webkit-background-clip:text;background-clip:text;color:transparent}
 .op-user .btn{border-radius:var(--r-pill)}
 .auth-avatar{width:96px;height:96px;align-self:center;margin:-8px 0 0;filter:drop-shadow(0 0 22px var(--accent-dim))}
-.op-user{display:flex;align-items:center;gap:12px;flex-wrap:wrap}
+.op-user{display:flex;align-items:center;gap:10px;min-width:0}
+.op-user .btn{min-height:44px;padding:0 18px}
+.op-user .name{max-width:180px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.sr-only{position:absolute;width:1px;height:1px;margin:-1px;padding:0;overflow:hidden;clip:rect(0 0 0 0);white-space:nowrap;border:0}
 .op-user .name{font-weight:600;font-size:14.5px}
 main{flex:1;width:100%;max-width:1280px;margin:0 auto;padding:28px 24px 44px}
 /* ---- workspace: connect on the left, tabbed panel on the right (owner request 20.10) ---- */
@@ -36,14 +39,17 @@ main{flex:1;width:100%;max-width:1280px;margin:0 auto;padding:28px 24px 44px}
 .connect-stack input,.connect-stack select{width:100%}
 #conn-id,#conn-password{font:600 20px/1.2 var(--font-mono);letter-spacing:.08em;min-height:54px}
 .connect-stack .btn{width:100%;min-height:54px;font-size:16px;margin-top:4px}
-.ws-panel{padding:0;min-width:0;overflow:hidden}
-.ws-tabs{display:flex;gap:6px;padding:10px;border-bottom:1px solid var(--line);overflow-x:auto;scrollbar-width:none}
-.ws-tabs::-webkit-scrollbar{display:none}
-.ws-tab{appearance:none;flex:none;border:1px solid transparent;background:transparent;color:var(--text-2);font:700 14px/1 var(--font-body);min-height:42px;padding:0 18px;border-radius:var(--r-pill);cursor:pointer;white-space:nowrap;transition:color var(--t-fast) var(--ease),background var(--t-fast) var(--ease),border-color var(--t-fast) var(--ease)}
+.ws-panel.card{padding:0;min-width:0;overflow:hidden}
+/* tabs wrap to a second row instead of scrolling: every section stays visible on an iPad */
+.ws-tabs{display:flex;flex-wrap:wrap;gap:6px;padding:10px;border-bottom:1px solid var(--line)}
+.ws-tab{appearance:none;flex:none;border:1px solid transparent;background:transparent;color:var(--text-2);font:700 14px/1 var(--font-body);min-height:42px;padding:0 16px;border-radius:var(--r-pill);cursor:pointer;white-space:nowrap;transition:color var(--t-fast) var(--ease),background var(--t-fast) var(--ease),border-color var(--t-fast) var(--ease)}
 .ws-tab:hover{color:var(--text);background:var(--accent-dim);border-color:var(--line-strong)}
 .ws-tab.active{color:var(--accent-ink);background:var(--btn-grad);box-shadow:var(--btn-shadow)}
 .ws-panel>.card{background:none;border:0;box-shadow:none;margin:0;padding:22px 24px 26px;border-radius:0}
 .ws-panel h1{font-size:21px}
+.ws-panel>.card>h1{margin-bottom:6px}
+.ws-panel>.card>.lead{margin-bottom:4px}
+.ws-panel>.card>h1+.btn,.ws-panel>.card>.lead+.btn{margin-top:10px}
 /* tabs replace the old back and cross links inside sections */
 #btn-contacts-back,#btn-history-back,#btn-audit-back,#btn-nav-connect,#btn-nav-connect2,#btn-nav-machines2,#btn-history-audit,#btn-audit-history{display:none!important}
 .card{padding:24px;background:var(--panel)}
@@ -52,8 +58,17 @@ main{flex:1;width:100%;max-width:1280px;margin:0 auto;padding:28px 24px 44px}
 .auth-card input{--field-glow:0 0 0 1px rgba(26,238,178,.20),0 0 24px rgba(26,238,178,.15);--field-glow-hover:0 0 0 1px rgba(26,238,178,.30),0 0 30px rgba(26,238,178,.22);--field-glow-focus:0 0 0 3px rgba(26,238,178,.22),0 0 34px rgba(26,238,178,.38)}
 .auth-card h1{font:800 26px/1.2 var(--font-display);letter-spacing:-.025em;text-align:center}
 .auth-card>.lead{text-align:center}
+.auth-card>.form-error:empty{min-height:0;margin-top:-14px}
 .lead{color:var(--text-2)}
 .field{display:flex;flex-direction:column;gap:6px}
+/* form rhythm: label/field pairs and the action button never touch (owner, iPad 20.10) */
+.form-stack{display:flex;flex-direction:column;gap:16px}
+.form-stack>.btn{align-self:flex-start;margin-top:4px}
+.form-stack>.btn.wide{align-self:stretch}
+.form-stack>.check{margin:0}
+.form-actions{display:flex;gap:10px;flex-wrap:wrap;margin-top:4px}
+#login-form{gap:18px}
+#login-form>.btn{min-height:52px;margin-top:6px;font-size:16px}
 .form-error{color:var(--danger);min-height:1.2em;font-size:14px}
 .note{color:var(--text-3);font-size:13.5px}
 .center-card{max-width:540px;margin:10vh auto 0;text-align:center;display:flex;flex-direction:column;gap:14px;align-items:center}
@@ -96,7 +111,7 @@ video.fit-cover{object-fit:cover}
 .machines-list{display:flex;flex-direction:column;gap:10px;margin-top:14px}
 /* машины: карточки с подсветкой; hover — без прыжков (панель управления) */
 .machine-item{display:flex;gap:12px;align-items:flex-start;justify-content:space-between;border:1px solid var(--line);border-radius:var(--r-md);padding:14px 16px;flex-wrap:wrap;background:var(--panel);box-shadow:var(--top-hl);transition:border-color var(--t-fast) var(--ease),background var(--t-fast) var(--ease)}
-.machine-item:hover{border-color:var(--accent-line);background:rgba(15,27,48,.82)}
+.machine-item:hover{border-color:var(--accent-line);background:var(--bg2)}
 .machine-item .grow{min-width:0;flex:1}
 .machine-item .title{font-weight:600;display:flex;align-items:center;gap:8px;flex-wrap:wrap}
 .machine-item .sub{color:var(--text-3);font-size:13.5px;overflow-wrap:anywhere}
@@ -106,8 +121,13 @@ video.fit-cover{object-fit:cover}
 .machines-claim{margin-top:16px;display:flex;flex-direction:column;gap:10px}
 .machines-claim-row{display:flex;gap:10px;flex-wrap:wrap}
 /* B6 этап 1: адресная книга, история, журнал — те же карточки, что у машин */
-.records-search{display:flex;gap:10px;align-items:flex-end;flex-wrap:wrap;margin-top:14px}
-#view-account h2{margin:26px 0 6px;font-size:18px}
+.records-search{display:flex;gap:10px;align-items:center;flex-wrap:wrap;margin-top:14px}
+.records-search>label{flex-basis:100%}
+#view-account{max-width:720px;width:100%;margin-inline:auto}
+#view-account h2{margin:28px 0 12px;font-size:18px}
+#view-account h1{margin-bottom:12px}
+#view-account .lead{margin-bottom:12px}
+#totp-status:not(:empty){margin-bottom:8px}
 #view-account h1+.btn{margin-bottom:4px}
 .records-search input{flex:1;min-width:180px}
 .records-list{display:flex;flex-direction:column;gap:10px;margin-top:14px}
@@ -115,18 +135,38 @@ video.fit-cover{object-fit:cover}
 .record-main{min-width:0;flex:1;display:flex;flex-direction:column;gap:4px;overflow-wrap:anywhere}
 .record-row .tag{font:500 12px var(--font-mono);color:var(--accent);background:var(--accent-dim);border-radius:6px;padding:2px 8px}
 .records-pager{display:flex;align-items:center;gap:10px;margin-top:14px;flex-wrap:wrap;color:var(--text-3);font:500 13px var(--font-mono)}
+.records-pager .btn,.machines-pager .btn{min-height:44px;padding:0 16px}
 /* G1: карточка «Подключение коллег» — ID/пароль машинного сеанса; клик по
    значению выделяет его целиком (user-select:all) для копирования без
    clipboard-API (SEC-002: writeText на странице ровно один — у буфера сеанса) */
 .join-creds{display:flex;flex-direction:column;gap:6px}
 .join-code{font:600 14px/1.4 var(--font-mono);color:var(--accent);background:var(--accent-dim);border:1px dashed var(--accent-line);border-radius:8px;padding:4px 10px;cursor:copy;-webkit-user-select:all;user-select:all;overflow-wrap:anywhere}
+/* team: section headings, the invite row and member/invite rows as cards */
+#view-team h2{font-size:18px;margin:26px 0 12px}
+#view-team .lead{max-width:68ch}
+#team-invite-form{display:flex;align-items:center;gap:10px;flex-wrap:wrap}
+#team-invite-form select{min-width:180px}
+#team-invites,#team-members{display:flex;flex-direction:column;gap:10px}
+.team-row{display:flex;align-items:center;gap:8px 14px;flex-wrap:wrap;border:1px solid var(--line);border-radius:var(--r-md);padding:12px 16px;background:var(--panel);box-shadow:var(--top-hl)}
+.team-row .muted,p.muted{color:var(--text-3);font-size:14px}
+.team-actions{display:flex;gap:8px;flex-wrap:wrap;margin-left:auto}
+.team-actions .btn,.team-row>.btn{min-height:40px;padding:0 16px;font-size:14px}
 .op-foot{border-top:1px solid var(--line);padding:14px 24px;color:var(--text-3);font-size:12.5px;font-family:var(--font-mono)}
 .wait-note{color:var(--text-2)}
-@media (max-width:900px){.workspace{grid-template-columns:1fr}#view-connect{position:static}.session{grid-template-columns:1fr}.connect-grid{grid-template-columns:1fr}.op-head{flex-wrap:wrap}}
+@media (max-width:1180px){.workspace{grid-template-columns:minmax(300px,340px) minmax(0,1fr)}#view-connect{padding:22px}}
+@media (max-width:1024px){#op-user-role{display:none}.op-user .name{max-width:22vw}}
+@media (max-width:900px){.workspace{grid-template-columns:1fr}#view-connect{position:static}.session{grid-template-columns:1fr}.connect-grid{grid-template-columns:1fr}}
 @media (max-width:640px){
-  .op-head{flex-direction:column;align-items:flex-start;gap:10px;padding:12px 14px;margin:8px 8px 0;border-radius:var(--r-lg);position:relative;top:0}
-  .op-user{width:100%;justify-content:space-between;gap:8px}
-  .op-user .name{max-width:44vw;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+  .op-head{flex-direction:column;align-items:stretch;gap:10px;padding:12px 14px;margin:8px 8px 0;border-radius:var(--r-lg);position:relative;top:0}
+  .op-user{flex-wrap:wrap;gap:8px}
+  .op-user .name{flex:1 1 auto;max-width:none;min-width:0}
+  .op-user select{flex:0 0 auto}
+  .op-user .btn{flex:1 1 0;padding:0 14px}
+  .ws-tab{flex:1 1 auto}
+  .ws-panel>.card{padding:18px 16px 22px}
+  .records-pager,.machines-pager{display:grid;grid-template-columns:auto minmax(0,1fr) auto;gap:10px}
+  .records-pager>span,.machines-pager>span{text-align:center}
+  #btn-machines-refresh{grid-column:1/-1}
   main{padding:18px 12px 32px}
   .card{padding:16px;border-radius:12px}
   .auth-card,.center-card{margin-top:4vh}
@@ -149,13 +189,13 @@ video.fit-cover{object-fit:cover}
   <div class="op-user">
     <span class="name" id="op-user-name"></span>
     <span class="badge" id="op-user-role"></span>
-    <label for="lang-select" data-i18n="web.lang">Язык</label>
+    <label for="lang-select" class="sr-only" data-i18n="web.lang">Язык</label>
     <select id="lang-select" data-i18n-aria-label="web.aria.lang" aria-label="Выбор языка интерфейса">
       <option value="ru">Русский</option>
       <option value="en">English</option>
     </select>
     <button id="btn-nav-account" class="btn ghost hidden" type="button" data-i18n="web.account.open">Аккаунт</button>
-    <button id="btn-logout" class="btn ghost hidden" type="button" data-i18n="web.logout">Выйти</button>
+    <button id="btn-logout" class="btn ghost" type="button" data-i18n="web.logout">Выйти</button>
   </div>
 </header>
 <main>
@@ -163,7 +203,7 @@ video.fit-cover{object-fit:cover}
     <img class="auth-avatar" src="/brand/enot-avatar.webp" alt="" width="96" height="96">
     <h1 data-i18n="web.login.title">Вход для оператора</h1>
     <p class="lead" data-i18n="web.login.lead">Тот же аккаунт, что и в desktop-приложении.</p>
-    <form id="login-form">
+    <form class="form-stack" id="login-form">
       <div class="field">
         <label for="login-login" data-i18n="web.login.login">Логин</label>
         <input id="login-login" name="login" autocomplete="username" required>
@@ -234,13 +274,15 @@ video.fit-cover{object-fit:cover}
         </form>
         <div class="card hidden" id="contact-editor">
           <h2 id="contact-editor-title" data-i18n="contacts.newTitle">Новый контакт</h2>
-          <form id="form-contact">
+          <form class="form-stack" id="form-contact">
             <div class="field"><label for="contact-name" data-i18n="contacts.nameLabel">Имя</label><input id="contact-name" maxlength="120"></div>
             <div class="field"><label for="contact-notes" data-i18n="contacts.notesLabel">Заметки</label><textarea id="contact-notes" maxlength="2000"></textarea></div>
             <div class="field"><label for="contact-tags" data-i18n="contacts.tagsLabel">Теги</label><input id="contact-tags" data-i18n-placeholder="contacts.tagsPlaceholder"></div>
             <p class="form-error" id="contact-error" aria-live="polite"></p>
-            <button id="btn-contact-save" class="btn" type="submit" data-i18n="contacts.save">Сохранить</button>
-            <button id="btn-contact-cancel" class="btn ghost" type="button" data-i18n="common.cancel">Отмена</button>
+            <div class="form-actions">
+              <button id="btn-contact-save" class="btn" type="submit" data-i18n="contacts.save">Сохранить</button>
+              <button id="btn-contact-cancel" class="btn ghost" type="button" data-i18n="common.cancel">Отмена</button>
+            </div>
           </form>
         </div>
         <p class="note" id="contacts-status" aria-live="polite"></p>
@@ -268,7 +310,7 @@ video.fit-cover{object-fit:cover}
         <div class="card machines-claim hidden" id="machines-claim">
           <h2 data-i18n="web.machines.claimTitle">Открыть терминал</h2>
           <p class="note" id="machines-claim-name"></p>
-          <form id="machines-claim-form">
+          <form class="form-stack" id="machines-claim-form">
             <div class="field">
               <label for="machines-claim-reason" data-i18n="web.machines.claimReason">Причина подключения (обязательно)</label>
               <input id="machines-claim-reason" maxlength="500">
@@ -277,7 +319,7 @@ video.fit-cover{object-fit:cover}
               <label for="machines-claim-pin" data-i18n="web.machines.claimPin">PIN машины</label>
               <input id="machines-claim-pin" type="password" autocomplete="off">
             </div>
-            <div class="machines-claim-row">
+            <div class="machines-claim-row form-actions">
               <button id="btn-machines-claim" class="btn" type="submit" data-i18n="web.machines.claimSubmit">Подключиться</button>
               <button id="btn-machines-claim-cancel" class="btn ghost" type="button" data-i18n="web.machines.claimCancel">Отмена</button>
             </div>
@@ -342,7 +384,7 @@ video.fit-cover{object-fit:cover}
     <button id="btn-account-back" class="btn ghost" type="button" data-i18n="common.back">← Назад</button>
 
     <h2 data-i18n="password.title">Сменить пароль</h2>
-    <form id="form-password" novalidate>
+    <form class="form-stack" id="form-password" novalidate>
       <div class="field">
         <label for="password-old" data-i18n="password.oldLabel">Текущий пароль</label>
         <input id="password-old" type="password" autocomplete="current-password" required>
@@ -361,7 +403,7 @@ video.fit-cover{object-fit:cover}
     <!-- 2FA выключена: настройка по текущему паролю -->
     <div id="totp-off">
       <p class="lead" data-i18n="totp.offLead">Второй фактор: одноразовый код из приложения-аутентификатора при каждом входе.</p>
-      <form id="form-totp-enable" novalidate>
+      <form class="form-stack" id="form-totp-enable" novalidate>
         <div class="field">
           <label for="totp-enable-password" data-i18n="totp.passwordLabel">Текущий пароль</label>
           <input id="totp-enable-password" type="password" autocomplete="current-password" required>
@@ -382,7 +424,7 @@ video.fit-cover{object-fit:cover}
         </div>
         <p class="lead" data-i18n="totp.backupLead">Резервные коды (показаны один раз — сохраните):</p>
         <p class="note" id="totp-backup-codes"></p>
-        <form id="form-totp-confirm" novalidate>
+        <form class="form-stack" id="form-totp-confirm" novalidate>
           <div class="field">
             <label for="totp-confirm-code" data-i18n="totp.codeLabel">Код из приложения для подтверждения</label>
             <input id="totp-confirm-code" inputmode="numeric" autocomplete="one-time-code" required>
@@ -395,7 +437,7 @@ video.fit-cover{object-fit:cover}
     <!-- 2FA включена: отключение по текущему паролю -->
     <div id="totp-on" class="hidden">
       <p class="lead" data-i18n="totp.onLead">Вход требует код из приложения-аутентификатора или одноразовый резервный код.</p>
-      <form id="form-totp-disable" novalidate>
+      <form class="form-stack" id="form-totp-disable" novalidate>
         <div class="field">
           <label for="totp-disable-password" data-i18n="totp.passwordLabel">Текущий пароль</label>
           <input id="totp-disable-password" type="password" autocomplete="current-password" required>

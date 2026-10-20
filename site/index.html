@@ -160,7 +160,7 @@ h2{font:800 clamp(26px,3.2vw,40px)/1.15 var(--font-display);letter-spacing:-.025
 .d-card:hover .d-chev{color:var(--accent);transform:translateX(3px)}
 .dl-title{margin:0 0 28px}
 .d-more{margin-top:18px;color:var(--text-3);font-size:14px}
-.d-more a{color:var(--text-2)}
+.d-more a{color:var(--text-2);white-space:nowrap}
 .d-more a:hover{color:var(--accent)}
 .d-ico{display:grid;place-items:center;width:62px;height:62px;border-radius:var(--r-md);background:var(--bg2);border:1px solid var(--line-strong);color:var(--accent);flex:none;box-shadow:inset 0 0 18px var(--accent-dim)}
 .d-ico svg{width:30px;height:30px}
@@ -171,12 +171,12 @@ h2{font:800 clamp(26px,3.2vw,40px)/1.15 var(--font-display);letter-spacing:-.025
 .d-alt a{color:var(--text-3)}
 .d-alt a:hover{color:var(--accent)}
 .repo-note{margin-top:18px;color:var(--text-3);font-size:14px}
-.repo-note a{color:var(--text-2)}
+.repo-note a{color:var(--text-2);white-space:nowrap}
 .repo-note a:hover{color:var(--accent)}
 .repo-note code{font:500 13px var(--font-mono);color:var(--text-2);background:var(--bg-inset);border:1px solid var(--line);border-radius:var(--r-sm);padding:2px 7px}
 /* ---- подвал ---- */
 .foot{border-top:1px solid var(--line);margin-top:72px}
-.foot-in{display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:12px 24px;padding:24px 0;color:var(--text-3);font-size:14px}
+.foot-in{display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:12px 24px;padding-block:24px;color:var(--text-3);font-size:14px}
 .foot-in a{color:var(--text-2)}
 .foot-in a:hover{color:var(--accent)}
 .foot-mono{font:500 12.5px var(--font-mono)}
@@ -193,14 +193,26 @@ h2{font:800 clamp(26px,3.2vw,40px)/1.15 var(--font-display);letter-spacing:-.025
   *,*::before,*::after{animation:none!important;transition:none!important}
 }
 /* ---- адаптив 320–1280 ---- */
+/* GitHub stays in the footer; the pill keeps room for the brand on iPad portrait */
+@media (max-width:900px){
+  .nav a.gh-mini{display:none}
+}
 @media (max-width:760px){
   .nav a.nav-sec span{display:none}
   .nav a.nav-sec{padding:0 13px}
 }
+/* tablet (iPad 768-1024): same composition as desktop - copy left, raccoon right;
+   the wide art is cropped to the raccoon instead of a full-width square on top */
 @media (max-width:1024px){
-  .hero{grid-template-columns:1fr;min-height:0;padding-block:24px 36px}
-  .hero-art{position:relative;top:auto;right:auto;width:auto;aspect-ratio:auto;margin:0 -24px 8px;order:-1}
-  .hero-art img{height:auto;aspect-ratio:1/1;max-height:520px;-webkit-mask-image:linear-gradient(180deg,#000 70%,transparent);mask-image:linear-gradient(180deg,#000 70%,transparent)}
+  .hero{grid-template-columns:minmax(0,1.1fr) minmax(0,1fr);gap:12px;min-height:0;padding-block:36px 40px}
+  .hero-art{position:relative;top:auto;right:auto;width:auto;aspect-ratio:1/1;margin-right:-24px;align-self:center}
+  .hero-art img{object-position:80% 50%;
+    -webkit-mask-image:linear-gradient(90deg,transparent 0,#000 28%),linear-gradient(180deg,transparent 0,#000 10%,#000 80%,transparent 100%);
+    mask-image:linear-gradient(90deg,transparent 0,#000 28%),linear-gradient(180deg,transparent 0,#000 10%,#000 80%,transparent 100%)}
+  .cta .btn{flex:1 1 auto}
+  .down{grid-template-columns:1fr}
+  .hero-chips{gap:10px}
+  .hero-chips li{padding:11px 14px}
 }
 @media (max-width:980px){
   .feat{grid-template-columns:repeat(2,minmax(0,1fr))}
@@ -215,20 +227,28 @@ h2{font:800 clamp(26px,3.2vw,40px)/1.15 var(--font-display);letter-spacing:-.025
   .head-in{min-height:60px;gap:8px;padding:0 6px 0 8px}
   .brand img{width:38px;height:38px}
   .brand b{font-size:18px}
-  .nav a.gh-mini{display:none}
   .nav a.cta-mini span{display:none}
   .nav a.cta-mini{padding:0 14px}
   .cta .btn{flex:1 1 100%}
-  .hero-art{margin:0 -16px 8px}
+  .hero{grid-template-columns:1fr;gap:0;padding-block:12px 40px}
+  .hero-art{order:-1;margin:0 -16px 8px;aspect-ratio:auto}
+  .hero-art img{height:auto;aspect-ratio:1/1;max-height:460px;object-position:50% 40%;-webkit-mask-image:linear-gradient(180deg,#000 70%,transparent);mask-image:linear-gradient(180deg,#000 70%,transparent)}
   .eyebrow{letter-spacing:.14em}
   .feat{grid-template-columns:1fr}
   .f-1,.f-6{grid-column:auto}
   .section{padding-block:44px}
-  .hero{padding-block:44px 40px}
-  .shot-note{flex-direction:column;align-items:flex-start}
+  .shot{padding:8px}
+  .shot-note{flex-direction:column;align-items:stretch;padding:12px 4px 4px}
+  .shot-note .btn{padding:12px 16px;font-size:14.5px}
+}
+@media (max-width:480px){
+  .brand{flex:none}
+  .brand b{display:none}
 }
 @media (max-width:360px){
-  .brand b{display:none}
+  .nav a.nav-sec{padding:0 11px}
+  .nav a.cta-mini{padding:0 12px}
+  .lang-btn{padding:9px 8px}
 }
 </style>
 </head>
@@ -237,7 +257,7 @@ h2{font:800 clamp(26px,3.2vw,40px)/1.15 var(--font-display);letter-spacing:-.025
 <div class="bg" aria-hidden="true"></div>
 
 <header class="head">
-  <div class="wrap head-in">
+  <div class="wrap"><div class="head-in">
     <a class="brand" href="#"><img src="assets/enot-brand-72.png" alt="" width="44" height="44"><b>Enot<span class="grad">Desk</span></b></a>
     <div class="head-actions">
       <nav class="nav" aria-label="Разделы" data-i18n-aria="nav.aria">
@@ -251,7 +271,7 @@ h2{font:800 clamp(26px,3.2vw,40px)/1.15 var(--font-display);letter-spacing:-.025
         <button type="button" class="lang-btn" data-lang="en" aria-pressed="false">EN</button>
       </div>
     </div>
-  </div>
+  </div></div>
 </header>
 
 <main>
@@ -271,8 +291,8 @@ h2{font:800 clamp(26px,3.2vw,40px)/1.15 var(--font-display);letter-spacing:-.025
       </ul>
     </div>
     <picture class="hero-art">
-      <source media="(max-width: 900px)" srcset="assets/hero-neon-square.webp">
-      <img src="assets/hero-neon.webp" srcset="assets/hero-neon-1100.webp 1100w, assets/hero-neon.webp 1774w" sizes="(max-width: 900px) 100vw, 90vw" alt="Енот-помощник EnotDesk за ноутбуком" width="1774" height="887" data-i18n-alt="img.mascot.alt">
+      <source media="(max-width: 600px)" srcset="assets/hero-neon-square.webp">
+      <img src="assets/hero-neon.webp" srcset="assets/hero-neon-1100.webp 1100w, assets/hero-neon.webp 1774w" sizes="(max-width: 1024px) 100vw, 90vw" alt="Енот-помощник EnotDesk за ноутбуком" width="1774" height="887" data-i18n-alt="img.mascot.alt">
     </picture>
   </section>
 
@@ -358,10 +378,10 @@ h2{font:800 clamp(26px,3.2vw,40px)/1.15 var(--font-display);letter-spacing:-.025
 </main>
 
 <footer class="foot">
-  <div class="wrap foot-in">
+  <div class="wrap"><div class="foot-in">
     <p data-i18n="foot.p">EnotDesk — открытое самохостинг-решение удалённой помощи.</p>
     <p class="foot-mono">AGPL-3.0 · <a href="https://github.com/Flint-sega/enotdesk">GitHub</a></p>
-  </div>
+  </div></div>
 </footer>
 
 <script>

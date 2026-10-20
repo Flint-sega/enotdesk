@@ -76,7 +76,7 @@ h1{font:800 clamp(46px,7vw,96px)/1 var(--font-display);letter-spacing:-.045em;ma
 .os-icon{display:grid;place-items:center;width:62px;height:62px;border-radius:var(--r-md);background:var(--bg2);border:1px solid var(--line-strong);color:var(--accent);flex:none;box-shadow:inset 0 0 18px var(--accent-dim)}
 .os-icon svg{width:30px;height:30px;filter:drop-shadow(0 0 8px var(--accent-dim))}
 .card h3{font-size:21px;font-weight:700;letter-spacing:-.01em}
-.file{margin:0;font:500 13.5px/1.5 var(--font-mono);word-break:break-all;color:var(--text)}
+.file{margin:0;font:500 13.5px/1.5 var(--font-mono);overflow-wrap:anywhere;color:var(--text)}
 .meta{margin:0;color:var(--text-3);font-size:13px}
 .kind{display:inline-block;padding:2px 9px;border-radius:999px;font:500 11px/1.6 var(--font-mono);letter-spacing:.03em;vertical-align:middle;white-space:nowrap}
 .kind-portable{border:1px solid var(--accent-line);color:var(--accent);background:var(--accent-dim)}
@@ -92,7 +92,7 @@ h1{font:800 clamp(46px,7vw,96px)/1 var(--font-display);letter-spacing:-.045em;ma
 .step p{color:var(--text-2);font-size:14px}
 /* ---- footer ---- */
 .site-foot{border-top:1px solid var(--line);margin-top:72px}
-.foot-inner{display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:10px 20px;padding:22px 0;color:var(--text-3);font-size:14px}
+.foot-inner{display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:10px 20px;padding-block:22px;color:var(--text-3);font-size:14px}
 .foot-ver{font-family:var(--font-mono);font-size:13px;opacity:.85}
 .foot-love{display:inline-flex;align-items:center;gap:8px}
 .foot-love svg{width:15px;height:15px;color:var(--accent)}
@@ -112,11 +112,22 @@ h1{font:800 clamp(46px,7vw,96px)/1 var(--font-display);letter-spacing:-.045em;ma
 @media (max-width:1080px){
 .brand-sub,.brand-sep{display:none}
 }
+/* tablet (iPad 768-1024): copy left, raccoon right, like desktop; the wide art is cropped to the raccoon */
+@media (max-width:1024px){
+.hero{grid-template-columns:minmax(0,1.1fr) minmax(0,1fr);gap:12px;min-height:0;padding-block:36px 40px}
+.hero-art{position:relative;inset:auto;width:auto;aspect-ratio:1/1;margin-right:-24px;align-self:center}
+.hero-art img{object-position:80% 50%;-webkit-mask-image:linear-gradient(90deg,transparent 0,#000 28%),linear-gradient(180deg,transparent 0,#000 10%,#000 80%,transparent 100%);mask-image:linear-gradient(90deg,transparent 0,#000 28%),linear-gradient(180deg,transparent 0,#000 10%,#000 80%,transparent 100%)}
+.cta .btn{flex:1 1 auto}
+.chips{gap:10px}
+.chips li{padding:11px 14px}
+.steps{grid-template-columns:repeat(2,minmax(0,1fr))}
+}
+/* platform cards: one per row on tablets - three equal rows instead of 2+1 or squeezed file names */
+@media (max-width:1100px){
+.cards{grid-template-columns:1fr}
+}
 @media (max-width:900px){
-.hero{grid-template-columns:1fr;min-height:0;padding-block:24px 36px}
-.hero-art{position:relative;inset:auto;width:auto;margin:0 -24px 8px;order:-1}
-.hero-art img{height:auto;aspect-ratio:1/1;max-height:520px;object-position:50% 40%;-webkit-mask-image:linear-gradient(180deg,#000 70%,transparent);mask-image:linear-gradient(180deg,#000 70%,transparent)}
-.cards,.steps{grid-template-columns:repeat(2,minmax(0,1fr))}
+.head-nav .btn{padding:0 18px}
 }
 @media (max-width:640px){
 .site-head{padding-top:8px}
@@ -125,18 +136,29 @@ h1{font:800 clamp(46px,7vw,96px)/1 var(--font-display);letter-spacing:-.045em;ma
 .brand-name{font-size:18px}
 .nav-btn{padding:0 13px;font-size:13.5px}
 .nav-btn span{display:none}
-.cards,.steps{grid-template-columns:1fr}
+.steps{grid-template-columns:1fr}
+.wrap{padding:0 16px}
+.hero{grid-template-columns:1fr;gap:0;padding-block:12px 40px}
+.hero-art{order:-1;margin:0 -16px 8px;aspect-ratio:auto}
+.hero-art img{height:auto;aspect-ratio:1/1;max-height:460px;object-position:50% 40%;-webkit-mask-image:linear-gradient(180deg,#000 70%,transparent);mask-image:linear-gradient(180deg,#000 70%,transparent)}
+.invite-page{padding:40px 16px 0}
 .section{padding-block:44px}
-.invite-page{padding:48px 20px 0}
 .invite-card{padding:26px}
 .card{padding:22px}
 .cta .btn{flex:1 1 100%}
 .eyebrow{letter-spacing:.14em}
 }
-@media (max-width:400px){
+@media (max-width:480px){
 .head-nav .btn span{display:none}
 .head-nav .btn{padding:0 14px}
+}
+@media (max-width:360px){
+.brand-name{display:none}
+}
+@media (max-width:400px){
 .card,.step{padding:18px}
+.file-row>svg{display:none}
+.file{font-size:12.5px}
 }
 `.trim();
 
@@ -207,7 +229,7 @@ function page(res, title, bodyHtml, locale) {
 }
 
 function siteHeader(locale) {
-  return `<header class="site-head"><div class="wrap head-inner">` +
+  return `<header class="site-head"><div class="wrap"><div class="head-inner">` +
     `<a class="brand" href="/downloads"><img src="/brand/enot-brand-72.png" alt="" width="40" height="40">` +
     `<span class="brand-name">Enot<span class="grad">Desk</span></span><span class="brand-sep" aria-hidden="true"></span>` +
     `<span class="brand-sub">${esc(t('app.subtitle', {}, locale))}</span></a>` +
@@ -215,14 +237,14 @@ function siteHeader(locale) {
     `<a class="nav-btn" href="/downloads#how" aria-label="${esc(t('server.nav.ariaHelp', {}, locale))}">${icon('headset')}<span>${esc(t('server.nav.help', {}, locale))}</span></a>` +
     `<a class="nav-btn" href="/operator" aria-label="${esc(t('server.nav.ariaOperator', {}, locale))}">${icon('monitor')}<span>${esc(t('server.nav.operator', {}, locale))}</span></a>` +
     `<a class="btn" href="/downloads#download">${icon('download')}<span>${esc(t('server.download', {}, locale))}</span></a>` +
-    `</nav></div></header>`;
+    `</nav></div></div></header>`;
 }
 
 function siteFooter(version, locale) {
-  return `<footer class="site-foot"><div class="wrap foot-inner">` +
+  return `<footer class="site-foot"><div class="wrap"><div class="foot-inner">` +
     `<p>EnotDesk <span class="foot-ver">v${esc(version)}</span></p>` +
     `<p class="foot-love">${icon('heart')}<span>${esc(t('app.care', {}, locale))}</span></p>` +
-    `</div></footer>`;
+    `</div></div></footer>`;
 }
 
 function steps(locale) {
@@ -289,8 +311,8 @@ function downloadsHtml(items, version, locale, insecure = false) {
     `<ul class="chips"><li>${icon('shield')}<span>${esc(t('server.chip.secure', {}, locale))}</span></li>` +
     `<li>${icon('bolt')}<span>${esc(t('server.chip.fast', {}, locale))}</span></li>` +
     `<li>${icon('lock')}<span>${esc(t('server.chip.noInstall', {}, locale))}</span></li></ul>` +
-    `</div><picture class="hero-art"><source media="(max-width: 900px)" srcset="/brand/hero-neon-square.webp">` +
-    `<img src="/brand/hero-neon.webp" srcset="/brand/hero-neon-1100.webp 1100w, /brand/hero-neon.webp 1774w" sizes="(max-width: 900px) 100vw, 90vw" alt="${esc(t('server.mascotAlt', {}, locale))}" width="1774" height="887"></picture></section>` +
+    `</div><picture class="hero-art"><source media="(max-width: 640px)" srcset="/brand/hero-neon-square.webp">` +
+    `<img src="/brand/hero-neon.webp" srcset="/brand/hero-neon-1100.webp 1100w, /brand/hero-neon.webp 1774w" sizes="(max-width: 1024px) 100vw, 90vw" alt="${esc(t('server.mascotAlt', {}, locale))}" width="1774" height="887"></picture></section>` +
     `<section id="download" class="wrap section"><h2>${esc(t('server.downloadFor', {}, locale))}</h2><div class="cards">${cards}</div></section>` +
     `<section id="how" class="wrap section"><h2>${esc(t('server.how', {}, locale))}</h2><ol class="steps">${stepItems}</ol></section></main>` +
     siteFooter(version, locale);

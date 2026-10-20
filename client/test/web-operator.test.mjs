@@ -319,3 +319,13 @@ test('B6 этап 3: раздел «Аккаунт» — смена пароля
   assert.match(operatorJs, /account\.setUser\(res\.body\.user\)/, 'флаг 2FA — из ответа входа');
   assert.match(operatorJs, /account\.setUser\(user\)/, 'и из /auth/me после перезагрузки');
 });
+
+// ---- Владелец 20.10 (iPad): «Выйти» на экране входа ничего не делала ----
+test('«Выйти» видна всегда: до входа уводит на /downloads, после входа — logout и форма входа', () => {
+  assert.match(html, /<button id="btn-logout" class="btn ghost" type="button"/, 'кнопка не скрыта до входа');
+  const code = operatorJs.replace(/\/\/[^\n]*/g, '');
+  const handler = code.slice(code.indexOf("$('btn-logout')?.addEventListener"), code.indexOf("$('lang-select')"));
+  assert.match(handler, /if \(!token\) \{\s*location\.assign\('\/downloads'\);\s*return;\s*\}/, 'без токена — на главную');
+  assert.match(handler, /api\('POST', '\/auth\/logout'\)[\s\S]*forgetSession\(\);[\s\S]*location\.replace\('\/operator'\)/, 'с токеном — logout и форма входа');
+  assert.ok(!/btn-logout'\)\?\.classList\.add\('hidden'\)/.test(code), 'forgetSession больше не прячет «Выйти»');
+});
