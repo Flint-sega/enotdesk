@@ -48,17 +48,90 @@
   <main id="main">
     <p id="update-banner" class="update-banner hidden" role="status"></p>
     <!-- ======================= КЛИЕНТ ======================= -->
-    <section id="view-client" class="view" data-i18n-aria-label="app.aria.getHelp" aria-label="Получить помощь">
-      <div class="hero">
-        <div class="hero-copy">
+    <section id="view-client" class="view" data-state="idle" data-i18n-aria-label="app.aria.getHelp" aria-label="Получить помощь">
+      <!-- Компактный путь клиента (вариант C): слева арт и «что это», справа три шага.
+           Действия живут внутри шагов; какой шаг текущий — решает data-state (clientShow). -->
+      <div class="help">
+        <aside class="help-side">
+          <img class="help-art" src="../../assets/mascot-app.webp" alt="Енот-специалист EnotDesk" data-i18n-alt="app.alt.mascotHero">
+          <p class="help-what" data-i18n="client.what">Специалист подключится к вашему экрану и поможет разобраться. Только с вашего согласия; закрыли окно — доступ закончился.</p>
           <span id="server-chip" class="server-chip server-chip--checking" role="status" data-i18n="server.checking">Проверяем сервер…</span>
-          <p class="eyebrow" data-i18n="app.subtitle">Удалённая поддержка</p>
-          <h1 id="client-title">Enot<span class="grad">Desk</span></h1>
-          <p id="client-subtitle" class="hero-lead" data-i18n-html="client.leadHtml">Быстрая и безопасная помощь<br>на расстоянии</p>
-          <p class="hero-explain" data-i18n="client.explain">Нажмите кнопку — приложение сообщит временные идентификатор и пароль. Передайте их вашему специалисту в чате.</p>
-          <div id="client-idle">
-            <button id="btn-start" class="cta cta-xl" data-i18n="client.start">Получить помощь</button>
-            <p id="client-idle-note" class="lock-line">
+        </aside>
+
+        <div class="help-main">
+          <div id="client-flow" class="card flow">
+            <h1 id="client-title" class="flow-title" data-i18n="client.flowTitle">Как получить помощь</h1>
+            <ol class="steps">
+              <li class="step step-1">
+                <span class="step-n" aria-hidden="true">1</span>
+                <div class="step-body">
+                  <b data-i18n="client.step1Title">Нажмите «Получить помощь»</b>
+                  <span class="step-sub" data-i18n="client.step1Sub">Программа выдаст временные ID и пароль</span>
+                  <div id="client-idle" class="step-act">
+                    <button id="btn-start" class="cta cta-get" data-i18n="client.start">Получить помощь</button>
+                  </div>
+                  <div id="client-registering" class="step-act wait-line hidden" role="status">
+                    <span class="spinner spinner-sm" aria-hidden="true"></span>
+                    <span data-i18n="client.registering">Соединяемся с сервером…</span>
+                  </div>
+                </div>
+              </li>
+              <li class="step step-2">
+                <span class="step-n" aria-hidden="true">2</span>
+                <div class="step-body">
+                  <b data-i18n="client.step2Title">Передайте ID и пароль специалисту</b>
+                  <span class="step-sub" data-i18n="client.step2Sub">В чате, письме или по телефону</span>
+                  <div class="step-act creds-act">
+                    <div class="cred-grid">
+                      <div class="cred">
+                        <span class="cred-label" data-i18n="client.idLabel">Идентификатор</span>
+                        <div class="cred-line">
+                          <span id="client-id" class="cred-value">—</span>
+                          <button id="btn-copy-id" class="copy-btn" data-i18n-aria-label="client.copyId" data-i18n-title="client.copyId" aria-label="Копировать ID" title="Копировать ID">
+                            <svg class="icon" viewBox="0 0 24 24" aria-hidden="true" focusable="false"><rect x="9" y="9" width="12" height="12" rx="2.5"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg>
+                          </button>
+                        </div>
+                      </div>
+                      <div class="cred">
+                        <span class="cred-label" data-i18n="client.passLabel">Пароль</span>
+                        <div class="cred-line">
+                          <span id="client-password" class="cred-value">—</span>
+                          <button id="btn-copy-password" class="copy-btn" data-i18n-aria-label="client.copyPass" data-i18n-title="client.copyPass" aria-label="Копировать пароль" title="Копировать пароль">
+                            <svg class="icon" viewBox="0 0 24 24" aria-hidden="true" focusable="false"><rect x="9" y="9" width="12" height="12" rx="2.5"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg>
+                          </button>
+                        </div>
+                      </div>
+                    </div>
+                    <div class="copy-row">
+                      <button id="btn-copy-both" class="btn btn-sm" data-i18n="client.copyBoth">Копировать ID и пароль</button>
+                      <p id="copy-status" class="note" role="status"></p>
+                    </div>
+                    <p id="join-status" class="note" role="status"></p>
+                  </div>
+                </div>
+              </li>
+              <li class="step step-3">
+                <span class="step-n" aria-hidden="true">3</span>
+                <div class="step-body">
+                  <b data-i18n="client.step3Title">Дождитесь подключения и подтвердите</b>
+                  <span class="step-sub" data-i18n="client.step3Sub">Появится запрос — нажмите «Разрешить»</span>
+                  <div id="client-waiting" class="step-act hidden" aria-live="polite">
+                    <p class="wait-line"><span class="wait-dot" aria-hidden="true"></span><span data-i18n="client.waitNote">Ожидаем подключения оператора… Пароль действует один раз и до завершения сеанса.</span></p>
+                    <button id="btn-cancel-wait" class="btn btn-sm danger-ghost" data-i18n="common.cancel">Отменить</button>
+                  </div>
+                  <div id="client-consent" class="step-act consent hidden" aria-live="assertive">
+                    <h2 data-i18n="client.consentTitle">Запрос на подключение</h2>
+                    <p data-i18n-html="client.consentIntroHtml">Оператор <strong id="consent-operator">—</strong> просит доступ к вашему экрану.</p>
+                    <p class="muted" data-i18n="client.consentNote">Разрешайте только тем, кого ждёте. Доступ можно прекратить кнопкой «Завершить» в любой момент.</p>
+                    <div class="row">
+                      <button id="btn-allow" class="cta" data-i18n="client.allow">Разрешить</button>
+                      <button id="btn-deny" class="btn danger-ghost" data-i18n="client.deny">Отклонить</button>
+                    </div>
+                  </div>
+                </div>
+              </li>
+            </ol>
+            <p class="lock-line">
               <svg class="icon" viewBox="0 0 24 24" aria-hidden="true" focusable="false">
                 <rect x="5" y="10.5" width="14" height="9.5" rx="2.5"/>
                 <path d="M8 10.5V8a4 4 0 0 1 8 0v2.5"/>
@@ -66,97 +139,40 @@
               <span data-i18n="client.idleNote">Соединение устанавливается только с вашего согласия</span>
             </p>
           </div>
-          <div class="tiles">
-            <div class="tile">
-              <span class="tile-icon">
-                <svg class="icon" viewBox="0 0 24 24" aria-hidden="true" focusable="false">
-                  <path d="M12 3 5 6v5.2c0 4.3 2.9 8.2 7 9.3 4.1-1.1 7-5 7-9.3V6z"/>
-                  <path d="m9.2 12 2 2 3.6-3.9"/>
-                </svg>
-              </span>
-              <h3 data-i18n="tile.secureTitle">Безопасно</h3>
-              <p data-i18n="tile.secureSub">Ваши данные под защитой</p>
-            </div>
-            <div class="tile">
-              <span class="tile-icon">
-                <svg class="icon" viewBox="0 0 24 24" aria-hidden="true" focusable="false">
-                  <path d="M13.2 2 5.5 13.4h5.1L10.8 22l7.7-11.4h-5.1z"/>
-                </svg>
-              </span>
-              <h3 data-i18n="tile.fastTitle">Быстро</h3>
-              <p data-i18n="tile.fastSub">Подключение за секунды</p>
-            </div>
-            <div class="tile">
-              <span class="tile-icon">
-                <svg class="icon" viewBox="0 0 24 24" aria-hidden="true" focusable="false">
-                  <circle cx="9" cy="8.4" r="3.2"/>
-                  <path d="M3.4 19.4a5.9 5.9 0 0 1 11.2 0"/>
-                  <path d="M16.4 5.6a3.2 3.2 0 0 1 0 5.9"/>
-                  <path d="M18.2 13.9a5.9 5.9 0 0 1 2.4 4.2"/>
-                </svg>
-              </span>
-              <h3 data-i18n="tile.easyTitle">Удобно</h3>
-              <p data-i18n="tile.easySub">Просто передайте ID и пароль</p>
-            </div>
+
+          <div id="client-ended" class="card hidden" aria-live="polite">
+            <h2 data-i18n="client.endedTitle">Сеанс завершён</h2>
+            <p id="ended-reason" class="muted">—</p>
+            <button id="btn-again" class="cta" data-i18n="client.restart">Начать заново</button>
+          </div>
+
+          <div id="client-error" class="card hidden" role="alert">
+            <h2 class="err-text" data-i18n="client.failTitle">Не удалось начать</h2>
+            <p id="client-error-text" class="err-text"></p>
+            <button id="btn-retry" class="btn" data-i18n="client.retry">Повторить</button>
           </div>
         </div>
-        <div class="hero-art">
-          <img class="mascot-hero" src="../../assets/mascot-app.webp" alt="Енот-специалист EnotDesk" data-i18n-alt="app.alt.mascotHero">
-        </div>
       </div>
 
-      <div id="client-registering" class="card center hidden" role="status">
-        <div class="spinner" aria-hidden="true"></div>
-        <p class="muted" data-i18n="client.registering">Соединяемся с сервером…</p>
-      </div>
-
-      <div id="client-waiting" class="card hidden" aria-live="polite">
-        <h2 data-i18n="client.tellOperator">Сообщите оператору</h2>
-        <div class="cred-grid">
-          <div class="cred">
-            <span class="cred-label" data-i18n="client.idLabel">Идентификатор</span>
-            <span id="client-id" class="cred-value">—</span>
-            <button id="btn-copy-id" class="btn" data-i18n="client.copyId">Копировать ID</button>
+      <div id="client-connected" class="card session hidden" aria-live="polite">
+        <div class="session-info">
+          <h2 class="ok-text" data-i18n="client.connectedTitle">Оператор подключён</h2>
+          <p data-i18n-html="client.connectedIntroHtml">Сейчас оператор видит ваш экран: <strong id="connected-operator">—</strong>.</p>
+          <p id="client-live-note" class="note" role="status"></p>
+          <p id="client-input-status" class="note" role="status"></p>
+          <p id="client-operators" class="note" role="status"></p>
+          <p id="client-control-note" class="note" role="status"></p>
+          <p id="client-access-note" class="note" role="status"></p>
+          <div class="row gap wrap-btns">
+            <button id="btn-switch-source" class="btn" data-i18n="client.switchScreen">Сменить экран</button>
+            <button id="btn-pause-stream" class="btn" data-i18n="client.hideScreen">Скрыть экран</button>
+            <button id="btn-client-file" class="btn" data-i18n="client.sendFile">Отправить файл</button>
+            <input id="client-file-input" type="file" class="hidden">
           </div>
-          <div class="cred">
-            <span class="cred-label" data-i18n="client.passLabel">Пароль</span>
-            <span id="client-password" class="cred-value">—</span>
-            <button id="btn-copy-password" class="btn" data-i18n="client.copyPass">Копировать пароль</button>
-          </div>
+          <label class="check-line" for="clip-client-toggle"><input type="checkbox" id="clip-client-toggle" checked> <span data-i18n="client.syncClip">Синхронизировать буфер обмена</span></label>
+          <div id="client-file-prompt" class="note"></div>
+          <button id="btn-stop" class="btn danger" data-i18n="client.endSession">Завершить сеанс</button>
         </div>
-        <button id="btn-copy-both" class="btn wide" data-i18n="client.copyBoth">Копировать ID и пароль</button>
-        <p id="copy-status" class="note" role="status"></p>
-        <p id="join-status" class="note" role="status"></p>
-        <p class="muted" data-i18n="client.waitNote">Ожидаем подключения оператора… Пароль действует один раз и до завершения сеанса.</p>
-        <button id="btn-cancel-wait" class="btn danger-ghost" data-i18n="common.cancel">Отменить</button>
-      </div>
-
-      <div id="client-consent" class="card hidden" aria-live="assertive">
-        <h2 data-i18n="client.consentTitle">Запрос на подключение</h2>
-        <p data-i18n-html="client.consentIntroHtml">Оператор <strong id="consent-operator">—</strong> просит доступ к вашему экрану.</p>
-        <p class="muted" data-i18n="client.consentNote">Разрешайте только тем, кого ждёте. Доступ можно прекратить кнопкой «Завершить» в любой момент.</p>
-        <div class="row">
-          <button id="btn-allow" class="cta" data-i18n="client.allow">Разрешить</button>
-          <button id="btn-deny" class="btn danger-ghost" data-i18n="client.deny">Отклонить</button>
-        </div>
-      </div>
-
-      <div id="client-connected" class="card hidden" aria-live="polite">
-        <h2 class="ok-text" data-i18n="client.connectedTitle">Оператор подключён</h2>
-        <p data-i18n-html="client.connectedIntroHtml">Сейчас оператор видит ваш экран: <strong id="connected-operator">—</strong>.</p>
-        <p id="client-live-note" class="note" role="status"></p>
-        <p id="client-input-status" class="note" role="status"></p>
-        <p id="client-operators" class="note" role="status"></p>
-        <p id="client-control-note" class="note" role="status"></p>
-        <p id="client-access-note" class="note" role="status"></p>
-        <div class="row gap wrap-btns">
-          <button id="btn-switch-source" class="btn" data-i18n="client.switchScreen">Сменить экран</button>
-          <button id="btn-pause-stream" class="btn" data-i18n="client.hideScreen">Скрыть экран</button>
-          <button id="btn-client-file" class="btn" data-i18n="client.sendFile">Отправить файл</button>
-          <input id="client-file-input" type="file" class="hidden">
-        </div>
-        <label class="check-line" for="clip-client-toggle"><input type="checkbox" id="clip-client-toggle" checked> <span data-i18n="client.syncClip">Синхронизировать буфер обмена</span></label>
-        <div id="client-file-prompt" class="note"></div>
         <div class="chat">
           <div id="client-chat-log" class="chat-log" aria-live="polite"></div>
           <div class="row gap">
@@ -164,19 +180,6 @@
             <button id="client-chat-send" class="btn" data-i18n="common.send">Отправить</button>
           </div>
         </div>
-        <button id="btn-stop" class="btn danger" data-i18n="client.endSession">Завершить сеанс</button>
-      </div>
-
-      <div id="client-ended" class="card hidden" aria-live="polite">
-        <h2 data-i18n="client.endedTitle">Сеанс завершён</h2>
-        <p id="ended-reason" class="muted">—</p>
-        <button id="btn-again" class="cta" data-i18n="client.restart">Начать заново</button>
-      </div>
-
-      <div id="client-error" class="card hidden" role="alert">
-        <h2 class="err-text" data-i18n="client.failTitle">Не удалось начать</h2>
-        <p id="client-error-text" class="err-text"></p>
-        <button id="btn-retry" class="btn" data-i18n="client.retry">Повторить</button>
       </div>
     </section>
 
