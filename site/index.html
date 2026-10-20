@@ -94,10 +94,10 @@ a:focus-visible,button:focus-visible{outline:2px solid var(--accent);outline-off
 .lang-btn:hover{color:var(--text)}
 .lang-btn.on{color:var(--accent);background:var(--accent-dim)}
 /* ---- герой: арт на правой половине, текст на тёмной стороне ---- */
-.hero{position:relative;display:grid;grid-template-columns:minmax(0,1fr) minmax(0,1fr);align-items:center;min-height:clamp(540px,44vw,700px);padding-block:56px 24px}
+.hero{position:relative;display:grid;grid-template-columns:minmax(0,1fr) minmax(0,1fr);align-items:center;min-height:clamp(520px,39vw,640px);padding-block:56px 24px}
 .hero>*{min-width:0}
 .hero-copy{position:relative;z-index:1}
-.hero-art{position:absolute;top:0;right:calc(50% - 50vw);width:min(1500px,90vw);aspect-ratio:2/1;z-index:0;pointer-events:none}
+.hero-art{position:absolute;top:0;right:calc(50% - 50vw);width:min(1440px,78vw);aspect-ratio:2/1;z-index:0;pointer-events:none}
 .hero-art img{display:block;width:100%;height:100%;object-fit:cover;object-position:50% 50%;
   -webkit-mask-image:linear-gradient(90deg,transparent 0,#000 38%),linear-gradient(180deg,transparent 0,#000 8%,#000 80%,transparent 100%);-webkit-mask-composite:source-in;
   mask-image:linear-gradient(90deg,transparent 0,#000 38%),linear-gradient(180deg,transparent 0,#000 8%,#000 80%,transparent 100%);mask-composite:intersect}
@@ -150,9 +150,18 @@ h2{font:800 clamp(26px,3.2vw,40px)/1.15 var(--font-display);letter-spacing:-.025
 /* ---- загрузки ---- */
 .down{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:14px}
 .down>*{min-width:0}
-.d-card{display:flex;flex-direction:column;background:var(--card);border:1px solid var(--line-strong);border-radius:var(--r-lg);padding:24px;box-shadow:var(--top-hl),var(--shadow-card);transition:border-color var(--t-med) var(--ease),box-shadow var(--t-med) var(--ease)}
+.d-card{display:flex;align-items:center;gap:18px;background:var(--card);border:1px solid var(--line-strong);border-radius:var(--r-lg);padding:20px 22px;box-shadow:var(--top-hl),var(--shadow-card);color:var(--text);text-decoration:none;transition:border-color var(--t-med) var(--ease),box-shadow var(--t-med) var(--ease),transform var(--t-med) var(--ease)}
 .d-card:hover{border-color:var(--accent-line);box-shadow:var(--top-hl),var(--glow),var(--shadow-card)}
 .d-head{display:flex;align-items:center;gap:16px;margin-bottom:20px}
+.d-text{display:flex;flex-direction:column;gap:3px;min-width:0;flex:1}
+.d-text b{font:700 21px/1.2 var(--font-display);letter-spacing:-.01em}
+.d-text span{color:var(--text-2);font-size:14.5px}
+.d-chev{width:22px;height:22px;color:var(--text-2);flex:none;transition:transform var(--t-fast) var(--ease),color var(--t-fast) var(--ease)}
+.d-card:hover .d-chev{color:var(--accent);transform:translateX(3px)}
+.dl-title{margin:0 0 28px}
+.d-more{margin-top:18px;color:var(--text-3);font-size:14px}
+.d-more a{color:var(--text-2)}
+.d-more a:hover{color:var(--accent)}
 .d-ico{display:grid;place-items:center;width:62px;height:62px;border-radius:var(--r-md);background:var(--bg2);border:1px solid var(--line-strong);color:var(--accent);flex:none;box-shadow:inset 0 0 18px var(--accent-dim)}
 .d-ico svg{width:30px;height:30px}
 .d-head h3{font-size:21px;font-weight:700;letter-spacing:-.01em}
@@ -184,10 +193,11 @@ h2{font:800 clamp(26px,3.2vw,40px)/1.15 var(--font-display);letter-spacing:-.025
   *,*::before,*::after{animation:none!important;transition:none!important}
 }
 /* ---- адаптив 320–1280 ---- */
-@media (max-width:1080px){
-  .nav a.nav-sec{display:none}
+@media (max-width:760px){
+  .nav a.nav-sec span{display:none}
+  .nav a.nav-sec{padding:0 13px}
 }
-@media (max-width:900px){
+@media (max-width:1024px){
   .hero{grid-template-columns:1fr;min-height:0;padding-block:24px 36px}
   .hero-art{position:relative;top:auto;right:auto;width:auto;aspect-ratio:auto;margin:0 -24px 8px;order:-1}
   .hero-art img{height:auto;aspect-ratio:1/1;max-height:520px;-webkit-mask-image:linear-gradient(180deg,#000 70%,transparent);mask-image:linear-gradient(180deg,#000 70%,transparent)}
@@ -231,8 +241,8 @@ h2{font:800 clamp(26px,3.2vw,40px)/1.15 var(--font-display);letter-spacing:-.025
     <a class="brand" href="#"><img src="assets/enot-brand-72.png" alt="" width="44" height="44"><b>Enot<span class="grad">Desk</span></b></a>
     <div class="head-actions">
       <nav class="nav" aria-label="Разделы" data-i18n-aria="nav.aria">
-        <a href="#features" class="nav-sec"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="3" y="3" width="7" height="7" rx="1.5"/><rect x="14" y="3" width="7" height="7" rx="1.5"/><rect x="3" y="14" width="7" height="7" rx="1.5"/><rect x="14" y="14" width="7" height="7" rx="1.5"/></svg><span data-i18n="nav.features">Возможности</span></a>
-        <a href="#how" class="nav-sec"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="6" cy="19" r="3"/><path d="M9 19h8.5a3.5 3.5 0 0 0 0-7h-11a3.5 3.5 0 0 1 0-7H15"/><circle cx="18" cy="5" r="3"/></svg><span data-i18n="nav.how">Как устроен</span></a>
+        <a href="#how" class="nav-sec"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4 14v-2a8 8 0 0 1 16 0v2"/><rect x="3" y="13" width="4" height="7" rx="1.5"/><rect x="17" y="13" width="4" height="7" rx="1.5"/><path d="M19 20a3 3 0 0 1-3 2h-2"/></svg><span data-i18n="nav.help">Помощь</span></a>
+        <a href="https://github.com/Flint-sega/enotdesk/blob/main/docs/WEB-OPERATOR.md" class="nav-sec"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="3" y="4" width="18" height="13" rx="2"/><line x1="8" y1="21" x2="16" y2="21"/><line x1="12" y1="17" x2="12" y2="21"/><circle cx="12" cy="10.5" r="2"/></svg><span data-i18n="nav.operator">Оператор</span></a>
         <a href="#download" class="cta-mini"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg><span data-i18n="nav.download">Скачать</span></a>
         <a href="https://github.com/Flint-sega/enotdesk" class="gh-mini">GitHub</a>
       </nav>
@@ -247,10 +257,9 @@ h2{font:800 clamp(26px,3.2vw,40px)/1.15 var(--font-display);letter-spacing:-.025
 <main>
   <section class="wrap hero">
     <div class="hero-copy">
-      <p class="eyebrow">Open source · Self-hosted · AGPL-3.0</p>
+      <p class="eyebrow" data-i18n="hero.eyebrow">Удалённая поддержка</p>
       <h1>Enot<span class="grad">Desk</span></h1>
-      <p class="hero-sub"><span data-i18n="hero.h1a">Удалённая помощь</span> — <span class="grad" data-i18n="hero.h1b">без установки</span></p>
-      <p class="lead" data-i18n="hero.lead">Специалист помогает клиенту за пару минут: тот открывает один файл, называет одноразовые ID и пароль — и доступ появляется. Закрыл окно — доступ исчез. Сервер — ваш собственный.</p>
+      <p class="lead" data-i18n="hero.lead">Быстрый и безопасный доступ к вашему устройству. Программа запускается без установки, а пароль действует только пока приложение открыто.</p>
       <p class="cta">
         <a class="btn" href="#download"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg><span data-i18n="hero.cta1">Скачать</span></a>
         <a class="btn ghost" href="#how"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><polygon points="7 4 20 12 7 20 7 4"/></svg><span data-i18n="hero.cta2">Как это работает</span></a>
@@ -268,37 +277,25 @@ h2{font:800 clamp(26px,3.2vw,40px)/1.15 var(--font-display);letter-spacing:-.025
   </section>
 
   <section id="download" class="wrap section">
-    <div class="sec-head">
-      <p class="eyebrow" data-i18n="dl.eyebrow">Скачать</p>
-      <h2 data-i18n="dl.h2">Бесплатно и открыто</h2>
-      <p class="sec-lead" data-i18n="dl.lead">Файлы берутся напрямую из официальных релизов GitHub. Сервер — tarball с установщиком за один прогон.</p>
-    </div>
+    <h2 class="dl-title" data-i18n="dl.h2">Скачать для вашей системы</h2>
     <div class="down">
-      <article class="d-card rise">
-        <div class="d-head">
-          <span class="d-ico"><svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M0 0h11.377v11.372H0zM12.623 0H24v11.372H12.623zM0 12.623h11.377V24H0zM12.623 12.623H24V24H12.623z"/></svg></span>
-          <div><h3>Windows</h3><p data-i18n="dl.win.req">Для Windows 10 и 11 (x64)</p></div>
-        </div>
-        <a class="btn" href="https://github.com/Flint-sega/enotdesk/releases/latest/download/EnotDesk-win-x64.exe" data-i18n="dl.win.btn">Portable .exe</a>
-        <p class="d-alt"><a href="https://github.com/Flint-sega/enotdesk/releases/latest/download/EnotDesk-win-x64-setup.exe" data-i18n="dl.win.alt">или установщик setup.exe</a></p>
-      </article>
-      <article class="d-card rise">
-        <div class="d-head">
-          <span class="d-ico"><svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M12.152 6.896c-.948 0-2.415-1.078-3.96-1.04-2.04.027-3.91 1.183-4.961 3.014-2.117 3.675-.546 9.103 1.519 12.09 1.013 1.454 2.208 3.09 3.792 3.039 1.52-.065 2.09-.987 3.935-.987 1.831 0 2.35.987 3.96.948 1.637-.026 2.676-1.48 3.676-2.948 1.156-1.688 1.636-3.325 1.662-3.415-.039-.013-3.182-1.221-3.22-4.857-.026-3.04 2.48-4.494 2.597-4.559-1.429-2.09-3.623-2.324-4.39-2.376-2-.156-3.675 1.09-4.61 1.09zM15.53 3.83c.843-1.012 1.4-2.427 1.245-3.83-1.207.052-2.662.805-3.532 1.818-.78.896-1.454 2.338-1.273 3.714 1.338.104 2.715-.688 3.559-1.701"/></svg></span>
-          <div><h3>macOS</h3><p data-i18n="dl.mac.req">Для macOS 13+ на Apple Silicon</p></div>
-        </div>
-        <a class="btn" href="https://github.com/Flint-sega/enotdesk/releases/latest/download/EnotDesk-mac-arm64.zip" data-i18n="dl.mac.btn">.zip для Apple Silicon</a>
-        <p class="d-alt"><a href="https://github.com/Flint-sega/enotdesk/releases/latest" data-i18n="dl.mac.alt">все сборки релиза</a></p>
-      </article>
-      <article class="d-card rise">
-        <div class="d-head">
-          <span class="d-ico"><svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M12.504 0c-.155 0-.315.008-.48.021-4.226.333-3.105 4.807-3.17 6.298-.076 1.092-.3 1.953-1.05 3.02-.885 1.051-2.127 2.75-2.716 4.521-.278.832-.41 1.684-.287 2.489a.424.424 0 00-.11.135c-.26.268-.45.6-.663.839-.199.199-.485.267-.797.4-.313.136-.658.269-.864.68-.09.189-.136.394-.132.602 0 .199.027.4.055.536.058.399.116.728.04.97-.249.68-.28 1.145-.106 1.484.174.334.535.47.94.601.81.2 1.91.135 2.774.6.926.466 1.866.67 2.616.47.526-.116.97-.464 1.208-.946.587-.003 1.23-.269 2.26-.334.699-.058 1.574.267 2.577.2.025.134.063.198.114.333l.003.003c.391.778 1.113 1.132 1.884 1.071.771-.06 1.592-.536 2.257-1.306.631-.765 1.683-1.084 2.378-1.503.348-.199.629-.469.649-.853.023-.4-.2-.811-.714-1.376v-.097l-.003-.003c-.17-.2-.25-.535-.338-.926-.085-.401-.182-.786-.492-1.046h-.003c-.059-.054-.123-.067-.188-.135a.357.357 0 00-.19-.064c.431-1.278.264-2.55-.173-3.694-.533-1.41-1.465-2.638-2.175-3.483-.796-1.005-1.576-1.957-1.56-3.368.026-2.152.236-6.133-3.544-6.139z"/></svg></span>
-          <div><h3>Linux</h3><p data-i18n="dl.lin.req">Для большинства дистрибутивов (x86_64)</p></div>
-        </div>
-        <a class="btn" href="https://github.com/Flint-sega/enotdesk/releases/latest/download/EnotDesk-linux-x86_64.AppImage" data-i18n="dl.lin.btn">AppImage x86_64</a>
-        <p class="d-alt"><a href="https://github.com/Flint-sega/enotdesk/releases/latest/download/enotdesk-server.tar.gz" data-i18n="dl.lin.alt">сервер: enotdesk-server.tar.gz</a></p>
-      </article>
+      <a class="d-card rise" href="https://github.com/Flint-sega/enotdesk/releases/latest/download/EnotDesk-win-x64.exe">
+        <span class="d-ico"><svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M0 0h11.377v11.372H0zM12.623 0H24v11.372H12.623zM0 12.623h11.377V24H0zM12.623 12.623H24V24H12.623z"/></svg></span>
+        <span class="d-text"><b>Windows</b><span data-i18n="dl.win.req">Для Windows 10 и 11 (x64)</span></span>
+        <svg class="d-chev" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><polyline points="9 6 15 12 9 18"/></svg>
+      </a>
+      <a class="d-card rise" href="https://github.com/Flint-sega/enotdesk/releases/latest/download/EnotDesk-mac-arm64.dmg">
+        <span class="d-ico"><svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M12.152 6.896c-.948 0-2.415-1.078-3.96-1.04-2.04.027-3.91 1.183-4.961 3.014-2.117 3.675-.546 9.103 1.519 12.09 1.013 1.454 2.208 3.09 3.792 3.039 1.52-.065 2.09-.987 3.935-.987 1.831 0 2.35.987 3.96.948 1.637-.026 2.676-1.48 3.676-2.948 1.156-1.688 1.636-3.325 1.662-3.415-.039-.013-3.182-1.221-3.22-4.857-.026-3.04 2.48-4.494 2.597-4.559-1.429-2.09-3.623-2.324-4.39-2.376-2-.156-3.675 1.09-4.61 1.09zM15.53 3.83c.843-1.012 1.4-2.427 1.245-3.83-1.207.052-2.662.805-3.532 1.818-.78.896-1.454 2.338-1.273 3.714 1.338.104 2.715-.688 3.559-1.701"/></svg></span>
+        <span class="d-text"><b>macOS</b><span data-i18n="dl.mac.req">Для macOS 13+ на Apple Silicon</span></span>
+        <svg class="d-chev" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><polyline points="9 6 15 12 9 18"/></svg>
+      </a>
+      <a class="d-card rise" href="https://github.com/Flint-sega/enotdesk/releases/latest/download/EnotDesk-linux-x86_64.AppImage">
+        <span class="d-ico"><svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M12.504 0c-.155 0-.315.008-.48.021-4.226.333-3.105 4.807-3.17 6.298-.076 1.092-.3 1.953-1.05 3.02-.885 1.051-2.127 2.75-2.716 4.521-.278.832-.41 1.684-.287 2.489a.424.424 0 00-.11.135c-.26.268-.45.6-.663.839-.199.199-.485.267-.797.4-.313.136-.658.269-.864.68-.09.189-.136.394-.132.602 0 .199.027.4.055.536.058.399.116.728.04.97-.249.68-.28 1.145-.106 1.484.174.334.535.47.94.601.81.2 1.91.135 2.774.6.926.466 1.866.67 2.616.47.526-.116.97-.464 1.208-.946.587-.003 1.23-.269 2.26-.334.699-.058 1.574.267 2.577.2.025.134.063.198.114.333l.003.003c.391.778 1.113 1.132 1.884 1.071.771-.06 1.592-.536 2.257-1.306.631-.765 1.683-1.084 2.378-1.503.348-.199.629-.469.649-.853.023-.4-.2-.811-.714-1.376v-.097l-.003-.003c-.17-.2-.25-.535-.338-.926-.085-.401-.182-.786-.492-1.046h-.003c-.059-.054-.123-.067-.188-.135a.357.357 0 00-.19-.064c.431-1.278.264-2.55-.173-3.694-.533-1.41-1.465-2.638-2.175-3.483-.796-1.005-1.576-1.957-1.56-3.368.026-2.152.236-6.133-3.544-6.139z"/></svg></span>
+        <span class="d-text"><b>Linux</b><span data-i18n="dl.lin.req">Для большинства дистрибутивов (x86_64)</span></span>
+        <svg class="d-chev" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><polyline points="9 6 15 12 9 18"/></svg>
+      </a>
     </div>
+    <p class="d-more"><span data-i18n="dl.more">Ещё:</span> <a href="https://github.com/Flint-sega/enotdesk/releases/latest/download/EnotDesk-win-x64-setup.exe" data-i18n="dl.win.alt">установщик для Windows (setup.exe)</a> · <a href="https://github.com/Flint-sega/enotdesk/releases/latest/download/EnotDesk-mac-arm64.zip" data-i18n="dl.mac.zip">macOS .zip</a> · <a href="https://github.com/Flint-sega/enotdesk/releases/latest/download/enotdesk-server.tar.gz" data-i18n="dl.lin.alt">сервер: enotdesk-server.tar.gz</a> · <a href="https://github.com/Flint-sega/enotdesk/releases/latest" data-i18n="dl.mac.alt">все сборки релиза</a></p>
     <p class="repo-note"><span data-i18n="dl.note1">Исходный код:</span> <a href="https://github.com/Flint-sega/enotdesk">github.com/Flint-sega/enotdesk</a><span data-i18n="dl.note2"> · лицензия AGPL-3.0 · сборка из тегов воспроизводима на CI.</span></p>
   </section>
 
@@ -374,10 +371,10 @@ h2{font:800 clamp(26px,3.2vw,40px)/1.15 var(--font-display);letter-spacing:-.025
     ru:{
       "meta.title":"EnotDesk — удалённая помощь без установки",
       "meta.desc":"Open-source удалённая помощь: приложение запускается без установки, одноразовые ID и пароль, браузерный оператор, self-hosted сервер. AGPL-3.0.",
-      "nav.aria":"Разделы","nav.features":"Возможности","nav.how":"Как устроен","nav.download":"Скачать",
+      "nav.aria":"Разделы","nav.features":"Возможности","nav.how":"Как устроен","nav.download":"Скачать","nav.help":"Помощь","nav.operator":"Оператор",
       "lang.aria":"Язык интерфейса",
       "hero.h1a":"Удалённая помощь","hero.h1b":"без установки",
-      "hero.lead":"Специалист помогает клиенту за пару минут: тот открывает один файл, называет одноразовые ID и пароль — и доступ появляется. Закрыл окно — доступ исчез. Сервер — ваш собственный.",
+      "hero.eyebrow":"Удалённая поддержка","hero.lead":"Быстрый и безопасный доступ к вашему устройству. Программа запускается без установки, а пароль действует только пока приложение открыто.",
       "hero.cta1":"Скачать","hero.cta2":"Как это работает",
       "hero.chip1":"Безопасные соединения","hero.chip2":"Быстрое подключение","hero.chip3":"Без установки",
       "feat.eyebrow":"Возможности","feat.h2":"Всё, что нужно помощи на расстоянии",
@@ -392,9 +389,9 @@ h2{font:800 clamp(26px,3.2vw,40px)/1.15 var(--font-display);letter-spacing:-.025
       "how.lead":"Схема ниже — живая карта проекта: сервер, хаб, службы агентов на трёх ОС, видео-хелпер и путь медиа между машинами.",
       "how.cap":"Полная схема: сигналинг, WebRTC-медиа, DataChannel-каналы (видео, ввод, чат, файлы, терминал) и службы на машине клиента.",
       "how.btn":"Открыть интерактивную схему",
-      "dl.eyebrow":"Скачать","dl.h2":"Бесплатно и открыто",
+      "dl.eyebrow":"Скачать","dl.h2":"Скачать для вашей системы","dl.more":"Ещё:","dl.mac.zip":"macOS .zip",
       "dl.lead":"Файлы берутся напрямую из официальных релизов GitHub. Сервер — tarball с установщиком за один прогон.",
-      "dl.win.btn":"Portable .exe","dl.win.alt":"или установщик setup.exe","dl.win.req":"Для Windows 10 и 11 (x64)",
+      "dl.win.btn":"Portable .exe","dl.win.alt":"установщик для Windows (setup.exe)","dl.win.req":"Для Windows 10 и 11 (x64)",
       "dl.mac.btn":".zip для Apple Silicon","dl.mac.alt":"все сборки релиза","dl.mac.req":"Для macOS 13+ на Apple Silicon",
       "dl.lin.btn":"AppImage x86_64","dl.lin.alt":"сервер: enotdesk-server.tar.gz","dl.lin.req":"Для большинства дистрибутивов (x86_64)",
       "dl.note1":"Исходный код:","dl.note2":" · лицензия AGPL-3.0 · сборка из тегов воспроизводима на CI.",
@@ -405,10 +402,10 @@ h2{font:800 clamp(26px,3.2vw,40px)/1.15 var(--font-display);letter-spacing:-.025
     en:{
       "meta.title":"EnotDesk — remote support with zero install",
       "meta.desc":"Open-source remote support: the app runs without installation, one-time ID and password, browser-based operator, self-hosted server. AGPL-3.0.",
-      "nav.aria":"Sections","nav.features":"Features","nav.how":"How it works","nav.download":"Download",
+      "nav.aria":"Sections","nav.features":"Features","nav.how":"How it works","nav.download":"Download","nav.help":"Help","nav.operator":"Operator",
       "lang.aria":"Interface language",
       "hero.h1a":"Remote support","hero.h1b":"with zero install",
-      "hero.lead":"Help arrives in minutes: the client opens a single file, reads out one-time ID and password — and access is there. Close the window, and it's gone. The server is your own.",
+      "hero.eyebrow":"Remote support","hero.lead":"Fast and secure access to your device. The app runs without installation, and the password works only while the app is open.",
       "hero.cta1":"Download","hero.cta2":"How it works",
       "hero.chip1":"Secure connections","hero.chip2":"Fast connection","hero.chip3":"No install",
       "feat.eyebrow":"Features","feat.h2":"Everything remote support needs",
@@ -423,9 +420,9 @@ h2{font:800 clamp(26px,3.2vw,40px)/1.15 var(--font-display);letter-spacing:-.025
       "how.lead":"The diagram below is a living map of the project: the server, the hub, agent services on three OSes, the video helper and the path media takes between machines.",
       "how.cap":"Full diagram: signalling, WebRTC media, DataChannel channels (video, input, chat, files, terminal) and the services on the client's machine.",
       "how.btn":"Open the interactive diagram",
-      "dl.eyebrow":"Download","dl.h2":"Free and open",
+      "dl.eyebrow":"Download","dl.h2":"Download for your system","dl.more":"Also:","dl.mac.zip":"macOS .zip",
       "dl.lead":"Files come straight from the official GitHub releases. The server ships as a tarball with a one-run installer.",
-      "dl.win.btn":"Portable .exe","dl.win.alt":"or the setup.exe installer","dl.win.req":"For Windows 10 and 11 (x64)",
+      "dl.win.btn":"Portable .exe","dl.win.alt":"Windows installer (setup.exe)","dl.win.req":"For Windows 10 and 11 (x64)",
       "dl.mac.btn":".zip for Apple Silicon","dl.mac.alt":"all release builds","dl.mac.req":"For macOS 13+ on Apple Silicon",
       "dl.lin.btn":"AppImage x86_64","dl.lin.alt":"server: enotdesk-server.tar.gz","dl.lin.req":"For most distributions (x86_64)",
       "dl.note1":"Source code:","dl.note2":" \u00b7 AGPL-3.0 license \u00b7 tagged builds are reproducible on CI.",

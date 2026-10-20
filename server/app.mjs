@@ -1918,7 +1918,7 @@ export function createServer(opts = {}) {
 
   function distFiles() {
     // Только разрешённые имена файлов из каталога сборок — никакие другие файлы проекта не отдаются
-    const allow = [/^EnotDesk.*\.exe$/, /^EnotDesk.*\.zip$/, /^EnotDesk.*\.AppImage$/];
+    const allow = [/^EnotDesk.*\.exe$/, /^EnotDesk.*\.zip$/, /^EnotDesk.*\.dmg$/, /^EnotDesk.*\.AppImage$/];
     const dir = cfg.distDir;
     let names;
     try { names = fs.readdirSync(dir); } catch { names = []; }

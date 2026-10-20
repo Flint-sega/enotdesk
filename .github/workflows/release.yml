@@ -45,7 +45,7 @@ jobs:
       - name: Sync version from tag
         shell: bash
         run: npm version "${GITHUB_REF_NAME#v}" --no-git-tag-version --allow-same-version
-      - name: Pack (macOS, zip)
+      - name: Pack (macOS, zip and dmg)
         if: runner.os == 'macOS'
         shell: bash
         run: npx electron-builder --config build/electron-builder.yml -c.publish.provider=generic -c.publish.url="$ENOT_FEED_URL" --mac --publish never
@@ -79,7 +79,12 @@ jobs:
       - name: Pack (Linux, AppImage)
         if: runner.os == 'Linux'
         shell: bash
-        run: npx electron-builder --config build/electron-builder.yml -c.publish.provider=generic -c.publish.url="$ENOT_FEED_URL" --linux --publish never
+        run: |
+          npx electron-builder --config build/electron-builder.yml -c.publish.provider=generic -c.publish.url="$ENOT_FEED_URL" --linux --publish never
+          # Постоянное имя для ссылок витрины (releases/latest/download/…): с 0.6.19
+          # AppImage несёт версию в имени, и ссылка без версии отдавала 404.
+          # Фид latest-linux.yml по-прежнему указывает на версионный файл.
+          cp dist/EnotDesk-*-linux-x86_64.AppImage dist/EnotDesk-linux-x86_64.AppImage
       - uses: actions/upload-artifact@v6
         with:
           name: dist-${{ matrix.os }}
@@ -188,14 +193,14 @@ jobs:
 
             **Без подписи — как запустить**
 
-            - **macOS**: правая кнопка по `EnotDesk.app` → «Открыть» → «Открыть» (или `xattr -cr /путь/EnotDesk.app`). При первом запуске разрешите «Запись экрана» и «Универсальный доступ».
+            - **macOS**: `EnotDesk-mac-arm64.dmg` — **установщик**: откройте и перетащите EnotDesk в «Программы»; `EnotDesk-mac-arm64.zip` — портативная версия (её же использует автообновление). При первом запуске: правая кнопка по EnotDesk → «Открыть» → «Открыть» (или `xattr -cr /Applications/EnotDesk.app`), затем разрешите «Запись экрана» и «Универсальный доступ».
             - **Windows**: SmartScreen → «Подробнее» → «Выполнить в любом случае».
               - `EnotDesk-win-x64.exe` — **портативная** версия: один файл, без установки, запуск двойным кликом.
               - `EnotDesk-win-x64-setup.exe` — **установщик**: ставит программу в систему (Program Files), создаёт ярлыки.
             - **Linux**: `chmod +x EnotDesk-linux-*.AppImage` и запустите двойным кликом.
 
             EN:
-            - **macOS**: right-click `EnotDesk.app` → Open → Open (or `xattr -cr /path/EnotDesk.app`). Grant Screen Recording and Accessibility on first launch.
+            - **macOS**: `EnotDesk-mac-arm64.dmg` — **installer**: open it and drag EnotDesk to Applications; `EnotDesk-mac-arm64.zip` — portable (also used by auto-update). On first launch: right-click EnotDesk → Open → Open (or `xattr -cr /Applications/EnotDesk.app`), then grant Screen Recording and Accessibility.
             - **Windows**: SmartScreen → More info → Run anyway.
               - `EnotDesk-win-x64.exe` — **portable**: single file, no installation, just run it.
               - `EnotDesk-win-x64-setup.exe` — **installer**: installs to the system (Program Files) with shortcuts.

@@ -49,6 +49,7 @@ function saveRoleCookie(role) {
 function forgetSession() {
   token = null;
   $('btn-nav-account')?.classList.add('hidden'); // без входа раздел аккаунта недоступен
+  $('btn-logout')?.classList.add('hidden'); // «Выйти» — только для вошедшего
   document.cookie = `${COOKIE}=; path=/operator; Max-Age=0; SameSite=Strict`;
 }
 
@@ -254,8 +255,44 @@ function resetKeyboardMode() {
 // ---- состояния страницы ----
 
 const VIEWS = ['view-login', 'view-denied', 'view-connect', 'view-machines', 'view-team', 'view-contacts', 'view-history', 'view-audit', 'view-account', 'op-waiting', 'op-reconnect', 'op-remote'];
+// Рабочий стол (20.10): подключение к клиенту слева, разделы — вкладками в
+// отдельном блоке справа. Пока открыт любой из них, левый блок подключения
+// остаётся на месте у ролей, которые подключаются; правый блок помнит вкладку.
+const PANEL_VIEWS = ['view-contacts', 'view-machines', 'view-team', 'view-history', 'view-audit'];
+const PANEL_TAB = {
+  'view-contacts': 'btn-nav-contacts', 'view-machines': 'btn-nav-machines', 'view-team': 'btn-nav-team',
+  'view-history': 'btn-nav-history', 'view-audit': 'btn-nav-audit',
+};
+let lastPanel = null;
 function showOnly(...ids) {
-  for (const id of VIEWS) (ids.includes(id) ? show : hide)($(id));
+  const panel = ids.find((id) => PANEL_VIEWS.includes(id)) ?? null;
+  const inWorkspace = Boolean(panel) || ids.includes('view-connect');
+  const withConnect = inWorkspace && CONNECT_ROLES.includes(currentRole);
+  for (const id of VIEWS) {
+    const on = ids.includes(id) || (id === 'view-connect' && withConnect);
+    (on ? show : hide)($(id));
+  }
+  (inWorkspace ? show : hide)($('workspace'));
+  $('workspace')?.classList.toggle('no-connect', !withConnect);
+  if (panel) lastPanel = panel;
+  for (const [view, tab] of Object.entries(PANEL_TAB)) {
+    const el = $(tab);
+    if (!el) continue;
+    el.classList.toggle('active', view === panel);
+    if (view === panel) el.setAttribute('aria-current', 'page'); else el.removeAttribute('aria-current');
+  }
+  // подключение без раздела справа: открываем последний (или первый доступный)
+  if (inWorkspace && !panel) openDefaultPanel();
+}
+function openDefaultPanel() {
+  const allowed = (id) => { const tab = $(PANEL_TAB[id]); return tab && !tab.classList.contains('hidden'); };
+  const target = (lastPanel && allowed(lastPanel)) ? lastPanel : PANEL_VIEWS.find(allowed);
+  if (!target || !records) return;
+  if (target === 'view-contacts') records.showContacts();
+  else if (target === 'view-history') records.showHistory();
+  else if (target === 'view-audit') records.showAudit();
+  else if (target === 'view-machines') showMachines();
+  else if (target === 'view-team') showTeam();
 }
 
 function showConnectForm() {
@@ -1242,6 +1279,7 @@ function applyRoleUi(role) {
   currentRole = role;
   const staff = CONNECT_ROLES.includes(role);
   show($('btn-nav-account')); // аккаунт — у любой вошедшей роли
+  show($('btn-logout'));
   for (const id of ['btn-nav-machines', 'btn-nav-team', 'btn-nav-audit']) (role === 'admin' ? show : hide)($(id));
   for (const id of ['btn-nav-contacts', 'btn-nav-history', 'conn-contact-field', 'btn-history-back', 'btn-audit-back', 'btn-contacts-back']) (staff ? show : hide)($(id));
   (role === 'admin' || role === 'auditor' ? show : hide)($('btn-history-audit'));
@@ -1267,11 +1305,15 @@ async function initRemember() {
   try {
     if (!(await desk.credentialsAvailable())) return;
     show($('field-login-remember'));
+    // В программе оператора desktop галочка включена по умолчанию (владелец 20.10:
+    // «чтоб не вводить каждый раз — просто войти»): пароль хранит шифрование ОС
+    // (Keychain/DPAPI/keyring), снять галочку — забыть сохранённое при входе.
+    $('login-remember').checked = true;
     const saved = await desk.credentialsLoad();
     if (saved && typeof saved.login === 'string' && typeof saved.password === 'string') {
       $('login-login').value = saved.login;
       $('login-password').value = saved.password;
-      $('login-remember').checked = true;
+      $('btn-login')?.focus(); // всё подставлено — осталось нажать «Войти» (или Enter)
     }
   } catch { /* хранилище недоступно — вход без «запомнить меня» */ }
 }

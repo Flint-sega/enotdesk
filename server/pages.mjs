@@ -61,7 +61,16 @@ h1{font:800 clamp(46px,7vw,96px)/1 var(--font-display);letter-spacing:-.045em;ma
 @media (prefers-reduced-motion: no-preference){.card{transition:transform var(--t-med) var(--ease),border-color var(--t-med) var(--ease),box-shadow var(--t-med) var(--ease)}.card:hover{transform:translateY(-3px)}}
 .card:hover{border-color:var(--accent-line);box-shadow:var(--top-hl),var(--glow),var(--shadow-card)}
 .card.active{border-color:var(--accent-line)}
-.card-head{display:flex;align-items:center;gap:16px;margin-bottom:6px}
+.card-head{display:flex;align-items:center;gap:16px;margin-bottom:6px;color:var(--text);text-decoration:none}
+.card-head>svg{width:22px;height:22px;color:var(--text-2);flex:none;transition:transform var(--t-fast) var(--ease),color var(--t-fast) var(--ease)}
+.card-link:hover>svg{color:var(--accent);transform:translateX(3px)}
+.card-link:hover h3{color:var(--accent)}
+.file-rows{display:flex;flex-direction:column;gap:6px;margin-top:6px;padding-top:12px;border-top:1px solid var(--line)}
+.file-row{display:flex;flex-wrap:wrap;align-items:center;gap:4px 10px;padding:8px 10px;border-radius:var(--r-sm);color:var(--text);text-decoration:none;transition:background var(--t-fast) var(--ease)}
+.file-row:hover{background:var(--accent-dim)}
+.file-row>svg{width:16px;height:16px;color:var(--accent);flex:none}
+.file-row .file{flex:1 1 auto;min-width:0}
+.file-row .kind{margin-left:0}
 .card-head>div{min-width:0;flex:1}
 .card-head .req{color:var(--text-2);font-size:14px;margin-top:3px}
 .os-icon{display:grid;place-items:center;width:62px;height:62px;border-radius:var(--r-md);background:var(--bg2);border:1px solid var(--line-strong);color:var(--accent);flex:none;box-shadow:inset 0 0 18px var(--accent-dim)}
@@ -69,8 +78,7 @@ h1{font:800 clamp(46px,7vw,96px)/1 var(--font-display);letter-spacing:-.045em;ma
 .card h3{font-size:21px;font-weight:700;letter-spacing:-.01em}
 .file{margin:0;font:500 13.5px/1.5 var(--font-mono);word-break:break-all;color:var(--text)}
 .meta{margin:0;color:var(--text-3);font-size:13px}
-.card .btn{margin-top:auto;width:100%}
-.kind{display:inline-block;margin-left:8px;padding:2px 9px;border-radius:999px;font:500 11px/1.6 var(--font-mono);letter-spacing:.03em;vertical-align:middle;white-space:nowrap}
+.kind{display:inline-block;padding:2px 9px;border-radius:999px;font:500 11px/1.6 var(--font-mono);letter-spacing:.03em;vertical-align:middle;white-space:nowrap}
 .kind-portable{border:1px solid var(--accent-line);color:var(--accent);background:var(--accent-dim)}
 .kind-installer{border:1px solid var(--line-strong);color:var(--text-3);background:var(--inset-glass)}
 .soon{display:block;text-align:center;margin-top:auto;padding:13px 16px;border:1px dashed var(--line-strong);border-radius:12px;color:var(--text-3);font-size:14.5px}
@@ -149,6 +157,7 @@ const ICONS = {
   chat: '<path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/>',
   link: '<path d="M10 13a5 5 0 0 0 7.5.5l3-3a5 5 0 0 0-7-7.1l-1.7 1.7"/><path d="M14 11a5 5 0 0 0-7.5-.5l-3 3a5 5 0 0 0 7 7.1l1.7-1.7"/>',
   headset: '<path d="M4 14v-2a8 8 0 0 1 16 0v2"/><rect x="3" y="13" width="4" height="7" rx="1.5"/><rect x="17" y="13" width="4" height="7" rx="1.5"/><path d="M19 20a3 3 0 0 1-3 2h-2"/>',
+  chevron: '<polyline points="9 6 15 12 9 18"/>',
   monitor: '<rect x="3" y="4" width="18" height="13" rx="2"/><line x1="8" y1="21" x2="16" y2="21"/><line x1="12" y1="17" x2="12" y2="21"/><circle cx="12" cy="10.5" r="2"/>',
   playCircle: '<circle cx="12" cy="12" r="10"/><polygon points="10 8 16 12 10 16 10 8"/>',
   idCard: '<rect x="2" y="5" width="20" height="14" rx="2"/><circle cx="8.5" cy="11" r="1.8"/><path d="M5.6 15.6c.7-1.3 1.7-2.1 2.9-2.1s2.2.8 2.9 2.1"/><line x1="14.5" y1="10" x2="19" y2="10"/><line x1="14.5" y1="13.5" x2="19" y2="13.5"/>',
@@ -228,25 +237,37 @@ function steps(locale) {
 // видно, какой файл портативный, а какой — установщик. Файл без «setup» —
 // портативный (win-одиночка, mac zip, AppImage); слово «setup» — установщик.
 function fileKind(name) {
-  return /setup/i.test(String(name)) ? 'installer' : 'portable';
+  return /setup|\.dmg$/i.test(String(name)) ? 'installer' : 'portable';
+}
+
+// Главная сборка карточки: на Mac — установщик .dmg, на Windows — портативная
+// (продукт «без установки»), иначе — самая свежая. Карточка, как на макете
+// 20.10, сама ссылка на главную сборку; остальные сборки — строками ниже.
+function primaryFile(platform, sorted) {
+  if (platform.key === 'darwin') return sorted.find((f) => /\.dmg$/i.test(f.name)) ?? sorted[0];
+  if (platform.key === 'win32') return sorted.find((f) => fileKind(f.name) === 'portable') ?? sorted[0];
+  return sorted[0];
 }
 
 function platformCard(platform, files, locale) {
-  const head = `<div class="card-head"><span class="os-icon">${icon(platform.icon)}</span>` +
-    `<div><h3>${esc(platform.label)}</h3><p class="req">${esc(t(`server.req.${platform.key}`, {}, locale))}</p></div></div>`;
+  const headInner = `<span class="os-icon">${icon(platform.icon)}</span>` +
+    `<div><h3>${esc(platform.label)}</h3><p class="req">${esc(t(`server.req.${platform.key}`, {}, locale))}</p></div>`;
   if (!files.length) {
-    return `<article class="card rise">${head}<p class="meta">${esc(t('server.notReady', {}, locale))}</p><span class="soon">${esc(t('server.soon', {}, locale))}</span></article>`;
+    return `<article class="card rise"><div class="card-head">${headInner}</div><p class="meta">${esc(t('server.notReady', {}, locale))}</p><span class="soon">${esc(t('server.soon', {}, locale))}</span></article>`;
   }
   // Все сборки платформы (portable и setup оба актуальны — ревью 04.10:
   // files[0] прятал портатив за setup-ом при совпадении имён в каталоге).
   // Свежей сборке — первый ряд: сортируем по mtime убыванию.
-  const rows = [...files].sort((a, b) => b.mtimeMs - a.mtimeMs).map((f, i) => {
+  const sorted = [...files].sort((a, b) => b.mtimeMs - a.mtimeMs);
+  const main = primaryFile(platform, sorted);
+  const rows = sorted.map((f) => {
     const kind = fileKind(f.name);
-    return `<p class="file">${esc(f.name)} <span class="kind kind-${kind}">${esc(t(`server.kind.${kind}`, {}, locale))}</span></p>` +
-      `<p class="meta">${esc(formatSize(f.size, locale))} · ${esc(f.arch)}</p>` +
-      `<a class="btn${i > 0 ? ' ghost' : ''}" href="${esc(f.url)}">${icon('download')}<span>${esc(t('server.download', {}, locale))}</span></a>`;
+    return `<a class="file-row" href="${esc(f.url)}">${icon('download')}<span class="file">${esc(f.name)}</span>` +
+      `<span class="kind kind-${kind}">${esc(t(`server.kind.${kind}`, {}, locale))}</span>` +
+      `<span class="meta">${esc(formatSize(f.size, locale))} · ${esc(f.arch)}</span></a>`;
   }).join('');
-  return `<article class="card active rise">${head}${rows}</article>`;
+  return `<article class="card active rise"><a class="card-head card-link" href="${esc(main.url)}" aria-label="${esc(t('server.download', {}, locale))} ${esc(platform.label)}">${headInner}${icon('chevron')}</a>` +
+    `<div class="file-rows">${rows}</div></article>`;
 }
 
 function downloadsHtml(items, version, locale, insecure = false) {

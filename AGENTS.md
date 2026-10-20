@@ -69,3 +69,9 @@ docs/        SESSION_PROTOCOL, SERVER, AGENT, WEB-OPERATOR, BUILD, MANUAL-QA, RO
 - Windows portable не умеет самообновление (только уведомление); установленная NSIS-сборка обновляется сама (ADR 0029).
 - Linux: без `--ozone-platform=x11` Electron 44 падает на Wayland (флаг ставит main). Профиль агента — `~/.config/enotdesk/agent` (строчными).
 - `npm run icons` — только macOS.
+
+## Фоновые процессы (после сбоя Mac 20.10.2026)
+- Никаких бесконечных циклов ожидания: у каждого поллера дедлайн (≤30 мин) или число итераций. Ждать процесс — по PID (`while kill -0 $PID`) или `wait`; `until ! pgrep -f 'строка'` находит сам себя и не кончается никогда.
+- Не отвязывать процессы от сессии (`nohup`, `disown`, `setsid`, `&`, `screen`/`tmux`) без прямой просьбы владельца; перед концом работы остановить всё фоновое, что запустил сам, и написать, что осталось запущенным.
+- Долгоживущая служба — только по просьбе владельца, как LaunchAgent или Docker, с записью в `handoff.md`.
+- Проверка сирот: `ps -axo pid,ppid,etime,command | awk '$2==1' | grep -E 'zsh|bash|sh -c|sleep|python|node'`.

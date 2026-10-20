@@ -22,7 +22,30 @@ body{display:flex;flex-direction:column}
 .auth-avatar{width:96px;height:96px;align-self:center;margin:-8px 0 0;filter:drop-shadow(0 0 22px var(--accent-dim))}
 .op-user{display:flex;align-items:center;gap:12px;flex-wrap:wrap}
 .op-user .name{font-weight:600;font-size:14.5px}
-main{flex:1;width:100%;max-width:1180px;margin:0 auto;padding:28px 24px 44px}
+main{flex:1;width:100%;max-width:1280px;margin:0 auto;padding:28px 24px 44px}
+/* ---- workspace: connect on the left, tabbed panel on the right (owner request 20.10) ---- */
+.workspace{display:grid;grid-template-columns:minmax(320px,400px) minmax(0,1fr);gap:20px;align-items:start}
+.workspace.no-connect{grid-template-columns:minmax(0,1fr)}
+.workspace>.card+.card,.workspace .card+.card{margin-top:0}
+#view-connect{position:sticky;top:96px;display:flex;flex-direction:column;gap:6px;padding:26px}
+#view-connect.hidden{display:none}
+#view-connect h1{font-size:24px}
+.ws-lead{font-size:14.5px;margin-bottom:10px}
+.connect-stack{display:flex;flex-direction:column;gap:14px}
+.connect-stack .field{min-width:0}
+.connect-stack input,.connect-stack select{width:100%}
+#conn-id,#conn-password{font:600 20px/1.2 var(--font-mono);letter-spacing:.08em;min-height:54px}
+.connect-stack .btn{width:100%;min-height:54px;font-size:16px;margin-top:4px}
+.ws-panel{padding:0;min-width:0;overflow:hidden}
+.ws-tabs{display:flex;gap:6px;padding:10px;border-bottom:1px solid var(--line);overflow-x:auto;scrollbar-width:none}
+.ws-tabs::-webkit-scrollbar{display:none}
+.ws-tab{appearance:none;flex:none;border:1px solid transparent;background:transparent;color:var(--text-2);font:700 14px/1 var(--font-body);min-height:42px;padding:0 18px;border-radius:var(--r-pill);cursor:pointer;white-space:nowrap;transition:color var(--t-fast) var(--ease),background var(--t-fast) var(--ease),border-color var(--t-fast) var(--ease)}
+.ws-tab:hover{color:var(--text);background:var(--accent-dim);border-color:var(--line-strong)}
+.ws-tab.active{color:var(--accent-ink);background:var(--btn-grad);box-shadow:var(--btn-shadow)}
+.ws-panel>.card{background:none;border:0;box-shadow:none;margin:0;padding:22px 24px 26px;border-radius:0}
+.ws-panel h1{font-size:21px}
+/* tabs replace the old back and cross links inside sections */
+#btn-contacts-back,#btn-history-back,#btn-audit-back,#btn-nav-connect,#btn-nav-connect2,#btn-nav-machines2,#btn-history-audit,#btn-audit-history{display:none!important}
 .card{padding:24px;background:var(--panel)}
 .card + .card{margin-top:16px}
 .auth-card{max-width:440px;margin:9vh auto 0;display:flex;flex-direction:column;gap:14px;background:linear-gradient(180deg,rgba(26,238,178,.07),rgba(26,238,178,.02) 46%),var(--panel);border-color:rgba(26,238,178,.24);box-shadow:var(--top-hl),0 0 0 1px rgba(26,238,178,.08),0 0 60px rgba(26,238,178,.10),var(--shadow-card)}
@@ -58,8 +81,10 @@ video.fit-cover{object-fit:cover}
 .chat-line strong{color:var(--accent)}
 .chat-row{display:flex;gap:8px;margin-top:10px}
 .chat-row input{flex:1;min-width:0}
-.check{display:flex;align-items:center;gap:9px;font-size:14px;color:var(--text)}
-.check input{width:auto}
+.check{display:flex;align-items:center;gap:12px;font-size:14.5px;font-weight:600;color:var(--text);padding:12px 14px;margin:4px 0 2px;border:1px solid var(--line-strong);border-radius:var(--r-md);background:var(--ghost-bg);cursor:pointer;transition:border-color var(--t-fast) var(--ease),background var(--t-fast) var(--ease)}
+.check:hover{border-color:var(--accent-line);background:var(--accent-dim)}
+.check input{width:20px;height:20px;flex:none;cursor:pointer}
+.check.hidden{display:none}
 .file-list p{margin:6px 0 0;overflow-wrap:anywhere}
 .file-list a{font-size:14px}
 .invite-link{overflow-wrap:anywhere;background:var(--accent-dim);border:1px dashed var(--accent-line);border-radius:10px;padding:10px 12px}
@@ -97,7 +122,7 @@ video.fit-cover{object-fit:cover}
 .join-code{font:600 14px/1.4 var(--font-mono);color:var(--accent);background:var(--accent-dim);border:1px dashed var(--accent-line);border-radius:8px;padding:4px 10px;cursor:copy;-webkit-user-select:all;user-select:all;overflow-wrap:anywhere}
 .op-foot{border-top:1px solid var(--line);padding:14px 24px;color:var(--text-3);font-size:12.5px;font-family:var(--font-mono)}
 .wait-note{color:var(--text-2)}
-@media (max-width:900px){.session{grid-template-columns:1fr}.connect-grid{grid-template-columns:1fr}.op-head{flex-wrap:wrap}}
+@media (max-width:900px){.workspace{grid-template-columns:1fr}#view-connect{position:static}.session{grid-template-columns:1fr}.connect-grid{grid-template-columns:1fr}.op-head{flex-wrap:wrap}}
 @media (max-width:640px){
   .op-head{flex-direction:column;align-items:flex-start;gap:10px;padding:12px 14px;margin:8px 8px 0;border-radius:var(--r-lg);position:relative;top:0}
   .op-user{width:100%;justify-content:space-between;gap:8px}
@@ -130,7 +155,7 @@ video.fit-cover{object-fit:cover}
       <option value="en">English</option>
     </select>
     <button id="btn-nav-account" class="btn ghost hidden" type="button" data-i18n="web.account.open">Аккаунт</button>
-    <button id="btn-logout" class="btn ghost" type="button" data-i18n="web.logout">Выйти</button>
+    <button id="btn-logout" class="btn ghost hidden" type="button" data-i18n="web.logout">Выйти</button>
   </div>
 </header>
 <main>
@@ -166,112 +191,150 @@ video.fit-cover{object-fit:cover}
     <a class="btn ghost" href="/downloads" data-i18n="web.denied.home">На страницу загрузок</a>
   </section>
 
-  <section id="view-team" class="card hidden">
-    <h1 data-i18n="web.team.title">Команда</h1>
-    <p class="lead" data-i18n="web.team.lead">Приглашайте операторов и аудиторов: ссылка действует 24 часа. Приглашённый открывает её, придумывает логин и пароль — учётная запись появится с выбранной ролью.</p>
-    <button id="btn-nav-machines2" class="btn ghost" type="button" data-i18n="web.machines.open">Машины</button>
-    <button id="btn-nav-connect2" class="btn ghost" type="button" data-i18n="web.team.backConnect">К подключению</button>
-    <p class="form-error" id="team-error" aria-live="polite"></p>
-    <h2 data-i18n="web.team.inviteTitle">Создать приглашение</h2>
-    <form id="team-invite-form">
-      <label for="team-invite-role" data-i18n="web.team.role">Роль</label>
-      <select id="team-invite-role">
-        <option value="operator" data-i18n="web.team.roleOperator">Оператор</option>
-        <option value="auditor" data-i18n="web.team.roleAuditor">Аудитор</option>
-        <option value="admin" data-i18n="web.team.roleAdmin">Администратор</option>
-      </select>
-      <button id="team-invite-create" class="btn" type="submit" data-i18n="web.team.create">Создать приглашение</button>
-    </form>
-    <p class="invite-link hidden" id="team-invite-link" aria-live="polite"></p>
-    <h2 data-i18n="web.team.invitesTitle">Приглашения</h2>
-    <div id="team-invites"></div>
-    <h2 data-i18n="web.team.membersTitle">Участники</h2>
-    <div id="team-members"></div>
-  </section>
-
-  <section id="view-connect" class="card hidden">
-    <h1 data-i18n="web.connect.title">Подключение к клиенту</h1>
-    <form id="connect-form" class="connect-grid">
-      <div class="field">
-        <label for="conn-id" data-i18n="web.connect.id">ID клиента</label>
-        <input id="conn-id" inputmode="numeric" autocomplete="off">
-      </div>
-      <div class="field">
-        <label for="conn-password" data-i18n="web.connect.password">Пароль сеанса</label>
-        <input id="conn-password" type="password" autocomplete="off">
-      </div>
-      <div class="field" id="conn-contact-field">
-        <label for="conn-contact" data-i18n="op.contactLabel">Клиент из адресной книги</label>
-        <select id="conn-contact"></select>
-      </div>
-      <button id="btn-claim" class="btn" type="submit" data-i18n="web.connect.submit">Подключиться</button>
-    </form>
-    <p class="form-error" id="conn-error" aria-live="polite"></p>
-    <button id="btn-nav-machines" class="btn ghost hidden" type="button" data-i18n="web.machines.open">Машины</button>
-    <button id="btn-nav-team" class="btn ghost hidden" type="button" data-i18n="web.team.open">Команда</button>
-    <button id="btn-nav-contacts" class="btn ghost hidden" type="button" data-i18n="op.paneContacts">Адресная книга</button>
-    <button id="btn-nav-history" class="btn ghost hidden" type="button" data-i18n="op.paneHistory">История</button>
-    <button id="btn-nav-audit" class="btn ghost hidden" type="button" data-i18n="op.paneAudit">Журнал</button>
-  </section>
-
-  <!-- B6 этап 1: записи оператора (паритет с desktop). Права — как у сервера:
-       адресная книга — admin/operator, история — все роли, журнал — admin/auditor. -->
-  <section id="view-contacts" class="card hidden">
-    <h1 data-i18n="contacts.title">Адресная книга</h1>
-    <button id="btn-contacts-back" class="btn ghost" type="button" data-i18n="web.team.backConnect">К подключению</button>
-    <form id="form-contact-search" class="records-search">
-      <label for="contact-search" data-i18n="contacts.searchLabel">Поиск</label>
-      <input id="contact-search" data-i18n-placeholder="contacts.searchPlaceholder">
-      <button class="btn ghost" type="submit" data-i18n="contacts.find">Найти</button>
-      <button id="btn-contact-add" class="btn" type="button" data-i18n="contacts.add">Добавить</button>
-    </form>
-    <div class="card hidden" id="contact-editor">
-      <h2 id="contact-editor-title" data-i18n="contacts.newTitle">Новый контакт</h2>
-      <form id="form-contact">
-        <div class="field"><label for="contact-name" data-i18n="contacts.nameLabel">Имя</label><input id="contact-name" maxlength="120"></div>
-        <div class="field"><label for="contact-notes" data-i18n="contacts.notesLabel">Заметки</label><textarea id="contact-notes" maxlength="2000"></textarea></div>
-        <div class="field"><label for="contact-tags" data-i18n="contacts.tagsLabel">Теги</label><input id="contact-tags" data-i18n-placeholder="contacts.tagsPlaceholder"></div>
-        <p class="form-error" id="contact-error" aria-live="polite"></p>
-        <button id="btn-contact-save" class="btn" type="submit" data-i18n="contacts.save">Сохранить</button>
-        <button id="btn-contact-cancel" class="btn ghost" type="button" data-i18n="common.cancel">Отмена</button>
+  <!-- Рабочий стол оператора (20.10, запрос владельца): слева — подключение к клиенту,
+       справа — отдельный блок с вкладками (адресная книга, машины, команда, история, журнал).
+       Права на вкладки — как у сервера (applyRoleUi), разделы те же секции view-*. -->
+  <div id="workspace" class="workspace hidden">
+    <section id="view-connect" class="card hidden">
+      <h1 data-i18n="web.connect.title">Подключение к клиенту</h1>
+      <p class="lead ws-lead" data-i18n="web.connect.lead">Клиент называет ID и пароль из своего окна EnotDesk.</p>
+      <form id="connect-form" class="connect-stack">
+        <div class="field">
+          <label for="conn-id" data-i18n="web.connect.id">ID клиента</label>
+          <input id="conn-id" inputmode="numeric" autocomplete="off">
+        </div>
+        <div class="field">
+          <label for="conn-password" data-i18n="web.connect.password">Пароль сеанса</label>
+          <input id="conn-password" type="password" autocomplete="off">
+        </div>
+        <div class="field" id="conn-contact-field">
+          <label for="conn-contact" data-i18n="op.contactLabel">Клиент из адресной книги</label>
+          <select id="conn-contact"></select>
+        </div>
+        <button id="btn-claim" class="btn" type="submit" data-i18n="web.connect.submit">Подключиться</button>
       </form>
+      <p class="form-error" id="conn-error" aria-live="polite"></p>
+    </section>
+    <div class="ws-panel card">
+      <nav class="ws-tabs" id="ws-tabs" data-i18n-aria-label="web.aria.panels" aria-label="Разделы">
+        <button id="btn-nav-contacts" class="ws-tab hidden" type="button" data-i18n="op.paneContacts">Адресная книга</button>
+        <button id="btn-nav-machines" class="ws-tab hidden" type="button" data-i18n="web.machines.open">Машины</button>
+        <button id="btn-nav-team" class="ws-tab hidden" type="button" data-i18n="web.team.open">Команда</button>
+        <button id="btn-nav-history" class="ws-tab hidden" type="button" data-i18n="op.paneHistory">История</button>
+        <button id="btn-nav-audit" class="ws-tab hidden" type="button" data-i18n="op.paneAudit">Журнал</button>
+      </nav>
+      <section id="view-contacts" class="card hidden">
+        <h1 data-i18n="contacts.title">Адресная книга</h1>
+        <button id="btn-contacts-back" class="btn ghost" type="button" data-i18n="web.team.backConnect">К подключению</button>
+        <form id="form-contact-search" class="records-search">
+          <label for="contact-search" data-i18n="contacts.searchLabel">Поиск</label>
+          <input id="contact-search" data-i18n-placeholder="contacts.searchPlaceholder">
+          <button class="btn ghost" type="submit" data-i18n="contacts.find">Найти</button>
+          <button id="btn-contact-add" class="btn" type="button" data-i18n="contacts.add">Добавить</button>
+        </form>
+        <div class="card hidden" id="contact-editor">
+          <h2 id="contact-editor-title" data-i18n="contacts.newTitle">Новый контакт</h2>
+          <form id="form-contact">
+            <div class="field"><label for="contact-name" data-i18n="contacts.nameLabel">Имя</label><input id="contact-name" maxlength="120"></div>
+            <div class="field"><label for="contact-notes" data-i18n="contacts.notesLabel">Заметки</label><textarea id="contact-notes" maxlength="2000"></textarea></div>
+            <div class="field"><label for="contact-tags" data-i18n="contacts.tagsLabel">Теги</label><input id="contact-tags" data-i18n-placeholder="contacts.tagsPlaceholder"></div>
+            <p class="form-error" id="contact-error" aria-live="polite"></p>
+            <button id="btn-contact-save" class="btn" type="submit" data-i18n="contacts.save">Сохранить</button>
+            <button id="btn-contact-cancel" class="btn ghost" type="button" data-i18n="common.cancel">Отмена</button>
+          </form>
+        </div>
+        <p class="note" id="contacts-status" aria-live="polite"></p>
+        <div id="contacts-list" class="records-list"></div>
+        <div class="records-pager">
+          <button id="contacts-prev" class="btn ghost" type="button" data-i18n="web.machines.prev">← Назад</button>
+          <span id="contacts-page"></span>
+          <button id="contacts-next" class="btn ghost" type="button" data-i18n="web.machines.next">Вперёд →</button>
+        </div>
+      </section>
+      <section id="view-machines" class="card hidden">
+        <div class="machines-head">
+          <h1 data-i18n="web.machines.title">Машины</h1>
+          <button id="btn-nav-connect" class="btn ghost" type="button" data-i18n="web.machines.backConnect">К подключению</button>
+        </div>
+        <p class="form-error" id="machines-error" aria-live="polite"></p>
+        <div id="machines-list" class="machines-list"></div>
+        <p class="note hidden" id="machines-empty" data-i18n="web.machines.empty"></p>
+        <div class="machines-pager">
+          <button id="btn-machines-prev" class="btn ghost" type="button" data-i18n="web.machines.prev">← Назад</button>
+          <span class="machines-page" id="machines-page"></span>
+          <button id="btn-machines-next" class="btn ghost" type="button" data-i18n="web.machines.next">Вперёд →</button>
+          <button id="btn-machines-refresh" class="btn ghost" type="button" data-i18n="web.machines.refresh">Обновить</button>
+        </div>
+        <div class="card machines-claim hidden" id="machines-claim">
+          <h2 data-i18n="web.machines.claimTitle">Открыть терминал</h2>
+          <p class="note" id="machines-claim-name"></p>
+          <form id="machines-claim-form">
+            <div class="field">
+              <label for="machines-claim-reason" data-i18n="web.machines.claimReason">Причина подключения (обязательно)</label>
+              <input id="machines-claim-reason" maxlength="500">
+            </div>
+            <div class="field hidden" id="machines-claim-pin-field">
+              <label for="machines-claim-pin" data-i18n="web.machines.claimPin">PIN машины</label>
+              <input id="machines-claim-pin" type="password" autocomplete="off">
+            </div>
+            <div class="machines-claim-row">
+              <button id="btn-machines-claim" class="btn" type="submit" data-i18n="web.machines.claimSubmit">Подключиться</button>
+              <button id="btn-machines-claim-cancel" class="btn ghost" type="button" data-i18n="web.machines.claimCancel">Отмена</button>
+            </div>
+          </form>
+          <p class="form-error" id="machines-claim-error" aria-live="polite"></p>
+        </div>
+      </section>
+      <section id="view-team" class="card hidden">
+        <h1 data-i18n="web.team.title">Команда</h1>
+        <p class="lead" data-i18n="web.team.lead">Приглашайте операторов и аудиторов: ссылка действует 24 часа. Приглашённый открывает её, придумывает логин и пароль — учётная запись появится с выбранной ролью.</p>
+        <button id="btn-nav-machines2" class="btn ghost" type="button" data-i18n="web.machines.open">Машины</button>
+        <button id="btn-nav-connect2" class="btn ghost" type="button" data-i18n="web.team.backConnect">К подключению</button>
+        <p class="form-error" id="team-error" aria-live="polite"></p>
+        <h2 data-i18n="web.team.inviteTitle">Создать приглашение</h2>
+        <form id="team-invite-form">
+          <label for="team-invite-role" data-i18n="web.team.role">Роль</label>
+          <select id="team-invite-role">
+            <option value="operator" data-i18n="web.team.roleOperator">Оператор</option>
+            <option value="auditor" data-i18n="web.team.roleAuditor">Аудитор</option>
+            <option value="admin" data-i18n="web.team.roleAdmin">Администратор</option>
+          </select>
+          <button id="team-invite-create" class="btn" type="submit" data-i18n="web.team.create">Создать приглашение</button>
+        </form>
+        <p class="invite-link hidden" id="team-invite-link" aria-live="polite"></p>
+        <h2 data-i18n="web.team.invitesTitle">Приглашения</h2>
+        <div id="team-invites"></div>
+        <h2 data-i18n="web.team.membersTitle">Участники</h2>
+        <div id="team-members"></div>
+      </section>
+      <section id="view-history" class="card hidden">
+        <h1 data-i18n="history.title">История сеансов</h1>
+        <button id="btn-history-back" class="btn ghost" type="button" data-i18n="web.team.backConnect">К подключению</button>
+        <button id="btn-history-audit" class="btn ghost hidden" type="button" data-i18n="op.paneAudit">Журнал</button>
+        <button id="history-csv" class="btn ghost" type="button" data-i18n="common.downloadCsv">Скачать CSV</button>
+        <p class="note" id="history-status" aria-live="polite"></p>
+        <div id="history-list" class="records-list"></div>
+        <div class="records-pager">
+          <button id="history-prev" class="btn ghost" type="button" data-i18n="web.machines.prev">← Назад</button>
+          <span id="history-page"></span>
+          <button id="history-next" class="btn ghost" type="button" data-i18n="web.machines.next">Вперёд →</button>
+        </div>
+      </section>
+      <section id="view-audit" class="card hidden">
+        <h1 data-i18n="audit.title">Журнал действий</h1>
+        <button id="btn-audit-back" class="btn ghost" type="button" data-i18n="web.team.backConnect">К подключению</button>
+        <button id="btn-audit-history" class="btn ghost" type="button" data-i18n="op.paneHistory">История</button>
+        <button id="audit-csv" class="btn ghost" type="button" data-i18n="common.downloadCsv">Скачать CSV</button>
+        <p class="note" id="audit-status" aria-live="polite"></p>
+        <div id="audit-list" class="records-list"></div>
+        <div class="records-pager">
+          <button id="audit-prev" class="btn ghost" type="button" data-i18n="web.machines.prev">← Назад</button>
+          <span id="audit-page"></span>
+          <button id="audit-next" class="btn ghost" type="button" data-i18n="web.machines.next">Вперёд →</button>
+        </div>
+      </section>
     </div>
-    <p class="note" id="contacts-status" aria-live="polite"></p>
-    <div id="contacts-list" class="records-list"></div>
-    <div class="records-pager">
-      <button id="contacts-prev" class="btn ghost" type="button" data-i18n="web.machines.prev">← Назад</button>
-      <span id="contacts-page"></span>
-      <button id="contacts-next" class="btn ghost" type="button" data-i18n="web.machines.next">Вперёд →</button>
-    </div>
-  </section>
-
-  <section id="view-history" class="card hidden">
-    <h1 data-i18n="history.title">История сеансов</h1>
-    <button id="btn-history-back" class="btn ghost" type="button" data-i18n="web.team.backConnect">К подключению</button>
-    <button id="btn-history-audit" class="btn ghost hidden" type="button" data-i18n="op.paneAudit">Журнал</button>
-    <button id="history-csv" class="btn ghost" type="button" data-i18n="common.downloadCsv">Скачать CSV</button>
-    <p class="note" id="history-status" aria-live="polite"></p>
-    <div id="history-list" class="records-list"></div>
-    <div class="records-pager">
-      <button id="history-prev" class="btn ghost" type="button" data-i18n="web.machines.prev">← Назад</button>
-      <span id="history-page"></span>
-      <button id="history-next" class="btn ghost" type="button" data-i18n="web.machines.next">Вперёд →</button>
-    </div>
-  </section>
-
-  <section id="view-audit" class="card hidden">
-    <h1 data-i18n="audit.title">Журнал действий</h1>
-    <button id="btn-audit-back" class="btn ghost" type="button" data-i18n="web.team.backConnect">К подключению</button>
-    <button id="btn-audit-history" class="btn ghost" type="button" data-i18n="op.paneHistory">История</button>
-    <button id="audit-csv" class="btn ghost" type="button" data-i18n="common.downloadCsv">Скачать CSV</button>
-    <p class="note" id="audit-status" aria-live="polite"></p>
-    <div id="audit-list" class="records-list"></div>
-    <div class="records-pager">
-      <button id="audit-prev" class="btn ghost" type="button" data-i18n="web.machines.prev">← Назад</button>
-      <span id="audit-page"></span>
-      <button id="audit-next" class="btn ghost" type="button" data-i18n="web.machines.next">Вперёд →</button>
-    </div>
-  </section>
+  </div>
 
   <!-- Аккаунт (ADR 0033, этап 3 — перенос из desktop): смена пароля и 2FA -->
   <section id="view-account" class="card hidden">
@@ -340,41 +403,6 @@ video.fit-cover{object-fit:cover}
         <button id="btn-totp-disable" class="btn danger" type="submit" data-i18n="totp.disableBtn">Отключить 2FA</button>
       </form>
       <p class="form-error" id="totp-disable-error" aria-live="polite"></p>
-    </div>
-  </section>
-
-  <section id="view-machines" class="card hidden">
-    <div class="machines-head">
-      <h1 data-i18n="web.machines.title">Машины</h1>
-      <button id="btn-nav-connect" class="btn ghost" type="button" data-i18n="web.machines.backConnect">К подключению</button>
-    </div>
-    <p class="form-error" id="machines-error" aria-live="polite"></p>
-    <div id="machines-list" class="machines-list"></div>
-    <p class="note hidden" id="machines-empty" data-i18n="web.machines.empty"></p>
-    <div class="machines-pager">
-      <button id="btn-machines-prev" class="btn ghost" type="button" data-i18n="web.machines.prev">← Назад</button>
-      <span class="machines-page" id="machines-page"></span>
-      <button id="btn-machines-next" class="btn ghost" type="button" data-i18n="web.machines.next">Вперёд →</button>
-      <button id="btn-machines-refresh" class="btn ghost" type="button" data-i18n="web.machines.refresh">Обновить</button>
-    </div>
-    <div class="card machines-claim hidden" id="machines-claim">
-      <h2 data-i18n="web.machines.claimTitle">Открыть терминал</h2>
-      <p class="note" id="machines-claim-name"></p>
-      <form id="machines-claim-form">
-        <div class="field">
-          <label for="machines-claim-reason" data-i18n="web.machines.claimReason">Причина подключения (обязательно)</label>
-          <input id="machines-claim-reason" maxlength="500">
-        </div>
-        <div class="field hidden" id="machines-claim-pin-field">
-          <label for="machines-claim-pin" data-i18n="web.machines.claimPin">PIN машины</label>
-          <input id="machines-claim-pin" type="password" autocomplete="off">
-        </div>
-        <div class="machines-claim-row">
-          <button id="btn-machines-claim" class="btn" type="submit" data-i18n="web.machines.claimSubmit">Подключиться</button>
-          <button id="btn-machines-claim-cancel" class="btn ghost" type="button" data-i18n="web.machines.claimCancel">Отмена</button>
-        </div>
-      </form>
-      <p class="form-error" id="machines-claim-error" aria-live="polite"></p>
     </div>
   </section>
 
