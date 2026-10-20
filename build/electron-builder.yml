@@ -21,6 +21,9 @@ files:
   # иконка для Linux-ярлыка (client/lib/desktop-entry.mjs копирует её в
   # ~/.local/share/icons при старте упакованного десктоп-приложения)
   - assets/icon.png
+  # шрифт Inter для интерфейса («Neon Emerald», 20.10): два woff2 ≈ 120 КБ
+  - assets/inter-cyrillic.woff2
+  - assets/inter-latin.woff2
   - package.json
   # Срез мёртвого груза koffi (R01): C++-исходники, vendor-заголовки, doc.
   # Рантайму нужны index.cjs -> src/koffi/index.cjs -> src/koffi/src/static.cjs

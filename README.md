@@ -8,13 +8,17 @@ EnotDesk is a self-hosted remote-support application for Windows, macOS and Linu
 
 ## Screenshots
 
-Main window — the client side with the one-time ID/password for the operator (smoke screenshot of the packaged build):
+Landing page (GitHub Pages) — the same look as the server download page:
+
+![EnotDesk landing page](docs/screenshot-site.webp)
+
+Main window — the client side: one button gets a one-time ID and password for the operator (smoke screenshot of the app):
 
 ![Main window of EnotDesk](docs/screenshot-main.png)
 
-Browser operator console — the machines panel (claim with a reason, terminal, toast, PIN, revoke):
+Operator program — the same page in a browser and in the desktop operator window (sign-in screen):
 
-![Browser operator console of EnotDesk](docs/screenshot-operator.png)
+![EnotDesk operator program](docs/screenshot-operator.png)
 
 ## Architecture
 

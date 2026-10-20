@@ -12,19 +12,23 @@
    панели — плотное рабочее стекло, видео — чистая тёмная плита без узоров,
    логи чата/терминала — утопленные плиты, статусы — моно. */
 body{display:flex;flex-direction:column}
-.card h1{font:600 22px/1.25 var(--font-display)}
-.op-head{position:sticky;top:0;z-index:20;display:flex;align-items:center;justify-content:space-between;gap:16px;min-height:60px;padding:12px 24px;border-bottom:1px solid var(--line);background:var(--head-bg);-webkit-backdrop-filter:blur(14px);backdrop-filter:blur(14px)}
+.card h1{font:800 22px/1.25 var(--font-display);letter-spacing:-.02em}
+.op-head{position:sticky;top:12px;z-index:20;display:flex;align-items:center;justify-content:space-between;gap:16px;min-height:64px;margin:12px 16px 0;padding:8px 10px 8px 12px;border:1px solid var(--line-strong);border-radius:var(--r-pill);background:var(--head-bg);box-shadow:var(--top-hl),var(--shadow-card);-webkit-backdrop-filter:blur(14px);backdrop-filter:blur(14px)}
 .brand{display:flex;align-items:center;gap:11px;color:var(--text);text-decoration:none}
-.brand img{width:34px;height:34px;padding:4px;border-radius:10px;background:var(--accent-dim);border:1px solid var(--accent-line)}
-.brand span{font:600 15px/1 var(--font-display);letter-spacing:.01em}
+.brand img{width:42px;height:42px;border-radius:50%;border:1px solid var(--accent-line);box-shadow:0 0 18px var(--accent-dim);background:var(--bg1)}
+.brand>span{font:800 19px/1 var(--font-display);letter-spacing:-.02em}
+.grad{background:var(--grad-text);-webkit-background-clip:text;background-clip:text;color:transparent}
+.op-user .btn{border-radius:var(--r-pill)}
+.auth-avatar{width:96px;height:96px;align-self:center;margin:-8px 0 0;filter:drop-shadow(0 0 22px var(--accent-dim))}
 .op-user{display:flex;align-items:center;gap:12px;flex-wrap:wrap}
 .op-user .name{font-weight:600;font-size:14.5px}
 main{flex:1;width:100%;max-width:1180px;margin:0 auto;padding:28px 24px 44px}
 .card{padding:24px;background:var(--panel)}
 .card + .card{margin-top:16px}
-.auth-card{max-width:440px;margin:9vh auto 0;display:flex;flex-direction:column;gap:14px;background:linear-gradient(180deg,rgba(53,208,186,.07),rgba(53,208,186,.02) 46%),var(--panel);border-color:rgba(53,208,186,.24);box-shadow:var(--top-hl),0 0 0 1px rgba(53,208,186,.08),0 0 60px rgba(53,208,186,.10),var(--shadow-card)}
-.auth-card input{--field-glow:0 0 0 1px rgba(53,208,186,.20),0 0 24px rgba(53,208,186,.15);--field-glow-hover:0 0 0 1px rgba(53,208,186,.30),0 0 30px rgba(53,208,186,.22);--field-glow-focus:0 0 0 3px rgba(53,208,186,.22),0 0 34px rgba(53,208,186,.38)}
-.auth-card h1{font:600 23px/1.2 var(--font-display)}
+.auth-card{max-width:440px;margin:9vh auto 0;display:flex;flex-direction:column;gap:14px;background:linear-gradient(180deg,rgba(26,238,178,.07),rgba(26,238,178,.02) 46%),var(--panel);border-color:rgba(26,238,178,.24);box-shadow:var(--top-hl),0 0 0 1px rgba(26,238,178,.08),0 0 60px rgba(26,238,178,.10),var(--shadow-card)}
+.auth-card input{--field-glow:0 0 0 1px rgba(26,238,178,.20),0 0 24px rgba(26,238,178,.15);--field-glow-hover:0 0 0 1px rgba(26,238,178,.30),0 0 30px rgba(26,238,178,.22);--field-glow-focus:0 0 0 3px rgba(26,238,178,.22),0 0 34px rgba(26,238,178,.38)}
+.auth-card h1{font:800 26px/1.2 var(--font-display);letter-spacing:-.025em;text-align:center}
+.auth-card>.lead{text-align:center}
 .lead{color:var(--text-2)}
 .field{display:flex;flex-direction:column;gap:6px}
 .form-error{color:var(--danger);min-height:1.2em;font-size:14px}
@@ -35,8 +39,8 @@ main{flex:1;width:100%;max-width:1180px;margin:0 auto;padding:28px 24px 44px}
 .session{display:grid;grid-template-columns:minmax(0,1fr) 340px;gap:18px;align-items:start}
 .stage{display:flex;flex-direction:column;gap:10px;min-width:0}
 /* видео: глубокая тёмная плита — только бордер и тень, никаких узоров */
-.video-box{position:relative;background:#030711;border:1px solid var(--line);border-radius:var(--r-md);overflow:hidden;box-shadow:var(--top-hl),var(--shadow-card)}
-video{display:block;width:100%;aspect-ratio:16/9;object-fit:contain;background:#030711;touch-action:none}
+.video-box{position:relative;background:#020A08;border:1px solid var(--line);border-radius:var(--r-md);overflow:hidden;box-shadow:var(--top-hl),var(--shadow-card)}
+video{display:block;width:100%;aspect-ratio:16/9;object-fit:contain;background:#020A08;touch-action:none}
 video.fit-cover{object-fit:cover}
 .stage-bar{display:flex;align-items:center;gap:8px;flex-wrap:wrap}
 .status{color:var(--text-3);font:500 13px/1.5 var(--font-mono);min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;flex:1}
@@ -49,7 +53,7 @@ video.fit-cover{object-fit:cover}
 .side{display:flex;flex-direction:column;gap:16px;min-width:0}
 .side h2{font-size:15px;margin-bottom:10px}
 /* чат и терминал: утопленные плиты с тонким скроллом */
-.chat-log{height:220px;overflow-y:auto;border:1px solid var(--line);border-radius:10px;padding:12px;background:var(--bg-inset);box-shadow:inset 0 2px 10px rgba(3,7,17,.45);scrollbar-width:thin;scrollbar-color:var(--line-strong) transparent}
+.chat-log{height:220px;overflow-y:auto;border:1px solid var(--line);border-radius:10px;padding:12px;background:var(--bg-inset);box-shadow:inset 0 2px 10px rgba(0,6,4,.45);scrollbar-width:thin;scrollbar-color:var(--line-strong) transparent}
 .chat-log p{margin:0 0 7px;font-size:14px;overflow-wrap:anywhere}
 .chat-line strong{color:var(--accent)}
 .chat-row{display:flex;gap:8px;margin-top:10px}
@@ -61,7 +65,7 @@ video.fit-cover{object-fit:cover}
 .invite-link{overflow-wrap:anywhere;background:var(--accent-dim);border:1px dashed var(--accent-line);border-radius:10px;padding:10px 12px}
 .row{display:flex;gap:8px;flex-wrap:wrap;align-items:center}
 .row input{flex:1 1 180px;min-width:0}
-.term-log{max-height:280px;overflow:auto;margin:10px 0;background:var(--bg-inset);border:1px solid var(--line);border-radius:10px;padding:12px;font:12.5px/1.55 var(--font-mono);white-space:pre-wrap;overflow-wrap:anywhere;box-shadow:inset 0 2px 10px rgba(3,7,17,.45);scrollbar-width:thin;scrollbar-color:var(--line-strong) transparent}
+.term-log{max-height:280px;overflow:auto;margin:10px 0;background:var(--bg-inset);border:1px solid var(--line);border-radius:10px;padding:12px;font:12.5px/1.55 var(--font-mono);white-space:pre-wrap;overflow-wrap:anywhere;box-shadow:inset 0 2px 10px rgba(0,6,4,.45);scrollbar-width:thin;scrollbar-color:var(--line-strong) transparent}
 .machines-head{display:flex;align-items:center;justify-content:space-between;gap:12px;flex-wrap:wrap}
 .machines-head h1{font:600 24px/1.2 var(--font-display)}
 .machines-list{display:flex;flex-direction:column;gap:10px;margin-top:14px}
@@ -95,7 +99,7 @@ video.fit-cover{object-fit:cover}
 .wait-note{color:var(--text-2)}
 @media (max-width:900px){.session{grid-template-columns:1fr}.connect-grid{grid-template-columns:1fr}.op-head{flex-wrap:wrap}}
 @media (max-width:640px){
-  .op-head{flex-direction:column;align-items:flex-start;gap:10px;padding:12px 14px}
+  .op-head{flex-direction:column;align-items:flex-start;gap:10px;padding:12px 14px;margin:8px 8px 0;border-radius:var(--r-lg);position:relative;top:0}
   .op-user{width:100%;justify-content:space-between;gap:8px}
   .op-user .name{max-width:44vw;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
   main{padding:18px 12px 32px}
@@ -116,7 +120,7 @@ video.fit-cover{object-fit:cover}
 </head>
 <body class="aurora-bg" data-locale="__LOCALE__">
 <header class="op-head">
-  <a class="brand" href="/downloads"><img src="/brand/enot-brand-72.png" alt="" width="34" height="34"><span>EnotDesk</span></a>
+  <a class="brand" href="/downloads"><img src="/brand/enot-brand-72.png" alt="" width="42" height="42"><span>Enot<span class="grad">Desk</span></span></a>
   <div class="op-user">
     <span class="name" id="op-user-name"></span>
     <span class="badge" id="op-user-role"></span>
@@ -131,6 +135,7 @@ video.fit-cover{object-fit:cover}
 </header>
 <main>
   <section id="view-login" class="card auth-card hidden">
+    <img class="auth-avatar" src="/brand/enot-avatar.webp" alt="" width="96" height="96">
     <h1 data-i18n="web.login.title">Вход для оператора</h1>
     <p class="lead" data-i18n="web.login.lead">Тот же аккаунт, что и в desktop-приложении.</p>
     <form id="login-form">

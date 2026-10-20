@@ -37,8 +37,15 @@ test('/downloads: hero, чипы, шаги, карточки платформ и
   assert.match(html, /Удалённая поддержка/);
   assert.match(html, /href="#download"/);
   assert.match(html, /href="#how"/);
-  assert.match(html, /href="\/invite"/);
-  assert.match(html, /\/brand\/mascot-hero\.webp/);
+  // «Neon Emerald» (20.10): «Оператор» ведёт в программу оператора, герой — новый арт
+  assert.match(html, /href="\/operator"/);
+  assert.match(html, /\/brand\/hero-neon\.webp/);
+  assert.match(html, /\/brand\/hero-neon-square\.webp/);
+  // требования ОС на карточках — реальные (Electron 44), без «Windows 7» / «macOS 10.13»
+  for (const req of ['Для Windows 10 и 11 (x64)', 'Для macOS 13+ на Apple Silicon', 'Для большинства дистрибутивов (x86_64)']) {
+    assert.ok(html.includes(req), `нет строки требований «${req}»`);
+  }
+  assert.doesNotMatch(html, /Windows 7|10\.13/);
   for (const chip of ['Безопасное соединение', 'Быстрое подключение', 'Без установки']) {
     assert.ok(html.includes(chip), `нет чипа «${chip}»`);
   }

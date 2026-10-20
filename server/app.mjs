@@ -124,6 +124,12 @@ const BRAND_FILES = {
   'mascot-site.png': 'image/png',
   'mascot-site.webp': 'image/webp',
   'mascot-hero.webp': 'image/webp',
+  // «Neon Emerald» (20.10): герой страниц и аватар — новые имена, чтобы кэш
+  // браузеров (max-age 3600) не показывал прежний арт
+  'hero-neon.webp': 'image/webp',
+  'hero-neon-1100.webp': 'image/webp',
+  'hero-neon-square.webp': 'image/webp',
+  'enot-avatar.webp': 'image/webp',
   'mascot-app.png': 'image/png',
   // веб-шрифты (self-hosted, кириллица+латиница, переменные оси) — CSP
   // страниц разрешает шрифты только со своего происхождения (font-src 'self')

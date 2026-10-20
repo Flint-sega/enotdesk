@@ -17,11 +17,11 @@
   var css = document.createElement('style');
   css.textContent =
     '.enot-w-btn{position:fixed;right:20px;bottom:20px;width:56px;height:56px;border-radius:50%;' +
-    'border:none;background:#35E0C4;color:#05231D;cursor:pointer;z-index:2147483000;' +
+    'border:none;background:#1AEEB2;color:#022419;cursor:pointer;z-index:2147483000;' +
     'box-shadow:0 6px 24px rgba(0,0,0,.35);display:flex;align-items:center;justify-content:center;padding:0}' +
     '.enot-w-btn:hover{filter:brightness(1.08)}' +
     '.enot-w-frame{position:fixed;right:20px;bottom:88px;width:360px;height:520px;max-height:calc(100vh - 110px);' +
-    'border:none;border-radius:16px;box-shadow:0 12px 40px rgba(0,0,0,.4);z-index:2147483000;background:#070D17;' +
+    'border:none;border-radius:16px;box-shadow:0 12px 40px rgba(0,0,0,.4);z-index:2147483000;background:#020D0B;' +
     'color-scheme:dark;display:none}' +
     '.enot-w-frame.enot-open{display:block}' +
     '@media (max-width:480px){' +

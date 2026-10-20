@@ -20,52 +20,53 @@ function formatSize(bytes, locale) {
 // Стиль страниц сайта: только раскладка и специфичные блоки — токены, шрифты
 // и базовые примитивы (кнопки, поля, карточки, чипы) живут в /web/theme.css.
 const BASE_STYLE = `
-.wrap{max-width:1160px;margin:0 auto;padding:0 24px}
-.insecure-warn{display:flex;align-items:flex-start;gap:10px;background:var(--warn-dim);border-bottom:1px solid rgba(242,201,76,.35);color:#F2D49B;padding:12px 24px;font-size:14.5px;line-height:1.5}
+.wrap{max-width:1200px;margin:0 auto;padding:0 24px}
+html,body{overflow-x:clip}
+.insecure-warn{display:flex;align-items:flex-start;gap:10px;background:var(--warn-dim);border-bottom:1px solid var(--warn);color:var(--warn);padding:12px 24px;font-size:14.5px;line-height:1.5}
 .insecure-warn svg{width:18px;height:18px;flex:none;margin-top:2px;color:var(--warn)}
 .wrap{position:relative}
-/* ---- header: sticky glass ---- */
-.site-head{position:sticky;top:0;z-index:20;border-bottom:1px solid var(--line);background:var(--head-bg);-webkit-backdrop-filter:blur(14px);backdrop-filter:blur(14px)}
-.head-inner{display:flex;align-items:center;justify-content:space-between;gap:16px;min-height:72px}
-.brand{display:flex;align-items:center;gap:12px;color:var(--text);text-decoration:none}
-.brand img{width:38px;height:38px;padding:5px;border-radius:11px;background:var(--accent-dim);border:1px solid var(--accent-line)}
-.brand-name{font:600 17px/1 var(--font-display);letter-spacing:.01em}
-.brand-sep{width:1px;height:22px;background:var(--line-strong)}
-.brand-sub{color:var(--text-3);font-size:13.5px}
-.head-nav{display:flex;gap:10px}
-.nav-btn{display:inline-flex;align-items:center;gap:8px;padding:9px 15px;border:1px solid var(--line-strong);border-radius:10px;background:var(--inset-glass);color:var(--text);text-decoration:none;font-size:14px;font-weight:600;transition:border-color var(--t-fast) var(--ease),color var(--t-fast) var(--ease),background var(--t-fast) var(--ease)}
-.nav-btn svg{width:16px;height:16px;color:var(--text-3);transition:color var(--t-fast) var(--ease)}
+/* ---- header: floating pill over the canvas ---- */
+.site-head{position:sticky;top:0;z-index:20;padding:12px 0 0}
+.head-inner{display:flex;align-items:center;justify-content:space-between;gap:16px;min-height:68px;padding:0 10px 0 14px;border:1px solid var(--line-strong);border-radius:var(--r-pill);background:var(--head-bg);box-shadow:var(--top-hl),var(--shadow-card);-webkit-backdrop-filter:blur(14px);backdrop-filter:blur(14px)}
+.brand{display:flex;align-items:center;gap:12px;color:var(--text);text-decoration:none;min-width:0}
+.brand img{width:44px;height:44px;border-radius:50%;border:1px solid var(--accent-line);box-shadow:0 0 18px var(--accent-dim);background:var(--bg1)}
+.brand-name{font:800 21px/1 var(--font-display);letter-spacing:-.02em;white-space:nowrap}
+.brand-sep{width:1px;height:24px;background:var(--line-strong)}
+.brand-sub{color:var(--text-2);font-size:14px;white-space:nowrap}
+.head-nav{display:flex;align-items:center;gap:10px}
+.nav-btn{display:inline-flex;align-items:center;gap:8px;min-height:44px;padding:0 18px;border:1px solid var(--line-strong);border-radius:var(--r-pill);background:var(--ghost-bg);color:var(--text);text-decoration:none;font-size:14.5px;font-weight:700;white-space:nowrap;transition:border-color var(--t-fast) var(--ease),color var(--t-fast) var(--ease),background var(--t-fast) var(--ease)}
+.nav-btn svg{width:17px;height:17px;color:var(--text-2);transition:color var(--t-fast) var(--ease)}
 .nav-btn:hover{border-color:var(--accent-line);color:var(--accent);background:var(--accent-dim)}
 .nav-btn:hover svg{color:var(--accent)}
-/* ---- hero: ambient mint glow behind the copy ---- */
-.hero{position:relative;display:grid;grid-template-columns:1.05fr .95fr;gap:44px;align-items:center;padding-block:88px 64px}
-.hero::before{content:"";position:absolute;inset:-12% -6% 0;background:radial-gradient(60% 60% at 42% 46%,rgba(53,208,186,.13),transparent 70%);filter:blur(30px);pointer-events:none}
-.hero>*{position:relative;z-index:1}
-.eyebrow{display:flex;align-items:center;gap:10px;color:var(--accent);font:600 12px/1 var(--font-mono);letter-spacing:.22em;text-transform:uppercase;margin:0 0 18px}
-.eyebrow::before{content:"";width:26px;height:1px;background:var(--accent)}
-h1{font:700 clamp(38px,5.8vw,64px)/1.07 var(--font-display);letter-spacing:-.02em;margin:0 0 20px}
-.grad{background:var(--grad-text);-webkit-background-clip:text;background-clip:text;color:transparent}
-.lead{color:var(--text-2);font-size:clamp(16px,1.4vw,18px);max-width:50ch}
-.cta{display:flex;flex-wrap:wrap;gap:14px;margin:32px 0 0}
-.chips{display:flex;flex-wrap:wrap;gap:12px;list-style:none;margin:36px 0 0;padding:0}
-.chips li{display:inline-flex;align-items:center;gap:9px;color:var(--text-2);font-size:14px;border:1px solid var(--line-strong);border-radius:999px;padding:8px 16px;background:var(--inset-glass)}
-.chips svg{width:16px;height:16px;color:var(--accent);flex:none}
-.mascot{width:100%;max-width:640px;justify-self:end;filter:drop-shadow(0 24px 70px rgba(53,208,186,.16));-webkit-mask-image:linear-gradient(90deg,transparent,#000 7%,#000 93%,transparent),linear-gradient(180deg,transparent,#000 9%,#000 96%,transparent);-webkit-mask-composite:source-in;mask-image:linear-gradient(90deg,transparent,#000 7%,#000 93%,transparent),linear-gradient(180deg,transparent,#000 9%,#000 96%,transparent);mask-composite:intersect}
-@media (prefers-reduced-motion: no-preference){.mascot{animation:float 7s var(--ease) 2 alternate}}
-@keyframes float{from{transform:translateY(0)}to{transform:translateY(-12px)}}
+.head-nav .btn{min-height:44px;border-radius:var(--r-pill);padding:0 22px}
+/* ---- hero: art fills the right half, copy sits on the dark side ---- */
+.hero{position:relative;display:grid;grid-template-columns:minmax(0,1fr) minmax(0,1fr);align-items:center;min-height:clamp(540px,44vw,700px);padding-block:56px 24px}
+.hero-art{position:absolute;top:0;right:calc(50% - 50vw);width:min(1500px,90vw);aspect-ratio:2/1;z-index:0;pointer-events:none}
+.hero-art img{display:block;width:100%;height:100%;object-fit:cover;object-position:50% 50%;-webkit-mask-image:linear-gradient(90deg,transparent 0,#000 38%),linear-gradient(180deg,transparent 0,#000 8%,#000 80%,transparent 100%);-webkit-mask-composite:source-in;mask-image:linear-gradient(90deg,transparent 0,#000 38%),linear-gradient(180deg,transparent 0,#000 8%,#000 80%,transparent 100%);mask-composite:intersect}
+.hero-copy{position:relative;z-index:1}
+.hero .eyebrow{margin:0 0 22px}
+h1{font:800 clamp(46px,7vw,96px)/1 var(--font-display);letter-spacing:-.045em;margin:0 0 22px}
+.lead{color:var(--text-2);font-size:clamp(16px,1.45vw,19px);max-width:46ch}
+.cta{display:flex;flex-wrap:wrap;gap:14px;margin:34px 0 0}
+.cta .btn{min-height:56px;padding:0 30px;border-radius:var(--r-md);font-size:16px}
+.chips{display:flex;flex-wrap:wrap;gap:12px;list-style:none;margin:30px 0 0;padding:0;max-width:560px}
+.chips li{display:inline-flex;align-items:center;gap:10px;color:var(--text);font-size:14.5px;font-weight:500;border:1px solid var(--line-strong);border-radius:var(--r-md);padding:12px 18px;background:var(--ghost-bg)}
+.chips svg{width:18px;height:18px;color:var(--accent);flex:none}
 /* ---- sections ---- */
-.section{padding-block:64px}
-.section h2{font:600 clamp(22px,2.6vw,30px)/1.2 var(--font-display);letter-spacing:-.01em;margin:0 0 24px}
-.cards{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:18px}
-/* ---- cards: glass with top highlight, mint glow on hover and featured ---- */
+.section{padding-block:64px;scroll-margin-top:84px}
+.section h2{font:800 clamp(26px,3.2vw,40px)/1.15 var(--font-display);letter-spacing:-.025em;margin:0 0 28px}
+.cards{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:20px}
+/* ---- platform cards: dark slab, thin emerald border, glow on hover ---- */
 .card{display:flex;flex-direction:column;gap:10px;padding:26px;transition:border-color var(--t-med) var(--ease),box-shadow var(--t-med) var(--ease)}
 @media (prefers-reduced-motion: no-preference){.card{transition:transform var(--t-med) var(--ease),border-color var(--t-med) var(--ease),box-shadow var(--t-med) var(--ease)}.card:hover{transform:translateY(-3px)}}
 .card:hover{border-color:var(--accent-line);box-shadow:var(--top-hl),var(--glow),var(--shadow-card)}
-.card.active{border-color:var(--accent-line);box-shadow:var(--top-hl),var(--glow),var(--shadow-card)}
-.card-head{display:flex;align-items:center;gap:13px;margin-bottom:4px}
-.os-icon{display:grid;place-items:center;width:46px;height:46px;border-radius:12px;background:var(--accent-dim);border:1px solid var(--accent-line);color:var(--accent);flex:none}
-.os-icon svg{width:22px;height:22px}
-.card h3{font-size:18px}
+.card.active{border-color:var(--accent-line)}
+.card-head{display:flex;align-items:center;gap:16px;margin-bottom:6px}
+.card-head>div{min-width:0;flex:1}
+.card-head .req{color:var(--text-2);font-size:14px;margin-top:3px}
+.os-icon{display:grid;place-items:center;width:62px;height:62px;border-radius:var(--r-md);background:var(--bg2);border:1px solid var(--line-strong);color:var(--accent);flex:none;box-shadow:inset 0 0 18px var(--accent-dim)}
+.os-icon svg{width:30px;height:30px;filter:drop-shadow(0 0 8px var(--accent-dim))}
+.card h3{font-size:21px;font-weight:700;letter-spacing:-.01em}
 .file{margin:0;font:500 13.5px/1.5 var(--font-mono);word-break:break-all;color:var(--text)}
 .meta{margin:0;color:var(--text-3);font-size:13px}
 .card .btn{margin-top:auto;width:100%}
@@ -75,9 +76,9 @@ h1{font:700 clamp(38px,5.8vw,64px)/1.07 var(--font-display);letter-spacing:-.02e
 .soon{display:block;text-align:center;margin-top:auto;padding:13px 16px;border:1px dashed var(--line-strong);border-radius:12px;color:var(--text-3);font-size:14.5px}
 /* ---- steps: four glass cards ---- */
 .steps{list-style:none;margin:0;padding:0;display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:18px}
-.step{padding:24px;border-radius:var(--r-lg);background:var(--card);border:1px solid var(--line);box-shadow:var(--top-hl),var(--shadow-card);-webkit-backdrop-filter:blur(12px);backdrop-filter:blur(12px)}
+.step{padding:24px;border-radius:var(--r-lg);background:var(--card);border:1px solid var(--line-strong);box-shadow:var(--top-hl),var(--shadow-card)}
 .step-head{display:flex;align-items:center;justify-content:space-between;margin-bottom:18px}
-.step-num{display:grid;place-items:center;width:34px;height:34px;border-radius:10px;border:1px solid var(--accent-line);background:var(--accent-dim);color:var(--accent);font:600 15px/1 var(--font-mono)}
+.step-num{display:grid;place-items:center;width:36px;height:36px;border-radius:var(--r-sm);border:1px solid var(--accent-line);background:var(--accent-dim);color:var(--accent);font:600 15px/1 var(--font-mono)}
 .step-head svg{width:21px;height:21px;color:var(--accent)}
 .step h3{font-size:16px;margin:0 0 8px}
 .step p{color:var(--text-2);font-size:14px}
@@ -89,29 +90,44 @@ h1{font:700 clamp(38px,5.8vw,64px)/1.07 var(--font-display);letter-spacing:-.02e
 .foot-love svg{width:15px;height:15px;color:var(--accent)}
 /* ---- invite: one glass card on the ambient field ---- */
 .invite-page{display:flex;justify-content:center;padding:80px 24px 0}
-.invite-card{display:flex;flex-direction:column;align-items:flex-start;gap:14px;padding:40px;max-width:600px;width:100%;border-radius:var(--r-lg);background:var(--card);border:1px solid var(--line);box-shadow:var(--top-hl),var(--shadow-card),var(--glow-soft);-webkit-backdrop-filter:blur(12px);backdrop-filter:blur(12px)}
+.invite-card{display:flex;flex-direction:column;align-items:flex-start;gap:14px;padding:40px;max-width:600px;width:100%;border-radius:var(--r-lg);background:var(--card);border:1px solid var(--line-strong);box-shadow:var(--top-hl),var(--shadow-card),var(--glow-soft)}
+.invite-card .avatar{width:96px;height:96px;margin:-6px 0 2px;filter:drop-shadow(0 0 22px var(--accent-dim))}
+#invite-accept{width:100%}
+#invite-accept h2{font-size:19px;margin:6px 0 12px}
+#invite-accept-form{display:flex;flex-direction:column;gap:8px;width:100%}
+#invite-accept-form input{width:100%;margin-bottom:6px}
+#invite-accept-form .btn{margin-top:8px;align-self:flex-start}
 .invite-card h1{font-size:clamp(24px,3.6vw,36px)}
 .invite-card .lead{max-width:56ch}
 .invite-card .cta{margin-top:6px}
 .note{color:var(--text-3);font-size:14px}
+@media (max-width:1080px){
+.brand-sub,.brand-sep{display:none}
+}
 @media (max-width:900px){
-.hero{grid-template-columns:1fr;padding-block:56px 44px}
-.mascot{justify-self:center;max-width:520px}
+.hero{grid-template-columns:1fr;min-height:0;padding-block:24px 36px}
+.hero-art{position:relative;inset:auto;width:auto;margin:0 -24px 8px;order:-1}
+.hero-art img{height:auto;aspect-ratio:1/1;max-height:520px;object-position:50% 40%;-webkit-mask-image:linear-gradient(180deg,#000 70%,transparent);mask-image:linear-gradient(180deg,#000 70%,transparent)}
 .cards,.steps{grid-template-columns:repeat(2,minmax(0,1fr))}
 }
 @media (max-width:640px){
-.head-inner{min-height:64px}
-.brand-sub,.brand-sep{display:none}
-.nav-btn{padding:9px 13px;font-size:13.5px}
+.site-head{padding-top:8px}
+.head-inner{min-height:60px;padding:0 6px 0 8px}
+.brand img{width:38px;height:38px}
+.brand-name{font-size:18px}
+.nav-btn{padding:0 13px;font-size:13.5px}
+.nav-btn span{display:none}
 .cards,.steps{grid-template-columns:1fr}
 .section{padding-block:44px}
 .invite-page{padding:48px 20px 0}
 .invite-card{padding:26px}
 .card{padding:22px}
+.cta .btn{flex:1 1 100%}
+.eyebrow{letter-spacing:.14em}
 }
 @media (max-width:400px){
-.nav-btn span{display:none}
-.hero{padding-block:44px 36px}
+.head-nav .btn span{display:none}
+.head-nav .btn{padding:0 14px}
 .card,.step{padding:18px}
 }
 `.trim();
@@ -132,6 +148,8 @@ const ICONS = {
   help: '<circle cx="12" cy="12" r="10"/><path d="M9.1 9a3 3 0 0 1 5.8 1c0 2-3 2.2-3 3.5"/><line x1="12" y1="17" x2="12.01" y2="17"/>',
   chat: '<path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/>',
   link: '<path d="M10 13a5 5 0 0 0 7.5.5l3-3a5 5 0 0 0-7-7.1l-1.7 1.7"/><path d="M14 11a5 5 0 0 0-7.5-.5l-3 3a5 5 0 0 0 7 7.1l1.7-1.7"/>',
+  headset: '<path d="M4 14v-2a8 8 0 0 1 16 0v2"/><rect x="3" y="13" width="4" height="7" rx="1.5"/><rect x="17" y="13" width="4" height="7" rx="1.5"/><path d="M19 20a3 3 0 0 1-3 2h-2"/>',
+  monitor: '<rect x="3" y="4" width="18" height="13" rx="2"/><line x1="8" y1="21" x2="16" y2="21"/><line x1="12" y1="17" x2="12" y2="21"/><circle cx="12" cy="10.5" r="2"/>',
   playCircle: '<circle cx="12" cy="12" r="10"/><polygon points="10 8 16 12 10 16 10 8"/>',
   idCard: '<rect x="2" y="5" width="20" height="14" rx="2"/><circle cx="8.5" cy="11" r="1.8"/><path d="M5.6 15.6c.7-1.3 1.7-2.1 2.9-2.1s2.2.8 2.9 2.1"/><line x1="14.5" y1="10" x2="19" y2="10"/><line x1="14.5" y1="13.5" x2="19" y2="13.5"/>',
   checkCircle: '<circle cx="12" cy="12" r="10"/><polyline points="8 12.4 11 15.4 16 9.6"/>',
@@ -182,11 +200,12 @@ function page(res, title, bodyHtml, locale) {
 function siteHeader(locale) {
   return `<header class="site-head"><div class="wrap head-inner">` +
     `<a class="brand" href="/downloads"><img src="/brand/enot-brand-72.png" alt="" width="40" height="40">` +
-    `<span class="brand-name">EnotDesk</span><span class="brand-sep" aria-hidden="true"></span>` +
+    `<span class="brand-name">Enot<span class="grad">Desk</span></span><span class="brand-sep" aria-hidden="true"></span>` +
     `<span class="brand-sub">${esc(t('app.subtitle', {}, locale))}</span></a>` +
     `<nav class="head-nav" aria-label="${esc(t('server.nav.ariaMain', {}, locale))}">` +
-    `<a class="nav-btn" href="/downloads#download" aria-label="${esc(t('server.nav.ariaHelp', {}, locale))}">${icon('help')}<span>${esc(t('server.nav.help', {}, locale))}</span></a>` +
-    `<a class="nav-btn" href="/invite" aria-label="${esc(t('server.nav.ariaOperator', {}, locale))}">${icon('chat')}<span>${esc(t('server.nav.operator', {}, locale))}</span></a>` +
+    `<a class="nav-btn" href="/downloads#how" aria-label="${esc(t('server.nav.ariaHelp', {}, locale))}">${icon('headset')}<span>${esc(t('server.nav.help', {}, locale))}</span></a>` +
+    `<a class="nav-btn" href="/operator" aria-label="${esc(t('server.nav.ariaOperator', {}, locale))}">${icon('monitor')}<span>${esc(t('server.nav.operator', {}, locale))}</span></a>` +
+    `<a class="btn" href="/downloads#download">${icon('download')}<span>${esc(t('server.download', {}, locale))}</span></a>` +
     `</nav></div></header>`;
 }
 
@@ -213,7 +232,8 @@ function fileKind(name) {
 }
 
 function platformCard(platform, files, locale) {
-  const head = `<div class="card-head"><span class="os-icon">${icon(platform.icon)}</span><h3>${esc(platform.label)}</h3></div>`;
+  const head = `<div class="card-head"><span class="os-icon">${icon(platform.icon)}</span>` +
+    `<div><h3>${esc(platform.label)}</h3><p class="req">${esc(t(`server.req.${platform.key}`, {}, locale))}</p></div></div>`;
   if (!files.length) {
     return `<article class="card rise">${head}<p class="meta">${esc(t('server.notReady', {}, locale))}</p><span class="soon">${esc(t('server.soon', {}, locale))}</span></article>`;
   }
@@ -248,7 +268,8 @@ function downloadsHtml(items, version, locale, insecure = false) {
     `<ul class="chips"><li>${icon('shield')}<span>${esc(t('server.chip.secure', {}, locale))}</span></li>` +
     `<li>${icon('bolt')}<span>${esc(t('server.chip.fast', {}, locale))}</span></li>` +
     `<li>${icon('lock')}<span>${esc(t('server.chip.noInstall', {}, locale))}</span></li></ul>` +
-    `</div><img class="mascot" src="/brand/mascot-hero.webp" alt="${esc(t('server.mascotAlt', {}, locale))}" width="736" height="372"></section>` +
+    `</div><picture class="hero-art"><source media="(max-width: 900px)" srcset="/brand/hero-neon-square.webp">` +
+    `<img src="/brand/hero-neon.webp" srcset="/brand/hero-neon-1100.webp 1100w, /brand/hero-neon.webp 1774w" sizes="(max-width: 900px) 100vw, 90vw" alt="${esc(t('server.mascotAlt', {}, locale))}" width="1774" height="887"></picture></section>` +
     `<section id="download" class="wrap section"><h2>${esc(t('server.downloadFor', {}, locale))}</h2><div class="cards">${cards}</div></section>` +
     `<section id="how" class="wrap section"><h2>${esc(t('server.how', {}, locale))}</h2><ol class="steps">${stepItems}</ol></section></main>` +
     siteFooter(version, locale);
@@ -260,6 +281,7 @@ function inviteHtml(version, locale, insecure = false) {
   // прежний путь «откройте приложение».
   return (insecure ? insecureBanner(locale) : '') + siteHeader(locale) +
     `<main class="wrap invite-page"><section class="invite-card rise">` +
+    `<img class="avatar" src="/brand/enot-avatar.webp" alt="" width="96" height="96">` +
     `<p class="eyebrow">${esc(t('server.invite.eyebrow', {}, locale))}</p>` +
     `<h1>${esc(t('server.invite.title', {}, locale))}</h1>` +
     `<p class="lead" id="invite-lead">${esc(t('server.invite.lead', {}, locale))}</p>` +

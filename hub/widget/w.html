@@ -5,7 +5,7 @@
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>EnotDesk</title>
 <style>
-:root{color-scheme:dark;--bg:#070D17;--panel:#0F1A2C;--line:#1C2C44;--text:#EAF2FF;--muted:#8FA3BF;--accent:#35E0C4;--danger:#FF7A7A;--in:#14243C;--out:#0E2E29}
+:root{color-scheme:dark;--bg:#020D0B;--panel:#06150F;--line:#0A1D16;--text:#EAF6F1;--muted:#A6C0B7;--accent:#1AEEB2;--danger:#FF8A80;--in:#08180F;--out:#06281F}
 *{box-sizing:border-box}
 html,body{height:100%}
 body{margin:0;display:flex;flex-direction:column;background:var(--bg);color:var(--text);font:15px/1.55 -apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,"Helvetica Neue",Arial,sans-serif}
@@ -14,25 +14,25 @@ body{margin:0;display:flex;flex-direction:column;background:var(--bg);color:var(
 .w-dot{width:8px;height:8px;border-radius:50%;background:var(--muted);flex:none}
 .w-dot.online{background:var(--accent)}
 .w-dot.away{background:#F2C94C}
-.w-dot.connecting{background:#7CB9FF}
+.w-dot.connecting{background:#6CC8FF}
 #w-msgs{flex:1;overflow-y:auto;padding:14px;display:flex;flex-direction:column;gap:8px}
 .bubble{max-width:86%;padding:9px 12px;border-radius:12px;border:1px solid var(--line);white-space:pre-wrap;word-break:break-word}
-.bubble.contact{align-self:flex-end;background:var(--out);border-color:#1F4A42}
+.bubble.contact{align-self:flex-end;background:var(--out);border-color:#0F3D2F}
 .bubble.agent{align-self:flex-start;background:var(--in)}
 .bubble.system{align-self:center;background:transparent;color:var(--muted);font-size:13px;max-width:100%}
 .bubble.card{align-self:flex-start;background:var(--in)}
 .w-card{display:flex;flex-direction:column;gap:8px}
 .w-card .w-btn{text-align:center;text-decoration:none}
-.w-card .w-btn.ghost{color:var(--text);border-color:#2B3D5E}
+.w-card .w-btn.ghost{color:var(--text);border-color:#1E4A3C}
 #w-typing{color:var(--muted);font-size:13px;padding:0 14px 6px;flex:none}
 .w-form{display:flex;gap:8px;padding:10px;border-top:1px solid var(--line);flex:none}
 .w-form input,.w-form textarea{background:var(--panel);color:var(--text);border:1px solid var(--line);border-radius:10px;padding:10px 12px;font:inherit;min-width:0}
 input:focus,textarea:focus,button:focus-visible{outline:1px solid var(--accent)}
 .w-form input{flex:1}
 button{font:inherit}
-.w-btn{background:var(--accent);border:1px solid var(--accent);color:#05231D;font-weight:700;padding:10px 16px;border-radius:10px;cursor:pointer}
+.w-btn{background:var(--accent);border:1px solid var(--accent);color:#022419;font-weight:700;padding:10px 16px;border-radius:10px;cursor:pointer}
 .w-btn:disabled{opacity:.55;cursor:default}
-.w-btn.ghost{background:transparent;color:var(--text);border-color:#2B3D5E}
+.w-btn.ghost{background:transparent;color:var(--text);border-color:#1E4A3C}
 .w-panel{display:flex;flex-direction:column;gap:10px;padding:16px 14px;overflow-y:auto}
 .w-panel .lead{color:var(--muted);margin:0}
 .w-panel input,.w-panel textarea{width:100%;background:var(--panel);color:var(--text);border:1px solid var(--line);border-radius:10px;padding:10px 12px;font:inherit}

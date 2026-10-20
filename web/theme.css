@@ -1,19 +1,18 @@
 /* ============================================================
-   EnotDesk · дизайн-система веб-поверхностей «Deep Mint»
-   Один файл на три страницы: сайт (/downloads, /invite), оператор
-   (/operator), консоль хаба (/hub). Токены + шрифты + базовые
-   примитивы (.btn/.card/.chip/.badge, поля, .aurora-bg); раскладка
-   каждой поверхности — в её собственном <style>.
-   Язык референса — лендинг site/index.html: тёмная база #050A13,
-   мятный акцент #35D0BA, амбиент-фон в три слоя (свечения + точечная
-   сетка + зерно), стеклянные панели, свечение по иерархии, моно-метки.
-   Шрифты самохостятся с /brand/ (CSP font-src 'self', кириллица +
-   латиница, переменные оси). Onest в стеке дисплея — предпочтение из
-   референса: пока файла нет в assets, поверхности честно рендерят
-   Inter (тот же геометрический голос: вес 600–700, плотный трекинг).
-   Hallmark · macrostructure: preserved-IA · tone: atmospheric-technical
-   * anchor hue: mint 168 (brand #35D0BA) · axes: dark paper / rounded-sans display / cool accent
-   * depth: layered glow bg + dot grid + grain + glass + glow hierarchy
+   EnotDesk · дизайн-система веб-поверхностей «Neon Emerald»
+   Один файл на поверхности сервера: сайт (/downloads, /invite), оператор
+   (/operator), консоль хаба (/hub). Токены + шрифты + базовые примитивы
+   (.btn/.card/.chip/.badge/.eyebrow, поля, .aurora-bg); раскладка каждой
+   поверхности — в её собственном <style>. Витрина site/index.html и
+   Electron-клиент держат копию тех же значений (у них нет /web/theme.css).
+   Язык — макет владельца 20.10: почти чёрный фон с зелёным подтоном
+   #020D0B, неоновый изумруд #1AEEB2, градиент «Desk» изумруд → циан,
+   кнопки-пилюли со свечением, тёмные карточки с тонкой зелёной рамкой.
+   Шрифты самохостятся с /brand/ (CSP font-src 'self').
+   Hallmark · genre: atmospheric · macrostructure: preserved-IA
+   * theme: studied-DNA (source: owner mockup, image) · paper #020D0B · accent #1AEEB2
+   * display: Inter 800 · body: Inter 400 · mono: JetBrains Mono
+   * deviation: gradient text on the "Desk" wordmark is brand, kept by owner request
    ============================================================ */
 
 /* ---- шрифты (self-hosted, font-display swap) ---- */
@@ -71,69 +70,74 @@
   color-scheme: dark;
 
   /* поверхности */
-  --bg0: #050A13;            /* фон страницы */
-  --bg1: #0B1424;            /* панель */
-  --bg2: #0F1B30;            /* приподнятое (hover, вложенное) */
-  --bg-inset: #0A1526;       /* утопленное (логи, история чата) */
-  --field-bg: #0F1D36;       /* поле ввода: явно светлее фона страницы */
-  --field-line: rgba(73, 205, 187, .35);  /* мятный подтон рамки — не серый */
-  --field-glow: 0 0 0 1px rgba(53, 208, 186, .14), 0 0 18px rgba(53, 208, 186, .10);
-  --field-glow-hover: 0 0 0 1px rgba(53, 208, 186, .24), 0 0 24px rgba(53, 208, 186, .17);
-  --field-glow-focus: 0 0 0 3px rgba(53, 208, 186, .18), 0 0 28px rgba(53, 208, 186, .32);
-  --card: rgba(15, 27, 48, .55);   /* витринное стекло */
-  --panel: rgba(13, 23, 41, .72);  /* рабочее стекло: плотнее — читаемость инструментов */
-  --inset-glass: rgba(7, 15, 29, .5);
-  --head-bg: rgba(5, 10, 19, .72);
+  --bg0: #020D0B;            /* фон страницы */
+  --bg1: #06150F;            /* панель */
+  --bg2: #0A1D16;            /* приподнятое (hover, вложенное) */
+  --bg-inset: #041210;       /* утопленное (логи, история чата) */
+  --field-bg: #071A14;       /* поле ввода: светлее фона страницы */
+  --field-line: rgba(46, 242, 181, .26);
+  --field-glow: 0 0 0 1px rgba(26, 238, 178, .10), 0 0 18px rgba(26, 238, 178, .07);
+  --field-glow-hover: 0 0 0 1px rgba(26, 238, 178, .2), 0 0 24px rgba(26, 238, 178, .12);
+  --field-glow-focus: 0 0 0 3px rgba(26, 238, 178, .18), 0 0 28px rgba(26, 238, 178, .28);
+  --card: rgba(6, 22, 17, .72);    /* карточка витрины */
+  --panel: rgba(5, 19, 15, .82);   /* рабочая панель: плотнее */
+  --inset-glass: rgba(3, 14, 11, .6);
+  --head-bg: rgba(3, 14, 11, .78);
+  --ghost-bg: rgba(4, 17, 13, .7);
 
   /* линии */
-  --line: rgba(154, 182, 220, .13);
-  --line-strong: rgba(154, 182, 220, .24);
+  --line: rgba(46, 242, 181, .13);
+  --line-strong: rgba(46, 242, 181, .26);
 
   /* текст */
-  --text: #E9F1FD;
-  --text-2: #A9BBD6;
-  --text-3: #6D81A6;
+  --text: #EAF6F1;
+  --text-2: #A6C0B7;
+  --text-3: #6F8C82;
+  --placeholder: #7E9B91;
+  --label: #C6DAD3;
 
   /* акцент бренда + служебные */
-  --accent: #35D0BA;
-  --accent-bright: #41EBCF;
-  --accent-2: #2BB8D4;
-  --accent-ink: #05231D;
-  --accent-dim: rgba(53, 208, 186, .12);
-  --accent-line: rgba(53, 208, 186, .42);
+  --accent: #1AEEB2;
+  --accent-bright: #4CF6C6;
+  --accent-2: #2ADBFF;
+  --accent-ink: #022419;
+  --accent-dim: rgba(26, 238, 178, .1);
+  --accent-line: rgba(26, 238, 178, .42);
   --accent-strong: var(--accent-bright); /* старое имя — совместимость */
-  --info: #7CB9FF;
-  --info-dim: rgba(124, 185, 255, .12);
+  --info: #6CC8FF;
+  --info-dim: rgba(108, 200, 255, .12);
   --warn: #F2C94C;
   --warn-dim: rgba(242, 201, 76, .12);
-  --danger: #FF8080;
-  --danger-dim: rgba(255, 128, 128, .1);
+  --danger: #FF8A80;
+  --danger-dim: rgba(255, 138, 128, .1);
+  --danger-line: rgba(255, 138, 128, .5);
+  --selection: rgba(26, 238, 178, .28);
 
-  /* фирменные градиенты */
-  --btn-grad: linear-gradient(135deg, var(--accent-bright), var(--accent) 46%, var(--accent-2));
-  --grad-text: linear-gradient(96deg, var(--accent-bright) 8%, var(--info) 88%);
+  /* фирменные градиенты: кнопка и слово «Desk» */
+  --btn-grad: linear-gradient(135deg, var(--accent-bright), var(--accent) 50%, #17D8C4);
+  --grad-text: linear-gradient(96deg, #09EFB8 10%, var(--accent-2) 92%);
 
   /* свечение по иерархии: панель → hover → герой */
-  --shadow-card: 0 18px 50px rgba(2, 6, 14, .45);
-  --glow: 0 0 0 1px rgba(53, 208, 186, .2), 0 14px 44px rgba(53, 208, 186, .14);
-  --glow-soft: 0 0 90px rgba(53, 208, 186, .06);
+  --shadow-card: 0 18px 50px rgba(0, 6, 4, .55);
+  --glow: 0 0 0 1px rgba(26, 238, 178, .22), 0 14px 44px rgba(26, 238, 178, .14);
+  --glow-soft: 0 0 90px rgba(26, 238, 178, .07);
   --top-hl: inset 0 1px 0 rgba(255, 255, 255, .05);
-  --btn-shadow: inset 0 1px 0 rgba(255, 255, 255, .25), 0 10px 30px rgba(53, 208, 186, .26);
-  --btn-shadow-hover: inset 0 1px 0 rgba(255, 255, 255, .25), 0 14px 40px rgba(53, 208, 186, .36);
+  --btn-shadow: inset 0 1px 0 rgba(255, 255, 255, .3), 0 0 0 1px rgba(26, 238, 178, .35), 0 10px 34px rgba(26, 238, 178, .32);
+  --btn-shadow-hover: inset 0 1px 0 rgba(255, 255, 255, .3), 0 0 0 1px rgba(26, 238, 178, .5), 0 14px 44px rgba(26, 238, 178, .45);
   --btn-shadow-active: inset 0 1px 0 rgba(255, 255, 255, .2);
   /* старые имена — совместимость */
   --glow-accent: var(--glow);
   --highlight-top: var(--top-hl);
 
-  /* амбиент: свечения + точечная сетка + зерно */
-  --dot: rgba(157, 190, 224, .16);
+  /* амбиент: два изумрудных свечения + зерно (без сетки) */
+  --dot: rgba(46, 242, 181, .07);
   --bg-glows:
-    radial-gradient(1000px 620px at 12% -10%, rgba(53, 208, 186, .1), transparent 60%),
-    radial-gradient(900px 600px at 108% 110%, rgba(124, 155, 255, .08), transparent 60%);
-  --grain: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='180' height='180'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.8' numOctaves='2' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)' opacity='0.05'/%3E%3C/svg%3E");
+    radial-gradient(1100px 680px at 78% -12%, rgba(26, 238, 178, .12), transparent 62%),
+    radial-gradient(900px 620px at -8% 108%, rgba(26, 238, 178, .07), transparent 60%);
+  --grain: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='180' height='180'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.8' numOctaves='2' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)' opacity='0.04'/%3E%3C/svg%3E");
 
   /* шрифты */
-  --font-display: 'Onest', 'Inter', -apple-system, 'Segoe UI', sans-serif;
+  --font-display: 'Inter', -apple-system, 'Segoe UI', sans-serif;
   --font-body: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
   --font-mono: 'JetBrains Mono', ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
 
@@ -141,8 +145,8 @@
   --s1: 4px; --s2: 8px; --s3: 12px; --s4: 16px;
   --s5: 24px; --s6: 32px; --s7: 48px; --s8: 72px;
 
-  /* радиусы */
-  --r-sm: 10px; --r-md: 14px; --r-lg: 18px;
+  /* радиусы: пилюли кнопок и карточки как на макете */
+  --r-sm: 12px; --r-md: 16px; --r-lg: 20px; --r-pill: 999px;
 
   /* движение */
   --t-fast: 140ms;
@@ -170,7 +174,7 @@ a:focus-visible, button:focus-visible, input:focus-visible, select:focus-visible
   outline-offset: 2px;
   border-radius: 6px;
 }
-::selection { background: rgba(53, 208, 186, .28); }
+::selection { background: var(--selection); }
 .hidden { display: none !important; }
 
 /* ---- амбиентный фон: три слоя глубины ----
@@ -193,16 +197,45 @@ a:focus-visible, button:focus-visible, input:focus-visible, select:focus-visible
   pointer-events: none;
   background-image: radial-gradient(var(--dot) 1px, transparent 1.4px);
   background-size: 28px 28px;
-  -webkit-mask-image: linear-gradient(to bottom, #000, transparent 72%);
-  mask-image: linear-gradient(to bottom, #000, transparent 72%);
+  -webkit-mask-image: linear-gradient(to bottom, #000, transparent 40%);
+  mask-image: linear-gradient(to bottom, #000, transparent 40%);
 }
 .aurora-bg > * { position: relative; z-index: 1; }
 
 /* ---- типографические примитивы ---- */
 .display {
   font-family: var(--font-display);
-  font-weight: 600;
-  letter-spacing: -.01em;
+  font-weight: 800;
+  letter-spacing: -.035em;
+}
+/* градиентное слово бренда: «Enot<span class="grad">Desk</span>» */
+.grad {
+  background: var(--grad-text);
+  -webkit-background-clip: text;
+  background-clip: text;
+  color: transparent;
+}
+/* eyebrow: капс с разрядкой, светящаяся точка и линия слева (макет) */
+.eyebrow {
+  display: inline-flex;
+  align-items: center;
+  gap: 10px;
+  padding: 6px 14px 6px 12px;
+  border: 1px solid var(--line-strong);
+  border-radius: var(--r-pill);
+  background: var(--inset-glass);
+  color: var(--text);
+  font: 700 12px/1.2 var(--font-body);
+  letter-spacing: .26em;
+  text-transform: uppercase;
+}
+.eyebrow::before {
+  content: "";
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: var(--accent);
+  box-shadow: 0 0 10px var(--accent);
 }
 .lead { color: var(--text-2); }
 
@@ -216,11 +249,11 @@ a:focus-visible, button:focus-visible, input:focus-visible, select:focus-visible
   background: var(--btn-grad);
   color: var(--accent-ink);
   border: 1px solid transparent;
-  font: 600 15px/1.2 var(--font-body);
+  font: 700 15px/1.2 var(--font-body);
   text-decoration: none;
-  min-height: 44px;
-  padding: 12px 22px;
-  border-radius: 13px;
+  min-height: 46px;
+  padding: 12px 24px;
+  border-radius: var(--r-md);
   cursor: pointer;
   box-shadow: var(--btn-shadow);
   transition: transform var(--t-fast) var(--ease), box-shadow var(--t-med) var(--ease),
@@ -232,9 +265,9 @@ a:focus-visible, button:focus-visible, input:focus-visible, select:focus-visible
 .btn:active { transform: translateY(0); filter: none; box-shadow: var(--btn-shadow-active); }
 .btn:disabled { opacity: .5; cursor: default; transform: none; filter: none; box-shadow: none; }
 .btn.ghost {
-  background: rgba(11, 20, 36, .6);
+  background: var(--ghost-bg);
   color: var(--text);
-  border-color: rgba(154, 182, 220, .32);
+  border-color: var(--line-strong);
   box-shadow: var(--top-hl);
 }
 .btn.ghost:hover {
@@ -248,7 +281,7 @@ a:focus-visible, button:focus-visible, input:focus-visible, select:focus-visible
 .btn.danger {
   background: transparent;
   color: var(--danger);
-  border-color: rgba(255, 128, 128, .5);
+  border-color: var(--danger-line);
   box-shadow: none;
 }
 .btn.danger:hover {
@@ -258,7 +291,7 @@ a:focus-visible, button:focus-visible, input:focus-visible, select:focus-visible
   transform: none;
   filter: none;
 }
-.btn.sm { min-height: 36px; padding: 7px 14px; font-size: 13.5px; border-radius: 10px; }
+.btn.sm { min-height: 36px; padding: 7px 14px; font-size: 13.5px; border-radius: var(--r-sm); }
 .btn.wide { width: 100%; }
 
 /* тач-цели: на coarse-указателях даже компактные кнопки ≥44 */
@@ -271,7 +304,7 @@ a:focus-visible, button:focus-visible, input:focus-visible, select:focus-visible
    а не включение только по фокусу. Тонкая мятная кромка + мягкое внешнее
    свечение в покое; hover усиливает; focus — яркое гало + рамка акцента. ---- */
 input, select, textarea {
-  background: linear-gradient(180deg, rgba(53, 208, 186, .05), rgba(53, 208, 186, 0) 58%), var(--field-bg);
+  background: var(--field-bg);
   border: 1px solid var(--field-line);
   border-radius: var(--r-sm);
   color: var(--text);
@@ -280,7 +313,7 @@ input, select, textarea {
   padding: 11px 13px;
   box-shadow: inset 0 1px 0 rgba(255, 255, 255, .05),
     var(--field-glow),
-    0 4px 14px rgba(2, 6, 14, .35);
+    0 4px 14px rgba(0, 6, 4, .4);
   transition: border-color var(--t-fast) var(--ease), box-shadow var(--t-med) var(--ease);
 }
 input[type="checkbox"] {
@@ -292,29 +325,27 @@ input[type="checkbox"] {
   box-shadow: none;
   accent-color: var(--accent);
 }
-input::placeholder, textarea::placeholder { color: #8CA0C2; }
+input::placeholder, textarea::placeholder { color: var(--placeholder); }
 input:hover, select:hover, textarea:hover {
   border-color: var(--accent-line);
   box-shadow: inset 0 1px 0 rgba(255, 255, 255, .06),
     var(--field-glow-hover),
-    0 4px 14px rgba(2, 6, 14, .35);
+    0 4px 14px rgba(0, 6, 4, .4);
 }
 input:focus, select:focus, textarea:focus {
   outline: none;
   border-color: var(--accent-bright);
-  background: linear-gradient(180deg, rgba(53, 208, 186, .08), rgba(53, 208, 186, 0) 58%), var(--field-bg);
+  background: var(--field-bg);
   box-shadow: var(--field-glow-focus), inset 0 1px 0 rgba(255, 255, 255, .06);
 }
-label { color: #C9D6EC; font-size: 13.5px; font-weight: 600; }
+label { color: var(--label); font-size: 13.5px; font-weight: 600; }
 
-/* ---- карточка: стекло с верхней подсветкой и глубиной ---- */
+/* ---- карточка: тёмная плита с зелёной рамкой и глубиной ---- */
 .card {
   background: var(--card);
-  border: 1px solid var(--line);
+  border: 1px solid var(--line-strong);
   border-radius: var(--r-lg);
   box-shadow: var(--top-hl), var(--shadow-card);
-  -webkit-backdrop-filter: blur(12px);
-  backdrop-filter: blur(12px);
 }
 
 /* ---- чипы/бейджи (моно-метки, статус — модификатором) ---- */
@@ -331,10 +362,11 @@ label { color: #C9D6EC; font-size: 13.5px; font-weight: 600; }
   white-space: nowrap;
   background: var(--inset-glass);
 }
+.chip:empty, .badge:empty { display: none; }
 .chip.on, .badge.on { color: var(--accent); border-color: var(--accent-line); background: var(--accent-dim); }
-.chip.off, .badge.off { color: var(--danger); border-color: rgba(255, 128, 128, .45); }
-.chip.warn { color: var(--warn); border-color: rgba(242, 201, 76, .45); }
-.chip.info { color: var(--info); border-color: rgba(124, 185, 255, .45); }
+.chip.off, .badge.off { color: var(--danger); border-color: var(--danger-line); }
+.chip.warn { color: var(--warn); border-color: var(--warn); }
+.chip.info { color: var(--info); border-color: var(--info); }
 
 /* ---- появление (мягкое, с уважением к reduced-motion) ---- */
 @media (prefers-reduced-motion: no-preference) {
