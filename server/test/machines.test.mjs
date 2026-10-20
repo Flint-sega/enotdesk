@@ -171,7 +171,10 @@ test('store: PIN задаётся и проверяется, снимается;
   const { token } = store.register({ code, name: 'skud-1', os: 'linux', version: '9.9' });
 
   assert.equal(store.setPin(machine.id, '1357'), true);
-  assert.equal(store.get(machine.id).pin_hash.includes('1357'), false, 'PIN не хранится открытым текстом');
+  // PIN не хранится открытым текстом: в поле — scrypt-запись s1$<соль>$<хеш>.
+  // Не includes('1357'): случайный hex содержит такую подстроку в ~0,25%
+  // запусков (флейк CI windows 20.10).
+  assert.match(store.get(machine.id).pin_hash, /^s1\$[0-9a-f]{32}\$[0-9a-f]{128}$/, 'PIN не хранится открытым текстом');
   assert.equal(store.verifyPin(machine.id, '1357'), true);
   assert.equal(store.verifyPin(machine.id, '0000'), false);
   assert.equal(store.verifyPin(machine.id, undefined), false);
