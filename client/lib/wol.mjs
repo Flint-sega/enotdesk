@@ -4,7 +4,6 @@
 // throw, никаких «попытаемся и посмотрим».
 
 const MAC_RE = /^([0-9a-fA-F]{2}:){5}[0-9a-fA-F]{2}$/;
-const IPV4_RE = /^(25[0-5]|2[0-4]\d|1\d\d|[1-9]?\d)(\.(25[0-5]|2[0-4]\d|1\d\d|[1-9]?\d)){3}$/;
 
 // Стандарт WOL: порт 9 (discard), magic packet = 6×0xFF + 16×MAC.
 export const WOL_PORT = 9;
@@ -26,20 +25,6 @@ export function magicPacket(mac) {
   const payload = new Uint8Array(6 + 16 * bytes.length).fill(0xff);
   for (let i = 0; i < 16; i += 1) payload.set(bytes, 6 + i * bytes.length);
   return payload;
-}
-
-// Broadcast-адреса для рассылки: общий 255.255.255.255 первым, затем directed
-// broadcast каждой известной подсети (192.168.1.10 → 192.168.1.255).
-// Мусорные адреса молча пропускаются — список строится из того, что удалось
-// понять; дубликаты подсетей схлопываются.
-export function broadcastsFor(localIps) {
-  const list = ['255.255.255.255'];
-  for (const ip of Array.isArray(localIps) ? localIps : []) {
-    if (typeof ip !== 'string' || !IPV4_RE.test(ip)) continue;
-    const bcast = `${ip.split('.').slice(0, 3).join('.')}.255`;
-    if (!list.includes(bcast)) list.push(bcast);
-  }
-  return list;
 }
 
 export function createWakeSender({ dgramFactory } = {}) {

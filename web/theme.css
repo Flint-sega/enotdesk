@@ -204,7 +204,6 @@ a:focus-visible, button:focus-visible, input:focus-visible, select:focus-visible
   font-weight: 600;
   letter-spacing: -.01em;
 }
-.mono { font-family: var(--font-mono); }
 .lead { color: var(--text-2); }
 
 /* ---- кнопки: градиентный примитив с верхней подсветкой и свечением ---- */

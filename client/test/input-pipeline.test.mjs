@@ -2,7 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { createInputGate, validateInputEvent, INPUT_KEYS } from '../lib/protocol.mjs';
 import { createNativeInput, inertAdapter } from '../lib/native-input.mjs';
-import { createInputPipeline, createHostChannel } from '../lib/input-pipeline.mjs';
+import { createInputPipeline } from '../lib/input-pipeline.mjs';
 
 // Шов: канал оператора (datachannel) → main-ворота (input-gate по реальному
 // approved) → диспетчер нативного адаптера. Приёмник — инертный адаптер:
@@ -13,7 +13,8 @@ function makePipeline() {
   const gate = createInputGate();
   const nativeInput = createNativeInput({ adapter: inertAdapter() });
   const pipeline = createInputPipeline({ gate, nativeInput });
-  const channel = createHostChannel({ handle: (ev) => pipeline.handle(ev, { width: 800, height: 600 }) });
+  // канал оператора: сырое сообщение datachannel → pipeline.handle
+  const channel = { onMessage: (raw) => pipeline.handle(raw, { width: 800, height: 600 }) };
   return { gate, nativeInput, pipeline, channel };
 }
 

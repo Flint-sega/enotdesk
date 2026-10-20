@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { macToBytes, magicPacket, broadcastsFor, createWakeSender } from '../lib/wol.mjs';
+import { macToBytes, magicPacket, createWakeSender } from '../lib/wol.mjs';
 
 // Wake-on-LAN (R10): чистый модуль без сети — dgram инъекцией фейком.
 // Ожидания из таска: payload = 6×0xFF + 16×MAC, сокет и 3 отправки на каждый
@@ -50,15 +50,6 @@ test('macToBytes: мусорный MAC — честный throw', () => {
     assert.throws(() => macToBytes(junk), `должен бросить на ${JSON.stringify(junk)}`);
     assert.throws(() => magicPacket(junk));
   }
-});
-
-test('broadcastsFor: общий 255 первым, directed broadcast по подсетям, мусор пропускается', () => {
-  assert.deepEqual(broadcastsFor(['192.168.1.10', '10.0.0.5']), ['255.255.255.255', '192.168.1.255', '10.0.0.255']);
-  // дубликат подсети схлопывается
-  assert.deepEqual(broadcastsFor(['192.168.1.10', '192.168.1.20']), ['255.255.255.255', '192.168.1.255']);
-  // не-IPv4 и мусор — молча пропущены
-  assert.deepEqual(broadcastsFor(['::1', '300.1.2.3', 'мусор', 42, null]), ['255.255.255.255']);
-  assert.deepEqual(broadcastsFor(undefined), ['255.255.255.255']);
 });
 
 test('sendMagicPacket: сокет и 3 отправки на каждый broadcast, порт 9', async () => {

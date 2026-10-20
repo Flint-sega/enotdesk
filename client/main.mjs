@@ -2,7 +2,7 @@
 // ворота нативного ввода по реальному WS-состоянию, выбор источника захвата.
 // Рендереру доступен только context-isolated мост window.enot (preload.cjs).
 
-import { app, BrowserWindow, ipcMain, session, desktopCapturer, screen, shell, clipboard, systemPreferences, Menu, dialog, Notification, powerSaveBlocker, safeStorage } from 'electron';
+import { app, BrowserWindow, ipcMain, session, desktopCapturer, screen, clipboard, systemPreferences, Menu, dialog, Notification, powerSaveBlocker, safeStorage } from 'electron';
 import path from 'node:path';
 import os from 'node:os';
 import fs from 'node:fs';
@@ -19,7 +19,7 @@ import { createInputArbiter } from './lib/input-arbiter.mjs';
 import { INPUT_KEYS } from './lib/protocol.mjs';
 import { normalizeServerUrl } from './lib/server-url.mjs';
 import { resolveServerUrl, DEFAULT_SERVER_URL } from './lib/first-run.mjs';
-import { safeCode, resolveInstallSource, buildInstallScript } from './lib/agent-install.mjs';
+import { safeCode, resolveInstallSource, buildInstallScript, RESULT_OK as INSTALL_RESULT_OK } from './lib/agent-install.mjs';
 import { parseJoinLink, reportJoin } from './lib/join.mjs';
 import { parseInviteLink } from './lib/invite-link.mjs';
 import { createAgent, createAgentApi, createIceServersFetcher } from './lib/agent.mjs';
@@ -30,7 +30,12 @@ import { showToast } from './lib/notify.mjs';
 import { createMachineServices } from './lib/machine-services.mjs';
 import { createOpCredentialsStore } from './lib/op-credentials.mjs';
 import { operatorWindowUrls, isAllowedNavigation, probeOperatorServer, isTrustedOperatorFrame, rememberAllowed } from './lib/operator-window.mjs';
-import { onIncoming as chatWidgetOnIncoming, shouldNotify as chatWidgetShouldNotify } from './lib/chat-widget.mjs';
+import {
+  onIncoming as chatWidgetOnIncoming,
+  onCollapse as chatWidgetOnCollapse,
+  onExpand as chatWidgetOnExpand,
+  shouldNotify as chatWidgetShouldNotify,
+} from './lib/chat-widget.mjs';
 import { createSessionSpawner } from './lib/session-spawn.mjs';
 import { createVideoHost } from './lib/video-host.mjs';
 import { inputEventToCommands } from './lib/input-translate.mjs';
@@ -1026,9 +1031,7 @@ function registerIpc() {
   });
   ipcMain.on('enot:chat-widget-toggle', (e) => {
     if (!fromWidget(e)) return;
-    chatWidgetState = chatWidgetState.collapsed
-      ? { visible: true, collapsed: false, unread: 0 }
-      : { visible: true, collapsed: true, unread: chatWidgetState.unread };
+    chatWidgetState = chatWidgetState.collapsed ? chatWidgetOnExpand() : chatWidgetOnCollapse(chatWidgetState);
     const w = chatWidgetWin;
     if (w && !w.isDestroyed()) {
       // 44px «полоска» ниже дефолтного minHeight: Electron клампит setBounds
@@ -1199,7 +1202,7 @@ function registerIpc() {
       // системная ошибка запуска (честно отличаем от провала самой установки,
       // ревью ADR 0029 P1-3); код выхода обёртки прикладываем для диагностики.
       if (!log) return { ok: false, reason: 'no-log', log: `powershell exit ${psExit ?? '?'}` };
-      if (/ENOT_INSTALL_RESULT=OK\r?\n?$/.test(log.trimEnd())) return { ok: true };
+      if (log.trimEnd().endsWith(INSTALL_RESULT_OK)) return { ok: true };
       return { ok: false, reason: 'install-failed', log };
     } catch (err) {
       return { ok: false, reason: 'install-failed', log: String(err?.message ?? err) };
@@ -1350,8 +1353,6 @@ function registerIpc() {
     }
   });
 
-  ipcMain.handle('enot:quit', (e) => { guard(e); app.quit(); return { ok: true }; });
-
   // One-click (R04): репорт {sessionId,password} на hub идёт из main — CSP
   // рендерера (connect-src 'self' file:) не пускает fetch на чужой origin.
   // reportJoin сам валидирует вход и шлёт строго {sessionId,password};
@@ -1365,17 +1366,6 @@ function registerIpc() {
   // чтобы со скриншота было видно, какая сборка установлена). В dev Electron
   // отдаёт свою версию — показываем версию продукта, как в getSettings.
   ipcMain.handle('enot:appVersion', (e) => { guard(e); return app.isPackaged ? app.getVersion() : (pkg.version ?? '?'); });
-
-  // Внешние ссылки — только одобренные https-адреса, через системный браузер
-  ipcMain.handle('enot:openExternal', (e, url) => {
-    guard(e);
-    if (typeof url !== 'string') throw new Error('Некорректная ссылка');
-    let parsed;
-    try { parsed = new URL(url); } catch { throw new Error('Некорректная ссылка'); }
-    if (parsed.protocol !== 'https:') throw new Error('Разрешены только https-ссылки');
-    shell.openExternal(parsed.toString());
-    return { ok: true };
-  });
 }
 
 function createWindow() {

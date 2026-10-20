@@ -30,8 +30,3 @@ export function createInputPipeline({ gate, nativeInput }) {
     },
   };
 }
-
-// Именованный шов канала оператора (используется тестом доставки).
-export function createHostChannel({ handle }) {
-  return { onMessage: (raw) => handle(raw) };
-}
