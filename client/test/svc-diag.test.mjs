@@ -28,6 +28,10 @@ test('maskJoinTokens: одноразовый токен join-ссылки не �
   const masked = maskJoinTokens(argv);
   assert.ok(!masked.includes('SECRET_JOIN_TOKEN_789xyz'), 'токен замаскирован');
   assert.ok(masked.includes('t=<masked>'), 'ссылка остаётся, токен скрыт');
+  // токен приглашения (enotdesk://invite#token=…) — тоже секрет
+  const inv = maskJoinTokens(JSON.stringify(['EnotDesk.exe', 'enotdesk://invite#token=SECRET_INVITE_456abc']));
+  assert.ok(!inv.includes('SECRET_INVITE_456abc'), 'токен приглашения замаскирован');
+  assert.ok(inv.includes('#token=<masked>'));
   // не-join argv не трогается
   assert.equal(maskJoinTokens(JSON.stringify(['EnotDesk.exe', '--no-sandbox'])), JSON.stringify(['EnotDesk.exe', '--no-sandbox']));
 });

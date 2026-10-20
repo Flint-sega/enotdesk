@@ -24,9 +24,11 @@ export function maskEnvValue(key, value) {
   return String(value ?? '');
 }
 
-// enotdesk://join?…&t=<одноразовый токен> приходит argv'ем — токен в лог не пишется
+// enotdesk://join?…&t=<одноразовый токен> и enotdesk://invite#token=<токен
+// приглашения> приходят argv'ем — токены в лог не пишутся (ревью 20.10: маска
+// знала только join, токен приглашения лежал в enotdesk-boot.log открытым)
 export function maskJoinTokens(s) {
-  return String(s).replace(/(enotdesk:\/\/[^"'\\\s]*?[?&]t=)[^"'\\\s]+/gi, '$1<masked>');
+  return String(s).replace(/(enotdesk:\/\/[^"'\\\s]*?[?&#](?:t|token)=)[^"'\\\s&]+/gi, '$1<masked>');
 }
 
 // Срез EDESK_*/ENOT_* окружения в логобезопасном виде — одна строка на процесс.
