@@ -372,11 +372,35 @@ export function createThreadsStore(db, { nowMs = Date.now } = {}) {
       .all().map((row) => ({ agentId: row.agent_id, status: row.status, updatedAt: row.updated_at }));
   }
 
+  // ---- имена специалистов (подписи в консоли) ----
+
+  function rememberAgent(user) {
+    const id = typeof user?.id === 'string' ? user.id : '';
+    if (!id) return;
+    const login = String(user.login ?? '').slice(0, 120);
+    const name = String(user.name ?? '').slice(0, 120) || login;
+    db.prepare(`INSERT INTO agents (id, name, login, updated_at) VALUES (?,?,?,?)
+                ON CONFLICT(id) DO UPDATE SET name = excluded.name, login = excluded.login, updated_at = excluded.updated_at`)
+      .run(id, name, login, nowIso());
+  }
+
+  // { id: name } для известных id; неизвестные (ещё не входили в консоль) пропускаются
+  function agentNames(ids) {
+    const out = {};
+    const get = db.prepare('SELECT name FROM agents WHERE id = ?');
+    for (const id of new Set(ids.filter((x) => typeof x === 'string' && x))) {
+      const row = get.get(id);
+      if (row) out[id] = row.name;
+    }
+    return out;
+  }
+
   return {
     createThread, getThread, listThreads, updateThread, setRating,
     listMessages, appendMessage,
     listCanned, createCanned, deleteCanned,
     setPresence, getPresence, listPresence,
+    rememberAgent, agentNames,
     latestContactThread, listContactThreads, setConsentAt, getContactByVisitor,
     ensureContact,
   };

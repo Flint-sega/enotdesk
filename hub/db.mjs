@@ -1,7 +1,7 @@
 import { DatabaseSync } from 'node:sqlite';
 
 // Схема hub.db — собственная БД хаба, независимая от enotdesk.db.
-export const SCHEMA_VERSION = 5;
+export const SCHEMA_VERSION = 6;
 
 // Версионированные шаги схемы (тот же паттерн, что server/db.mjs): каждая база
 // проходит недостающие шаги по порядку, шаги идемпотентны.
@@ -137,6 +137,22 @@ const MIGRATIONS = [
           created_at TEXT NOT NULL
         );
         CREATE INDEX IF NOT EXISTS email_seen_thread ON email_seen(thread_id);
+      `);
+    },
+  },
+  {
+    // Имена специалистов для консоли: хаб пользователей не хранит (SSO через
+    // EnotDesk), поэтому запоминает имя каждого, кто работал в консоли, —
+    // подписи сообщений и «Исполнитель» показывают имя, а не id.
+    version: 6,
+    up: (db) => {
+      db.exec(`
+        CREATE TABLE IF NOT EXISTS agents (
+          id TEXT PRIMARY KEY,
+          name TEXT NOT NULL,
+          login TEXT NOT NULL,
+          updated_at TEXT NOT NULL
+        );
       `);
     },
   },

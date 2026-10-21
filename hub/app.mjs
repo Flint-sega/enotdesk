@@ -167,6 +167,8 @@ const HUB_ASSETS = {
   // общая дизайн-система веб-поверхностей (сайт/оператор/консоль); шрифты
   // при этом идут с серверного /brand/ — то же происхождение за Caddy
   'theme.css': { file: '../web/theme.css', type: 'text/css' },
+  // енот в шапке консоли: под /hub/, чтобы отдавался хабом и без серверного /brand/
+  'brand.webp': { file: '../assets/mascot-mini.webp', type: 'image/webp' },
   'widget/w.mjs': { file: './widget/w.mjs', type: 'text/javascript' },
   'lib/i18n.mjs': { file: '../client/lib/i18n.mjs', type: 'text/javascript' },
   'locales/ru.mjs': { file: '../client/locales/ru.mjs', type: 'text/javascript' },
@@ -306,6 +308,7 @@ export function createHub(opts = {}) {
   });
 
   // Гейт консольного API (R02): hub-сессия + роль из EnotDesk; auditor — 403.
+  const knownAgents = new Map(); // id → имя, уже записанные в agents этим процессом
   async function hubUser(req, res) {
     const r = await auth.authUser(cookieSid(req));
     if (!r.ok) {
@@ -316,7 +319,17 @@ export function createHub(opts = {}) {
       err(res, 403, 'forbidden', 'Консоль недоступна для этой роли');
       return null;
     }
+    // имя специалиста для подписей в консоли: пишем раз за процесс и при смене имени
+    if (knownAgents.get(r.user.id) !== r.user.name) {
+      threads.rememberAgent(r.user);
+      knownAgents.set(r.user.id, r.user.name);
+    }
     return r.user;
+  }
+
+  // карта id → имя для исполнителей и авторов сообщений из ответа API
+  function agentsFor(items, messages = []) {
+    return threads.agentNames([...items.map((th) => th?.assigneeId), ...messages.map((m) => m.agentId)]);
   }
 
   // пагинация: REST только парсит query — кламп (1..100, ≥0) живёт в store
@@ -360,7 +373,8 @@ export function createHub(opts = {}) {
       const query = q.get('q');
       if (query) filters.q = String(query).slice(0, 120);
       Object.assign(filters, listParams(url));
-      return ok(res, 200, threads.listThreads(filters));
+      const list = threads.listThreads(filters);
+      return ok(res, 200, { ...list, agents: agentsFor(list.items ?? []) });
     }
 
     if (!id && method === 'POST') {
@@ -392,7 +406,7 @@ export function createHub(opts = {}) {
         contact,
         firstMessage: { author: 'contact', body: text },
       });
-      if (!thread) return err(res, 400, 'bad_request', 'Не удалось создать тикет');
+      if (!thread) return err(res, 400, 'bad_request', 'Не удалось создать обращение');
       return ok(res, 201, { thread });
     }
 
@@ -400,8 +414,8 @@ export function createHub(opts = {}) {
       const user = await hubUser(req, res);
       if (!user) return true;
       const found = threads.getThread(id);
-      if (!found) return err(res, 404, 'not_found', 'Тред не найден');
-      return ok(res, 200, found);
+      if (!found) return err(res, 404, 'not_found', 'Обращение не найдено');
+      return ok(res, 200, { ...found, agents: agentsFor([found.thread], found.messages ?? []) });
     }
 
     if (id && !sub && method === 'PATCH') {
@@ -418,18 +432,18 @@ export function createHub(opts = {}) {
         patch.tags = tags;
       }
       const updated = threads.updateThread(id, patch);
-      if (updated === null) return err(res, 404, 'not_found', 'Тред не найден');
-      if (updated === 'invalid') return err(res, 400, 'bad_request', 'Некорректные поля треда');
+      if (updated === null) return err(res, 404, 'not_found', 'Обращение не найдено');
+      if (updated === 'invalid') return err(res, 400, 'bad_request', 'Некорректные поля обращения');
       // resolve доходит до гостя — виджет показывает rating (R11)
       if (patch.status === 'resolved') pushToThreadGuests(id, { type: 'resolved', threadId: id });
-      return ok(res, 200, { thread: updated });
+      return ok(res, 200, { thread: updated, agents: agentsFor([updated]) });
     }
 
     if (id && sub === 'messages' && method === 'POST') {
       const user = await hubUser(req, res);
       if (!user) return true;
       const found = threads.getThread(id);
-      if (!found) return err(res, 404, 'not_found', 'Тред не найден');
+      if (!found) return err(res, 404, 'not_found', 'Обращение не найдено');
       const body = await readJson(req, res, THREADS_BODY_MAX);
       if (!body || typeof body !== 'object') return err(res, body === null ? 413 : 400, 'bad_request', 'Некорректный запрос');
       const message = threads.appendMessage(id, {
@@ -439,6 +453,9 @@ export function createHub(opts = {}) {
         agentId: user.id,
       });
       if (!message) return err(res, 400, 'bad_request', 'Некорректный текст сообщения');
+      // первый ответ клиенту берёт открытое обращение «В работе» (решение владельца
+      // 21.10); заметки и карточки статус не трогают
+      if (message.type === 'text' && found.thread.status === 'open') threads.updateThread(id, { status: 'pending' });
       // ответ оператора доходит гостю в реальном времени (заметки — не доходят)
       if (message.type === 'text') pushToThreadGuests(id, { type: 'msg', threadId: id, message });
       // Email-канал (T06): текстовый ответ агента уходит клиенту почтой;
@@ -461,7 +478,7 @@ export function createHub(opts = {}) {
       if (!user) return true;
       if (!limits.join.take(`ip:${ip(req)}`)) return err(res, 429, 'rate_limited', 'Слишком много запросов, попробуйте позже');
       const created = joinStore.create({ threadId: id, agentId: user.id });
-      if (!created) return err(res, 404, 'not_found', 'Тред не найден');
+      if (!created) return err(res, 404, 'not_found', 'Обращение не найдено');
       const urls = joinUrls(created.token);
       const message = threads.appendMessage(id, {
         author: 'agent',
@@ -486,7 +503,7 @@ export function createHub(opts = {}) {
         return err(res, 400, 'bad_request', 'Оценка — целое 1..5 или null');
       }
       const updated = threads.setRating(id, rating);
-      if (updated === null) return err(res, 404, 'not_found', 'Тред не найден');
+      if (updated === null) return err(res, 404, 'not_found', 'Обращение не найдено');
       return ok(res, 200, { thread: updated });
     }
 
@@ -914,11 +931,11 @@ export function createHub(opts = {}) {
       if (!visitorId || !threadId) return err(res, 400, 'bad_request', 'Некорректный запрос');
       if (!Number.isInteger(rating) || rating < 1 || rating > 5) return err(res, 400, 'bad_request', 'Оценка — целое 1..5');
       const found = threads.getThread(threadId);
-      if (!found) return err(res, 404, 'not_found', 'Тред не найден');
-      if (found.thread.contact?.visitorId !== visitorId) return err(res, 403, 'forbidden', 'Тред не ваш');
+      if (!found) return err(res, 404, 'not_found', 'Обращение не найдено');
+      if (found.thread.contact?.visitorId !== visitorId) return err(res, 403, 'forbidden', 'Обращение не ваше');
       if (found.thread.status !== 'resolved') return err(res, 409, 'not_resolved', 'Оценить можно завершённый чат');
       const updated = threads.setRating(threadId, rating);
-      if (!updated) return err(res, 404, 'not_found', 'Тред не найден');
+      if (!updated) return err(res, 404, 'not_found', 'Обращение не найдено');
       return ok(res, 200, { thread: updated });
     }
 

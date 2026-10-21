@@ -7,19 +7,24 @@
 <link rel="stylesheet" href="/hub/theme.css">
 <style>
 /* консоль хаба: раскладка; токены/шрифты/примитивы — в /hub/theme.css.
-   Читаемость прежде всего: стекло-тинты аккуратно, треды — строки-карточки,
-   пузыри чата — с направлением (кто говорит — видно без подписи). */
+   Рабочий экран — две колонки (список обращений | разговор), настройки —
+   своя вкладка (решение владельца 21.10). Узкий экран — одна колонка. */
 body{display:flex;flex-direction:column}
 /* header: the same floating pill as /operator and the site */
-.head{position:sticky;top:12px;z-index:20;display:flex;align-items:center;justify-content:space-between;gap:16px;min-height:64px;margin:12px 16px 0;padding:8px 10px 8px 20px;border:1px solid var(--line-strong);border-radius:var(--r-pill);background:var(--head-bg);box-shadow:var(--top-hl),var(--shadow-card);-webkit-backdrop-filter:blur(14px);backdrop-filter:blur(14px)}
-.brand{font:700 16px/1 var(--font-display);letter-spacing:-.01em;display:flex;align-items:center;gap:10px;white-space:nowrap}
+.head{position:sticky;top:12px;z-index:20;display:flex;align-items:center;justify-content:space-between;gap:16px;min-height:60px;margin:12px 16px 0;padding:8px 10px 8px 12px;border:1px solid var(--line-strong);border-radius:var(--r-pill);background:var(--head-bg);box-shadow:var(--top-hl),var(--shadow-card);-webkit-backdrop-filter:blur(14px);backdrop-filter:blur(14px)}
+.brand{font:700 17px/1 var(--font-display);letter-spacing:-.01em;display:flex;align-items:center;gap:10px;white-space:nowrap}
+.brand img{width:36px;height:36px;border-radius:50%;border:1px solid var(--accent-line);background:var(--bg-inset);box-shadow:0 0 18px rgba(26,238,178,.18)}
+.tabs{display:flex;gap:6px;margin-left:8px}
+.tabs .btn{min-height:40px;padding:0 16px;border-radius:var(--r-pill);border-color:transparent;background:transparent;box-shadow:none;color:var(--text-2)}
+.tabs .btn:hover{color:var(--text)}
+.tabs .btn[aria-pressed="true"]{color:var(--text);background:var(--accent-dim);border-color:var(--accent-line)}
+.head .left{display:flex;align-items:center;gap:6px;min-width:0}
 .head .who{display:flex;align-items:center;gap:10px;min-width:0}
-.head .who .btn{min-height:44px;padding:0 18px;border-radius:var(--r-pill)}
-.lang .btn{padding:0 14px}
+.head .who .btn{min-height:42px;padding:0 16px;border-radius:var(--r-pill)}
+.lang .btn{padding:0 12px}
 #hub-user{white-space:nowrap}
-main{flex:1;width:100%;max-width:1000px;margin:0 auto;padding:28px 24px 44px}
-.card{padding:24px;background:var(--panel)}
-.card+.card{margin-top:16px}
+main{flex:1;width:100%;max-width:1320px;margin:0 auto;padding:22px 24px 36px}
+.card{padding:22px;background:var(--panel)}
 /* вход: поля — главный акцент карточки; стекло с мятным тинтом и ровным свечением,
    локально усиленные уровни гало полей (токены из theme.css перекрываются тут) */
 .auth-card{max-width:440px;margin:9vh auto 0;display:flex;flex-direction:column;gap:14px;background:linear-gradient(180deg,rgba(26,238,178,.07),rgba(26,238,178,.02) 46%),var(--panel);border-color:rgba(26,238,178,.24);box-shadow:var(--top-hl),0 0 0 1px rgba(26,238,178,.08),0 0 60px rgba(26,238,178,.10),var(--shadow-card)}
@@ -30,88 +35,137 @@ main{flex:1;width:100%;max-width:1000px;margin:0 auto;padding:28px 24px 44px}
 .lead{color:var(--text-2)}
 .field{display:flex;flex-direction:column;gap:6px}
 .form-error{color:var(--danger);min-height:1.2em;font-size:14px}
+.form-error:empty{min-height:0}
 .note{color:var(--text-3);font-size:13.5px}
 .lang{display:flex;gap:6px}
-.bar{display:flex;gap:10px;flex-wrap:wrap;align-items:center;margin-bottom:14px}
-.bar h2{margin-right:auto;font:600 20px/1.2 var(--font-display)}
-.bar input{width:auto}
-.bar .grow{flex:1;min-width:180px}
-/* треды: строки-карточки; hover и непрочитанные — подсветкой, без сдвигов */
-.row{display:flex;align-items:center;gap:14px;padding:13px 15px;border:1px solid var(--line);border-radius:var(--r-md);cursor:pointer;margin-bottom:8px;background:var(--panel);box-shadow:var(--top-hl);transition:border-color var(--t-fast) var(--ease),background var(--t-fast) var(--ease)}
+/* рабочий экран: список | разговор */
+.workspace{display:grid;grid-template-columns:minmax(300px,390px) minmax(0,1fr);gap:18px;align-items:start}
+.inbox{position:sticky;top:96px;display:flex;flex-direction:column;max-height:calc(100vh - 116px);padding:16px;border:1px solid var(--line);border-radius:var(--r-lg);background:var(--panel);box-shadow:var(--top-hl)}
+.inbox h2{font:600 19px/1.2 var(--font-display);margin-bottom:12px}
+.filters{display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-bottom:12px}
+.filters select,.filters input{min-width:0;padding:8px 12px;font-size:14px}
+.filters .wide{grid-column:1/-1;display:flex;gap:8px}
+.filters .wide input{flex:1}
+#hub-list{overflow:auto;margin:0 -6px;padding:0 6px;scrollbar-width:thin;scrollbar-color:var(--line-strong) transparent}
+/* строки обращений: тема в две строки, справа время и число сообщений */
+.row{display:grid;grid-template-columns:minmax(0,1fr) auto;gap:4px 12px;padding:11px 12px;border:1px solid var(--line);border-radius:var(--r-md);cursor:pointer;margin-bottom:8px;background:var(--bg-inset);transition:border-color var(--t-fast) var(--ease),background var(--t-fast) var(--ease)}
 .row:hover{border-color:var(--accent-line);background:var(--bg2)}
-.row .col{flex:1;min-width:0}
-.row .subject{font-weight:600}
-.row .sub{color:var(--text-3);font-size:13.5px;display:flex;gap:10px;flex-wrap:wrap;margin-top:2px}
-.row .side{color:var(--text-3);font:500 12.5px/1.4 var(--font-mono);text-align:right;white-space:nowrap}
-.pager{display:flex;align-items:center;gap:12px;margin-top:14px}
-.pager .info{color:var(--text-3);font:500 13px var(--font-mono)}
-.empty{color:var(--text-3);text-align:center;padding:36px 12px;border:1px dashed var(--line-strong);border-radius:var(--r-md)}
+.row.active{border-color:var(--accent);background:var(--accent-dim)}
+.row .subject{font-weight:600;font-size:14.5px;line-height:1.35;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden}
+.row .side{color:var(--text-3);font:500 12px/1.5 var(--font-mono);text-align:right;white-space:nowrap}
+.row .sub{grid-column:1/-1;color:var(--text-3);font-size:13px;display:flex;gap:6px;align-items:center;flex-wrap:wrap}
+.row .sub .chip{font-size:11.5px;padding:1px 8px}
+.pager{display:flex;align-items:center;gap:8px;flex-wrap:wrap;margin-top:10px}
+.pager .info{color:var(--text-3);font:500 12.5px var(--font-mono);margin-left:auto;white-space:nowrap}
+.empty{color:var(--text-3);text-align:center;padding:28px 12px;border:1px dashed var(--line-strong);border-radius:var(--r-md)}
 .chip.open{color:var(--accent);border-color:var(--accent-line);background:var(--accent-dim)}
 .chip.pending{color:var(--warn);border-color:rgba(242,201,76,.45)}
 .chip.resolved{color:var(--info);border-color:rgba(124,185,255,.45)}
-.thread-head{display:flex;align-items:center;gap:12px;flex-wrap:wrap}
-.thread-head h2{flex:1;min-width:200px;font:600 20px/1.2 var(--font-display)}
-.msgs{display:flex;flex-direction:column;gap:10px;margin:16px 0}
-/* пузыри: контакт слева, агент справа с мятным тинтом, «хвост» по стороне автора */
-.bubble{max-width:78%;padding:11px 14px;border-radius:14px;border:1px solid var(--line);white-space:pre-wrap;word-break:break-word;background:var(--bg2);box-shadow:var(--top-hl)}
-.bubble .who{display:block;font:500 11.5px/1 var(--font-mono);color:var(--text-3);margin-bottom:5px;letter-spacing:.02em}
+.pane{min-width:0}
+.placeholder{display:grid;place-items:center;min-height:320px;padding:32px;color:var(--text-3);text-align:center;border:1px dashed var(--line-strong);border-radius:var(--r-lg)}
+.thread{padding:18px 20px;border:1px solid var(--line);border-radius:var(--r-lg);background:var(--panel);box-shadow:var(--top-hl)}
+.thread-head{display:flex;align-items:flex-start;gap:12px}
+.thread-head h2{flex:1;min-width:0;font:600 19px/1.3 var(--font-display)}
+.meta{color:var(--text-3);font-size:13.5px;display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin:10px 0}
+.controls{display:flex;gap:8px;flex-wrap:wrap;align-items:center;padding-bottom:12px;border-bottom:1px solid var(--line)}
+.statuses{display:inline-flex;gap:4px;padding:3px;border:1px solid var(--line);border-radius:var(--r-pill);background:var(--bg-inset)}
+.statuses .btn{border-radius:var(--r-pill);border-color:transparent;background:transparent;box-shadow:none;color:var(--text-2)}
+.statuses .btn[aria-pressed="true"]{color:var(--accent-ink);background:var(--btn-grad);border-color:transparent}
+.tags{display:flex;gap:6px;flex-wrap:wrap;align-items:center;flex:1;min-width:200px}
+.tags>span:first-child{color:var(--text-3);font-size:13px}
+#hub-thread-taglist{display:contents}
+.tag{display:inline-flex;gap:6px;align-items:center;border:1px solid var(--line);border-radius:999px;padding:2px 10px;font-size:13px;background:var(--inset-glass)}
+.tag button{background:none;border:none;color:var(--text-3);cursor:pointer;padding:0 2px}
+.tag button:hover{color:var(--danger)}
+.tagform{display:flex;gap:6px}
+.tagform input{width:150px;padding:6px 10px;font-size:13.5px}
+.msgs{display:flex;flex-direction:column;gap:10px;margin:14px 0;max-height:calc(100vh - 430px);min-height:180px;overflow:auto;padding-right:4px;scrollbar-width:thin;scrollbar-color:var(--line-strong) transparent}
+/* пузыри: клиент слева, специалист справа с мятным тинтом; подпись — имя и время */
+.bubble{max-width:78%;padding:10px 14px;border-radius:14px;border:1px solid var(--line);white-space:pre-wrap;word-break:break-word;background:var(--bg2);box-shadow:var(--top-hl)}
+.bubble .who{display:flex;gap:8px;align-items:baseline;font:600 12.5px/1.2 var(--font-body);color:var(--text-2);margin-bottom:5px;white-space:normal}
+.bubble .who time{font:500 11.5px/1 var(--font-mono);color:var(--text-3)}
 .bubble.contact{align-self:flex-start;border-bottom-left-radius:5px}
 .bubble.agent{align-self:flex-end;background:rgba(26,238,178,.12);border-color:var(--accent-line);border-bottom-right-radius:5px}
 .bubble.system{align-self:center;background:transparent;border-color:transparent;color:var(--text-3);font-size:13.5px;max-width:100%;box-shadow:none}
 .bubble.note{align-self:flex-end;background:var(--warn-dim);border-color:rgba(242,201,76,.35);border-bottom-right-radius:5px}
-.badgeword{display:inline-block;font-size:12px;color:var(--warn);margin-left:8px}
+.badgeword{display:inline-block;font-size:12px;color:var(--warn)}
 .cardlinks{display:flex;gap:10px;flex-wrap:wrap;margin-top:6px}
 .cardlinks a{color:var(--accent)}
-.meta{color:var(--text-3);font-size:13.5px;display:flex;gap:10px;align-items:center;flex-wrap:wrap;margin:10px 0}
-.tags{display:flex;gap:8px;flex-wrap:wrap;align-items:center;margin:10px 0}
-.tag{display:inline-flex;gap:6px;align-items:center;border:1px solid var(--line);border-radius:999px;padding:2px 10px;font-size:13.5px;background:var(--inset-glass)}
-.tag button{background:none;border:none;color:var(--text-3);cursor:pointer;padding:0 2px}
-.tag button:hover{color:var(--danger)}
-.tagform{display:flex;gap:8px;margin:10px 0}
-.tagform input{max-width:180px}
-.statuses{display:flex;gap:8px;flex-wrap:wrap}
-.reply{position:relative;margin-top:14px;display:flex;flex-direction:column;gap:10px}
+.reply{position:relative;display:flex;flex-direction:column;gap:10px}
+.reply textarea{min-height:76px}
 .reply .actions{display:flex;gap:10px;flex-wrap:wrap}
-/* canned-меню: плавающее стекло поверх треда */
+.reply .actions .spacer{flex:1}
+/* меню шаблонов ответов: плавающее стекло над полем ответа */
 .canned{position:absolute;bottom:100%;left:0;right:0;max-height:240px;overflow:auto;background:var(--panel);border:1px solid var(--line-strong);border-radius:12px;z-index:5;box-shadow:var(--shadow-card);-webkit-backdrop-filter:blur(12px);backdrop-filter:blur(12px);scrollbar-width:thin;scrollbar-color:var(--line-strong) transparent}
 .canned button{display:block;width:100%;text-align:left;background:none;border:none;color:var(--text);padding:10px 14px;cursor:pointer;border-bottom:1px solid var(--line)}
 .canned button:hover{background:var(--bg2)}
 .canned .none{color:var(--text-3);padding:10px 14px}
 .new-grid{display:flex;flex-direction:column;gap:14px;max-width:560px}
-.card>h2{font:600 20px/1.2 var(--font-display);margin-bottom:16px}
-.new-grid>h3{font-size:16px;margin-top:8px}
+.card>h2{font:600 19px/1.2 var(--font-display);margin-bottom:16px}
+.new-grid>h3{font-size:15px;margin-top:6px}
 /* empty status lines do not leave holes in the form (they stay in the tree for aria-live) */
 .new-grid>p:empty{min-height:0;margin-top:-14px}
 .new-grid .actions{display:flex;gap:10px;flex-wrap:wrap}
 .new-grid .actions input{flex:1 1 220px;min-width:0}
+/* настройки: своя вкладка, карточки в сетке */
+.settings>h2{font:600 22px/1.2 var(--font-display);margin-bottom:16px}
+.settings-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(380px,1fr));gap:16px;align-items:start}
+.settings-grid .stack{display:flex;flex-direction:column;gap:16px}
 .presence{display:flex;align-items:center;gap:8px}
 .presence select{padding:6px 10px;font-size:14px}
 .check{display:flex;gap:10px;align-items:center}
 .check input{width:auto}
-.row.unread{border-color:var(--accent-line);box-shadow:var(--top-hl),0 0 0 1px var(--accent-dim)}
+.row.unread{border-color:var(--accent-line);box-shadow:0 0 0 1px var(--accent-dim)}
 .unread-chip{border-radius:999px;background:var(--accent);color:var(--accent-ink);font:700 11px/1.6 var(--font-mono);padding:1px 8px;margin-left:8px}
 .saved{color:var(--accent);font-size:13.5px;min-height:1.2em}
-@media (max-width:1024px){
-  #hub-user-role,.brand .badge{display:none}
-  .head .who .btn{padding:0 14px}
-  .lang .btn{padding:0 11px}
-  #hub-presence-box label{position:absolute;width:1px;height:1px;overflow:hidden;clip:rect(0 0 0 0);white-space:nowrap}
+.saved:empty{min-height:0}
+@media (min-width:961px){
+  /* две колонки: назад к списку не нужно — список всегда слева */
+  #hub-thread-back{display:none}
+}
+@media (max-width:1180px){
+  #hub-user-role,.brand .badge,#hub-presence-box label{display:none}
+  .head .who .btn{padding:0 13px}
+  .lang .btn{padding:0 10px}
+}
+@media (max-width:960px){
+  .workspace{grid-template-columns:1fr}
+  .inbox{position:static;max-height:none}
+  /* открыт разговор или новое обращение — список уходит, «← К обращениям» возвращает */
+  .workspace.has-pane .inbox{display:none}
+  .workspace:not(.has-pane) .pane{display:none}
+  .msgs{max-height:none}
+  #hub-user{display:none}
+  /* шапка в два ряда: бренд и вкладки | статус и кнопки */
+  .head{flex-wrap:wrap;gap:8px;margin:8px 8px 0;padding:10px 12px;border-radius:var(--r-lg);position:relative;top:0}
+  .head .left{width:100%;justify-content:space-between}
+  .head .who{width:100%;flex-wrap:wrap;gap:8px}
+  .head .who .btn{min-height:38px}
+  /* заголовок разговора — отдельной строкой под «← К обращениям» и «Подключиться» */
+  .thread-head{flex-wrap:wrap;justify-content:space-between}
+  .thread-head h2{order:3;flex-basis:100%}
 }
 @media (max-width:640px){
-  .head{flex-direction:column;align-items:stretch;gap:10px;margin:8px 8px 0;padding:12px 14px;border-radius:var(--r-lg);position:relative;top:0}
-  .head .who{flex-wrap:wrap;gap:8px}
-  .bar h2{flex-basis:100%}
-  .bar select,.bar input{flex:1 1 140px;min-width:0}
-  main{padding:18px 12px 32px}
-  .card{padding:16px}
+  .brand .label{display:none}
+  .tabs{margin-left:0}
+  main{padding:14px 10px 28px}
+  .card,.thread{padding:14px}
+  .inbox{padding:12px}
   .bubble{max-width:92%}
+  .settings-grid{grid-template-columns:1fr}
 }
 </style>
 </head>
 <body class="aurora-bg">
 <div id="hub-root" data-state="__STATE__">
   <header class="head">
-    <div class="brand">EnotDesk Hub <span class="badge">__VERSION__</span></div>
+    <div class="left">
+      <div class="brand"><img src="/hub/brand.webp" alt="" width="36" height="36"><span class="label">Enot<span class="grad">Desk</span> Hub</span> <span class="badge">__VERSION__</span></div>
+      <nav id="hub-tabs" class="tabs hidden">
+        <button id="hub-tab-inbox" class="btn sm" type="button" aria-pressed="true" data-i18n="hub.tab.inbox"></button>
+        <button id="hub-tab-settings" class="btn sm" type="button" aria-pressed="false" data-i18n="hub.tab.settings"></button>
+      </nav>
+    </div>
     <div class="who">
       <div id="hub-presence-box" class="presence hidden">
         <label for="hub-presence" data-i18n="hub.presence.label"></label>
@@ -145,154 +199,172 @@ main{flex:1;width:100%;max-width:1000px;margin:0 auto;padding:28px 24px 44px}
       <button class="btn" type="submit" id="hub-login-submit" data-i18n="hub.login.submit"></button>
     </form>
     <section id="hub-console" class="hidden">
-      <div id="hub-inbox">
-        <div class="bar">
+      <div id="hub-workspace" class="workspace">
+        <div id="hub-inbox" class="inbox">
           <h2 data-i18n="hub.inbox.title"></h2>
-          <select id="hub-f-status" aria-label="status">
-            <option value="" id="hub-f-status-all" data-i18n="hub.filter.status"></option>
-            <option value="open" id="hub-f-status-open" data-i18n="hub.status.open"></option>
-            <option value="pending" id="hub-f-status-pending" data-i18n="hub.status.pending"></option>
-            <option value="resolved" id="hub-f-status-resolved" data-i18n="hub.status.resolved"></option>
-          </select>
-          <select id="hub-f-channel" aria-label="channel">
-            <option value="" id="hub-f-channel-all" data-i18n="hub.filter.channel"></option>
-            <option value="chat" id="hub-f-channel-chat" data-i18n="hub.channel.chat"></option>
-            <option value="email" id="hub-f-channel-email" data-i18n="hub.channel.email"></option>
-            <option value="manual" id="hub-f-channel-manual" data-i18n="hub.channel.manual"></option>
-          </select>
-          <input id="hub-f-tag" data-i18n-placeholder="hub.filter.tag">
-          <input id="hub-f-search" class="grow" data-i18n-placeholder="hub.filter.search">
-          <button id="hub-f-reset" class="btn ghost sm" type="button" data-i18n="hub.new.cancel"></button>
+          <div class="filters">
+            <select id="hub-f-status" aria-label="status">
+              <option value="" id="hub-f-status-all" data-i18n="hub.filter.status"></option>
+              <option value="open" id="hub-f-status-open" data-i18n="hub.status.open"></option>
+              <option value="pending" id="hub-f-status-pending" data-i18n="hub.status.pending"></option>
+              <option value="resolved" id="hub-f-status-resolved" data-i18n="hub.status.resolved"></option>
+            </select>
+            <select id="hub-f-channel" aria-label="channel">
+              <option value="" id="hub-f-channel-all" data-i18n="hub.filter.channel"></option>
+              <option value="chat" id="hub-f-channel-chat" data-i18n="hub.channel.chat"></option>
+              <option value="email" id="hub-f-channel-email" data-i18n="hub.channel.email"></option>
+              <option value="manual" id="hub-f-channel-manual" data-i18n="hub.channel.manual"></option>
+            </select>
+            <div class="wide">
+              <input id="hub-f-search" data-i18n-placeholder="hub.filter.search">
+              <input id="hub-f-tag" data-i18n-placeholder="hub.filter.tag">
+            </div>
+          </div>
+          <div id="hub-list"></div>
+          <div id="hub-list-empty" class="empty hidden"></div>
+          <p class="form-error" id="hub-list-error" role="alert"></p>
+          <div class="pager">
+            <button id="hub-page-prev" class="btn ghost sm" type="button" data-i18n="hub.page.prev"></button>
+            <button id="hub-page-next" class="btn ghost sm" type="button" data-i18n="hub.page.next"></button>
+            <button id="hub-f-reset" class="btn ghost sm" type="button" data-i18n="hub.filter.reset"></button>
+            <span id="hub-page-info" class="info"></span>
+          </div>
         </div>
-        <div id="hub-list"></div>
-        <div id="hub-list-empty" class="empty hidden"></div>
-        <p class="form-error" id="hub-list-error" role="alert"></p>
-        <div class="pager">
-          <button id="hub-page-prev" class="btn ghost sm" type="button" data-i18n="hub.page.prev"></button>
-          <button id="hub-page-next" class="btn ghost sm" type="button" data-i18n="hub.page.next"></button>
-          <span id="hub-page-info" class="info"></span>
+        <div class="pane">
+          <div id="hub-thread-empty" class="placeholder" data-i18n="hub.thread.placeholder"></div>
+          <div id="hub-thread" class="thread hidden">
+            <div class="thread-head">
+              <button id="hub-thread-back" class="btn ghost sm" type="button" data-i18n="hub.btn.back"></button>
+              <h2 id="hub-thread-subject"></h2>
+              <button id="hub-join-btn" class="btn sm hidden" type="button" data-i18n="hub.join.btn"></button>
+            </div>
+            <div class="meta">
+              <span id="hub-thread-channel" class="chip"></span>
+              <span id="hub-thread-status" class="chip"></span>
+              <span id="hub-thread-assignee"></span>
+              <span id="hub-thread-rating"></span>
+            </div>
+            <div class="controls">
+              <div class="statuses" role="group">
+                <button id="hub-st-open" class="btn ghost sm" type="button" aria-pressed="false" data-i18n="hub.status.open"></button>
+                <button id="hub-st-pending" class="btn ghost sm" type="button" aria-pressed="false" data-i18n="hub.status.pending"></button>
+                <button id="hub-st-resolved" class="btn ghost sm" type="button" aria-pressed="false" data-i18n="hub.status.resolved"></button>
+              </div>
+              <button id="hub-thread-take" class="btn ghost sm" type="button"></button>
+              <div class="tags">
+                <span data-i18n="hub.thread.tags"></span>
+                <span id="hub-thread-taglist"></span>
+                <form id="hub-tag-form" class="tagform">
+                  <input id="hub-tag-input" data-i18n-placeholder="hub.thread.addTag">
+                  <button id="hub-tag-add" class="btn ghost sm" type="submit" data-i18n="hub.thread.add"></button>
+                </form>
+              </div>
+            </div>
+            <div id="hub-msgs" class="msgs"></div>
+            <p class="form-error" id="hub-thread-error" role="alert"></p>
+            <form id="hub-reply-form" class="reply">
+              <div id="hub-canned-pop" class="canned hidden"></div>
+              <textarea id="hub-reply" data-i18n-placeholder="hub.reply.placeholder"></textarea>
+              <div class="actions">
+                <button id="hub-reply-send" class="btn" type="submit" data-i18n="hub.reply.send"></button>
+                <button id="hub-reply-note" class="btn ghost" type="button" data-i18n="hub.reply.note"></button>
+                <span class="spacer"></span>
+                <button id="hub-canned-save" class="btn ghost sm" type="button" data-i18n="hub.canned.saveBtn"></button>
+              </div>
+            </form>
+          </div>
+          <form id="hub-new" class="card hidden">
+            <h2 data-i18n="hub.new.title"></h2>
+            <div class="new-grid">
+              <div class="field"><label for="hub-new-subject" data-i18n="hub.new.subject"></label>
+                <input id="hub-new-subject" required></div>
+              <div class="field"><label for="hub-new-text" data-i18n="hub.new.text"></label>
+                <textarea id="hub-new-text" required></textarea></div>
+              <div class="field"><label for="hub-new-name" data-i18n="hub.new.contactName"></label>
+                <input id="hub-new-name"></div>
+              <div class="field"><label for="hub-new-email" data-i18n="hub.new.contactEmail"></label>
+                <input id="hub-new-email" type="email"></div>
+              <p class="form-error" id="hub-new-error" role="alert"></p>
+              <div class="actions">
+                <button id="hub-new-submit" class="btn" type="submit" data-i18n="hub.new.submit"></button>
+                <button id="hub-new-cancel" class="btn ghost" type="button" data-i18n="hub.new.cancel"></button>
+              </div>
+            </div>
+          </form>
         </div>
       </div>
-      <div id="hub-thread" class="hidden">
-        <div class="thread-head">
-          <button id="hub-thread-back" class="btn ghost sm" type="button" data-i18n="hub.btn.back"></button>
-          <h2 id="hub-thread-subject"></h2>
-          <button id="hub-join-btn" class="btn sm hidden" type="button" data-i18n="hub.join.btn"></button>
-        </div>
-        <div class="meta">
-          <span id="hub-thread-channel" class="chip"></span>
-          <span id="hub-thread-status" class="chip"></span>
-          <span id="hub-thread-assignee"></span>
-          <span id="hub-thread-rating"></span>
-        </div>
-        <div class="statuses">
-          <button id="hub-st-open" class="btn ghost sm" type="button" data-i18n="hub.status.open"></button>
-          <button id="hub-st-pending" class="btn ghost sm" type="button" data-i18n="hub.status.pending"></button>
-          <button id="hub-st-resolved" class="btn ghost sm" type="button" data-i18n="hub.status.resolved"></button>
-          <button id="hub-thread-take" class="btn ghost sm" type="button"></button>
-        </div>
-        <div class="tags">
-          <span data-i18n="hub.thread.tags"></span>
-          <span id="hub-thread-taglist"></span>
-        </div>
-        <form id="hub-tag-form" class="tagform">
-          <input id="hub-tag-input" data-i18n-placeholder="hub.thread.addTag">
-          <button id="hub-tag-add" class="btn ghost sm" type="submit" data-i18n="hub.thread.add"></button>
-        </form>
-        <div id="hub-msgs" class="msgs"></div>
-        <p class="form-error" id="hub-thread-error" role="alert"></p>
-        <form id="hub-reply-form" class="reply">
-          <div id="hub-canned-pop" class="canned hidden"></div>
-          <textarea id="hub-reply" data-i18n-placeholder="hub.reply.placeholder"></textarea>
-          <div class="actions">
-            <button id="hub-reply-send" class="btn" type="submit" data-i18n="hub.reply.send"></button>
-            <button id="hub-reply-note" class="btn ghost" type="button" data-i18n="hub.reply.note"></button>
-            <button id="hub-canned-save" class="btn ghost sm" type="button" data-i18n="hub.canned.saveBtn"></button>
+      <div id="hub-settings" class="settings hidden">
+        <h2 data-i18n="hub.settings.title"></h2>
+        <div class="settings-grid">
+          <div class="stack">
+            <section id="hub-widget-admin" class="card hidden">
+              <h2 data-i18n="hub.widget.adminTitle"></h2>
+              <div class="new-grid">
+                <div class="field"><label for="hub-widget-origins" data-i18n="hub.widget.origins"></label>
+                  <textarea id="hub-widget-origins" data-i18n-placeholder="hub.widget.originsHint"></textarea></div>
+                <label class="check"><input type="checkbox" id="hub-widget-consent">
+                  <span data-i18n="hub.widget.consent"></span></label>
+                <div class="field"><label for="hub-widget-policy" data-i18n="hub.widget.policy"></label>
+                  <input id="hub-widget-policy" type="url"></div>
+                <p class="form-error" id="hub-widget-error" role="alert"></p>
+                <p class="saved" id="hub-widget-saved" role="status"></p>
+                <div class="actions">
+                  <button id="hub-widget-save" class="btn" type="button" data-i18n="hub.widget.save"></button>
+                </div>
+              </div>
+            </section>
+            <section id="hub-webhook-admin" class="card hidden">
+              <h2 data-i18n="hub.webhook.title"></h2>
+              <div class="new-grid">
+                <div class="field"><label for="hub-webhook-secret" data-i18n="hub.webhook.secret"></label>
+                  <div class="actions"><input id="hub-webhook-secret" type="password" readonly autocomplete="off">
+                    <button id="hub-webhook-show" class="btn ghost sm" type="button" data-i18n="hub.webhook.show"></button>
+                    <button id="hub-webhook-copy" class="btn ghost sm" type="button" data-i18n="hub.webhook.copy"></button></div>
+                </div>
+                <p class="saved" id="hub-webhook-copied" role="status"></p>
+              </div>
+            </section>
           </div>
-        </form>
+          <section id="hub-email-admin" class="card hidden">
+            <h2 data-i18n="hub.email.title"></h2>
+            <div class="new-grid">
+              <h3 data-i18n="hub.email.imapTitle"></h3>
+              <div class="field"><label for="hub-email-imap-host" data-i18n="hub.email.host"></label>
+                <input id="hub-email-imap-host"></div>
+              <div class="field"><label for="hub-email-imap-port" data-i18n="hub.email.port"></label>
+                <input id="hub-email-imap-port" type="number" min="1" max="65535"></div>
+              <label class="check"><input type="checkbox" id="hub-email-imap-tls">
+                <span data-i18n="hub.email.tls"></span></label>
+              <div class="field"><label for="hub-email-imap-user" data-i18n="hub.email.user"></label>
+                <input id="hub-email-imap-user" autocomplete="off"></div>
+              <div class="field"><label for="hub-email-imap-pass" data-i18n="hub.email.pass"></label>
+                <input id="hub-email-imap-pass" type="password" autocomplete="new-password" data-i18n-placeholder="hub.email.passHint"></div>
+              <h3 data-i18n="hub.email.smtpTitle"></h3>
+              <div class="field"><label for="hub-email-smtp-host" data-i18n="hub.email.host"></label>
+                <input id="hub-email-smtp-host"></div>
+              <div class="field"><label for="hub-email-smtp-port" data-i18n="hub.email.port"></label>
+                <input id="hub-email-smtp-port" type="number" min="1" max="65535"></div>
+              <label class="check"><input type="checkbox" id="hub-email-smtp-tls">
+                <span data-i18n="hub.email.tls"></span></label>
+              <div class="field"><label for="hub-email-smtp-user" data-i18n="hub.email.user"></label>
+                <input id="hub-email-smtp-user" autocomplete="off"></div>
+              <div class="field"><label for="hub-email-smtp-pass" data-i18n="hub.email.pass"></label>
+                <input id="hub-email-smtp-pass" type="password" autocomplete="new-password" data-i18n-placeholder="hub.email.passHint"></div>
+              <div class="field"><label for="hub-email-from" data-i18n="hub.email.from"></label>
+                <input id="hub-email-from" type="email"></div>
+              <p class="note" id="hub-email-status" role="status"></p>
+              <p class="note" id="hub-email-lasttest"></p>
+              <p class="form-error" id="hub-email-error" role="alert"></p>
+              <p class="saved" id="hub-email-saved" role="status"></p>
+              <div class="actions">
+                <button id="hub-email-save" class="btn" type="button" data-i18n="hub.email.save"></button>
+                <button id="hub-email-test" class="btn ghost" type="button" data-i18n="hub.email.test"></button>
+                <button id="hub-email-disable" class="btn ghost" type="button" data-i18n="hub.email.disable"></button>
+              </div>
+            </div>
+          </section>
+        </div>
       </div>
-      <form id="hub-new" class="card hidden">
-        <h2 data-i18n="hub.new.title"></h2>
-        <div class="new-grid">
-          <div class="field"><label for="hub-new-subject" data-i18n="hub.new.subject"></label>
-            <input id="hub-new-subject" required></div>
-          <div class="field"><label for="hub-new-text" data-i18n="hub.new.text"></label>
-            <textarea id="hub-new-text" required></textarea></div>
-          <div class="field"><label for="hub-new-name" data-i18n="hub.new.contactName"></label>
-            <input id="hub-new-name"></div>
-          <div class="field"><label for="hub-new-email" data-i18n="hub.new.contactEmail"></label>
-            <input id="hub-new-email" type="email"></div>
-          <p class="form-error" id="hub-new-error" role="alert"></p>
-          <div class="actions">
-            <button id="hub-new-submit" class="btn" type="submit" data-i18n="hub.new.submit"></button>
-            <button id="hub-new-cancel" class="btn ghost" type="button" data-i18n="hub.new.cancel"></button>
-          </div>
-        </div>
-      </form>
-      <section id="hub-widget-admin" class="card hidden">
-        <h2 data-i18n="hub.widget.adminTitle"></h2>
-        <div class="new-grid">
-          <div class="field"><label for="hub-widget-origins" data-i18n="hub.widget.origins"></label>
-            <textarea id="hub-widget-origins" data-i18n-placeholder="hub.widget.originsHint"></textarea></div>
-          <label class="check"><input type="checkbox" id="hub-widget-consent">
-            <span data-i18n="hub.widget.consent"></span></label>
-          <div class="field"><label for="hub-widget-policy" data-i18n="hub.widget.policy"></label>
-            <input id="hub-widget-policy" type="url"></div>
-          <p class="form-error" id="hub-widget-error" role="alert"></p>
-          <p class="saved" id="hub-widget-saved" role="status"></p>
-          <div class="actions">
-            <button id="hub-widget-save" class="btn" type="button" data-i18n="hub.widget.save"></button>
-          </div>
-        </div>
-      </section>
-      <section id="hub-webhook-admin" class="card hidden">
-        <h2 data-i18n="hub.webhook.title"></h2>
-        <div class="new-grid">
-          <div class="field"><label for="hub-webhook-secret" data-i18n="hub.webhook.secret"></label>
-            <div class="actions"><input id="hub-webhook-secret" readonly>
-              <button id="hub-webhook-copy" class="btn ghost sm" type="button" data-i18n="hub.webhook.copy"></button></div>
-          </div>
-          <p class="saved" id="hub-webhook-copied" role="status"></p>
-        </div>
-      </section>
-      <section id="hub-email-admin" class="card hidden">
-        <h2 data-i18n="hub.email.title"></h2>
-        <div class="new-grid">
-          <h3 data-i18n="hub.email.imapTitle"></h3>
-          <div class="field"><label for="hub-email-imap-host" data-i18n="hub.email.host"></label>
-            <input id="hub-email-imap-host"></div>
-          <div class="field"><label for="hub-email-imap-port" data-i18n="hub.email.port"></label>
-            <input id="hub-email-imap-port" type="number" min="1" max="65535"></div>
-          <label class="check"><input type="checkbox" id="hub-email-imap-tls">
-            <span data-i18n="hub.email.tls"></span></label>
-          <div class="field"><label for="hub-email-imap-user" data-i18n="hub.email.user"></label>
-            <input id="hub-email-imap-user" autocomplete="off"></div>
-          <div class="field"><label for="hub-email-imap-pass" data-i18n="hub.email.pass"></label>
-            <input id="hub-email-imap-pass" type="password" autocomplete="new-password" data-i18n-placeholder="hub.email.passHint"></div>
-          <h3 data-i18n="hub.email.smtpTitle"></h3>
-          <div class="field"><label for="hub-email-smtp-host" data-i18n="hub.email.host"></label>
-            <input id="hub-email-smtp-host"></div>
-          <div class="field"><label for="hub-email-smtp-port" data-i18n="hub.email.port"></label>
-            <input id="hub-email-smtp-port" type="number" min="1" max="65535"></div>
-          <label class="check"><input type="checkbox" id="hub-email-smtp-tls">
-            <span data-i18n="hub.email.tls"></span></label>
-          <div class="field"><label for="hub-email-smtp-user" data-i18n="hub.email.user"></label>
-            <input id="hub-email-smtp-user" autocomplete="off"></div>
-          <div class="field"><label for="hub-email-smtp-pass" data-i18n="hub.email.pass"></label>
-            <input id="hub-email-smtp-pass" type="password" autocomplete="new-password" data-i18n-placeholder="hub.email.passHint"></div>
-          <div class="field"><label for="hub-email-from" data-i18n="hub.email.from"></label>
-            <input id="hub-email-from" type="email"></div>
-          <p class="note" id="hub-email-status" role="status"></p>
-          <p class="note" id="hub-email-lasttest"></p>
-          <p class="form-error" id="hub-email-error" role="alert"></p>
-          <p class="saved" id="hub-email-saved" role="status"></p>
-          <div class="actions">
-            <button id="hub-email-save" class="btn" type="button" data-i18n="hub.email.save"></button>
-            <button id="hub-email-test" class="btn ghost" type="button" data-i18n="hub.email.test"></button>
-            <button id="hub-email-disable" class="btn ghost" type="button" data-i18n="hub.email.disable"></button>
-          </div>
-        </div>
-      </section>
     </section>
     <section id="hub-forbidden" class="card hidden">
       <h1 id="hub-forbidden-title" data-i18n="hub.forbidden.title"></h1>
