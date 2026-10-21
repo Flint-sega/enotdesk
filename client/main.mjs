@@ -1728,6 +1728,10 @@ function startAgentMode() {
       // командная строка видна только процессам того же пользователя.
       spawner: createSessionSpawner({
         koffi: spawnKoffi,
+        // ADR 0036: хелпер — от SYSTEM в консольном сеансе (видит экран входа и
+        // блокировки, работает без вошедшего пользователя); ENOT_VIDEO_TOKEN=user —
+        // прежний токен пользователя (аварийный выключатель)
+        tokenMode: process.env.ENOT_VIDEO_TOKEN === 'user' ? 'user' : 'system',
         log: { warn: (...a) => { console.warn(...a); svcDiag.write('video', a.map(String).join(' ')); } },
       }),
       netFactory: (p) => net.connect(p),

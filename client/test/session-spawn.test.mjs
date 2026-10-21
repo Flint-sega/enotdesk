@@ -27,7 +27,22 @@ function makeKoffi(script) {
                 args[1].writeUInt32LE(script.tokenHandle ?? 0xdeadbeef, 0);
                 return true;
               case 'CloseHandle':
+                (script.closed ??= []).push(args[0]);
                 return true;
+              case 'GetCurrentProcess':
+                return 0xffff;
+              case 'OpenProcessToken':
+                if (script.ownOk === false) return false;
+                args[2].writeUInt32LE(0x5151, 0);
+                return true;
+              case 'DuplicateTokenEx':
+                if (script.dupOk === false) return false;
+                args[5].writeUInt32LE(0x5252, 0);
+                return true;
+              case 'SetTokenInformation':
+                script.gotSession = args[2].readUInt32LE(0);
+                script.gotClass = args[1];
+                return script.setOk !== false;
               case 'CreateProcessAsUserW': {
                 const si = args[9];
                 const pi = args[10];
@@ -105,4 +120,39 @@ test('мусорные аргументы и отсутствие koffi — че
   const spawner = createSessionSpawner({ koffi: koffiMock });
   assert.deepEqual(await spawner.spawnInConsoleSession({ commandLine: 'x' }), { ok: false, reason: 'bad-exe' });
   assert.deepEqual(await spawner.spawnInConsoleSession({ exePath: 'x' }), { ok: false, reason: 'bad-commandline' });
+});
+
+// ---- ADR 0036: SYSTEM в консольном сеансе ----
+
+test('tokenMode system: свой токен → DuplicateTokenEx → TokenSessionId сеанса → спавн', async () => {
+  const script = { ...SCRIPT, sessionId: 3 };
+  const { koffiMock, calls } = makeKoffi(script);
+  const { spawnInConsoleSession } = createSessionSpawner({ koffi: koffiMock, tokenMode: 'system' });
+  const r = await spawnInConsoleSession({ exePath: 'C:\\x\\helper.exe', commandLine: 'x --token abc' });
+  assert.deepEqual(r, { ok: true, pid: 4242, token: 'system' });
+  assert.equal(script.gotToken, 0x5252, 'процесс создан дубликатом токена службы');
+  assert.equal(script.gotClass, 12, 'TokenSessionId');
+  assert.equal(script.gotSession, 3, 'номер консольного сеанса записан в токен');
+  assert.ok(!calls.some(([n]) => n === 'WTSQueryUserToken'), 'токен пользователя не нужен');
+  assert.ok(script.closed.includes(0x5151) && script.closed.includes(0x5252), 'оба токена закрыты');
+});
+
+test('tokenMode system: сбой SetTokenInformation — честный откат на токен пользователя', async () => {
+  const warns = [];
+  const script = { ...SCRIPT, setOk: false };
+  const { koffiMock } = makeKoffi(script);
+  const { spawnInConsoleSession } = createSessionSpawner({ koffi: koffiMock, tokenMode: 'system', log: { warn: (m) => warns.push(m) } });
+  const r = await spawnInConsoleSession({ exePath: 'C:\\x\\helper.exe', commandLine: 'x --token abc' });
+  assert.deepEqual(r, { ok: true, pid: 4242, token: 'user' });
+  assert.equal(script.gotToken, 0xdeadbeef, 'процесс создан токеном пользователя');
+  assert.ok(script.closed.includes(0x5252), 'неудавшийся дубликат закрыт');
+  assert.match(warns.join(' '), /откат на токен пользователя/);
+});
+
+test('tokenMode system без вошедшего пользователя: SYSTEM работает, токен пользователя не нужен', async () => {
+  const script = { ...SCRIPT, tokenOk: false };
+  const { koffiMock } = makeKoffi(script);
+  const { spawnInConsoleSession } = createSessionSpawner({ koffi: koffiMock, tokenMode: 'system' });
+  const r = await spawnInConsoleSession({ exePath: 'C:\\x\\helper.exe', commandLine: 'x --token abc' });
+  assert.equal(r.ok, true, 'экран входа без пользователя — хелпер всё равно запускается');
 });

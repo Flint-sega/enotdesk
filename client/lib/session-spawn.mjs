@@ -8,8 +8,20 @@
 // koffi инъекцией — юнит-тесты на моках без Electron.
 
 const CREATE_FLAGS = 0x00000008 | 0x00000400; // DETACHED_PROCESS | CREATE_UNICODE_ENVIRONMENT
+// ADR 0036: токен SYSTEM в консольном сеансе — свой токен службы (LocalSystem)
+// дублируется в primary и получает номер консольного сеанса (нужен SeTcbPrivilege,
+// он у LocalSystem есть). Такой процесс видит и рабочий стол Winlogon (экран
+// входа/блокировки), а при отсутствии вошедшего пользователя WTSQueryUserToken
+// не работает вовсе.
+const TOKEN_ALL_ACCESS = 0x000F01FF;
+const MAXIMUM_ALLOWED = 0x02000000;
+const SECURITY_IMPERSONATION = 2;
+const TOKEN_PRIMARY = 1;
+const TOKEN_SESSION_ID = 12; // TOKEN_INFORMATION_CLASS.TokenSessionId
 
-export function createSessionSpawner({ koffi, log = console } = {}) {
+// tokenMode: 'user' — токен вошедшего пользователя (как до ADR 0036);
+// 'system' — SYSTEM в консольном сеансе, при сбое — честный откат на 'user'.
+export function createSessionSpawner({ koffi, log = console, tokenMode = 'user' } = {}) {
   if (!koffi) {
     return { spawnInConsoleSession: async () => ({ ok: false, reason: 'koffi-unavailable' }) };
   }
@@ -52,6 +64,12 @@ export function createSessionSpawner({ koffi, log = console } = {}) {
       getActiveSession: kernel32.func('uint32 WTSGetActiveConsoleSessionId()'),
       queryUserToken: wtsapi32.func('bool WTSQueryUserToken(uint32 SessionId, _Out_ void *Token)'),
       closeHandle: kernel32.func('bool CloseHandle(void *Handle)'),
+      getCurrentProcess: kernel32.func('void * GetCurrentProcess()'),
+      openProcessToken: advapi32.func('bool OpenProcessToken(void *Process, uint32 Access, _Out_ void *Token)'),
+      duplicateTokenEx: advapi32.func(
+        'bool DuplicateTokenEx(void *Existing, uint32 Access, void *Attrs, int Impersonation, int Type, _Out_ void *NewToken)',
+      ),
+      setTokenInformation: advapi32.func('bool SetTokenInformation(void *Token, int Class, void *Info, uint32 Length)'),
       createAsUser: advapi32.func(
         'bool CreateProcessAsUserW(void *Token, const void *Application, const void *CommandLine, '
         + 'void *ProcessAttrs, void *ThreadAttrs, bool Inherit, uint32 Flags, void *Environment, '
@@ -61,7 +79,28 @@ export function createSessionSpawner({ koffi, log = console } = {}) {
     return api;
   }
 
-  // Запуск helper'а в консольном сеансе. → { ok, pid } | { ok:false, reason }.
+  // Токен SYSTEM для консольного сеанса или null (честный откат на токен пользователя).
+  function systemTokenFor(dll, sessionId) {
+    const own = Buffer.alloc(8);
+    if (!dll.openProcessToken(dll.getCurrentProcess(), TOKEN_ALL_ACCESS, own)) return null;
+    const ownToken = koffi.decode(own, 0, 'void *');
+    try {
+      const dupBuf = Buffer.alloc(8);
+      if (!dll.duplicateTokenEx(ownToken, MAXIMUM_ALLOWED, null, SECURITY_IMPERSONATION, TOKEN_PRIMARY, dupBuf)) return null;
+      const dup = koffi.decode(dupBuf, 0, 'void *');
+      const sess = Buffer.alloc(4);
+      sess.writeUInt32LE(sessionId, 0);
+      if (!dll.setTokenInformation(dup, TOKEN_SESSION_ID, sess, 4)) {
+        try { dll.closeHandle(dup); } catch { /* токен уже мёртв */ }
+        return null;
+      }
+      return dup;
+    } finally {
+      try { dll.closeHandle(ownToken); } catch { /* токен уже мёртв */ }
+    }
+  }
+
+  // Запуск helper'а в консольном сеансе. → { ok, pid, token } | { ok:false, reason }.
   async function spawnInConsoleSession({ exePath, commandLine, desktop = 'winsta0\\default' }) {
     if (typeof exePath !== 'string' || !exePath) return { ok: false, reason: 'bad-exe' };
     if (typeof commandLine !== 'string' || !commandLine) return { ok: false, reason: 'bad-commandline' };
@@ -70,11 +109,20 @@ export function createSessionSpawner({ koffi, log = console } = {}) {
       const sessionId = dll.getActiveSession();
       if (!sessionId || sessionId === 0xFFFFFFFF) return { ok: false, reason: 'no-active-session' };
 
-      const tokenBuf = Buffer.alloc(8); // место под HANDLE (_Out_)
-      if (!dll.queryUserToken(sessionId, tokenBuf)) {
-        return { ok: false, reason: 'token-failed' };
+      let token = null;
+      let kind = 'user';
+      if (tokenMode === 'system') {
+        token = systemTokenFor(dll, sessionId);
+        if (token) kind = 'system';
+        else log.warn?.('session-spawn: токен SYSTEM для сеанса не получен — откат на токен пользователя');
       }
-      const token = koffi.decode(tokenBuf, 0, 'void *');
+      if (!token) {
+        const tokenBuf = Buffer.alloc(8); // место под HANDLE (_Out_)
+        if (!dll.queryUserToken(sessionId, tokenBuf)) {
+          return { ok: false, reason: 'token-failed' };
+        }
+        token = koffi.decode(tokenBuf, 0, 'void *');
+      }
       try {
         const utf16 = (s) => Buffer.concat([Buffer.from(s, 'utf16le'), Buffer.from([0, 0])]);
         // plain-объект: _Inout_ — koffi пакует вход (cb, lpDesktop) и пишет выход
@@ -94,7 +142,7 @@ export function createSessionSpawner({ koffi, log = console } = {}) {
         if (!spawned) return { ok: false, reason: 'create-failed' };
         try { dll.closeHandle(pi.hProcess); } catch { /* хэндл не выделился */ }
         try { dll.closeHandle(pi.hThread); } catch { /* хэндл не выделился */ }
-        return { ok: true, pid: pi.dwProcessId };
+        return tokenMode === 'system' ? { ok: true, pid: pi.dwProcessId, token: kind } : { ok: true, pid: pi.dwProcessId };
       } finally {
         try { dll.closeHandle(token); } catch { /* токен уже мёртв */ }
       }

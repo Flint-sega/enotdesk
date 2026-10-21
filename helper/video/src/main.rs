@@ -1023,6 +1023,14 @@ fn capture_session(
     // which runs once per pipe connection).
     let mut black_streak: u32 = 0;
     let mut other_err_streak: u32 = 0;
+    // ADR 0036: перед каждым созданием дубликата поток захвата прицепляется к
+    // ТЕКУЩЕМУ рабочему столу ввода — после блокировки/UAC дубликат
+    // пересоздаётся уже на Winlogon (процессу от SYSTEM это разрешено; у
+    // процесса пользователя OpenInputDesktop там честно отказывает — прежнее
+    // поведение). ENOT_VIDEO_FOLLOW=off — аварийный выключатель. Лог — только
+    // при смене исхода (ok/failed), без шума на каждом пересоздании.
+    let follow_desktop = std::env::var("ENOT_VIDEO_FOLLOW").map_or(true, |v| v != "off");
+    let mut capture_desk_ok: Option<bool> = None;
 
     loop {
         if shared.auth_fail.load(Ordering::SeqCst) {
@@ -1094,6 +1102,18 @@ fn capture_session(
                 // consecutive failures -> Fatal, lock-screen/UAC failures
                 // never silently downgrade the capture path.
                 if dup.is_none() {
+                    if follow_desktop {
+                        let r = win::attach_input_desktop();
+                        let ok = r.is_ok();
+                        if capture_desk_ok != Some(ok) {
+                            capture_desk_ok = Some(ok);
+                            let name = ascii(&win::thread_desktop_name()).replace(['"', '\\'], "'");
+                            match r {
+                                Ok(()) => log_line(&format!("{{\"ev\":\"capture-desktop\",\"attach\":\"ok\",\"desktop\":\"{name}\"}}")),
+                                Err(e) => log_line(&format!("{{\"ev\":\"capture-desktop\",\"attach\":\"failed\",\"desktop\":\"{name}\",\"err\":\"{}\"}}", ascii(&e).replace(['"', '\\'], "'"))),
+                            }
+                        }
+                    }
                     match cap.make_dup() {
                         Ok(d) => {
                             dup_fail_streak = 0;
