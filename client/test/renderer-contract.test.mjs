@@ -304,7 +304,7 @@ test('W-C4: события ввода уходят в main с opKey; claim/relea
     'claim-input уходит в main IPC-мостом');
   assert.match(services, /svc\.type === 'release-input'[\s\S]{0,120}enot\.inputRelease\(opKey\)/,
     'release-input уходит в main IPC-мостом');
-  assert.match(services, /parseControlMessage\(m\.data\)[\s\S]{0,700}return;[^\n]*\n[\s\S]{0,40}\}\n\s*enot\.input\(m\.data, opKey\)/,
+  assert.match(services, /parseControlMessage\(m\.data\)[\s\S]{0,700}return;[^\n]*\r?\n[\s\S]{0,40}\}\r?\n\s*enot\.input\(m\.data, opKey\)/,
     'служебное сообщение (в т.ч. битое служебное) не падает в enot.input');
   // ADR 0035: передача конкретному и «только смотреть» — тоже в main
   assert.match(services, /svc\.type === 'pass-input'[\s\S]{0,120}enot\.inputPass\?\.\(opKey, svc\.to\)/);
