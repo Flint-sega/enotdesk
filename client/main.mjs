@@ -46,6 +46,7 @@ import { t, setLocale } from './lib/i18n.mjs';
 import { createSvcDiag, envDiagSlice, maskJoinTokens } from './lib/svc-diag.mjs';
 import { createKeepAwake } from './lib/keep-awake.mjs';
 import { createBootLog } from './lib/boot-log.mjs';
+import { gdmVideoStatus } from './lib/gdm-status.mjs';
 import { applyDesktopEntry } from './lib/desktop-entry.mjs';
 
 // Диагностика Windows-службы (W-U2): первый маркер каждого запуска процесса —
@@ -1566,6 +1567,7 @@ function createAgentRtc({ fetchIceServers, videoForward = null } = {}) {
       return null;
     }
     bootLog.write('bridge', 'мост RTC создан (скрытое окно)');
+    videoForward?.setGdm?.(null); // новый мост — захват ещё не стартовал
     win.on('closed', () => { win = null; });
     // Тот же контур, что у главного окна (SEC-003): мост не открывает окна
     // и не навигируется — страница фиксированная (client/agent-bridge/page.html).
@@ -1596,6 +1598,7 @@ function createAgentRtc({ fetchIceServers, videoForward = null } = {}) {
       const handler = (e, payload) => {
         if (win && !win.isDestroyed() && e.sender === win.webContents) {
           svcDiag.write('video', `gdm ${payload?.state ?? '?'}${payload?.reason ? ` (${payload.reason})` : ''}`);
+          videoForward?.setGdm?.({ state: payload?.state, reason: payload?.reason });
         }
       };
       ipcMain.on('enot:bridge-gdm', handler);
@@ -1687,6 +1690,15 @@ function startAgentMode() {
     setRelay(fn) { this.relay = fn; },
   };
   const videoStatusCb = { fn: null };
+  // ADR 0031: на Linux видео даёт мост (getDisplayMedia) — оператору уходит
+  // его реальный статус захвата; createAgentRtc передаёт сюда состояние моста.
+  const gdmVideo = process.platform === 'linux' && process.env.EDESK_AGENT_VIDEO !== 'off';
+  let gdmState = null;
+  videoForward.setGdm = (payload) => {
+    gdmState = payload;
+    const s = gdmVideoStatus(payload);
+    if (s) videoStatusCb.fn?.(s);
+  };
   let spawnKoffi;
   try { spawnKoffi = createRequire(import.meta.url)('koffi'); } catch { spawnKoffi = null; } // честный spawn-koffi-unavailable
   // Портативная сборка самораспаковывается в %TEMP%\<случай>\ с SYSTEM-only ACL
@@ -1750,6 +1762,12 @@ function startAgentMode() {
   const video = {
     bind: () => {}, // relay привязывается в createAgentRtc (videoForward.setRelay)
     start: () => {
+      if (!videoHost && gdmVideo) {
+        // мост ещё не отчитался — «запускается»; running/unavailable придут от моста
+        const s = gdmVideoStatus(gdmState) ?? { state: 'connecting' };
+        videoStatusCb.fn?.(s);
+        return s;
+      }
       if (!videoHost) {
         const s = { state: 'error', reason: 'video-unsupported-platform' };
         videoStatusCb.fn?.(s);
