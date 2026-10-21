@@ -175,6 +175,15 @@ test('контракты w.html: все id из w.mjs есть в разметк
   for (const m of wJs.matchAll(/\bt\('([^']+)'/g)) {
     assert.ok(m[1] in ruDict && m[1] in enDict, `t('${m[1]}') нет в словарях`);
   }
+  // мёртвые стили: каждый класс из <style> где-то применяется (у w-status не было class — шапка без отступа)
+  const css = wHtml.slice(wHtml.indexOf('<style>'), wHtml.indexOf('</style>'));
+  const used = new Set([
+    ...[...wHtml.matchAll(/class="([^"]+)"/g)].flatMap((m) => m[1].split(/\s+/)),
+    ...(wJs.match(/'[^'\n]*'|`[^`]*`/g) ?? []).flatMap((lit) => lit.slice(1, -1).split(/[\s.${}]+/)),
+  ]);
+  for (const cls of new Set([...css.matchAll(/\.(w-[a-z-]+)/g)].map((m) => m[1]))) {
+    assert.ok(used.has(cls), `класс .${cls} описан в стилях, но нигде не применён`);
+  }
   const cyr = /[\u0400-\u04FF]/;
   for (const lit of wJs.match(/'[^'\n]*'|"[^"\n]*"|`[^`]*`/g) ?? []) {
     assert.ok(!cyr.test(lit), `кириллический литерал в w.mjs: ${lit.slice(0, 50)}`);
