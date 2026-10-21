@@ -36,7 +36,7 @@ import {
   onExpand as chatWidgetOnExpand,
   shouldNotify as chatWidgetShouldNotify,
 } from './lib/chat-widget.mjs';
-import { createSessionSpawner } from './lib/session-spawn.mjs';
+import { createSessionSpawner, helperLaunchPlan } from './lib/session-spawn.mjs';
 import { createVideoHost } from './lib/video-host.mjs';
 import { inputEventToCommands } from './lib/input-translate.mjs';
 import { resolveConsoleUser, noNewPrivs } from './lib/console-user.mjs';
@@ -1696,7 +1696,17 @@ function startAgentMode() {
   // оттуда. При установке NSIS (Program Files) путь уже доступен — копия не
   // нужна. Копия не удалась — честно отдаём исходный путь: спавн отчитает отказ.
   let helperExe = app.isPackaged ? path.join(process.resourcesPath, 'enotdesk-video.exe') : '';
-  if (process.platform === 'win32' && helperExe) {
+  // ADR 0036: от SYSTEM — только из Program Files (защищённая папка), без копии;
+  // иначе прежний путь — токен пользователя и копия в ProgramData.
+  const launchPlan = helperLaunchPlan({
+    platform: process.platform,
+    helperExe,
+    programFiles: process.env.ProgramW6432 || process.env.ProgramFiles,
+    envToken: process.env.ENOT_VIDEO_TOKEN,
+    pathApi: path.win32,
+  });
+  svcDiag.write('video', `helper token: ${launchPlan.tokenMode}`);
+  if (process.platform === 'win32' && helperExe && launchPlan.copyToProgramData) {
     try {
       const helperDir = path.join(process.env.PROGRAMDATA || 'C:\\ProgramData', 'EnotDesk', 'helper');
       fs.mkdirSync(helperDir, { recursive: true });
@@ -1729,9 +1739,9 @@ function startAgentMode() {
       spawner: createSessionSpawner({
         koffi: spawnKoffi,
         // ADR 0036: хелпер — от SYSTEM в консольном сеансе (видит экран входа и
-        // блокировки, работает без вошедшего пользователя); ENOT_VIDEO_TOKEN=user —
-        // прежний токен пользователя (аварийный выключатель)
-        tokenMode: process.env.ENOT_VIDEO_TOKEN === 'user' ? 'user' : 'system',
+        // блокировки, работает без вошедшего пользователя), если exe в Program
+        // Files; ENOT_VIDEO_TOKEN=user — прежний токен пользователя (выключатель)
+        tokenMode: launchPlan.tokenMode,
         log: { warn: (...a) => { console.warn(...a); svcDiag.write('video', a.map(String).join(' ')); } },
       }),
       netFactory: (p) => net.connect(p),

@@ -154,3 +154,19 @@ export function createSessionSpawner({ koffi, log = console, tokenMode = 'user' 
 
   return { spawnInConsoleSession };
 }
+
+// ADR 0036, security-review 21.10: от SYSTEM хелпер запускается ТОЛЬКО из папки,
+// куда обычный пользователь не может писать, — иначе подложенная рядом с exe DLL
+// (dxgi.dll и т.п. грузятся из папки программы раньше системной) исполнилась бы
+// от SYSTEM. Program Files (установка NSIS, ADR 0029) закрыта; распаковка
+// портативки в TEMP и копия в ProgramData — нет (у Users там WD/AD). Вне
+// Program Files — прежний путь: токен пользователя и копия в ProgramData
+// (подложенная DLL получает права того же пользователя, роста прав нет).
+export function helperLaunchPlan({ platform, helperExe, programFiles, envToken, pathApi }) {
+  if (platform !== 'win32' || !helperExe) return { tokenMode: 'user', copyToProgramData: false };
+  const norm = (p) => pathApi.resolve(p).toLowerCase();
+  const root = programFiles ? norm(programFiles) + pathApi.sep : null;
+  const protectedDir = root != null && norm(helperExe).startsWith(root);
+  if (envToken !== 'user' && protectedDir) return { tokenMode: 'system', copyToProgramData: false };
+  return { tokenMode: 'user', copyToProgramData: true };
+}

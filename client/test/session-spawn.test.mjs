@@ -4,7 +4,8 @@
 
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { createSessionSpawner } from '../lib/session-spawn.mjs';
+import path from 'node:path';
+import { createSessionSpawner, helperLaunchPlan } from '../lib/session-spawn.mjs';
 
 function makeKoffi(script) {
   const calls = [];
@@ -155,4 +156,17 @@ test('tokenMode system без вошедшего пользователя: SYSTE
   const { spawnInConsoleSession } = createSessionSpawner({ koffi: koffiMock, tokenMode: 'system' });
   const r = await spawnInConsoleSession({ exePath: 'C:\\x\\helper.exe', commandLine: 'x --token abc' });
   assert.equal(r.ok, true, 'экран входа без пользователя — хелпер всё равно запускается');
+});
+
+test('helperLaunchPlan: SYSTEM только из Program Files; портативка/ProgramData — токен пользователя (security-review 21.10)', () => {
+  const base = { platform: 'win32', programFiles: 'C:\\Program Files', envToken: undefined, pathApi: path.win32 };
+  assert.deepEqual(helperLaunchPlan({ ...base, helperExe: 'C:\\Program Files\\EnotDesk\\resources\\enotdesk-video.exe' }),
+    { tokenMode: 'system', copyToProgramData: false });
+  assert.deepEqual(helperLaunchPlan({ ...base, helperExe: 'C:\\Windows\\TEMP\\3Kmj\\resources\\enotdesk-video.exe' }),
+    { tokenMode: 'user', copyToProgramData: true }, 'распаковка портативки в TEMP доступна Users на запись');
+  assert.deepEqual(helperLaunchPlan({ ...base, helperExe: 'C:\\Program Files Evil\\x\\enotdesk-video.exe' }),
+    { tokenMode: 'user', copyToProgramData: true }, 'префикс без разделителя не считается Program Files');
+  assert.equal(helperLaunchPlan({ ...base, helperExe: 'C:\\PROGRAM FILES\\EnotDesk\\resources\\enotdesk-video.exe' }).tokenMode, 'system', 'регистр не важен');
+  assert.equal(helperLaunchPlan({ ...base, envToken: 'user', helperExe: 'C:\\Program Files\\EnotDesk\\resources\\enotdesk-video.exe' }).tokenMode, 'user', 'выключатель');
+  assert.deepEqual(helperLaunchPlan({ ...base, platform: 'linux', helperExe: '/opt/x' }), { tokenMode: 'user', copyToProgramData: false });
 });
