@@ -17,7 +17,7 @@ Thank you for considering a contribution. EnotDesk is a remote-support tool that
 - **Honest status everywhere**: an unavailable platform feature reports `native-unavailable` / `wayland-unsupported-control` — never fake success. Koffi adapters load lazily and fall back to inert adapters instead of throwing.
 - **Allowlists and bounds**: keys, buttons, scroll deltas, SDP sizes and served filenames are allowlisted and size-bounded. New protocol input must go through validation in `client/lib/protocol.mjs` (or the server equivalent), never raw pass-through.
 - **Input decisions belong to the main process** behind the WS-state gate (`gate.isOpen()`); renderer claims are never trusted.
-- **Security invariants**: passwords and tokens are stored only as hashes; secrets never cross into the renderer; RBAC is checked per request; the last active admin is protected; audit and history are append-only.
+- **Security invariants**: passwords and tokens are stored only as hashes; secrets never cross into the renderer; RBAC is checked per request; the last active admin is protected; audit and history are written only by the server; retention, cleanup and the routine-log switch are admin-only and security events are always logged (ADR 0034).
 - **User-facing messages are in Russian** (the project ships ru+en); keep new user-facing strings consistent with that convention.
 - **Architectural decisions** are recorded as ADRs in `docs/adr/` (numbering continues from the latest).
 

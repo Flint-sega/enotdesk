@@ -1259,7 +1259,7 @@ for (const id of ['op-join-id', 'op-join-pass']) {
 
 function showTeam() {
   showOnly('view-team');
-  void teamRoute({ api, t });
+  void teamRoute({ api, t, getMe, getLocale });
 }
 
 function showMachines() {
@@ -1275,6 +1275,8 @@ function showMachines() {
 let records = null;
 let account = null; // смена пароля и 2FA (ADR 0033, этап 3)
 let currentRole = null;
+let currentUserId = null; // своя строка в «Команде» — без кнопок «Отключить/Удалить»
+const getMe = () => currentUserId;
 function applyRoleUi(role) {
   currentRole = role;
   const staff = CONNECT_ROLES.includes(role);
@@ -1364,6 +1366,7 @@ function wire() {
       text($('op-user-name'), res.body.user.name);
       text($('op-user-role'), roleName(res.body.user.role));
       account.setUser(res.body.user);
+      currentUserId = res.body.user.id;
       applyRoleUi(res.body.user.role);
       text($('login-error'), '');
       // одноразовый код не должен пережить вход (повторный вход начнёт с чистого поля)
@@ -1555,10 +1558,10 @@ function wire() {
     showConnectForm();
   });
   // Панель команды: монтируем один раз (формы/кнопки внутри view-team).
-  bindTeam({ api, t, showOnly, onOpenMachines: () => showMachines() });
+  bindTeam({ api, t, showOnly, getMe, getLocale, onOpenMachines: () => showMachines() });
 
   // B6 этап 1: адресная книга, история, журнал (паритет с desktop)
-  records = bindRecords({ api, t, getLocale, showOnly, $ });
+  records = bindRecords({ api, t, getLocale, showOnly, $, getRole: () => currentRole });
   account = bindAccount({ api, t, showOnly, $, onBack: () => showLanding(currentRole) });
   $('btn-nav-account').addEventListener('click', () => account.show());
   $('btn-nav-contacts')?.addEventListener('click', () => records.showContacts());
@@ -1634,6 +1637,7 @@ function wire() {
     }
     // Панель машин — только admin (spec §UI машин); оператор её не видит.
     account.setUser(user);
+    currentUserId = user.id;
     applyRoleUi(user.role);
     showLanding(user.role);
     return;

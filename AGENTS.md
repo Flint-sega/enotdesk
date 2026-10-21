@@ -16,7 +16,7 @@
 
 ## Структура
 ```
-server/      app.mjs (REST /api/v1, WS /signal, страницы, статика, relay файлов, WoL, /rtc-config), machines.mjs, totp.mjs, webhooks.mjs, pages.mjs, db.mjs (SCHEMA_VERSION=9), crypto.mjs, backup.mjs, bootstrap.mjs, main.mjs, test/
+server/      app.mjs (REST /api/v1, WS /signal, страницы, статика, relay файлов, WoL, /rtc-config), machines.mjs, totp.mjs, webhooks.mjs, pages.mjs, db.mjs (SCHEMA_VERSION=10), crypto.mjs, backup.mjs, bootstrap.mjs, main.mjs, test/
 hub/         опциональный сервис: app.mjs, auth.mjs (SSO через EnotDesk), threads.mjs, settings.mjs, email.mjs, join.mjs, db.mjs (свой hub.db, SCHEMA_VERSION=5), web/ (консоль), widget/, test/
 client/      main.mjs (окно, токены, WS, ворота ввода, агент-режим, SCM-родитель, мост RTC, updater, окно оператора), preload.cjs (window.enot), operator-preload.cjs (window.enotOperator — «запомнить меня» в окне оператора)
 client/agent-bridge/  скрытое окно с RTCPeerConnection для машинного сеанса: relay.mjs, bridge.mjs, page.html, preload.cjs
@@ -38,7 +38,7 @@ docs/        SESSION_PROTOCOL, SERVER, AGENT, WEB-OPERATOR, BUILD, MANUAL-QA, RO
 - **Сервисы сеанса** — DataChannel: `input`, `chat`, `clip`, `file`, `term` (ADR 0014/0021). Relay сервера не расширяется; у файлов есть серверный fallback `/relay`.
 - **Мультиоператор:** адресация `to/from` по claimId, арбитраж ввода в main (`input-arbiter`), до 3 видеослотов (ADR 0030); join к машине — по паролю из claim (ADR 0032).
 - **Решение о вводе** принимает только main хоста по реальному состоянию WS (`gate.isOpen()`), рендереру и браузеру не доверяем.
-- **RBAC** admin/operator/auditor на каждом запросе; audit и history — append-only; TOTP-2FA (`ENOT_SECRET_KEY`, AES-256-GCM); webhooks с HMAC-подписью; ретенция БД раз в час.
+- **RBAC** admin/operator/auditor на каждом запросе; audit и history пишутся только сервером; срок хранения, очистка и выключатель рутинных записей — у админа, события безопасности пишутся всегда (ADR 0034); TOTP-2FA (`ENOT_SECRET_KEY`, AES-256-GCM); webhooks с HMAC-подписью; ретенция БД раз в час.
 - **TURN:** `/rtc-config` выдаёт эфемерные креды coturn REST (HMAC-SHA1 от `ENOT_TURN_SECRET`, TTL 1 ч).
 - Платформенный слой (Electron, WebRTC, koffi, службы, docker) подробно описан в проектном скилле `enotdesk-platform`, если он установлен локально.
 
@@ -48,7 +48,7 @@ docs/        SESSION_PROTOCOL, SERVER, AGENT, WEB-OPERATOR, BUILD, MANUAL-QA, RO
 - Всё входящее проходит allowlist и лимиты. Недоступная платформа честно сообщает код причины (`native-unavailable`, `wayland-unsupported-control`, `video-unsupported-platform`, `no-active-session`, `term-busy`…), фейковый успех запрещён.
 - Токены, пароли и коды в БД — только хешами; шифруемые секреты — AES-256-GCM от `ENOT_SECRET_KEY`; токены не попадают в рендерер; секреты не идут в argv и логи.
 - Пользовательские тексты — через словари `client/locales/{ru,en}.mjs` (ключи совпадают, `error.code` не локализуется).
-- ADR в `docs/adr/`: следующий номер — 0034.
+- ADR в `docs/adr/`: следующий номер — 0035.
 - README.md (en) ↔ README.ru.md. Лицензия AGPL-3.0.
 
 ## Окружение

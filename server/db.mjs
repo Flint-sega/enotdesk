@@ -1,7 +1,7 @@
 import { DatabaseSync } from 'node:sqlite';
 
 // Последняя версия схемы; растёт с каждым версионированным шагом (A01 и далее).
-export const SCHEMA_VERSION = 9;
+export const SCHEMA_VERSION = 10;
 
 // Версионированные шаги схемы (A01): каждая база — старая или новая — проходит
 // недостающие шаги по порядку, версия хранится в таблице schema_version.
@@ -202,6 +202,18 @@ const MIGRATIONS = [
                )`);
     },
   },
+  {
+    // v10 (ADR 0034): настройки сервера «ключ — значение», которые админ меняет
+    // из панели: сроки хранения журнала и истории, выключатель журнала действий.
+    version: 10,
+    up: (db) => {
+      db.exec(`CREATE TABLE IF NOT EXISTS settings (
+                 key TEXT PRIMARY KEY,
+                 value TEXT NOT NULL,
+                 updated_at TEXT NOT NULL
+               )`);
+    },
+  },
 ];
 
 function schemaVersion(db) {
@@ -245,22 +257,85 @@ export function endLiveSessions(db, reason) {
   return r.changes;
 }
 
+export function getSetting(db, key, fallback = null) {
+  const row = db.prepare('SELECT value FROM settings WHERE key = ?').get(key);
+  return row ? row.value : fallback;
+}
+
+export function setSetting(db, key, value) {
+  db.prepare(`INSERT INTO settings (key, value, updated_at) VALUES (?,?,?)
+              ON CONFLICT(key) DO UPDATE SET value = excluded.value, updated_at = excluded.updated_at`)
+    .run(key, String(value), new Date().toISOString());
+}
+
+// Допустимые сроки хранения в днях (0 — хранить всегда), ADR 0034.
+export const RETENTION_CHOICES = [0, 7, 30, 90, 180, 365];
+
+// Текущая политика хранения: значения из settings главнее умолчаний;
+// historyDefault — срок истории из ENOT_RETENTION_DAYS (90, если не задан).
+export function retentionPolicy(db, { historyDefault = 90 } = {}) {
+  const days = (key, fallback) => {
+    const n = Number(getSetting(db, key, fallback));
+    return Number.isInteger(n) && n >= 0 ? n : fallback;
+  };
+  return {
+    auditEnabled: getSetting(db, 'audit.enabled', '1') !== '0',
+    auditDays: days('audit.retentionDays', 0),
+    historyDays: days('history.retentionDays', historyDefault),
+  };
+}
+
 // Ретенция (гигиена): истёкшие токены старше 7 дней, приглашения, истёкшие
 // более 30 дней назад (использованные, отозванные или просто истёкшие — они
-// непригодны в любом случае), завершённые сеансы старше retentionDays.
+// непригодны в любом случае), завершённые сеансы и записи журнала старше сроков
+// из retentionPolicy (0 — хранить всегда). retentionDays — срок истории по
+// умолчанию (ENOT_RETENTION_DAYS), если админ не задал свой в панели.
 // Вызывается домом-уборщиком раз в час и тестируется напрямую.
 export function runRetention(db, { retentionDays = 90, nowMs = Date.now() } = {}) {
   const cut = (days) => new Date(nowMs - days * 86_400_000).toISOString();
+  const policy = retentionPolicy(db, { historyDefault: retentionDays });
   const tokens = db.prepare('DELETE FROM auth_tokens WHERE expires_at < ?').run(cut(7)).changes;
   const invites = db.prepare('DELETE FROM invites WHERE expires_at <= ?').run(cut(30)).changes;
-  let sessions = 0;
-  if (retentionDays > 0) {
-    sessions = db.prepare("DELETE FROM sessions WHERE state='ended' AND ended_at < ?").run(cut(retentionDays)).changes;
-  }
-  return { tokens, invites, sessions };
+  const sessions = policy.historyDays > 0 ? purgeHistory(db, policy.historyDays, nowMs) : 0;
+  const audit = policy.auditDays > 0 ? purgeAudit(db, policy.auditDays, nowMs) : 0;
+  return { tokens, invites, sessions, audit };
+}
+
+// Очистка истории: только завершённые сеансы (живые не трогаем) старше
+// olderThanDays; 0 — все завершённые. Вместе с ними уходят их операторы.
+export function purgeHistory(db, olderThanDays, nowMs = Date.now()) {
+  const cut = new Date(nowMs - olderThanDays * 86_400_000).toISOString();
+  const r = olderThanDays > 0
+    ? db.prepare("DELETE FROM sessions WHERE state='ended' AND ended_at < ?").run(cut)
+    : db.prepare("DELETE FROM sessions WHERE state='ended'").run();
+  db.prepare('DELETE FROM session_operators WHERE session_id NOT IN (SELECT id FROM sessions)').run();
+  return r.changes;
+}
+
+// Очистка журнала действий старше olderThanDays; 0 — весь журнал.
+export function purgeAudit(db, olderThanDays, nowMs = Date.now()) {
+  const cut = new Date(nowMs - olderThanDays * 86_400_000).toISOString();
+  return (olderThanDays > 0
+    ? db.prepare('DELETE FROM audit WHERE created_at < ?').run(cut)
+    : db.prepare('DELETE FROM audit').run()).changes;
+}
+
+// События безопасности пишутся в журнал всегда, даже когда админ выключил
+// журнал действий (ADR 0034): входы, пароли и 2FA, участники и приглашения,
+// подключения к машинам без согласия (unattended), права машин и любые
+// изменения самого журнала.
+const AUDIT_ALWAYS_PREFIX = ['login.', 'totp.', 'member.', 'invite.', 'audit.', 'history.'];
+const AUDIT_ALWAYS = new Set([
+  'logout', 'password.change', 'webhooks.config', 'retention.config', 'bootstrap.admin',
+  'machine.claim', 'machine.claim.deny', 'machine.pin', 'machine.revoke', 'machine.delete',
+]);
+
+export function isSecurityAction(action) {
+  return AUDIT_ALWAYS.has(action) || AUDIT_ALWAYS_PREFIX.some((p) => action.startsWith(p));
 }
 
 export function auditLog(db, actorId, action, targetId, detail = {}) {
+  if (!isSecurityAction(action) && getSetting(db, 'audit.enabled', '1') === '0') return;
   db.prepare(
     'INSERT INTO audit (actor_id, action, target_id, detail, created_at) VALUES (?,?,?,?,?)'
   ).run(actorId, action, targetId, JSON.stringify(detail), new Date().toISOString());

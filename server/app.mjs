@@ -4,7 +4,10 @@ import fs from 'node:fs';
 import crypto from 'node:crypto';
 import dns from 'node:dns';
 import { WebSocketServer } from 'ws';
-import { openDb, endLiveSessions, auditLog, runRetention } from './db.mjs';
+import {
+  openDb, endLiveSessions, auditLog, runRetention, retentionPolicy, setSetting,
+  purgeAudit, purgeHistory, RETENTION_CHOICES,
+} from './db.mjs';
 import { sanitizeFileName } from '../client/lib/file-transfer.mjs';
 import { createMachinesStore, sanitizeInventory } from './machines.mjs';
 import { createWebhooks } from './webhooks.mjs';
@@ -1069,11 +1072,31 @@ export function createServer(opts = {}) {
       if (!user) return err(res, 401, 'unauthorized', 'Требуется авторизация');
       if (user.role !== 'admin') return err(res, 403, 'forbidden', 'Недостаточно прав');
       const { limit, offset } = listParams(url);
+      // ?status=active — действующие, ?status=archive — использованные, отозванные
+      // и просроченные (обе выборки новые сверху); без параметра — все, как раньше
+      const status = url.searchParams.get('status');
+      if (status !== null && !['active', 'archive'].includes(status)) {
+        return err(res, 400, 'bad_request', 'Некорректный статус приглашений');
+      }
+      const ACTIVE = 'used_at IS NULL AND revoked_at IS NULL AND expires_at > ?';
+      const where = status === 'active' ? `WHERE ${ACTIVE}` : status === 'archive' ? `WHERE NOT (${ACTIVE})` : '';
+      const args = status ? [new Date().toISOString()] : [];
+      const order = status ? 'created_at DESC, rowid DESC' : 'created_at';
       const items = db.prepare(`
         SELECT id, role, expires_at AS expiresAt, used_at AS usedAt, revoked_at AS revokedAt, created_at AS createdAt
-        FROM invites ORDER BY created_at LIMIT ? OFFSET ?`).all(limit, offset);
-      const total = db.prepare('SELECT count(*) c FROM invites').get().c;
+        FROM invites ${where} ORDER BY ${order} LIMIT ? OFFSET ?`).all(...args, limit, offset);
+      const total = db.prepare(`SELECT count(*) c FROM invites ${where}`).get(...args).c;
       return ok(res, 200, { items, total });
+    }
+    if (p === '/invites/purge' && req.method === 'POST') {
+      if (!user) return err(res, 401, 'unauthorized', 'Требуется авторизация');
+      if (user.role !== 'admin') return err(res, 403, 'forbidden', 'Недостаточно прав');
+      // насовсем удаляет архив: использованные, отозванные и просроченные (ADR 0034)
+      const deleted = db.prepare(
+        'DELETE FROM invites WHERE used_at IS NOT NULL OR revoked_at IS NOT NULL OR expires_at <= ?'
+      ).run(new Date().toISOString()).changes;
+      auditLog(db, user.id, 'invite.purge', null, { deleted });
+      return ok(res, 200, { deleted });
     }
     if (p === '/invites' && req.method === 'POST') {
       if (!user) return err(res, 401, 'unauthorized', 'Требуется авторизация');
@@ -1222,11 +1245,52 @@ export function createServer(opts = {}) {
       if (!['admin', 'auditor'].includes(user.role)) return err(res, 403, 'forbidden', 'Недостаточно прав');
       const { limit, offset } = listParams(url);
       const items = db.prepare(`
-        SELECT id, actor_id AS actorId, action, target_id AS targetId, detail, created_at AS createdAt
-        FROM audit ORDER BY id DESC LIMIT ? OFFSET ?`).all(limit, offset)
+        SELECT a.id, a.actor_id AS actorId, u.name AS actorName, a.action, a.target_id AS targetId,
+               a.detail, a.created_at AS createdAt
+        FROM audit a LEFT JOIN users u ON u.id = a.actor_id
+        ORDER BY a.id DESC LIMIT ? OFFSET ?`).all(limit, offset)
         .map((a) => ({ ...a, detail: JSON.parse(a.detail) }));
       const total = db.prepare('SELECT count(*) c FROM audit').get().c;
       return ok(res, 200, { items, total });
+    }
+    // ---- хранение журнала и истории (ADR 0034): очистка и сроки — только админ ----
+    if ((p === '/audit/purge' || p === '/history/purge') && req.method === 'POST') {
+      if (!user) return err(res, 401, 'unauthorized', 'Требуется авторизация');
+      if (user.role !== 'admin') return err(res, 403, 'forbidden', 'Недостаточно прав');
+      const days = body?.olderThanDays;
+      if (!RETENTION_CHOICES.includes(days)) return err(res, 400, 'bad_request', 'Некорректный период очистки');
+      if (p === '/audit/purge') {
+        const deleted = purgeAudit(db, days);
+        // след очистки пишется после неё, поэтому в журнале всегда остаётся запись о ней
+        auditLog(db, user.id, 'audit.purge', null, { deleted, olderThanDays: days });
+        return ok(res, 200, { deleted });
+      }
+      const deleted = purgeHistory(db, days);
+      auditLog(db, user.id, 'history.purge', null, { deleted, olderThanDays: days });
+      return ok(res, 200, { deleted });
+    }
+    if (p === '/settings/retention' && req.method === 'GET') {
+      if (!user) return err(res, 401, 'unauthorized', 'Требуется авторизация');
+      if (!['admin', 'auditor'].includes(user.role)) return err(res, 403, 'forbidden', 'Недостаточно прав');
+      return ok(res, 200, { ...retentionPolicy(db, { historyDefault: cfg.retentionDays }), choices: RETENTION_CHOICES });
+    }
+    if (p === '/settings/retention' && req.method === 'POST') {
+      if (!user) return err(res, 401, 'unauthorized', 'Требуется авторизация');
+      if (user.role !== 'admin') return err(res, 403, 'forbidden', 'Недостаточно прав');
+      const { auditEnabled, auditDays, historyDays } = body || {};
+      if (auditEnabled !== undefined && typeof auditEnabled !== 'boolean') {
+        return err(res, 400, 'bad_request', 'Некорректный признак журнала');
+      }
+      for (const d of [auditDays, historyDays]) {
+        if (d !== undefined && !RETENTION_CHOICES.includes(d)) return err(res, 400, 'bad_request', 'Некорректный срок хранения');
+      }
+      const before = retentionPolicy(db, { historyDefault: cfg.retentionDays });
+      if (auditEnabled !== undefined) setSetting(db, 'audit.enabled', auditEnabled ? '1' : '0');
+      if (auditDays !== undefined) setSetting(db, 'audit.retentionDays', auditDays);
+      if (historyDays !== undefined) setSetting(db, 'history.retentionDays', historyDays);
+      const after = retentionPolicy(db, { historyDefault: cfg.retentionDays });
+      auditLog(db, user.id, 'retention.config', null, { before, after });
+      return ok(res, 200, { ...after, choices: RETENTION_CHOICES });
     }
 
     // ---- sessions ----

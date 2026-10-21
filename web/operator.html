@@ -39,7 +39,7 @@ main{flex:1;width:100%;max-width:1280px;margin:0 auto;padding:28px 24px 44px}
 .connect-stack input,.connect-stack select{width:100%}
 #conn-id,#conn-password{font:600 20px/1.2 var(--font-mono);letter-spacing:.08em;min-height:54px}
 .connect-stack .btn{width:100%;min-height:54px;font-size:16px;margin-top:4px}
-.ws-panel.card{padding:0;min-width:0;overflow:hidden}
+.ws-panel.card{padding:0;min-width:0;overflow:hidden;container:panel/inline-size}
 /* tabs wrap to a second row instead of scrolling: every section stays visible on an iPad */
 .ws-tabs{display:flex;flex-wrap:wrap;gap:6px;padding:10px;border-bottom:1px solid var(--line)}
 .ws-tab{appearance:none;flex:none;border:1px solid transparent;background:transparent;color:var(--text-2);font:700 14px/1 var(--font-body);min-height:42px;padding:0 16px;border-radius:var(--r-pill);cursor:pointer;white-space:nowrap;transition:color var(--t-fast) var(--ease),background var(--t-fast) var(--ease),border-color var(--t-fast) var(--ease)}
@@ -123,15 +123,50 @@ video.fit-cover{object-fit:cover}
 /* B6 этап 1: адресная книга, история, журнал — те же карточки, что у машин */
 .records-search{display:flex;gap:10px;align-items:center;flex-wrap:wrap;margin-top:14px}
 .records-search>label{flex-basis:100%}
-#view-account{max-width:720px;width:100%;margin-inline:auto}
-#view-account h2{margin:28px 0 12px;font-size:18px}
-#view-account h1{margin-bottom:12px}
-#view-account .lead{margin-bottom:12px}
-#totp-status:not(:empty){margin-bottom:8px}
-#view-account h1+.btn{margin-bottom:4px}
+/* account (owner 21.10): two equal compact boxes, fields no wider than a password needs */
+#view-account{max-width:900px;width:100%;margin-inline:auto}
+.acct-head{display:flex;align-items:center;justify-content:space-between;gap:12px;margin-bottom:18px}
+.acct-head h1{margin:0}
+.acct-head .btn{min-height:40px;padding:0 16px;font-size:14px}
+.acct-grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:16px}
+.acct-box{display:flex;flex-direction:column;gap:12px;min-width:0;padding:20px;border:1px solid var(--line);border-radius:var(--r-md);background:var(--bg-inset);box-shadow:var(--top-hl)}
+.acct-box h2{margin:0;font-size:16px}
+.acct-box>div,#totp-setup{display:flex;flex-direction:column;gap:12px}
+.acct-box .lead{font-size:14px;margin:0}
+.acct-box .form-stack{gap:12px}
+.acct-box .form-stack>.btn{margin-top:2px;min-height:42px;padding:0 18px;font-size:14.5px}
+.acct-box input{width:100%;max-width:320px;min-height:42px;padding:9px 12px;font-size:14.5px}
+.acct-box label{font-size:13px}
+#totp-uri,#totp-secret{max-width:none;font:500 12.5px/1.4 var(--font-mono)}
+#totp-confirm-code{max-width:9.5em;font:600 18px/1 var(--font-mono);letter-spacing:.3em;text-align:center}
+#totp-backup-codes{font-family:var(--font-mono);overflow-wrap:anywhere}
+.acct-box .form-error:empty,.acct-box .note:empty{display:none}
+.acct-box .form-error,.acct-box .note{margin:0}
+/* session password: plain text field masked by CSS, so browsers never treat the connect form as a login form */
+.secret-text{-webkit-text-security:disc}
 .records-search input{flex:1;min-width:180px}
 .records-list{display:flex;flex-direction:column;gap:10px;margin-top:14px}
-.record-row{display:flex;gap:12px;align-items:flex-start;justify-content:space-between;border:1px solid var(--line);border-radius:var(--r-md);padding:14px 16px;flex-wrap:wrap;background:var(--panel);box-shadow:var(--top-hl)}
+/* history/audit tools (owner 21.10): CSV in a slim row, storage and purge folded away */
+.records-tools{display:flex;gap:8px;flex-wrap:wrap;align-items:center;margin-top:12px}
+.records-manage{margin-top:12px;border:1px solid var(--line);border-radius:var(--r-md);background:var(--bg-inset);padding:2px 16px}
+.records-manage[open]{padding-bottom:16px}
+.records-manage>summary{cursor:pointer;min-height:44px;display:flex;align-items:center;gap:10px;font-weight:600;font-size:14.5px;color:var(--text-2);list-style:none}
+.records-manage>summary::-webkit-details-marker{display:none}
+.records-manage>summary::before{content:"";width:7px;height:7px;border-right:2px solid currentColor;border-bottom:2px solid currentColor;transform:rotate(-45deg);transition:transform var(--t-fast) var(--ease)}
+.records-manage[open]>summary::before{transform:rotate(45deg)}
+.records-manage>summary:hover{color:var(--text)}
+.records-manage>summary:focus-visible{outline:2px solid var(--accent);outline-offset:2px;border-radius:6px}
+.manage-grid{display:grid;grid-template-columns:150px minmax(0,1fr);gap:12px 16px;align-items:center;margin-top:6px}
+.manage-grid>label,.manage-label{font-size:13.5px;font-weight:600;color:var(--text-2)}
+.manage-grid select{width:200px;max-width:100%;min-height:40px;padding:7px 10px;font-size:14px}
+.manage-row{display:flex;gap:8px;flex-wrap:wrap;align-items:center}
+.manage-grid .check{margin:0;justify-self:start;padding:9px 14px}
+.manage-wide{grid-column:2;margin:-4px 0 0}
+.records-manage>.note{margin:12px 0 0}
+.records-manage>.note:empty{display:none}
+.records-off{margin-top:12px;padding:10px 14px;border:1px solid var(--accent-line);border-radius:var(--r-md);background:var(--accent-dim);color:var(--text);font-size:14px}
+.record-row .record-title{display:flex;align-items:center;gap:8px;flex-wrap:wrap}
+.record-row{display:flex;gap:12px;align-items:flex-start;justify-content:space-between;border:1px solid var(--line);border-radius:var(--r-md);padding:12px 16px;flex-wrap:wrap;background:var(--panel);box-shadow:var(--top-hl)}
 .record-main{min-width:0;flex:1;display:flex;flex-direction:column;gap:4px;overflow-wrap:anywhere}
 .record-row .tag{font:500 12px var(--font-mono);color:var(--accent);background:var(--accent-dim);border-radius:6px;padding:2px 8px}
 .records-pager{display:flex;align-items:center;gap:10px;margin-top:14px;flex-wrap:wrap;color:var(--text-3);font:500 13px var(--font-mono)}
@@ -145,16 +180,59 @@ video.fit-cover{object-fit:cover}
 #view-team h2{font-size:18px;margin:26px 0 12px}
 #view-team .lead{max-width:68ch}
 #team-invite-form{display:flex;align-items:center;gap:10px;flex-wrap:wrap}
-#team-invite-form select{min-width:180px}
-#team-invites,#team-members{display:flex;flex-direction:column;gap:10px}
-.team-row{display:flex;align-items:center;gap:8px 14px;flex-wrap:wrap;border:1px solid var(--line);border-radius:var(--r-md);padding:12px 16px;background:var(--panel);box-shadow:var(--top-hl)}
+#team-invite-form select{width:200px;min-height:42px}
+#team-invite-form .btn{min-height:42px;padding:0 18px;font-size:14.5px}
+/* team lists (owner 21.10): one grid per list, rows are subgrids, so role/status/actions
+   sit in the same columns on every row whatever the name length */
+.team-list{display:grid;grid-template-columns:minmax(0,1fr) 190px 128px max-content;gap:8px 0}
+.team-row{grid-column:1/-1;display:grid;grid-template-columns:subgrid;align-items:center;column-gap:16px;min-height:60px;padding:8px 12px 8px 16px;border:1px solid var(--line);border-radius:var(--r-md);background:var(--panel);box-shadow:var(--top-hl)}
+.team-list>p{grid-column:1/-1;margin:0}
+.team-row.off{opacity:.62}
+.cell-main{display:flex;flex-direction:column;gap:2px;min-width:0}
+.cell-main strong,.cell-main .muted{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.cell-role select{width:100%;min-height:40px;padding:7px 10px;font-size:14px}
+.cell-state{display:flex;align-items:center;gap:8px;color:var(--text-2);font-size:14px;white-space:nowrap}
+.state-dot{width:8px;height:8px;border-radius:50%;background:var(--text-3);flex:none}
+.state-dot.on{background:var(--accent);box-shadow:0 0 8px var(--accent-dim)}
 .team-row .muted,p.muted{color:var(--text-3);font-size:14px}
-.team-actions{display:flex;gap:8px;flex-wrap:wrap;margin-left:auto}
-.team-actions .btn,.team-row>.btn{min-height:40px;padding:0 16px;font-size:14px}
+.team-actions{display:flex;gap:8px;justify-content:flex-end;align-items:center}
+.team-actions .btn{min-height:38px;padding:0 14px;font-size:13.5px}
+.team-row .tag,.team-archive .count{font:500 12px var(--font-mono);color:var(--accent);background:var(--accent-dim);border-radius:6px;padding:3px 8px}
+.team-archive{margin-top:12px;border:1px dashed var(--line-strong);border-radius:var(--r-md);padding:4px 14px}
+.team-archive[open]{padding-bottom:14px}
+.team-archive>summary{cursor:pointer;min-height:44px;display:flex;align-items:center;gap:10px;color:var(--text-2);font-weight:600;font-size:14.5px;list-style:none}
+.team-archive>summary::-webkit-details-marker{display:none}
+.team-archive>summary::before{content:"";width:7px;height:7px;border-right:2px solid currentColor;border-bottom:2px solid currentColor;transform:rotate(-45deg);transition:transform var(--t-fast) var(--ease)}
+.team-archive[open]>summary::before{transform:rotate(45deg)}
+.team-archive>summary:hover{color:var(--text)}
+.team-archive>summary:focus-visible{outline:2px solid var(--accent);outline-offset:2px;border-radius:6px}
+.team-archive .team-list{margin:6px 0 12px}
+.team-archive .team-row{background:transparent;box-shadow:none}
 .op-foot{border-top:1px solid var(--line);padding:14px 24px;color:var(--text-3);font-size:12.5px;font-family:var(--font-mono)}
 .wait-note{color:var(--text-2)}
 @media (max-width:1180px){.workspace{grid-template-columns:minmax(300px,340px) minmax(0,1fr)}#view-connect{padding:22px}}
 @media (max-width:1024px){#op-user-role{display:none}.op-user .name{max-width:22vw}}
+/* narrow panel (iPad, laptop with the connect block, phone): each row becomes two lines —
+   name + status on top, role + actions below; still the same columns on every row */
+@container panel (max-width:720px){
+  .team-list{grid-template-columns:minmax(0,1fr) auto}
+  .team-row{grid-template-columns:minmax(0,1fr) auto;row-gap:10px;padding:12px 14px}
+  .cell-main{grid-column:1;grid-row:1}
+  .cell-state{grid-column:2;grid-row:1;justify-self:end}
+  .cell-role{grid-column:1;grid-row:2;max-width:240px}
+  .team-actions{grid-column:2;grid-row:2}
+  .team-actions:empty{display:none}
+}
+@container panel (max-width:440px){
+  .cell-role{grid-column:1/-1;max-width:none}
+  .team-actions{grid-column:1/-1;grid-row:3;justify-content:flex-start}
+}
+@media (max-width:760px){
+  .acct-grid{grid-template-columns:1fr}
+  .manage-grid{grid-template-columns:1fr;gap:8px}
+  .manage-wide{grid-column:1;margin:0}
+  .manage-grid select{width:100%}
+}
 @media (max-width:900px){.workspace{grid-template-columns:1fr}#view-connect{position:static}.session{grid-template-columns:1fr}.connect-grid{grid-template-columns:1fr}}
 @media (max-width:640px){
   .op-head{flex-direction:column;align-items:stretch;gap:10px;padding:12px 14px;margin:8px 8px 0;border-radius:var(--r-lg);position:relative;top:0}
@@ -241,11 +319,11 @@ video.fit-cover{object-fit:cover}
       <form id="connect-form" class="connect-stack">
         <div class="field">
           <label for="conn-id" data-i18n="web.connect.id">ID клиента</label>
-          <input id="conn-id" inputmode="numeric" autocomplete="off">
+          <input id="conn-id" name="session-id" inputmode="numeric" autocomplete="off" autocapitalize="off" spellcheck="false" data-lpignore="true" data-1p-ignore data-bwignore>
         </div>
         <div class="field">
           <label for="conn-password" data-i18n="web.connect.password">Пароль сеанса</label>
-          <input id="conn-password" type="password" autocomplete="off">
+          <input id="conn-password" name="session-pass" class="secret-text" type="text" autocomplete="off" autocapitalize="off" spellcheck="false" data-lpignore="true" data-1p-ignore data-bwignore>
         </div>
         <div class="field" id="conn-contact-field">
           <label for="conn-contact" data-i18n="op.contactLabel">Клиент из адресной книги</label>
@@ -313,11 +391,11 @@ video.fit-cover{object-fit:cover}
           <form class="form-stack" id="machines-claim-form">
             <div class="field">
               <label for="machines-claim-reason" data-i18n="web.machines.claimReason">Причина подключения (обязательно)</label>
-              <input id="machines-claim-reason" maxlength="500">
+              <input id="machines-claim-reason" name="claim-reason" maxlength="500" autocomplete="off" data-lpignore="true" data-1p-ignore data-bwignore>
             </div>
             <div class="field hidden" id="machines-claim-pin-field">
               <label for="machines-claim-pin" data-i18n="web.machines.claimPin">PIN машины</label>
-              <input id="machines-claim-pin" type="password" autocomplete="off">
+              <input id="machines-claim-pin" type="password" name="machine-pin" autocomplete="one-time-code" data-lpignore="true" data-1p-ignore data-bwignore>
             </div>
             <div class="machines-claim-row form-actions">
               <button id="btn-machines-claim" class="btn" type="submit" data-i18n="web.machines.claimSubmit">Подключиться</button>
@@ -345,15 +423,49 @@ video.fit-cover{object-fit:cover}
         </form>
         <p class="invite-link hidden" id="team-invite-link" aria-live="polite"></p>
         <h2 data-i18n="web.team.invitesTitle">Приглашения</h2>
-        <div id="team-invites"></div>
+        <div id="team-invites" class="team-list"></div>
+        <!-- архив приглашений (owner 21.10): использованные, отозванные и просроченные — свёрнуты, с очисткой -->
+        <details class="team-archive" id="team-archive">
+          <summary><span data-i18n="web.team.archiveTitle">Архив приглашений</span> <span class="count" id="team-archive-count">0</span></summary>
+          <div id="team-archive-list" class="team-list"></div>
+          <button id="team-archive-purge" class="btn danger ghost sm" type="button" data-i18n="web.team.archivePurge">Очистить архив</button>
+        </details>
         <h2 data-i18n="web.team.membersTitle">Участники</h2>
-        <div id="team-members"></div>
+        <div id="team-members" class="team-list"></div>
       </section>
       <section id="view-history" class="card hidden">
         <h1 data-i18n="history.title">История сеансов</h1>
         <button id="btn-history-back" class="btn ghost" type="button" data-i18n="web.team.backConnect">К подключению</button>
         <button id="btn-history-audit" class="btn ghost hidden" type="button" data-i18n="op.paneAudit">Журнал</button>
-        <button id="history-csv" class="btn ghost" type="button" data-i18n="common.downloadCsv">Скачать CSV</button>
+        <div class="records-tools">
+          <button id="history-csv" class="btn ghost sm" type="button" data-i18n="common.downloadCsv">Скачать CSV</button>
+        </div>
+        <!-- хранение и очистка (ADR 0034): видят admin и auditor, менять может только admin -->
+        <details class="records-manage hidden" id="history-manage">
+          <summary data-i18n="retention.title">Хранение и очистка</summary>
+          <div class="manage-grid">
+            <label for="history-keep" data-i18n="retention.keepLabel">Хранить записи</label>
+            <select id="history-keep">
+              <option value="0" data-i18n="retention.keep0">Всегда</option>
+              <option value="7" data-i18n="retention.keep7">7 дней</option>
+              <option value="30" data-i18n="retention.keep30">30 дней</option>
+              <option value="90" data-i18n="retention.keep90">90 дней</option>
+              <option value="180" data-i18n="retention.keep180">180 дней</option>
+              <option value="365" data-i18n="retention.keep365">1 год</option>
+            </select>
+            <label for="history-purge-age" data-i18n="retention.purgeLabel">Удалить сейчас</label>
+            <div class="manage-row">
+              <select id="history-purge-age">
+              <option value="30" data-i18n="retention.purge30">Старше 30 дней</option>
+              <option value="90" data-i18n="retention.purge90">Старше 90 дней</option>
+              <option value="365" data-i18n="retention.purge365">Старше года</option>
+              <option value="0" data-i18n="retention.purge0">Всё целиком</option>
+              </select>
+              <button id="history-purge" class="btn danger ghost sm" type="button" data-i18n="retention.purgeBtn">Очистить</button>
+            </div>
+          </div>
+          <p class="note" id="history-manage-note" aria-live="polite"></p>
+        </details>
         <p class="note" id="history-status" aria-live="polite"></p>
         <div id="history-list" class="records-list"></div>
         <div class="records-pager">
@@ -366,7 +478,39 @@ video.fit-cover{object-fit:cover}
         <h1 data-i18n="audit.title">Журнал действий</h1>
         <button id="btn-audit-back" class="btn ghost" type="button" data-i18n="web.team.backConnect">К подключению</button>
         <button id="btn-audit-history" class="btn ghost" type="button" data-i18n="op.paneHistory">История</button>
-        <button id="audit-csv" class="btn ghost" type="button" data-i18n="common.downloadCsv">Скачать CSV</button>
+        <div class="records-tools">
+          <button id="audit-csv" class="btn ghost sm" type="button" data-i18n="common.downloadCsv">Скачать CSV</button>
+        </div>
+        <p class="records-off hidden" id="audit-off" data-i18n="retention.auditOff">Журнал действий выключен: записываются только события безопасности.</p>
+        <!-- хранение и очистка (ADR 0034): видят admin и auditor, менять может только admin -->
+        <details class="records-manage hidden" id="audit-manage">
+          <summary data-i18n="retention.title">Хранение и очистка</summary>
+          <div class="manage-grid">
+            <label for="audit-keep" data-i18n="retention.keepLabel">Хранить записи</label>
+            <select id="audit-keep">
+              <option value="0" data-i18n="retention.keep0">Всегда</option>
+              <option value="7" data-i18n="retention.keep7">7 дней</option>
+              <option value="30" data-i18n="retention.keep30">30 дней</option>
+              <option value="90" data-i18n="retention.keep90">90 дней</option>
+              <option value="180" data-i18n="retention.keep180">180 дней</option>
+              <option value="365" data-i18n="retention.keep365">1 год</option>
+            </select>
+            <label for="audit-purge-age" data-i18n="retention.purgeLabel">Удалить сейчас</label>
+            <div class="manage-row">
+              <select id="audit-purge-age">
+              <option value="30" data-i18n="retention.purge30">Старше 30 дней</option>
+              <option value="90" data-i18n="retention.purge90">Старше 90 дней</option>
+              <option value="365" data-i18n="retention.purge365">Старше года</option>
+              <option value="0" data-i18n="retention.purge0">Всё целиком</option>
+              </select>
+              <button id="audit-purge" class="btn danger ghost sm" type="button" data-i18n="retention.purgeBtn">Очистить</button>
+            </div>
+            <span class="manage-label" data-i18n="retention.auditLabel">Журнал</span>
+            <label class="check" for="audit-enabled"><input type="checkbox" id="audit-enabled"> <span data-i18n="retention.auditEnabled">Вести журнал действий</span></label>
+            <p class="note manage-wide" data-i18n="retention.auditAlways">Входы, пароли, 2FA, участники, приглашения, подключения к машинам и изменения журнала записываются всегда.</p>
+          </div>
+          <p class="note" id="audit-manage-note" aria-live="polite"></p>
+        </details>
         <p class="note" id="audit-status" aria-live="polite"></p>
         <div id="audit-list" class="records-list"></div>
         <div class="records-pager">
@@ -380,9 +524,12 @@ video.fit-cover{object-fit:cover}
 
   <!-- Аккаунт (ADR 0033, этап 3 — перенос из desktop): смена пароля и 2FA -->
   <section id="view-account" class="card hidden">
-    <h1 data-i18n="web.account.title">Мой аккаунт</h1>
-    <button id="btn-account-back" class="btn ghost" type="button" data-i18n="common.back">← Назад</button>
-
+    <div class="acct-head">
+      <h1 data-i18n="web.account.title">Мой аккаунт</h1>
+      <button id="btn-account-back" class="btn ghost" type="button" data-i18n="common.back">← Назад</button>
+    </div>
+    <div class="acct-grid">
+    <div class="acct-box">
     <h2 data-i18n="password.title">Сменить пароль</h2>
     <form class="form-stack" id="form-password" novalidate>
       <div class="field">
@@ -397,7 +544,9 @@ video.fit-cover{object-fit:cover}
     </form>
     <p class="form-error" id="password-error" aria-live="polite"></p>
     <p class="note" id="password-status" aria-live="polite"></p>
+    </div>
 
+    <div class="acct-box">
     <h2 data-i18n="totp.title">Двухфакторная аутентификация</h2>
     <p class="note" id="totp-status" aria-live="polite"></p>
     <!-- 2FA выключена: настройка по текущему паролю -->
@@ -445,6 +594,8 @@ video.fit-cover{object-fit:cover}
         <button id="btn-totp-disable" class="btn danger" type="submit" data-i18n="totp.disableBtn">Отключить 2FA</button>
       </form>
       <p class="form-error" id="totp-disable-error" aria-live="polite"></p>
+    </div>
+    </div>
     </div>
   </section>
 

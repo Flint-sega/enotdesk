@@ -10,7 +10,7 @@ import { toCsv } from '../client/lib/csv.mjs';
 const PAGE = 20;
 const CSV_LIMIT = 1000;
 
-export function bindRecords({ api, t, getLocale, showOnly, $ }) {
+export function bindRecords({ api, t, getLocale, showOnly, $, getRole = () => null }) {
   const pages = { contacts: 0, history: 0, audit: 0 };
   let contactsQuery = '';
   let editing = null; // контакт в редакторе (null — новый)
@@ -134,10 +134,86 @@ export function bindRecords({ api, t, getLocale, showOnly, $ }) {
     title: (it) => t('history.item', { id: it.id, state: it.state }),
     sub: (it) => t('history.sub', { operator: it.operatorName ?? t('history.operatorDefault'), date: when(it.createdAt), reason: it.endReason ?? '—' }),
   });
+  // понятное название действия из словаря; неизвестный код показывается как есть
+  const actionName = (code) => {
+    const key = `audit.action.${code}`;
+    const text = t(key);
+    return text === key ? code : text;
+  };
+  // деталь записи — объект с сервера: короткие пары «ключ: значение»
+  const detailText = (d) => {
+    if (!d || typeof d !== 'object') return '';
+    const parts = Object.entries(d)
+      .filter(([, v]) => v !== null && v !== undefined && v !== '' && typeof v !== 'object')
+      .map(([k, v]) => `${k}: ${v}`);
+    return parts.length ? ` · ${parts.join(', ')}` : '';
+  };
   const renderAudit = () => renderTimeList('audit', '/audit', 'audit.empty', {
-    title: (it) => `${it.action}`,
-    sub: (it) => t('audit.sub', { date: when(it.createdAt), detail: it.detail && typeof it.detail === 'string' ? ` · ${it.detail}` : '' }),
+    title: (it) => actionName(it.action),
+    sub: (it) => t('audit.sub', {
+      date: `${it.actorName ? `${it.actorName} · ` : ''}${when(it.createdAt)}`,
+      detail: detailText(it.detail),
+    }),
   });
+
+  // ---- хранение и очистка (ADR 0034): видят admin и auditor, меняет только admin ----
+  async function renderManage(kind) {
+    const box = $(`${kind}-manage`);
+    const note = $(`${kind}-manage-note`);
+    let res;
+    try { res = await api('GET', '/settings/retention'); } catch { res = { status: 0 }; }
+    if (res.status !== 200) { box.classList.add('hidden'); if (kind === 'audit') $('audit-off').classList.add('hidden'); return; }
+    box.classList.remove('hidden');
+    const admin = getRole() === 'admin';
+    const keep = $(`${kind}-keep`);
+    const days = kind === 'audit' ? res.body.auditDays : res.body.historyDays;
+    // срок из ENOT_RETENTION_DAYS может быть нестандартным — показываем его отдельной строкой
+    if (![...keep.options].some((o) => Number(o.value) === days)) {
+      const o = document.createElement('option');
+      o.value = String(days);
+      o.textContent = t('retention.keepDays', { days });
+      keep.appendChild(o);
+    }
+    keep.value = String(days);
+    keep.disabled = !admin;
+    $(`${kind}-purge-age`).disabled = !admin;
+    $(`${kind}-purge`).disabled = !admin;
+    if (kind === 'audit') {
+      $('audit-enabled').checked = res.body.auditEnabled;
+      $('audit-enabled').disabled = !admin;
+      $('audit-off').classList.toggle('hidden', res.body.auditEnabled);
+    }
+    if (!admin) note.textContent = t('retention.readOnly');
+  }
+  async function saveRetention(kind, patch) {
+    const note = $(`${kind}-manage-note`);
+    note.textContent = '';
+    try {
+      const res = await api('POST', '/settings/retention', patch);
+      note.textContent = res.status === 200 ? t('retention.saved') : (res.body?.error?.message ?? t('common.serverError'));
+    } catch (e) {
+      note.textContent = e.message;
+    }
+    await renderManage(kind);
+  }
+  async function purge(kind, render) {
+    const age = Number($(`${kind}-purge-age`).value);
+    const what = $(`${kind}-purge-age`).selectedOptions[0]?.textContent ?? '';
+    if (!window.confirm(t(kind === 'audit' ? 'retention.purgeAuditConfirm' : 'retention.purgeHistoryConfirm', { what }))) return;
+    const note = $(`${kind}-manage-note`);
+    const btn = $(`${kind}-purge`);
+    btn.disabled = true;
+    try {
+      const res = await api('POST', `/${kind}/purge`, { olderThanDays: age });
+      note.textContent = res.status === 200 ? t('retention.purged', { count: res.body.deleted }) : (res.body?.error?.message ?? t('common.serverError'));
+      pages[kind] = 0;
+      await render();
+    } catch (e) {
+      note.textContent = e.message;
+    } finally {
+      btn.disabled = false;
+    }
+  }
 
   // Экспорт в CSV: до 1000 записей постранично, файл через Blob (как в desktop).
   async function downloadCsv(path, name, header, rowOf) {
@@ -192,6 +268,11 @@ export function bindRecords({ api, t, getLocale, showOnly, $ }) {
     ui[kind].prev.addEventListener('click', () => { pages[kind] = Math.max(0, pages[kind] - 1); void render(); });
     ui[kind].next.addEventListener('click', () => { pages[kind] += 1; void render(); });
   }
+  $('history-keep').addEventListener('change', (e) => { void saveRetention('history', { historyDays: Number(e.target.value) }); });
+  $('audit-keep').addEventListener('change', (e) => { void saveRetention('audit', { auditDays: Number(e.target.value) }); });
+  $('audit-enabled').addEventListener('change', (e) => { void saveRetention('audit', { auditEnabled: e.target.checked }); });
+  $('history-purge').addEventListener('click', () => { void purge('history', renderHistory); });
+  $('audit-purge').addEventListener('click', () => { void purge('audit', renderAudit); });
   $('history-csv').addEventListener('click', () => {
     downloadCsv('/history', 'history',
       [t('csv.session'), t('csv.operator'), t('csv.state'), t('csv.created'), t('csv.ended'), t('csv.reason')],
@@ -207,8 +288,8 @@ export function bindRecords({ api, t, getLocale, showOnly, $ }) {
 
   return {
     showContacts() { showOnly('view-contacts'); void renderContacts(); },
-    showHistory() { showOnly('view-history'); void renderHistory(); },
-    showAudit() { showOnly('view-audit'); void renderAudit(); },
+    showHistory() { showOnly('view-history'); void renderHistory(); void renderManage('history'); },
+    showAudit() { showOnly('view-audit'); void renderAudit(); void renderManage('audit'); },
     loadContactsIntoSelect,
   };
 }

@@ -22,10 +22,11 @@ globalThis.document = { getElementById: (id) => els.get(id) ?? null };
 const { renderTeam, bindTeam, teamRoute } = await import('../../web/team.js');
 
 const t = (key) => key;
-function stubApi({ members, invites }) {
+function stubApi({ members, invites, archive = { status: 200, body: { items: [], total: 0 } } }) {
   return async (method, path) => {
-    if (path === '/members') return members;
-    if (path === '/invites') return invites;
+    if (path.startsWith('/members')) return members;
+    if (path.startsWith('/invites?status=archive')) return archive;
+    if (path.startsWith('/invites')) return invites;
     return { status: 404, body: {} };
   };
 }
@@ -45,6 +46,25 @@ test('renderTeam исполняется и рендерит участников
   assert.match(html, /data-role="operator"/); // esc(m.role) — дисциплина файла
   assert.ok(!html.includes('<b>'), 'имя экранируется');
   assert.match(els.get('team-invites').innerHTML, /roleAuditor/);
+});
+
+test('renderTeam: своя строка без «Отключить/Удалить», архив приглашений считается отдельно', async () => {
+  for (const id of ['team-error', 'team-members', 'team-invites', 'team-archive-list', 'team-archive-count', 'team-archive-purge']) els.set(id, fakeEl(id));
+  const api = stubApi({
+    members: { status: 200, body: { items: [
+      { id: 'me', name: 'Я', login: 'me', role: 'admin', active: true },
+      { id: 'm2', name: 'Коллега', login: 'c', role: 'operator', active: true },
+    ] } },
+    invites: { status: 200, body: { items: [] } },
+    archive: { status: 200, body: { items: [{ id: 'old', role: 'operator', expiresAt: '2026-10-01T00:00:00Z', usedAt: '2026-10-01T00:00:00Z' }], total: 7 } },
+  });
+  await renderTeam({ api, t, getMe: () => 'me', force: true });
+  const rows = els.get('team-members').innerHTML.split('data-member=').slice(1);
+  assert.ok(!/data-act="del"/.test(rows[0]) && /web\.team\.youTag/.test(rows[0]), 'своя строка — без удаления');
+  assert.match(rows[1], /data-act="del"/);
+  assert.equal(els.get('team-archive-count').textContent, '7');
+  assert.equal(els.get('team-archive-purge').disabled, false);
+  assert.match(els.get('team-archive-list').innerHTML, /web\.team\.statusUsed/);
 });
 
 test('renderTeam: 403 — честное «только админ», не ошибка', async () => {
