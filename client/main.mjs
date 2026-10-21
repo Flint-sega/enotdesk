@@ -337,7 +337,7 @@ let idleWarned = false; // уже показывали предупрежден�
 // в main (конвенция продукта). Рендерер получает события смены и сам рассылает
 // grants по input-каналам операторов (каналы живут в рендерере host-стороны).
 const inputArbiter = createInputArbiter({
-  onChange: (activeOp, operators) => sendToRenderer('enot:input-active', { claimId: activeOp, operators }),
+  onChange: (activeOp, operators, participants) => sendToRenderer('enot:input-active', { claimId: activeOp, operators, participants }),
 });
 let droppedInputCount = 0; // события не-активных операторов (svc-diag, без тел событий)
 let droppedInputLoggedAt = 0;
@@ -1330,6 +1330,20 @@ function registerIpc() {
     guard(e);
     if (typeof opKey !== 'string' || !opKey) throw new Error('Некорректный оператор');
     inputArbiter.release(opKey);
+    return { ok: true };
+  });
+  // ADR 0035: передача ввода конкретному участнику и «только смотреть» —
+  // тоже от оператора по его input-каналу; решает арбитр в main
+  ipcMain.handle('enot:input-pass', (e, opKey, to) => {
+    guard(e);
+    if (typeof opKey !== 'string' || !opKey || typeof to !== 'string' || !to || to.length > 128) throw new Error('Некорректный оператор');
+    inputArbiter.pass(opKey, to);
+    return { ok: true };
+  });
+  ipcMain.handle('enot:input-view-only', (e, opKey, on) => {
+    guard(e);
+    if (typeof opKey !== 'string' || !opKey || typeof on !== 'boolean') throw new Error('Некорректный оператор');
+    inputArbiter.setViewOnly(opKey, on);
     return { ok: true };
   });
   ipcMain.handle('enot:input-attach', (e, claimId) => {

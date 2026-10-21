@@ -333,6 +333,7 @@ function stopMedia() {
   hide(qp);
   resetKeyboardMode(); // индикатор клавиш не переживает сеанс
   setControl(null); // статус управления не переживает сеанс (W-C4)
+  resetParticipants(); // и список участников (ADR 0035)
   stopTimers();
 }
 
@@ -594,8 +595,70 @@ function wireControlChannel(ch) {
     if (!msg || typeof msg !== 'object') return;
     if (msg.type === 'input-grant') setControl(msg.granted === true);
     else if (msg.type === 'session-info' && msg.video === false) setVideoStatus(t('op.videoSlotsFull'));
+    else if (msg.type === 'participants') renderParticipants(msg);
   };
 }
+
+// ---- участники сеанса (ADR 0035): кто в сеансе, у кого управление ----
+// Блок появляется только по сообщению хоста — старые хосты его не шлют, и
+// панель остаётся как раньше. Имена ставит хост; «вы» — по полю you.
+function renderParticipants(msg) {
+  const list = Array.isArray(msg.list) ? msg.list.slice(0, 16) : [];
+  const box = $('op-participants');
+  const ul = $('op-participants-list');
+  if (!box || !ul) return;
+  const me = list.find((p) => p && p.id === msg.you);
+  const iControl = me?.control === true;
+  ul.replaceChildren(...list.filter((p) => p && typeof p.id === 'string').map((p) => {
+    const li = document.createElement('li');
+    li.className = 'participant';
+    const name = document.createElement('span');
+    name.className = 'p-name';
+    name.textContent = typeof p.name === 'string' && p.name ? p.name : t('op.participants.unnamed');
+    li.append(name);
+    if (p.id === msg.you) {
+      const you = document.createElement('span');
+      you.className = 'p-you';
+      you.textContent = t('op.participants.you');
+      li.append(you);
+    }
+    const tag = document.createElement('span');
+    tag.className = p.control ? 'tag control' : 'tag';
+    tag.textContent = t(p.control ? 'op.participants.control' : p.viewOnly ? 'op.participants.observer' : 'op.participants.watching');
+    li.append(tag);
+    // передать можно только будучи активным — тому, кто не «только смотрит»
+    if (iControl && p.id !== msg.you && !p.viewOnly) {
+      const btn = document.createElement('button');
+      btn.type = 'button';
+      btn.className = 'btn ghost';
+      btn.dataset.pass = p.id;
+      btn.textContent = t('op.participants.pass');
+      li.append(btn);
+    }
+    return li;
+  }));
+  const observe = $('op-observe');
+  if (observe) observe.checked = me?.viewOnly === true;
+  (list.length ? show : hide)(box);
+}
+
+function resetParticipants() {
+  $('op-participants-list')?.replaceChildren();
+  const observe = $('op-observe');
+  if (observe) observe.checked = false;
+  hide($('op-participants'));
+}
+
+function sendControl(obj) {
+  const dc = state.dcs?.input;
+  if (!dc || dc.readyState !== 'open') return;
+  try { dc.send(JSON.stringify(obj)); } catch { /* канал закрывается */ }
+}
+$('op-participants-list')?.addEventListener('click', (e) => {
+  const id = e.target instanceof Element ? e.target.closest('[data-pass]')?.getAttribute('data-pass') : null;
+  if (id) sendControl({ type: 'pass-input', to: id });
+});
+$('op-observe')?.addEventListener('change', (e) => sendControl({ type: 'view-only', on: e.target.checked === true }));
 
 function sendControlMessage(type) {
   const dc = state.dcs?.input;

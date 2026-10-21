@@ -168,6 +168,13 @@ video.fit-cover{object-fit:cover}
 .record-row .record-title{display:flex;align-items:center;gap:8px;flex-wrap:wrap}
 .record-row{display:flex;gap:12px;align-items:flex-start;justify-content:space-between;border:1px solid var(--line);border-radius:var(--r-md);padding:12px 16px;flex-wrap:wrap;background:var(--panel);box-shadow:var(--top-hl)}
 .record-main{min-width:0;flex:1;display:flex;flex-direction:column;gap:4px;overflow-wrap:anywhere}
+.participants{list-style:none;margin:0 0 10px;padding:0;display:flex;flex-direction:column;gap:6px}
+.participant{display:flex;align-items:center;gap:8px;flex-wrap:wrap;padding:8px 10px;border:1px solid var(--line);border-radius:var(--r-md);background:var(--inset-glass)}
+.participant .p-name{font-weight:600;overflow-wrap:anywhere}
+.participant .p-you{color:var(--text-3);font-size:13px}
+.participant .tag{margin-left:auto;font:500 12px var(--font-mono);color:var(--text-2);background:var(--bg2);border-radius:6px;padding:2px 8px}
+.participant .tag.control{color:var(--accent);background:var(--accent-dim)}
+.participant .btn{padding:6px 10px;font-size:13px;min-height:0}
 .record-row .tag{font:500 12px var(--font-mono);color:var(--accent);background:var(--accent-dim);border-radius:6px;padding:2px 8px}
 .records-pager{display:flex;align-items:center;gap:10px;margin-top:14px;flex-wrap:wrap;color:var(--text-3);font:500 13px var(--font-mono)}
 .records-pager .btn,.machines-pager .btn{min-height:44px;padding:0 16px}
@@ -636,6 +643,12 @@ video.fit-cover{object-fit:cover}
       </div>
     </div>
     <div class="side">
+      <div class="card hidden" id="op-participants">
+        <h2 data-i18n="op.participants.title">Участники</h2>
+        <ul class="participants" id="op-participants-list"></ul>
+        <label class="check"><input type="checkbox" id="op-observe"><span data-i18n="op.participants.observe">Только смотреть</span></label>
+        <p class="muted" data-i18n="op.participants.observeHint"></p>
+      </div>
       <div class="card">
         <h2 data-i18n="web.chat.title">Чат</h2>
         <div class="chat-log" id="op-chat-log" data-i18n-aria-label="web.aria.chatLog" aria-label="История чата"></div>

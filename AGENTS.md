@@ -36,7 +36,7 @@ docs/        SESSION_PROTOCOL, SERVER, AGENT, WEB-OPERATOR, BUILD, MANUAL-QA, RO
 - **Attended:** клиент `POST /api/v1/sessions` → sessionId (9 цифр) + пароль + hostToken. Оператор делает claim, хост даёт согласие, оба подключаются к WS `/signal`. Сервер пересылает только offer/answer/ICE; **хост офферит**, отдельный pc на каждого оператора. Обрыв WS в approved — грейс `ENOT_GRACE_MS`; до согласия — fail-closed (ADR 0013).
 - **Unattended:** админ создаёт машину → одноразовый onboarding-код → агент (`EDESK_AGENT=1`) меняет его на токен. Claim оператора требует причину и PIN (политика на сервере), агент соглашается автоматически. **Оператор офферит**, pc агента живёт в скрытом окне моста. Windows: служба `EnotDeskAgent` = SCM-родитель на koffi (`EDESK_AGENT_SVC=1`, ADR 0026), видео и ввод — через хелпер в консольной сессии (ADR 0027). Linux/X11: видео через getDisplayMedia в мосту (ADR 0031), ввод — XTest.
 - **Сервисы сеанса** — DataChannel: `input`, `chat`, `clip`, `file`, `term` (ADR 0014/0021). Relay сервера не расширяется; у файлов есть серверный fallback `/relay`.
-- **Мультиоператор:** адресация `to/from` по claimId, арбитраж ввода в main (`input-arbiter`), до 3 видеослотов (ADR 0030); join к машине — по паролю из claim (ADR 0032).
+- **Мультиоператор:** адресация `to/from` по claimId, арбитраж ввода в main (`input-arbiter`), до 3 видеослотов (ADR 0030); join к машине — по паролю из claim (ADR 0032); список участников, передача управления и «только смотреть» (ADR 0035).
 - **Решение о вводе** принимает только main хоста по реальному состоянию WS (`gate.isOpen()`), рендереру и браузеру не доверяем.
 - **RBAC** admin/operator/auditor на каждом запросе; audit и history пишутся только сервером; срок хранения, очистка и выключатель рутинных записей — у админа, события безопасности пишутся всегда (ADR 0034); TOTP-2FA (`ENOT_SECRET_KEY`, AES-256-GCM); webhooks с HMAC-подписью; ретенция БД раз в час.
 - **TURN:** `/rtc-config` выдаёт эфемерные креды coturn REST (HMAC-SHA1 от `ENOT_TURN_SECRET`, TTL 1 ч).
@@ -48,7 +48,7 @@ docs/        SESSION_PROTOCOL, SERVER, AGENT, WEB-OPERATOR, BUILD, MANUAL-QA, RO
 - Всё входящее проходит allowlist и лимиты. Недоступная платформа честно сообщает код причины (`native-unavailable`, `wayland-unsupported-control`, `video-unsupported-platform`, `no-active-session`, `term-busy`…), фейковый успех запрещён.
 - Токены, пароли и коды в БД — только хешами; шифруемые секреты — AES-256-GCM от `ENOT_SECRET_KEY`; токены не попадают в рендерер; секреты не идут в argv и логи.
 - Пользовательские тексты — через словари `client/locales/{ru,en}.mjs` (ключи совпадают, `error.code` не локализуется).
-- ADR в `docs/adr/`: следующий номер — 0035.
+- ADR в `docs/adr/`: следующий номер — 0036.
 - README.md (en) ↔ README.ru.md. Лицензия AGPL-3.0.
 
 ## Окружение
