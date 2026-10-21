@@ -48,6 +48,10 @@ import { createKeepAwake } from './lib/keep-awake.mjs';
 import { createBootLog } from './lib/boot-log.mjs';
 import { applyDesktopEntry } from './lib/desktop-entry.mjs';
 
+// Вехи старта (мс от начала процесса, performance.now): смоук печатает их строкой
+// SMOKE timing — замер «до/после» оптимизаций запуска без внешних инструментов.
+const bootMarks = { imports: Math.round(performance.now()) };
+
 // Диагностика Windows-службы (W-U2): первый маркер каждого запуска процесса —
 // ДО ветки службы. Если svc-ветка НЕ вошла, а эта строка в логе есть —
 // Environment REG_MULTI_SZ не доставлен процессу (гипотеза №1) либо диспетчер
@@ -1504,6 +1508,7 @@ function createWindow() {
   // слушатели (client-view) уже установлены (R04)
   win.webContents.on('did-finish-load', () => {
     winLoaded = true;
+    bootMarks.loaded ??= Math.round(performance.now());
     bootLog.write('win', 'страница загружена');
     flushPendingJoin();
     // Тестовая сборка (ENOT_AUTO_SESSION): сеанс создаётся сам при старте —
@@ -1926,6 +1931,7 @@ app.on('window-all-closed', () => {
 });
 
 app.whenReady().then(() => {
+  bootMarks.ready = Math.round(performance.now());
   bootLog.write('main', 'app ready');
   if (!gotLock) return; // второй экземпляр уже уходит через app.quit()
   if (SMOKE) {
@@ -1975,6 +1981,7 @@ app.whenReady().then(() => {
   if (SMOKE) {
     setTimeout(async () => {
       const lines = [];
+      lines.push(`SMOKE timing: ${JSON.stringify(bootMarks)}`);
       lines.push(`SMOKE window: ${win ? 'created' : 'MISSING'}`);
       lines.push(`SMOKE title: ${win ? win.getTitle() : 'n/a'}`);
       lines.push(`SMOKE native input status: ${JSON.stringify(nativeInput.status())}`);
