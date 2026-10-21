@@ -45,6 +45,20 @@ let inboxItems = [];
 let currentThread = null;
 let me = null;
 let cannedCache = null;
+let agents = {}; // id → имя специалиста (сервер присылает вместе со списком и обращением)
+
+function rememberAgents(map) {
+  if (map && typeof map === 'object') agents = { ...agents, ...map };
+}
+
+// время: сегодня — «05:58», раньше — «20.10, 05:58»; секунды не показываем
+function shortTime(iso) {
+  const d = iso ? new Date(iso) : null;
+  if (!d || Number.isNaN(d.valueOf())) return '';
+  const time = d.toLocaleTimeString(getLocale(), { hour: '2-digit', minute: '2-digit' });
+  if (d.toDateString() === new Date().toDateString()) return time;
+  return `${d.toLocaleDateString(getLocale(), { day: '2-digit', month: '2-digit' })}, ${time}`;
+}
 
 // ---- инбокс ----
 
@@ -54,36 +68,37 @@ function contactLabel(th) {
   return c.name || c.email || '';
 }
 
-function assigneeLabel(th) {
-  if (!th.assigneeId) return t('hub.inbox.unassigned');
-  if (me && th.assigneeId === me.id) return t('hub.thread.you');
-  return th.assigneeId;
+function agentName(id) {
+  if (me && id === me.id) return t('hub.thread.you');
+  return agents[id] ?? t('hub.msg.fromAgent');
 }
 
+function assigneeLabel(th) {
+  if (!th.assigneeId) return t('hub.inbox.unassigned');
+  return agentName(th.assigneeId);
+}
+
+// строка обращения: тема (до двух строк) | время и число сообщений; ниже —
+// статус, канал, контакт и исполнитель
 function threadRow(th) {
   const row = document.createElement('div');
-  row.className = 'row';
+  row.className = currentThread?.id === th.id ? 'row active' : 'row';
   row.dataset.id = th.id;
   row.setAttribute('role', 'button');
-  const col = document.createElement('div');
-  col.className = 'col';
   const subjectLine = document.createElement('div');
   subjectLine.className = 'subject';
   subjectLine.appendChild(document.createTextNode(th.subject));
-  subjectLine.appendChild(chip(`hub.status.${th.status}`, `chip ${th.status}`));
-  subjectLine.appendChild(chip(`hub.channel.${th.channel}`));
-  col.appendChild(subjectLine);
-  const sub = document.createElement('div');
-  sub.className = 'sub';
-  const parts = [contactLabel(th), assigneeLabel(th)].filter(Boolean);
-  sub.textContent = parts.join(' · ');
-  col.appendChild(sub);
-  row.appendChild(col);
+  row.appendChild(subjectLine);
   const side = document.createElement('div');
   side.className = 'side';
-  const when = th.lastActivityAt ? new Date(th.lastActivityAt) : null;
-  side.textContent = `${th.messageCount} · ${when && !Number.isNaN(when.valueOf()) ? when.toLocaleString(getLocale()) : ''}`;
+  side.append(shortTime(th.lastActivityAt), document.createElement('br'), t('hub.inbox.count', { n: th.messageCount }));
   row.appendChild(side);
+  const sub = document.createElement('div');
+  sub.className = 'sub';
+  sub.appendChild(chip(`hub.status.${th.status}`, `chip ${th.status}`));
+  sub.appendChild(chip(`hub.channel.${th.channel}`));
+  sub.appendChild(document.createTextNode([contactLabel(th), assigneeLabel(th)].filter(Boolean).join(' · ')));
+  row.appendChild(sub);
   return row;
 }
 
@@ -121,6 +136,7 @@ async function loadInbox() {
     return;
   }
   $('hub-list-error').textContent = '';
+  rememberAgents(res.body?.agents);
   inboxItems = res.body?.items ?? [];
   inboxTotal = res.body?.total ?? 0;
   renderInbox();
@@ -150,8 +166,10 @@ function setThreadStatusLine(th) {
   chipEl.className = `chip ${th.status}`;
   $('hub-thread-channel').textContent = t(`hub.channel.${th.channel}`);
   $('hub-thread-assignee').textContent = th.assigneeId
-    ? t('hub.thread.assignedTo', { name: th.assigneeId === me?.id ? t('hub.thread.you') : th.assigneeId })
+    ? t('hub.thread.assignedTo', { name: agentName(th.assigneeId) })
     : t('hub.inbox.unassigned');
+  // текущий статус подсвечен в переключателе
+  for (const st of ['open', 'pending', 'resolved']) $(`hub-st-${st}`).setAttribute('aria-pressed', String(th.status === st));
   $('hub-thread-rating').textContent = th.rating
     ? t('hub.thread.rating', { value: th.rating })
     : t('hub.thread.noRating');
@@ -180,9 +198,17 @@ function renderTags(th) {
 function messageBubble(m) {
   const el = document.createElement('div');
   el.className = `bubble ${m.author}${m.type === 'note' ? ' note' : ''}`;
+  // подпись: имя клиента или специалиста и время сообщения
   const who = document.createElement('span');
   who.className = 'who';
-  who.textContent = t(`hub.msg.from${m.author[0].toUpperCase()}${m.author.slice(1)}`);
+  let name = t(`hub.msg.from${m.author[0].toUpperCase()}${m.author.slice(1)}`);
+  if (m.author === 'contact') name = contactLabel(currentThread ?? {}) || name;
+  if (m.author === 'agent' && m.agentId) name = m.agentId === me?.id ? (me.name || me.login || name) : agentName(m.agentId);
+  who.appendChild(document.createTextNode(name));
+  const when = document.createElement('time');
+  when.dateTime = m.createdAt ?? '';
+  when.textContent = shortTime(m.createdAt);
+  who.appendChild(when);
   if (m.type === 'note' || m.type === 'card') {
     const badge = document.createElement('span');
     badge.className = 'badgeword';
@@ -229,6 +255,7 @@ function renderMessages(messages) {
   const box = $('hub-msgs');
   box.textContent = '';
   for (const m of messages) box.appendChild(messageBubble(m));
+  box.scrollTop = box.scrollHeight; // свежие сообщения — внизу, их и видно
 }
 
 async function openThread(id) {
@@ -239,6 +266,7 @@ async function openThread(id) {
     return;
   }
   currentThread = res.body?.thread ?? null;
+  rememberAgents(res.body?.agents);
   hide($('hub-thread-error'));
   clearUnread(currentThread?.id);
   $('hub-thread-subject').textContent = currentThread?.subject ?? '';
@@ -249,6 +277,7 @@ async function openThread(id) {
   renderMessages(res.body?.messages ?? []);
   showThreadView();
   hideCannedPop();
+  for (const row of document.querySelectorAll('#hub-list .row')) row.classList.toggle('active', row.dataset.id === currentThread?.id);
 }
 
 // Кнопка «Подключиться» (T05): join-токен + карточка клиенту и в тред.
@@ -269,25 +298,41 @@ async function createJoinCard() {
   }
 }
 
+// Правая колонка показывает одно из трёх: подсказку, разговор или новое
+// обращение. На узком экране has-pane прячет список (CSS), «← К обращениям»
+// возвращает к нему.
+function showPane(which) {
+  $('hub-thread-empty').classList.toggle('hidden', which !== 'empty');
+  $('hub-thread').classList.toggle('hidden', which !== 'thread');
+  $('hub-new').classList.toggle('hidden', which !== 'new');
+  $('hub-workspace').classList.toggle('has-pane', which !== 'empty');
+}
+
 function showInboxView() {
-  show($('hub-inbox'));
-  hide($('hub-thread'));
-  hide($('hub-new'));
+  currentThread = null;
+  showPane('empty');
   void loadInbox();
 }
 
 function showThreadView() {
-  hide($('hub-inbox'));
-  show($('hub-thread'));
-  hide($('hub-new'));
+  showPane('thread');
 }
 
 function showNewView() {
-  hide($('hub-inbox'));
-  hide($('hub-thread'));
-  show($('hub-new'));
+  showTab('inbox');
+  currentThread = null;
+  showPane('new');
   $('hub-new-error').textContent = '';
   $('hub-new-subject').focus();
+  for (const row of document.querySelectorAll('#hub-list .row.active')) row.classList.remove('active');
+}
+
+// вкладки: «Обращения» и «Настройки» (только админ)
+function showTab(tab) {
+  $('hub-workspace').classList.toggle('hidden', tab !== 'inbox');
+  $('hub-settings').classList.toggle('hidden', tab !== 'settings');
+  $('hub-tab-inbox').setAttribute('aria-pressed', String(tab === 'inbox'));
+  $('hub-tab-settings').setAttribute('aria-pressed', String(tab === 'settings'));
 }
 
 // ---- canned-подсказки (#) ----
@@ -371,9 +416,11 @@ async function patchThread(patch) {
   if (!currentThread) return null;
   const res = await api('PATCH', `/threads/${encodeURIComponent(currentThread.id)}`, patch);
   if (res.status === 200 && res.body?.thread) {
+    rememberAgents(res.body.agents);
     currentThread = res.body.thread;
     setThreadStatusLine(currentThread);
     renderTags(currentThread);
+    void loadInbox(); // статус и исполнитель видны и в списке
   }
   return res;
 }
@@ -401,6 +448,7 @@ async function sendReply(asNote) {
     input.value = '';
     hideCannedPop();
     await openThread(currentThread.id);
+    void loadInbox(); // первый ответ переводит обращение «В работе» — список это покажет
   } finally {
     btn.disabled = false;
   }
@@ -742,6 +790,7 @@ if (pageState === 'login') {
     void loadPresence();
     connectConsole(); // live-обновления инбокса (new-message/typing/presence)
     if (me.role === 'admin') {
+      show($('hub-tabs'));
       show($('hub-widget-admin'));
       show($('hub-webhook-admin'));
       show($('hub-email-admin'));
@@ -847,6 +896,18 @@ $('hub-widget-save').addEventListener('click', () => void saveWidgetSettings());
 $('hub-email-save').addEventListener('click', () => void saveEmailSettings());
 $('hub-email-test').addEventListener('click', () => void testEmailSettings());
 $('hub-email-disable').addEventListener('click', () => void disableEmailSettings());
+
+// webhook-секрет под точками: «Показать» / «Скрыть»
+$('hub-webhook-show').addEventListener('click', () => {
+  const input = $('hub-webhook-secret');
+  const reveal = input.type === 'password';
+  input.type = reveal ? 'text' : 'password';
+  $('hub-webhook-show').textContent = t(reveal ? 'hub.webhook.hide' : 'hub.webhook.show');
+});
+
+// вкладки консоли
+$('hub-tab-inbox').addEventListener('click', () => showTab('inbox'));
+$('hub-tab-settings').addEventListener('click', () => showTab('settings'));
 
 // webhook-секрет: копирование в буфер — с честным фидбеком при отказе
 $('hub-webhook-copy').addEventListener('click', async () => {

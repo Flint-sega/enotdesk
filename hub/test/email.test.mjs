@@ -696,11 +696,11 @@ test('авто-ответ: сбой отправки не роняет REST и �
   } finally { await hub.close(); }
 });
 
-test('миграция v5: email_seen поднимается openHubDb, SCHEMA_VERSION = 5', () => {
+test('миграция v5: email_seen поднимается openHubDb', () => {
   const db = openHubDb(':memory:');
   const table = db.prepare("SELECT name FROM sqlite_master WHERE type='table' AND name='email_seen'").get();
   assert.ok(table, 'таблица email_seen есть после миграций');
   const idx = db.prepare("SELECT name FROM sqlite_master WHERE type='index' AND name='email_seen_thread'").get();
   assert.ok(idx, 'индекс email_seen_thread есть');
-  assert.equal(SCHEMA_VERSION, 5);
+  assert.ok(SCHEMA_VERSION >= 5);
 });

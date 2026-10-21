@@ -215,6 +215,41 @@ test('store: presence — set/get/list, чужой статус — false', () =
 
 // ---- REST: RBAC и маршруты /api/hub/* ----
 
+test('REST: имена специалистов — исполнитель и автор ответа приходят картой agents', async () => {
+  const f = fakeEnotDesk();
+  const h = await startHub({ enotFetch: f.enotFetch });
+  try {
+    const op = await loginCookie(h.base);
+    const created = await (await api(h.base, 'POST', '/api/hub/threads', { cookie: op, body: { subject: 'Принтер', text: 'не печатает' } })).json();
+    const id = created.thread.id;
+    await api(h.base, 'PATCH', `/api/hub/threads/${id}`, { cookie: op, body: { assigneeId: 'u1' } });
+    await api(h.base, 'POST', `/api/hub/threads/${id}/messages`, { cookie: op, body: { text: 'Сейчас посмотрю' } });
+    const det = await (await api(h.base, 'GET', `/api/hub/threads/${id}`, { cookie: op })).json();
+    assert.deepEqual(det.agents, { u1: 'Оператор' }, 'имя автора ответа и исполнителя');
+    const list = await (await api(h.base, 'GET', '/api/hub/threads', { cookie: op })).json();
+    assert.equal(list.agents.u1, 'Оператор', 'инбокс знает имя исполнителя');
+  } finally { h.close(); }
+});
+
+test('REST: первый ответ клиенту переводит открытое обращение «В работе», заметка — нет', async () => {
+  const f = fakeEnotDesk();
+  const h = await startHub({ enotFetch: f.enotFetch });
+  try {
+    const op = await loginCookie(h.base);
+    const mk = async () => (await (await api(h.base, 'POST', '/api/hub/threads', { cookie: op, body: { subject: 'Почта', text: 'просит пароль' } })).json()).thread.id;
+    const status = async (id) => (await (await api(h.base, 'GET', `/api/hub/threads/${id}`, { cookie: op })).json()).thread.status;
+    const a = await mk();
+    await api(h.base, 'POST', `/api/hub/threads/${a}/messages`, { cookie: op, body: { text: 'внутренняя заметка', note: true } });
+    assert.equal(await status(a), 'open', 'заметка статус не меняет');
+    await api(h.base, 'POST', `/api/hub/threads/${a}/messages`, { cookie: op, body: { text: 'Здравствуйте!' } });
+    assert.equal(await status(a), 'pending', 'ответ клиенту — «В работе»');
+    const b = await mk();
+    await api(h.base, 'PATCH', `/api/hub/threads/${b}`, { cookie: op, body: { status: 'resolved' } });
+    await api(h.base, 'POST', `/api/hub/threads/${b}/messages`, { cookie: op, body: { text: 'Дополню' } });
+    assert.equal(await status(b), 'resolved', 'решённое обращение ответ не переоткрывает');
+  } finally { h.close(); }
+});
+
 test('REST: инбокс без сессии — 401, auditor — 403, operator/admin — 200', async () => {
   const f = fakeEnotDesk();
   const h = await startHub({ enotFetch: f.enotFetch });

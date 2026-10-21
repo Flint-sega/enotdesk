@@ -75,7 +75,7 @@ test('hub.db: schema_version поднимается до текущей', async 
   try {
     const row = h.db.prepare('SELECT version FROM schema_version').get();
     assert.equal(row.version, SCHEMA_VERSION);
-    assert.equal(SCHEMA_VERSION, 5); // 1 — SSO (T01), 2 — тикеты (T02), 3 — виджет+consent (T03), 4 — join-токены (T05), 5 — email_seen (T06)
+    assert.equal(SCHEMA_VERSION, 6); // 1 — SSO (T01), 2 — тикеты (T02), 3 — виджет+consent (T03), 4 — join-токены (T05), 5 — email_seen (T06), 6 — имена специалистов
   } finally { h.close(); }
 });
 
