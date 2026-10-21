@@ -27,7 +27,7 @@ client/agent-service/  службы агента: Windows (sc.exe), Linux (syste
 web/         единственная программа оператора /operator, её же показывает desktop (operator.html, operator.mjs, input-source.mjs, team.js, records.js — контакты/история/журнал/CSV, account.js — пароль и 2FA; ADR 0033)
 helper/video/  Rust-хелпер Windows: захват DXGI/GDI и ввод в консольной сессии, named pipe (ADR 0027)
 docker/ Dockerfile compose.yaml   серверный стек
-scripts/     quick-setup.sh, install-server.sh, deploy-server.sh, smoke-local.mjs, smoke-remote.mjs, make-icons.mjs, make-mascot.mjs
+scripts/     quick-setup.sh, install-server.sh, deploy-server.sh, smoke-local.mjs, smoke-remote.mjs, make-icons.mjs, make-mascot.mjs, make-social.mjs (картинки соцпревью)
 site/        публичная витрина (GitHub Pages)
 docs/        SESSION_PROTOCOL, SERVER, AGENT, WEB-OPERATOR, BUILD, MANUAL-QA, ROADMAP, LAB, adr/0001–0033
 ```
