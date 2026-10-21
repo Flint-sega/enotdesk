@@ -3,7 +3,7 @@
 // Сигналинг этого окна — только host-роль клиента помощи: программа оператора
 // живёт в отдельном окне со страницей сервера (ADR 0033, этап 3).
 
-import { $, enot, text, show, hide, applyI18n } from './dom.js';
+import { $, enot, text, show, hide, applyI18n, errorText } from './dom.js';
 import { state, endReasonText } from './state.js';
 import { initLocale, getLocale, t } from '../lib/i18n.mjs';
 import { clientShow } from './views/client-view.js';
@@ -82,7 +82,7 @@ enot.onSignal(async (msg) => {
       try { await startHostRtc(); } catch (e) {
         // 'ended' мог прийти во время await: не затираем экран завершения
         if (state.session) {
-          text($('client-error-text'), e.message);
+          text($('client-error-text'), errorText(e));
           clientShow('error');
         }
       }

@@ -18,6 +18,11 @@ export function setBusyAll(container, busy) {
   for (const btn of container.querySelectorAll('button')) btn.disabled = busy;
 }
 export function text(el, value) { el.textContent = value; }
+// Текст ошибки для человека: Electron заворачивает отказ IPC-обработчика в
+// «Error invoking remote method 'enot:…': Error: …» — клиенту нужна только причина
+export function errorText(e) {
+  return String(e?.message ?? e ?? '').replace(/^Error invoking remote method '[^']+': (?:\w*Error: )?/, '');
+}
 
 export function roleName(r) {
   const label = t(`role.${r}`);

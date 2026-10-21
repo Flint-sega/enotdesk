@@ -234,6 +234,10 @@ p:last-child { margin-bottom: 0; }
 }
 /* копирование — только когда есть что копировать */
 #view-client:not(:is([data-state="waiting"], [data-state="consent"])) :is(.copy-btn, .copy-row, #join-status) { display: none; }
+/* сбой захвата в живом сеансе: вместо «Повторить» (новый сеанс) — карточка
+   «Начать показ экрана» / «Завершить сеанс» под текстом причины */
+.capture-card { margin: var(--s-3) 0 0; }
+#view-client:has(.capture-card) #btn-retry { display: none; }
 /* завершение и ошибка встают на место шагов; идёт сеанс — экран сеанса на всё окно */
 #view-client:is([data-state="ended"], [data-state="error"]) .flow { display: none; }
 #view-client[data-state="connected"] .help { display: none; }
@@ -458,15 +462,6 @@ input[type="checkbox"] {
 .chat-line.chat-me strong { color: var(--accent); }
 .chat-line.chat-them strong { color: #A6C0B7; }
 .chat .row input { flex: 1; }
-
-/* ---------- терминал машины (web-оператор, R09) ---------- */
-
-.term-log {
-  margin: 0; min-height: 96px; max-height: 260px; overflow-y: auto;
-  background: var(--bg-deep); border: 1px solid var(--border); border-radius: var(--r-md);
-  padding: var(--s-3); font-size: 13px; line-height: 1.45; color: var(--text);
-  white-space: pre-wrap; overflow-wrap: anywhere;
-}
 
 /* ---------- настройки ---------- */
 

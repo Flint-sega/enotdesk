@@ -2,7 +2,7 @@
 // пауза трансляции, персональные pc операторов, адаптивный битрейт.
 // Операторская сторона — программа оператора с сервера (ADR 0033, этап 3).
 
-import { $, enot, text, setBusyAll } from './dom.js';
+import { $, enot, text, setBusyAll, errorText } from './dom.js';
 import { state } from './state.js';
 import { t } from '../lib/i18n.mjs';
 import { wireHostChannel, resetFileReceivers } from './session-services.js';
@@ -98,9 +98,9 @@ export function removeCaptureCard() {
 function captureFailureUi() {
   removeCaptureCard();
   const card = document.createElement('div');
-  card.className = 'card';
+  card.className = 'card capture-card';
   const btn = document.createElement('button');
-  btn.className = 'btn wide';
+  btn.className = 'cta';
   btn.textContent = t('client.retryCapture');
   btn.addEventListener('click', async () => {
     // сеанс мог закончиться, пока карточка висела — призрачный захват не запускаем
@@ -111,17 +111,40 @@ function captureFailureUi() {
       await startHostRtc();
     } catch { /* ошибка уже показана в статусах сеанса */ }
   });
-  card.appendChild(btn);
-  $('view-client').appendChild(card);
+  // Сеанс жив (согласие дано), поэтому «Повторить» экрана ошибки здесь не к месту
+  // (CSS прячет его при карточке) — выход из сеанса даёт своя кнопка
+  const stop = document.createElement('button');
+  stop.className = 'btn danger-ghost';
+  stop.textContent = t('client.endSession');
+  stop.addEventListener('click', () => { removeCaptureCard(); $('btn-stop').click(); });
+  const row = document.createElement('div');
+  row.className = 'row';
+  row.append(btn, stop);
+  card.appendChild(row);
+  $('client-error').after(card); // правая колонка компактного окна, под текстом причины
   captureCard = card;
   clientShow('error');
+}
+
+// Отказ ОС в захвате: честный текст про разрешение «Запись экрана» + версия и
+// техническая деталь (без префикса IPC-обёртки Electron)
+async function showCaptureDenied(err) {
+  const perms = await enot.permissions();
+  const v = await clientVersion();
+  const detail = err && err.name ? ` (${err.name}: ${errorText(err)})` : '';
+  text($('client-error-text'), (perms.platform === 'darwin' ? t('client.permMac') : t('client.permOther')) + ` [${t('client.captureVersionTag', { v })}]` + detail);
+  clientShow('error');
+  return { stream: null, reason: 'os' };
 }
 
 // Захват основного экрана без вопросов: согласие клиента уже дано — трансляция
 // стартует сразу. reason: 'sel' — нет дисплеев/источника (честный текст уже
 // показан), 'os' — ОС/Chromium отказал в самом захвате (perm-текст + версия).
 async function acquirePrimaryStream() {
-  const sel = await enot.selectPrimaryScreen();
+  let sel;
+  // macOS без «Записи экрана» отказывает уже на списке экранов (desktopCapturer
+  // бросает «Failed to get sources») — это тот же отказ ОС, а не сбой сеанса
+  try { sel = await enot.selectPrimaryScreen(); } catch (err) { return showCaptureDenied(err); }
   if (!sel.ok) {
     text($('client-error-text'), sel.error ?? t('client.sourceUnavailable'));
     clientShow('error');
@@ -130,12 +153,7 @@ async function acquirePrimaryStream() {
   try {
     return { stream: await navigator.mediaDevices.getDisplayMedia({ video: true, audio: false }), reason: null };
   } catch (err) {
-    const perms = await enot.permissions();
-    const v = await clientVersion();
-    const detail = err && err.name ? ` (${err.name}: ${err.message ?? ''})` : '';
-    text($('client-error-text'), (perms.platform === 'darwin' ? t('client.permMac') : t('client.permOther')) + ` [${t('client.captureVersionTag', { v })}]` + detail);
-    clientShow('error');
-    return { stream: null, reason: 'os' };
+    return showCaptureDenied(err);
   }
 }
 

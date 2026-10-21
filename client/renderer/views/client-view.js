@@ -1,6 +1,6 @@
 // Представление «Помощь» (клиент): регистрация сеанса, согласие, завершение.
 
-import { $, enot, text, show, hide, setBusy } from '../dom.js';
+import { $, enot, text, show, hide, setBusy, errorText } from '../dom.js';
 import { state } from '../state.js';
 import { t } from '../../lib/i18n.mjs';
 import { cleanupSession } from '../session-media.js';
@@ -49,7 +49,7 @@ async function startHelp() {
     return state.session;
   } catch (e) {
     state.session = null;
-    text($('client-error-text'), e.message);
+    text($('client-error-text'), errorText(e));
     clientShow('error');
     return null;
   } finally {
@@ -108,7 +108,7 @@ async function decide(allow) {
     if (!allow) { cleanupSession(); clientShow('idle'); }
     // при allow ждём approved из сигналинга
   } catch (e) {
-    text($('ended-reason'), e.message);
+    text($('ended-reason'), errorText(e));
     cleanupSession();
     clientShow('ended');
   } finally {
