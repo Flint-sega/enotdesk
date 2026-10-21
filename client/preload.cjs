@@ -43,6 +43,8 @@ contextBridge.exposeInMainWorld('enot', {
   input: (event, opKey) => ipcRenderer.invoke('enot:input', event, opKey),
   inputClaim: (opKey) => ipcRenderer.invoke('enot:input-claim', opKey),
   inputRelease: (opKey) => ipcRenderer.invoke('enot:input-release', opKey),
+  inputPass: (opKey, to) => ipcRenderer.invoke('enot:input-pass', opKey, to),
+  inputViewOnly: (opKey, on) => ipcRenderer.invoke('enot:input-view-only', opKey, on),
   inputAttach: (claimId) => ipcRenderer.invoke('enot:input-attach', claimId),
   inputDrop: (claimId) => ipcRenderer.invoke('enot:input-drop', claimId),
   onInputActive: (callback) => {

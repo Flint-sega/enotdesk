@@ -18,6 +18,8 @@ export const state = {
   // нужен wireHostChannel'у для начального input-grant при открытии канала:
   // событие смены могло прийти до готовности канала и потеряться (P3-1).
   inputActiveClaimId: null,
+  // ADR 0035: последний список участников из main — для начальной рассылки
+  inputParticipants: null,
   // Состояние операторской стороны браузерной программы оператора (web/operator.mjs
   // импортирует этот модуль): {sessionId, claimId}, pc/каналы/приём файла/очередь ICE.
   connect: null,

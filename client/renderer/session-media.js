@@ -5,7 +5,8 @@
 import { $, enot, text, setBusyAll, errorText } from './dom.js';
 import { state } from './state.js';
 import { t } from '../lib/i18n.mjs';
-import { wireHostChannel, resetFileReceivers } from './session-services.js';
+import { wireHostChannel, resetFileReceivers, operatorName } from './session-services.js';
+import { participantsMessage } from '../lib/input-arbiter.mjs';
 import { videoAllowed } from '../lib/multiop-limits.mjs';
 import { setVideoEnabled } from '../lib/media-toggle.mjs';
 import { summarizeStats } from '../lib/rtc-stats.mjs';
@@ -378,12 +379,17 @@ function videoOperatorCount() {
 
 // Арбитраж (W-C4): main сменил активного вводчика — grants уходят всем
 // операторам по их input-каналам, клиенту честный бейдж «кто управляет».
-enot.onInputActive?.(({ claimId } = {}) => {
+enot.onInputActive?.(({ claimId, participants } = {}) => {
   state.inputActiveClaimId = claimId ?? null; // кэш для начального гранта (P3-1)
+  state.inputParticipants = Array.isArray(participants) ? participants : null;
   for (const [opId, op] of state.operators) {
     const ch = op.dcs?.input;
     if (!ch || ch.readyState !== 'open') continue;
     try { ch.send(JSON.stringify({ type: 'input-grant', granted: opId === claimId })); } catch { /* канал закрывается */ }
+    // ADR 0035: каждому — список участников с отметкой «вы»
+    if (state.inputParticipants) {
+      try { ch.send(JSON.stringify(participantsMessage(state.inputParticipants, opId, operatorName))); } catch { /* канал закрывается */ }
+    }
   }
   const note = $('client-control-note');
   if (!note) return;

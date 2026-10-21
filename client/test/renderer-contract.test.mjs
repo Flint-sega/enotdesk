@@ -304,8 +304,11 @@ test('W-C4: события ввода уходят в main с opKey; claim/relea
     'claim-input уходит в main IPC-мостом');
   assert.match(services, /svc\.type === 'release-input'[\s\S]{0,120}enot\.inputRelease\(opKey\)/,
     'release-input уходит в main IPC-мостом');
-  assert.match(services, /claim-input[\s\S]{0,200}return;/,
-    'служебное сообщение не падает в enot.input');
+  assert.match(services, /parseControlMessage\(m\.data\)[\s\S]{0,700}return;[^\n]*\n[\s\S]{0,40}\}\n\s*enot\.input\(m\.data, opKey\)/,
+    'служебное сообщение (в т.ч. битое служебное) не падает в enot.input');
+  // ADR 0035: передача конкретному и «только смотреть» — тоже в main
+  assert.match(services, /svc\.type === 'pass-input'[\s\S]{0,120}enot\.inputPass\?\.\(opKey, svc\.to\)/);
+  assert.match(services, /svc\.type === 'view-only'[\s\S]{0,120}enot\.inputViewOnly\?\.\(opKey, svc\.on\)/);
 });
 
 test('W-C4: main держит фильтр арбитража ДО idle-таймера и инъекции; кнопки/статус в разметке', () => {

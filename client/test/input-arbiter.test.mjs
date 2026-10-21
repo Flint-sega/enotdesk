@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { createInputArbiter } from '../lib/input-arbiter.mjs';
+import { createInputArbiter, participantsMessage, parseControlMessage } from '../lib/input-arbiter.mjs';
 
 // Арбитраж ввода мультиоператора (W-C4, волна C): чистый модуль без Electron.
 // Правила: одинокий оператор получает ввод автоматически; при >1 — только
@@ -90,4 +90,67 @@ test('onChange не должен ронять арбитра (слушатель
   const a = createInputArbiter({ onChange: () => { throw new Error('listener boom'); } });
   a.attach('op-1');
   assert.equal(a.active(), 'op-1', 'арбитр жив после исключения слушателя');
+});
+
+// ---- этапы 2–3 (ADR 0035): передача конкретному, «только смотреть», список ----
+
+test('pass: активный передаёт ввод конкретному участнику, чужой pass игнорируется', () => {
+  const a = createInputArbiter();
+  a.attach('op-1');
+  a.attach('op-2');
+  a.attach('op-3');
+  a.pass('op-2', 'op-3');
+  assert.equal(a.active(), 'op-1', 'передавать может только активный');
+  a.pass('op-1', 'op-9');
+  assert.equal(a.active(), 'op-1', 'неизвестному участнику не передаётся');
+  a.pass('op-1', 'op-3');
+  assert.equal(a.active(), 'op-3');
+  assert.equal(a.isAllowed('op-1'), false);
+});
+
+test('только смотреть: без автовыдачи, claim и pass не дают ввод, выключение возвращает одинокому', () => {
+  const events = [];
+  const a = createInputArbiter({ onChange: (_op, _ops, parts) => events.push(parts) });
+  a.attach('op-1');
+  a.setViewOnly('op-1', true);
+  assert.equal(a.active(), null, 'включение снимает ввод с активного');
+  a.claim('op-1');
+  assert.equal(a.active(), null, 'claim наблюдателя игнорируется');
+  a.attach('op-2');
+  assert.equal(a.active(), 'op-2', 'новый не-наблюдатель получает свободный ввод');
+  a.pass('op-2', 'op-1');
+  assert.equal(a.active(), 'op-2', 'наблюдателю ввод не передаётся');
+  assert.deepEqual(events.at(-1), [{ op: 'op-1', control: false, viewOnly: true }, { op: 'op-2', control: true, viewOnly: false }]);
+  a.drop('op-2');
+  a.setViewOnly('op-1', false);
+  assert.equal(a.active(), 'op-1', 'остался один — ввод снова его');
+});
+
+test('attach наблюдателя после сброса режима не тянет старое состояние', () => {
+  const a = createInputArbiter();
+  a.attach('op-1');
+  a.setViewOnly('op-1', true);
+  a.drop('op-1');
+  a.attach('op-1');
+  assert.equal(a.active(), 'op-1', 'drop забывает режим наблюдателя');
+});
+
+test('participantsMessage: имена ставит хост, you — получатель', () => {
+  const msg = participantsMessage([{ op: 'c1', control: true, viewOnly: false }, { op: 'c2', control: false, viewOnly: true }], 'c2',
+    (op) => ({ c1: 'Анна' })[op]);
+  assert.deepEqual(msg, { type: 'participants', you: 'c2', list: [
+    { id: 'c1', name: 'Анна', control: true, viewOnly: false },
+    { id: 'c2', name: '', control: false, viewOnly: true },
+  ] });
+});
+
+test('parseControlMessage: служебные claim/release/pass/view-only, остальное — не служебное', () => {
+  assert.deepEqual(parseControlMessage('{"type":"claim-input"}'), { type: 'claim-input' });
+  assert.deepEqual(parseControlMessage('{"type":"pass-input","to":"c2"}'), { type: 'pass-input', to: 'c2' });
+  assert.deepEqual(parseControlMessage('{"type":"view-only","on":true}'), { type: 'view-only', on: true });
+  assert.deepEqual(parseControlMessage('{"type":"view-only","on":"yes"}'), { type: 'invalid' });
+  assert.deepEqual(parseControlMessage('{"type":"pass-input"}'), { type: 'invalid' });
+  assert.equal(parseControlMessage('{"type":"move","x":0.1,"y":0.2}'), null, 'событие ввода — не служебное');
+  assert.equal(parseControlMessage('мусор'), null);
+  assert.equal(parseControlMessage('x'.repeat(600)), null);
 });
