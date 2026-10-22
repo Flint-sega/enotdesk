@@ -1,0 +1,67 @@
+name: Сообщить о проблеме / Report a problem
+description: Что-то работает не так, как ожидалось / Something does not work as expected
+labels: ["bug"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Спасибо! Сначала загляните в «Если что-то не так»: docs/guides/troubleshooting.md — там частые случаи и где лежат журналы.
+        Уязвимости безопасности сюда не пишите — см. SECURITY.md (закрытый канал).
+        Thanks! Check docs/guides/troubleshooting.md first. Do not report security vulnerabilities here — see SECURITY.md.
+  - type: dropdown
+    id: part
+    attributes:
+      label: Где проблема / Where
+      options:
+        - Программа помощи (клиент) / Help client
+        - Программа оператора (/operator или окно в приложении) / Operator app
+        - Постоянный доступ (служба агента) / Unattended agent
+        - Сервер, установка, обновление / Server, install, update
+        - Hub (тикеты, виджет, почта) / Hub
+        - Другое / Other
+    validations:
+      required: true
+  - type: input
+    id: versions
+    attributes:
+      label: Версии / Versions
+      description: Клиент — внизу окна «EnotDesk vX.Y.Z»; сервер — поле version на https://<сервер>/api/v1/health
+      placeholder: клиент 0.6.28, сервер 0.6.28
+    validations:
+      required: true
+  - type: input
+    id: os
+    attributes:
+      label: ОС и браузер / OS and browser
+      placeholder: Windows 11 23H2; оператор — Chrome 140
+    validations:
+      required: true
+  - type: textarea
+    id: steps
+    attributes:
+      label: Что делали / Steps
+      placeholder: |
+        1. Нажал «Получить помощь»
+        2. Оператор подключился
+        3. ...
+    validations:
+      required: true
+  - type: textarea
+    id: expected
+    attributes:
+      label: Что ожидали и что получилось / Expected vs actual
+    validations:
+      required: true
+  - type: textarea
+    id: logs
+    attributes:
+      label: Журналы / Logs
+      description: Где их взять — docs/guides/troubleshooting.md, раздел 2. Пароли и токены в журналах маскируются, но перед отправкой просмотрите текст.
+      render: text
+  - type: checkboxes
+    id: network
+    attributes:
+      label: Сеть / Network
+      options:
+        - label: Оператор и клиент в разных сетях (не в одной квартире или офисе) / Different networks
+        - label: Сервер с доменом и HTTPS / Server has a domain and HTTPS

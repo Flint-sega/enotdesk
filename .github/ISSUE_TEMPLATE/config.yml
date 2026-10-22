@@ -1,0 +1,8 @@
+blank_issues_enabled: true
+contact_links:
+  - name: Уязвимость безопасности / Security vulnerability
+    url: https://github.com/Flint-sega/enotdesk/security/advisories/new
+    about: Сообщите закрыто, не публичным issue / Report privately, not as a public issue
+  - name: Руководства / Guides
+    url: https://github.com/Flint-sega/enotdesk/tree/main/docs/guides
+    about: Как получить помощь, оператору, администратору, постоянный доступ, «если что-то не так»

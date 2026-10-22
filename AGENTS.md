@@ -29,7 +29,7 @@ helper/video/  Rust-хелпер Windows: захват DXGI/GDI и ввод в �
 docker/ Dockerfile compose.yaml   серверный стек
 scripts/     quick-setup.sh, install-server.sh, deploy-server.sh, smoke-local.mjs, smoke-remote.mjs, make-icons.mjs, make-mascot.mjs, make-social.mjs (картинки соцпревью)
 site/        публичная витрина (GitHub Pages)
-docs/        SESSION_PROTOCOL, SERVER, AGENT, WEB-OPERATOR, BUILD, ACCEPTANCE-1.0 (определение готовности 1.0), MANUAL-QA, ROADMAP, LAB, adr/0001–0038
+docs/        guides/ (руководства людям: клиенту, оператору, админу, постоянный доступ, «если что-то не так», откат выпуска), SESSION_PROTOCOL, SERVER, AGENT, WEB-OPERATOR, BUILD, ACCEPTANCE-1.0 (определение готовности 1.0), MANUAL-QA, ROADMAP, LAB, adr/0001–0038
 ```
 
 ## Архитектура (кратко; подробности в docs/ и ADR)
