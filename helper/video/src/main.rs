@@ -45,6 +45,7 @@ const ACQUIRE_TIMEOUT_MS: u32 = 100; // AcquireNextFrame poll window
 // never downgrades to GDI stale-framebuffer video.
 const ACCESS_LOST_WINDOW: Duration = Duration::from_secs(10);
 const ACCESS_LOST_MAX: usize = 3; // more recreations than this in the window -> honest exit
+const SEED_AFTER: Duration = Duration::from_millis(1500); // стартовый кадр GDI, если DXGI молчит
 const TIMEOUT_WAKE_AFTER: Duration = Duration::from_secs(5); // consecutive timeouts -> wake display
 const WAKE_THROTTLE: Duration = Duration::from_secs(5); // wake attempts at least this far apart
 const DUP_FAIL_GIVE_UP: u32 = 50; // ~10 s of 200 ms retries -> honest exit (the ever-framed path)
@@ -1023,6 +1024,18 @@ fn capture_session(
     // which runs once per pipe connection).
     let mut black_streak: u32 = 0;
     let mut other_err_streak: u32 = 0;
+    // Стартовый кадр (21.10, Win11 + virtio-gpu DOD в лабе): на статичном экране
+    // DXGI не отдаёт ни одного кадра, и оператор видит чёрное, пока на машине
+    // что-то не изменится. Если после создания дубликата за SEED_AFTER кадров
+    // нет — один снимок GDI (BitBlt) уходит как стартовый, дальше снова DXGI.
+    // Один раз на каждый новый дубликат; ENOT_VIDEO_SEED=off — выключатель.
+    let seed_enabled = std::env::var("ENOT_VIDEO_SEED").map_or(true, |v| v != "off");
+    // Отсчёт — от начала сеанса ИЛИ от создания дубликата: дубликат DXGI
+    // переживает переподключение пайпа, и при отсчёте только от make_dup()
+    // новый сеанс на уже живом дубликате стартового кадра не получал
+    // (живьём на Win11-ВМ 22.10: ни одного события seed в журнале).
+    let mut dup_since: Option<Instant> = Some(Instant::now());
+    let mut seeded = false;
 
     loop {
         if shared.auth_fail.load(Ordering::SeqCst) {
@@ -1099,6 +1112,8 @@ fn capture_session(
                             dup_fail_streak = 0;
                             first_dup_fail = None;
                             *dup = Some(d);
+                            dup_since = Some(Instant::now());
+                            seeded = false;
                         }
                         Err(e) => {
                             if first_dup_fail.is_none() {
@@ -1132,6 +1147,7 @@ fn capture_session(
                     match grab {
                         win::Grab::Frame => {
                             timeout_since = None;
+                            seeded = true; // настоящий кадр DXGI — стартовый больше не нужен
                             shared.display_off.store(false, Ordering::Relaxed);
                             other_err_streak = 0;
 
@@ -1225,6 +1241,39 @@ fn capture_session(
                             empty_window += 1;
                         }
                         win::Grab::Timeout => {
+                            if seed_enabled
+                                && !seeded
+                                && dup_since.map_or(false, |t| t.elapsed() >= SEED_AFTER)
+                                && shared.authenticated.load(Ordering::SeqCst)
+                                && !privacy_sleep.load(Ordering::Relaxed)
+                            {
+                                seeded = true;
+                                match win::Gdi::new().map(|mut g| (g.grab(1), g)) {
+                                    Ok((win::Grab::Frame, g)) => {
+                                        let (w, h) = g.size();
+                                        let (px, pw, ph) = downscale(g.buf(), w, h, FRAME_TARGET_W);
+                                        log_line("{\"ev\":\"seed\",\"result\":\"gdi-frame\"}");
+                                        if !encode_and_send(
+                                            &cap.wic,
+                                            &px,
+                                            pw,
+                                            ph,
+                                            shared,
+                                            io,
+                                            pipe_lock,
+                                            &mut frames_window,
+                                            &mut last_encode,
+                                        ) {
+                                            return SessionEnd::Broken;
+                                        }
+                                    }
+                                    Ok(_) => log_line("{\"ev\":\"seed\",\"result\":\"no-frame\"}"),
+                                    Err(e) => log_line(&format!(
+                                        "{{\"ev\":\"seed\",\"result\":\"failed\",\"err\":\"{}\"}}",
+                                        ascii(&e).replace(['"', '\\'], "'")
+                                    )),
+                                }
+                            }
                             // Consecutive timeouts mean a still screen OR a powered-off
                             // display (ADR 0027: DPMS-off yields zero frames). After 5 s
                             // of silence we poke the display, but at most once per 5 s.
