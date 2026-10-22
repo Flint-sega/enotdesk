@@ -445,7 +445,19 @@ setup_turn() {
     echo "no-multicast-peers"
     [ -n "$external_ip" ] && echo "external-ip=$external_ip"
   } > "$TURN_CONF"
-  chmod 0600 "$TURN_CONF"
+  # Debian-юнит coturn работает от User=turnserver: конфиг root:root 0600 он не
+  # прочитает и молча стартует на дефолтах — без realm и static-auth-secret, то есть
+  # TURN не выдаёт ретрансляцию (живой прод, 27.09–22.10.2026: «Cannot find config file»).
+  # Поэтому группа turnserver и 0640: секрет читает только служба.
+  if getent group turnserver >/dev/null 2>&1; then
+    chgrp turnserver "$TURN_CONF"
+    chmod 0640 "$TURN_CONF"
+  else
+    chmod 0600 "$TURN_CONF"
+  fi
+  if id turnserver >/dev/null 2>&1 && ! runuser -u turnserver -- test -r "$TURN_CONF"; then
+    die "служба coturn (пользователь turnserver) не может прочитать $TURN_CONF — проверьте права"
+  fi
   systemctl enable --now coturn >/dev/null 2>&1 || die "не удалось включить службу coturn (journalctl -u coturn)"
   systemctl restart coturn || die "coturn не запустился — смотрите journalctl -u coturn"
   info "coturn настроен: 3478 tcp/udp, relay 49160–49200/udp, креды TURN — в env-файле"

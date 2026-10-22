@@ -1662,3 +1662,18 @@ Linux, шапка виджета хаба, картинки соцпревью 0
 через «Конфиденциальность и безопасность → Всё равно открыть».
 Автоматически: `npm test` 757 (756 pass, 0 fail), lint, `smoke:local` PASS, `EDESK_SMOKE` OK.
 Ждёт живой проверки: упакованная mac-сборка показывает уведомление о новой версии и не закрывается «на установку».
+## 22.10.2026 — TURN: конфиг coturn не читался службой (ветка `feature/turn-config-readable`)
+Находка при подготовке сетевых проверок 1.0. Рабочий сервер: `/etc/turnserver.conf` — `root:turnserver 0600`, юнит
+coturn — `User=turnserver`; в журнале с 27.09 «Cannot find config file: /etc/turnserver.conf. Default and command-line
+settings will be used» и пустой realm. Значит, coturn работал без `static-auth-secret` и realm, а эфемерные креды
+сервера ему ничего не давали: ретрансляция не выдавалась, сеансы через строгий NAT не могли пройти. Лабовый staging:
+та же картина по другой причине — комментарии после значений в строках конфига («allow-private-peers  # …»), realm
+терялся; Chromium получал 401 без realm и молча не ставил relay-кандидатов (`onicecandidateerror` не приходил).
+Исправление: установщик ставит группу `turnserver` и 0640 и до перезапуска проверяет, что служба читает конфиг
+(`runuser -u turnserver -- test -r`); тест-контракт `server/test/install-turn-config.test.mjs`; раздел 9 SERVER.md.
+Лаба: конфиг staging переписан без комментариев (бэкап рядом) — Electron 44 с `iceTransportPolicy: relay` получает
+relay-кандидаты по UDP и TCP. Рабочий сервер: исправление прав + перезапуск coturn — по слову владельца.
+Рабочий сервер исправлен 22.10 (~08:10Z) по слову владельца: `chgrp turnserver` + `chmod 0640` + перезапуск coturn;
+в журнале coturn — «Default realm: support.ruenot.site»; `turnutils_uclient` на сервере с эфемерными кредами той же
+схемы, что выдаёт `/rtc-config` (HMAC-SHA1 от общего секрета), получает ретрансляцию по UDP и TCP: 12/12 пакетов,
+0% потерь. Сеанс через интернет с принудительной ретрансляцией — следующий шаг (строки N-1…N-4 ACCEPTANCE-1.0).
