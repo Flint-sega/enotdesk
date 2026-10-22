@@ -1093,7 +1093,19 @@ function registerIpc() {
   });
   // Хранилищем пользуется только окно оператора (мост enot-op:*, ниже); главный
   // рендерер к кредам доступа не имеет (ADR 0033, этап 3).
-  opCreds.available().then((ok) => { if (!ok) opCreds.clear(); });
+  // К хранилищу ОС — только по запросу окна оператора, не на старте: на Linux
+  // safeStorage идёт в gnome-keyring синхронно, и при запертой или ещё не
+  // созданной связке ключей главный процесс ждал ответа на окно GNOME «пароль
+  // для связки» — клиент помощи не открывал окно вовсе (стенд, 22.10).
+  let opCredsChecked = false;
+  const opCredsAvailable = async () => {
+    const ok = await opCreds.available();
+    if (!opCredsChecked) {
+      opCredsChecked = true;
+      if (!ok) await opCreds.clear(); // протухший файл при недоступном шифровании
+    }
+    return ok;
+  };
 
   // Окно оператора (ADR 0033, этап 2): главное окно просит открыть программу
   // оператора с сервера; ответ {ok, reason?, version?}, статус — enot:operator-window.
@@ -1112,7 +1124,7 @@ function registerIpc() {
   };
   ipcMain.handle('enot-op:credentials-available', (e) => {
     operatorGuard(e);
-    return rememberAllowed(operatorOrigin) ? opCreds.available() : false;
+    return rememberAllowed(operatorOrigin) ? opCredsAvailable() : false;
   });
   ipcMain.handle('enot-op:credentials-load', (e) => {
     operatorGuard(e);

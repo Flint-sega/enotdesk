@@ -106,6 +106,12 @@ test('operator-window: контракт закалки окна в main.mjs и �
   assert.match(main, /opCreds\.load\(\{ origin: operatorOrigin \}\)/);
   assert.equal((main.match(/rememberAllowed\(operatorOrigin\)/g) ?? []).length, 3, 'available/load/save сверяют схему origin');
   assert.match(main, /opCreds\.save\(\{ login, password, origin: operatorOrigin \}\)/);
+  // Стенд 22.10: на Linux safeStorage синхронно идёт в gnome-keyring — запрос на
+  // старте вешал главный процесс на окне «пароль для связки ключей», и клиент
+  // помощи не открывал окно. К хранилищу — только по запросу окна оператора.
+  assert.equal((main.match(/opCreds\.available\(\)/g) ?? []).length, 1, 'одна точка обращения к хранилищу');
+  assert.match(main, /const opCredsAvailable = async \(\) => \{\s*const ok = await opCreds\.available\(\);/);
+  assert.match(main, /rememberAllowed\(operatorOrigin\) \? opCredsAvailable\(\) : false/);
 
   const preload = readFileSync(path.join(dir, '..', 'operator-preload.cjs'), 'utf8');
   const channels = [...preload.matchAll(/ipcRenderer\.invoke\('([^']+)'/g)].map((m) => m[1]).sort();
