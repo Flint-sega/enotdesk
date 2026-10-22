@@ -2069,11 +2069,18 @@ app.whenReady().then(() => {
         const img = await win.webContents.capturePage();
         fs.mkdirSync(path.dirname(shotPath), { recursive: true });
         fs.writeFileSync(shotPath, img.toPNG());
+        lines.push(`SMOKE screenshot: ${shotPath}`);
         console.log(`SMOKE screenshot: ${shotPath}`);
       } catch (e) {
+        lines.push(`SMOKE screenshot failed: ${e.message}`);
         console.log(`SMOKE screenshot failed: ${e.message}`);
       }
       console.log('SMOKE OK');
+      // Смоук собранной программы в CI (scripts/smoke-artifact.mjs): у GUI-exe
+      // Windows stdout ненадёжен — итог дублируется в файл
+      if (process.env.EDESK_SMOKE_LOG) {
+        try { fs.writeFileSync(process.env.EDESK_SMOKE_LOG, `${lines.join('\n')}\nSMOKE OK\n`); } catch { /* итог есть в stdout */ }
+      }
       // закрытие окна должно завершить процесс (window-all-closed → quit), а не app.quit напрямую
       win.close();
     }, 2500);

@@ -120,6 +120,19 @@ jobs:
           # AppImage несёт версию в имени, и ссылка без версии отдавала 404.
           # Фид latest-linux.yml по-прежнему указывает на версионный файл.
           cp dist/EnotDesk-*-linux-x86_64.AppImage dist/EnotDesk-linux-x86_64.AppImage
+      # Смоук СОБРАННОЙ программы (ACCEPTANCE U-5): окно, ворота ввода, снимок,
+      # самостоятельный выход — до публикации; упала — релиза нет.
+      - name: Xvfb (Linux)
+        if: runner.os == 'Linux'
+        run: sudo apt-get update -q && sudo apt-get install -y -q xvfb
+      - name: "Gate: смоук собранной программы"
+        shell: bash
+        run: |
+          case "$RUNNER_OS" in
+            macOS) node scripts/smoke-artifact.mjs dist/mac-arm64/EnotDesk.app/Contents/MacOS/EnotDesk ;;
+            Windows) node scripts/smoke-artifact.mjs dist/win-unpacked/EnotDesk.exe ;;
+            Linux) xvfb-run -a node scripts/smoke-artifact.mjs dist/linux-unpacked/enotdesk --no-sandbox ;;
+          esac
       - uses: actions/upload-artifact@v6
         with:
           name: dist-${{ matrix.os }}

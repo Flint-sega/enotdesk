@@ -1,0 +1,66 @@
+# Смоук СОБРАННЫХ программ на трёх ОС (ACCEPTANCE U-5) без публикации:
+# упаковка в каталог (--dir) и запуск scripts/smoke-artifact.mjs — окно,
+# ворота ввода, снимок, самостоятельный выход. Тот же шаг стоит в release.yml
+# перед публикацией; здесь — проверка по кнопке и раз в неделю, чтобы поломка
+# упаковки не ждала тега; при правках упаковки — на каждый push.
+
+name: artifact-smoke
+
+on:
+  workflow_dispatch:
+  # при правках упаковки — сразу, не дожидаясь тега
+  push:
+    paths:
+      - 'build/**'
+      - 'package.json'
+      - 'package-lock.json'
+      - 'scripts/smoke-artifact.mjs'
+      - '.github/workflows/artifact-smoke.yml'
+  schedule:
+    - cron: '17 4 * * 1'
+
+permissions:
+  contents: read
+
+jobs:
+  smoke:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [macos-latest, windows-latest, ubuntu-latest]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v6
+        with:
+          node-version: 24
+          cache: npm
+      - run: npm ci
+      - name: Pack (каталог программы, без установщиков)
+        shell: bash
+        run: |
+          case "$RUNNER_OS" in
+            macOS) npx electron-builder --config build/electron-builder.yml --mac dir --publish never ;;
+            Windows) npx electron-builder --config build/electron-builder.yml --win dir --publish never ;;
+            Linux) npx electron-builder --config build/electron-builder.yml --linux dir --publish never ;;
+          esac
+      - name: Xvfb (Linux)
+        if: runner.os == 'Linux'
+        run: sudo apt-get update -q && sudo apt-get install -y -q xvfb
+      - name: Smoke собранной программы
+        shell: bash
+        env:
+          SMOKE_KEEP_SHOT: smoke-${{ matrix.os }}.png
+        run: |
+          case "$RUNNER_OS" in
+            macOS) node scripts/smoke-artifact.mjs dist/mac-arm64/EnotDesk.app/Contents/MacOS/EnotDesk ;;
+            Windows) node scripts/smoke-artifact.mjs dist/win-unpacked/EnotDesk.exe ;;
+            Linux) xvfb-run -a node scripts/smoke-artifact.mjs dist/linux-unpacked/enotdesk --no-sandbox ;;
+          esac
+      - uses: actions/upload-artifact@v6
+        if: always()
+        with:
+          name: smoke-${{ matrix.os }}
+          path: smoke-${{ matrix.os }}.png
+          retention-days: 7
+          if-no-files-found: ignore
