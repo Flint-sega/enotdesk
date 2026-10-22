@@ -1649,3 +1649,15 @@ Linux, шапка виджета хаба, картинки соцпревью 0
 14 файлов, фиды latest*.yml = 0.6.28. Сборки страницы /downloads прода заменены на 0.6.28 (каждый файл сверен
 с checksums релиза, прежние — в `dist.bak-<штамп>`). Сервер прода не передеплоивался (код с 13:18Z тот же).
 Ждёт живой проверки: заставка при запуске портативки на настоящем Windows-ПК, автообновление 0.6.27 → 0.6.28.
+
+## 22.10.2026 — TURN: конфиг coturn не читался службой (ветка `feature/turn-config-readable`)
+Находка при подготовке сетевых проверок 1.0. Рабочий сервер: `/etc/turnserver.conf` — `root:turnserver 0600`, юнит
+coturn — `User=turnserver`; в журнале с 27.09 «Cannot find config file: /etc/turnserver.conf. Default and command-line
+settings will be used» и пустой realm. Значит, coturn работал без `static-auth-secret` и realm, а эфемерные креды
+сервера ему ничего не давали: ретрансляция не выдавалась, сеансы через строгий NAT не могли пройти. Лабовый staging:
+та же картина по другой причине — комментарии после значений в строках конфига («allow-private-peers  # …»), realm
+терялся; Chromium получал 401 без realm и молча не ставил relay-кандидатов (`onicecandidateerror` не приходил).
+Исправление: установщик ставит группу `turnserver` и 0640 и до перезапуска проверяет, что служба читает конфиг
+(`runuser -u turnserver -- test -r`); тест-контракт `server/test/install-turn-config.test.mjs`; раздел 9 SERVER.md.
+Лаба: конфиг staging переписан без комментариев (бэкап рядом) — Electron 44 с `iceTransportPolicy: relay` получает
+relay-кандидаты по UDP и TCP. Рабочий сервер: исправление прав + перезапуск coturn — по слову владельца.

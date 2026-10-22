@@ -351,7 +351,10 @@ journalctl -u enotdesk -p err              # только ошибки
 curl -fsS https://example.com/api/v1/health
 systemctl status coturn caddy
 ss -ulnp | grep -E ':3478|4916'   # слушает coturn
+journalctl -u coturn -b | grep -i 'config file'   # пусто — конфиг прочитан
 ```
+
+Если в журнале coturn есть «Cannot find config file», служба (пользователь `turnserver`) не может прочитать `/etc/turnserver.conf` и работает на настройках по умолчанию — без секрета и realm, ретрансляция не выдаётся. Так было у установок до 0.6.29: файл получал права `root:root 0600`. Исправление: `sudo chgrp turnserver /etc/turnserver.conf && sudo chmod 0640 /etc/turnserver.conf && sudo systemctl restart coturn` (или повторный `install-server.sh --update --reset-turn`). В строках этого файла не пишите комментарии после значения (`опция  # текст`) — coturn их не понимает.
 
 ### 9.1. Caddy вручную (fallback)
 
