@@ -270,9 +270,20 @@ export function routeOperatorSignal(from, data) {
 // async не для await: все ранние выходы обязаны возвращать Promise —
 // вызывающие вешают .catch (живая приёмка v0.6.2: undefined.catch ронял
 // startHostRtc в «Не удалось начать» сразу после «Разрешить»)
-export async function attachOperator(claimId, name = '') {
+export async function attachOperator(claimId, name = '', { rejoin = false } = {}) {
   if (!claimId || typeof claimId !== 'string') return;
-  if (state.operators.has(claimId)) return; // уже подключён (upsert не нужен)
+  if (state.operators.has(claimId)) {
+    // Повторный operator-joined того же claim (WS оператора (пере)подключился):
+    // живой pc не трогаем; pc без ответа или упавший — пересоздаём с новым offer.
+    // Живая находка 22.10: при join сервер шлёт operator-joined и при claim, и
+    // при WS-аутентификации; offer на первый уходил, пока WS оператора ещё нет,
+    // сервер его отбрасывал, а второй operator-joined игнорировался — у оператора
+    // навсегда чёрный экран (повторный вход в живой сеанс, перезагрузка страницы).
+    const pc = state.operators.get(claimId).pc;
+    const alive = pc && pc.remoteDescription && ['connected', 'connecting'].includes(pc.connectionState);
+    if (!rejoin || alive) return;
+    dropOperator(claimId);
+  }
   if (!state.localStream || !state.session) {
     pendingAttaches.set(claimId, name); // захват ещё не готов — доиграем после (с именем)
     return;
