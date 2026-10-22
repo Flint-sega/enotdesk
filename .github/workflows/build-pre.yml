@@ -15,6 +15,10 @@ on:
         description: 'Версия артефактов (semver, например 0.6.7-pre.1)'
         required: true
         default: '0.6.7-pre.1'
+      autotest:
+        description: 'Дополнительно портатив для автопрогона приёмки: авто-сеанс + авто-согласие (ENOT_AUTO_*), НЕ для людей'
+        type: boolean
+        default: false
 
 permissions:
   contents: read
@@ -46,6 +50,15 @@ jobs:
         run: |
           npx electron-builder --config build/electron-builder.yml --win portable --publish never
           npx electron-builder --config build/electron-builder.yml --win nsis --publish never
+      - name: Pack autotest portable (ENOT_AUTO_SESSION/CONSENT, ADR 0037)
+        if: ${{ github.event.inputs.autotest == 'true' }}
+        shell: bash
+        run: |
+          mkdir -p dist-autotest
+          npx electron-builder --config build/electron-builder.yml --win portable --publish never \
+            -c.directories.output=dist-autotest \
+            -c.extraMetadata.ENOT_AUTO_SESSION=1 -c.extraMetadata.ENOT_AUTO_CONSENT=1
+          for f in dist-autotest/EnotDesk-*.exe; do cp "$f" "dist/$(basename "${f%.exe}")-autotest.exe"; done
       - name: "Gate: locales en-US.pak + ru.pak в сборке"
         shell: bash
         run: |

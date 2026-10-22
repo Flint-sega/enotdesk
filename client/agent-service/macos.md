@@ -1,72 +1,73 @@
-# Агент-служба macOS (LaunchDaemon)
+# Постоянный доступ на macOS (LaunchAgent, ADR 0038)
 
-LaunchDaemon стартует от root **до логина пользователя** (`RunAtLoad`) и перезапускается при падении
-(`KeepAlive`, `ThrottleInterval=10`). Файлы: `com.enotdesk.agent.plist`, `install-macos.sh`,
-`remove-macos.sh` (запуск через sudo).
+Агент работает **в графическом сеансе пользователя Mac** как LaunchAgent
+(`~/Library/LaunchAgents/com.enotdesk.agent.plist`, `LimitLoadToSessionType=Aqua`,
+`RunAtLoad`, `KeepAlive`, `ThrottleInterval=10`). Только там macOS даёт захват экрана и ввод,
+поэтому прежняя служба от root (LaunchDaemon, до 0.6.29) видео не умела. Установка — **без sudo**.
+
+Что работает: машина онлайн, пока пользователь вошёл в систему; видео (getDisplayMedia в скрытом
+окне-мосте, как на Linux, ADR 0031), управление мышью и клавиатурой (CoreGraphics), терминал
+от имени этого пользователя, сообщение на экран, чат, файлы.
+Чего нет (ограничение 1.0): экран входа macOS — пока никто не вошёл, агент не запущен и машина
+офлайн. Включите автоматический вход или держите пользователя залогиненным.
 
 ## Установка
 
-1. Положите сборку в `/Applications/EnotDesk.app` (или задайте `APP_PATH`).
-2. Запустите установщик:
+1. Перетащите EnotDesk в «Программы» (`/Applications/EnotDesk.app`) и один раз откройте его
+   (macOS 15+: «Системные настройки» → «Конфиденциальность и безопасность» → «Всё равно открыть»).
+2. Создайте машину в панели оператора и сохраните одноразовый код в файл (например `~/code.txt`).
+3. В Терминале, **без sudo**:
 
 ```bash
-sudo SERVER_URL="https://enotdesk.example.com" \
-     APP_PATH="/Applications/EnotDesk.app" \
-     AGENT_NAME="mac-mini" \
-     ./install-macos.sh
+SERVER_URL="https://enotdesk.example.com" AGENT_NAME="Mac бухгалтерии" \
+AGENT_CODE_FILE=~/code.txt ./install-macos.sh
 ```
 
-Скрипт: пишет `settings.json` (адрес сервера) в профиль агента, копирует plist в
-`/Library/LaunchDaemons/com.enotdesk.agent.plist` (root:wheel, 0644, подставив ваш путь и имя),
-создаёт лог-файл и делает `launchctl bootstrap system`.
+Скрипт пишет `settings.json` (адрес сервера) в профиль агента
+`~/Library/Application Support/EnotDesk/agent/`, регистрирует машину по коду (код читается из файла,
+не попадает в командную строку, после регистрации файл удаляется; токен — `agent-token.json`, 0600),
+ставит LaunchAgent и запускает его (`launchctl bootstrap gui/<uid>`). Повторный запуск без кода
+обновляет настройки и перезапускает агент с прежним токеном.
 
-Так как LaunchDaemon исполняется от **root**, профиль Electron агента —
-`/var/root/Library/Application Support/EnotDesk/agent/` (там же `agent-token.json`, 0600),
-а не в профиле обычного пользователя.
+4. Один раз разрешите EnotDesk: «Системные настройки» → «Конфиденциальность и безопасность» →
+   **«Запись экрана и системного звука»** и **«Универсальный доступ»**. Без них машина онлайн и терминал
+   работает, а видео и управление честно сообщают, что разрешения нет.
 
-## Первый запуск с onboarding-кодом
-
-Код одноразовый и не должен попадать в plist. Рекомендуемый порядок — зарегистрировать вручную,
-затем ставить службу:
+## Диагностика и журнал
 
 ```bash
-sudo env EDESK_AGENT=1 EDESK_AGENT_NAME=mac-mini EDESK_AGENT_CODE=123456789 \
-  /Applications/EnotDesk.app/Contents/MacOS/EnotDesk
+tail -f ~/Library/Logs/enotdesk-agent.log
+launchctl print gui/$(id -u)/com.enotdesk.agent
 ```
-
-После «запущен» прервите (Ctrl+C) — токен останется в `/var/root/Library/.../agent/agent-token.json`,
-служба стартует уже с ним.
-
-## Диагностика и логи
-
-```bash
-tail -f /var/log/enotdesk-agent.log     # stdout/stderr агента (StandardOutPath/StandardErrorPath)
-launchctl print system/com.enotdesk.agent
-log show --predicate 'process == "EnotDesk"' --last 10m
-```
-
-## TCC-разрешения (Screen Recording / Accessibility) — честно
-
-macOS требует разрешения **Screen Recording** (захват экрана) и **Accessibility** (инъекция ввода).
-Для LaunchDaemon, работающего от root до логина, выдача этих разрешений через Системные настройки
-не всегда возможна — штатно они выдаются процессам пользователя; на немодерированной машине может
-понадобиться MDM-профиль (например, через платформенные SSR/TTU-механизмы). До тех пор агент
-работает (регистрация, чат, файлы, heartbeat), а захват/ввод честно сообщают об отсутствии
-разрешения. Проверка этого — обязательный пункт ручной приёмки: `docs/MANUAL-QA.md`, macOS-M3.
 
 ## Обновление
 
+Замените `/Applications/EnotDesk.app` новой версией и перезапустите агент:
+
 ```bash
-sudo launchctl bootout system/com.enotdesk.agent
-# замените /Applications/EnotDesk.app на новую сборку
-sudo launchctl bootstrap system /Library/LaunchDaemons/com.enotdesk.agent.plist
+launchctl kickstart -k gui/$(id -u)/com.enotdesk.agent
 ```
+
+У сборки без подписи macOS может заново спросить разрешения после замены программы (её «личность»
+меняется); подпись собственным сертификатом проекта это устраняет (ADR 0037).
 
 ## Удаление
 
 ```bash
-sudo ./remove-macos.sh              # служба остаётся с токеном
-sudo ./remove-macos.sh --purge-data # + профиль агента и логи
+./remove-macos.sh               # агент удалён, токен остался
+./remove-macos.sh --purge-data  # + профиль агента (токен) и журнал
 ```
 
-Запись машины на сервере удаляется отдельно (список машин → удалить/отозвать).
+Запись машины на сервере удаляется отдельно (список машин → отозвать/удалить).
+
+## Переход со службы от root (до 0.6.29)
+
+Если раньше ставилась LaunchDaemon-версия, удалите её (нужен пароль администратора):
+
+```bash
+sudo launchctl bootout system/com.enotdesk.agent
+sudo rm /Library/LaunchDaemons/com.enotdesk.agent.plist
+```
+
+Её токен лежал в `/var/root/Library/Application Support/EnotDesk/agent/` — машину проще
+зарегистрировать заново новым кодом и отозвать старую запись.

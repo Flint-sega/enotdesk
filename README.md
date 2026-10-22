@@ -4,7 +4,7 @@ English | [Русский](README.ru.md)
 
 [![tests](https://github.com/Flint-sega/enotdesk/actions/workflows/test.yml/badge.svg)](https://github.com/Flint-sega/enotdesk/actions/workflows/test.yml)
 
-EnotDesk is a self-hosted remote-support application for Windows, macOS and Linux, licensed under **AGPL-3.0**. In the default **attended** mode the person receiving help runs a portable app with no installation, gets a one-time ID and password, and passes them to the operator through their usual chat; closing the app immediately ends access — no services, no autostart, no background processes. Optionally, on Windows the **agent service** can be installed right from the app (Settings → “Machine”) for unattended access: the operator claims the machine with a mandatory reason and an optional PIN. Operators can work from the desktop client or a plain browser, and the optional EnotDesk Hub adds a ticket desk with a chat widget, one-click join and an email channel.
+EnotDesk is a self-hosted remote-support application for Windows, macOS and Linux, licensed under **AGPL-3.0**. In the default **attended** mode the person receiving help runs a portable app with no installation, gets a one-time ID and password, and passes them to the operator through their usual chat; closing the app immediately ends access — no services, no autostart, no background processes. Optionally, **unattended access** (agent): on Windows the service is installed right from the app (Settings → “Machine”), on Linux and macOS with the scripts in `client/agent-service/` (on macOS the agent runs in the user's session, with video and input — ADR 0038); the operator claims the machine with a mandatory reason and an optional PIN. Operators can work from the desktop client or a plain browser, and the optional EnotDesk Hub adds a ticket desk with a chat widget, one-click join and an email channel.
 
 ## Screenshots
 
@@ -95,7 +95,7 @@ Live acceptance checklist for all of the above: [`docs/MANUAL-QA.md`](docs/MANUA
 
 ## Security notes
 
-- **Unsigned builds.** Releases are not code-signed yet — see “Unsigned builds” below for run instructions and why the OS warnings appear.
+- **Unsigned builds.** Releases are not signed with paid Apple/Windows certificates (ADR 0037) — see “Unsigned builds” below for run instructions and why the OS warnings appear.
 - **Network.** The server listens on `127.0.0.1:8080` by default; exposing it requires HTTPS/WSS (Caddy in the docker setup, or your own reverse proxy — see SERVER.md). TURN credentials are issued only to authenticated session participants.
 - **Data.** Passwords and tokens are stored in the database only as hashes; secrets never reach the renderer process (`contextIsolation: true`, `sandbox: true`, communication only via the preload bridge). Never commit your `.env`.
 - **Protocol.** Keys, buttons, scroll deltas and SDP sizes are allowlisted and bounded; file serving is name-allowlisted and rejects path traversal; input decisions belong to the main process behind a WS-state gate, never to renderer claims.
@@ -103,32 +103,34 @@ Live acceptance checklist for all of the above: [`docs/MANUAL-QA.md`](docs/MANUA
 
 ## Platforms
 
-| Platform | Build (npm run) | Artifact | Verified |
+| Platform | Build (npm run) | Artifact | Verified live |
 |---|---|---|---|
-| macOS (arm64) | `pack:mac` | `dist/EnotDesk-mac-arm64.zip` with portable `EnotDesk.app` | Yes: build, run, smoke screenshot |
-| Windows | `pack:win` | portable `.exe` | Not yet: configured, but not exercised on a live Windows machine |
-| Linux | `pack:linux` | `AppImage` | Not yet: configured, but not exercised on a live Linux machine |
+| Windows 10/11 (x64) | `pack:win` | portable `.exe` and `setup.exe` installer | Yes: help client, agent service, operator window — on lab machines and a real PC; some scenarios (logon screen, service input on a real PC) are still being verified |
+| macOS 13+ (Apple Silicon) | `pack:mac` | `.dmg` and `.zip` with `EnotDesk.app` | Partly: build, run, operator window; a help session with video and the Mac agent await live checks |
+| Linux (x86_64, X11) | `pack:linux` | `AppImage` | Yes: help client and agent on Debian 13 (lab); on Wayland — screen viewing only, no control |
+
+What exactly counts as “done” for 1.0 and what is not verified yet — [`docs/ACCEPTANCE-1.0.md`](docs/ACCEPTANCE-1.0.md) (in Russian).
 
 Artifacts are branded EnotDesk (`assets/icon.icns` / `icon.ico` / `icon.png`).
 
 ## Releases and updates
 
-Pushing a tag `v…` runs [.github/workflows/release.yml](.github/workflows/release.yml): the three platforms are packed on GitHub runners, lint and tests gate the build, and the artifacts are attached to a GitHub Release together with `checksums-sha256.txt` (verify with `sha256sum -c`) and the auto-update feed files (`latest-mac.yml`, `latest.yml`, `latest-linux.yml`).
+Pushing a tag `v…` runs [.github/workflows/release.yml](.github/workflows/release.yml): the three platforms are packed on GitHub runners, lint and tests gate the build, and the artifacts are attached to a GitHub Release together with `checksums-sha256.txt` (verify with `sha256sum -c`) and the auto-update feed files (`latest.yml`, `latest-linux.yml`). The unsigned macOS build cannot install updates by itself, so it has no install feed: it reads the version from `latest.yml` and only notifies.
 
-The packaged client checks that feed once a day (electron-updater, generic provider): on macOS and Linux the update downloads in the background and applies on the next restart — never in the middle of a session. On Windows the v1 build is a portable `.exe` that cannot replace itself, so the client shows a notification with a link to the releases page. The updater is disabled in development (`npm start`), smoke runs (`EDESK_SMOKE=1`) and the headless agent.
+The packaged client checks that feed once a day (electron-updater, generic provider). The installed Windows build (`setup.exe`) and the Linux AppImage download the update in the background and install it after a person confirms — never in the middle of a session. The portable Windows `.exe` and the macOS build cannot replace themselves: the client shows a notification about the new version with a link to the downloads page. The updater is disabled in development (`npm start`), smoke runs (`EDESK_SMOKE=1`) and the headless agent.
 
 ## Unsigned builds
 
-Releases are not code-signed yet (no certificate budget); enabling signing later requires no rework — the secrets block is prepared and commented in release.yml. OS warnings on first launch are expected, here is the short way to run:
+Paid Apple and Windows certificates are not used (ADR 0037); the macOS build is signed with the project's own certificate when CI has it. OS warnings on first launch are expected, here is the short way to run:
 
-- **macOS**: right-click `EnotDesk.app` → “Open” → “Open”; if it stays blocked, `xattr -cr /path/to/EnotDesk.app` removes the quarantine flag. Grant Screen Recording and Accessibility permissions on first launch (see [docs/BUILD.md](docs/BUILD.md)).
-- **Windows**: SmartScreen → “More info” → “Run anyway”.
+- **macOS 15 and later**: on first open click “Done”, then System Settings → Privacy & Security → “Open Anyway” for EnotDesk at the bottom. **macOS 14 and earlier**: right-click `EnotDesk.app` → “Open” → “Open”. If it stays blocked, `xattr -cr /path/to/EnotDesk.app` removes the quarantine flag. Grant Screen Recording and Accessibility permissions on first launch (see [docs/BUILD.md](docs/BUILD.md)).
+- **Windows**: SmartScreen → “More info” → “Run anyway”. The portable `.exe` may trigger a Windows Firewall prompt when connecting — “Cancel” is fine too, the connection still works.
 - **Linux**: `chmod +x EnotDesk-linux-*.AppImage` and run it.
 
 ## Development
 
 ```bash
-npm test          # 481 node:test tests: server + hub HTTP/WS + client lib shims + renderer contract
+npm test          # ~770 node:test tests: server + hub HTTP/WS + client lib shims + renderer contract
 npm run lint      # ESLint
 npm run smoke:local
 ```

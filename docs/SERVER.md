@@ -9,7 +9,7 @@
 - Исходящий интернет: nodejs.org (tarball Node 24) и npm registry (зависимости).
 - Порт сервера: `8080` по умолчанию для тестового HTTP-режима, либо `80`/`443` при TLS через Caddy.
 - Для TURN (coturn) и TLS (Caddy), которые установщик ставит по умолчанию, нужен работающий `apt` и исходящий доступ к репозиториям Debian/Ubuntu и Caddy; флаги `--no-turn` / `--no-tls` отключают их.
-- Порты TURN: `3478` tcp/udp (сигналинг) и `49160–49200`/udp (relay) — откройте их в файрволе или группе безопасности облака (установщик умеет сам, см. `--open-firewall`).
+- Порты TURN: `3478` tcp/udp (сигналинг) и `49160–49999`/udp (relay) — откройте их в файрволе или группе безопасности облака (установщик умеет сам, см. `--open-firewall`). Один сеанс с одним оператором занимает около 5 портов ретрансляции (замер 22.10.2026), так что диапазон рассчитан примерно на 165 одновременных сеансов. Установки до 0.6.29 имели диапазон 49160–49200 (около 7 сеансов) — расширьте его: `install-server.sh --update --reset-turn` и откройте новые порты в файрволе.
 - Свободное место: ~300 МБ на Node.js + релиз + `node_modules`.
 - Архитектура x86_64 (установщик ставит tarball `linux-x64`; на arm64 Node ставится вручную).
 
@@ -90,7 +90,7 @@ export ENOT_DEPLOY_PROTO=http
 Node ставится официальным tarball-ом с nodejs.org — без apt и NodeSource. Это важно на серверах, где `apt update` зависает (зеркала отвечают `Ign`): нужны только `curl`, `tar` и `xz`.
 
 ```bash
-NODE_VERSION=24.12.0
+NODE_VERSION=24.22.1
 cd /tmp
 curl -fsSLO "https://nodejs.org/dist/v$NODE_VERSION/node-v$NODE_VERSION-linux-x64.tar.xz"
 curl -fsSLO "https://nodejs.org/dist/v$NODE_VERSION/SHASUMS256.txt"
@@ -100,10 +100,10 @@ tar -xJf "node-v$NODE_VERSION-linux-x64.tar.xz" -C /opt/node-24 --strip-componen
 ln -sfn /opt/node-24/bin/node /usr/local/bin/node
 ln -sfn /opt/node-24/bin/npm  /usr/local/bin/npm
 ln -sfn /opt/node-24/bin/npx  /usr/local/bin/npx
-node -v    # ожидается v24.12.0
+node -v    # ожидается v24.22.1
 ```
 
-Если `node -v` уже равен нужной версии, шаг можно пропустить. Установщик `install-server.sh` делает то же самое идемпотентно (версия переопределяется `NODE_VERSION`). На arm64 скачайте tarball `linux-arm64` и повторите распаковку/симлинки — автоматически поддерживается только x86_64.
+Если `node -v` уже равен нужной версии, шаг можно пропустить. Исправления безопасности Node 24 ставьте в течение двух недель после выхода (ADR 0037): `install-server.sh --update` сам заменит Node, если версия в установщике новее установленной. Установщик `install-server.sh` делает то же самое идемпотентно (версия переопределяется `NODE_VERSION`). На arm64 скачайте tarball `linux-arm64` и повторите распаковку/симлинки — автоматически поддерживается только x86_64.
 
 ### 2.2. Пользователь и каталоги
 
@@ -298,7 +298,7 @@ systemctl start enotdesk
 curl -fsS http://127.0.0.1:8080/api/v1/health
 ```
 
-В env-файле секретов нет, кроме пароля TURN (если задан), — его тоже стоит сохранить, но не вместе с бэкапами на публичном диске.
+**Env-файл `/etc/enotdesk/enotdesk.env` — секретный и без него бэкап неполон.** В нём `ENOT_SECRET_KEY` (им зашифрованы секреты 2FA: база, восстановленная без этого ключа, не пустит пользователей с включённой 2FA — см. `reset-2fa` ниже), `ENOT_TURN_SECRET` (общий секрет с coturn) и остальные настройки. Храните его копию отдельно от бэкапов базы — например, в менеджере паролей владельца сервера, — а не рядом с ними на том же диске.
 
 ### 7.1. Встроенный бэкап без sqlite3 (рекомендуется)
 
@@ -321,6 +321,40 @@ sudo -u enotdesk /opt/node-24/bin/node /opt/enotdesk/current/server/backup.mjs \
   /var/lib/enotdesk/enotdesk.db /var/lib/enotdesk/backups 10
 ```
 
+### 7.2. Что хранить вне сервера и как восстановиться на новом
+
+Ежедневный таймер установщика (`enotdesk-backup.timer`, 04:30) кладёт дампы **обеих** баз — `enotdesk.db` и `hub.db` (префикс `hub-`) — в `/var/lib/enotdesk/backups`, то есть на тот же диск. Если пропадёт сам сервер, пропадут и они. Минимум, который должен жить вне сервера:
+
+1. свежий дамп `enotdesk-*.db` и `hub-*.db` (раз в сутки — например, `rsync`/`rclone` на второй сервер или в объектное хранилище, шифруя копию);
+2. копия `/etc/enotdesk/enotdesk.env` (отдельно от дампов, см. выше);
+3. при своём домене — ничего больше: Caddy заново получит сертификат, coturn конфиг пересоздаст установщик из env-файла.
+
+Восстановление на чистом сервере:
+
+```bash
+# 1) поставить ту же или более новую версию тем же установщиком (без bootstrap)
+sudo bash install-server.sh            # отвечает на вопросы, ставит Node, coturn, Caddy
+# 2) вернуть env-файл со старыми секретами и базы
+sudo systemctl stop enotdesk enotdesk-hub 2>/dev/null || true
+sudo install -m 0600 -o root -g root enotdesk.env /etc/enotdesk/enotdesk.env
+sudo install -m 0640 -o enotdesk -g enotdesk enotdesk-<штамп>.db /var/lib/enotdesk/enotdesk.db
+sudo install -m 0640 -o enotdesk -g enotdesk hub-<штамп>.db /var/lib/enotdesk/hub.db   # если был хаб
+sudo rm -f /var/lib/enotdesk/*.db-wal /var/lib/enotdesk/*.db-shm
+# 3) пересоздать конфиг coturn из секрета env-файла и запустить всё
+sudo bash install-server.sh --update --reset-turn
+curl -fsS http://127.0.0.1:8080/api/v1/health
+```
+
+Миграции схемы применятся сами при старте. Машины переподключатся сами (их токены в базе), если адрес сервера не изменился. Хаб поднимется, если в восстановленном env-файле есть `ENOT_HUB='1'` (так его записывает установщик).
+
+**Аварийное снятие 2FA.** Если администратор потерял телефон и резервные коды или база восстановлена без прежнего `ENOT_SECRET_KEY`, снимите 2FA с консоли сервера:
+
+```bash
+sudo -u enotdesk env ENOT_DB=/var/lib/enotdesk/enotdesk.db /opt/node-24/bin/node /opt/enotdesk/current/server/main.mjs reset-2fa <логин>
+```
+
+Команда выключает 2FA, удаляет резервные коды, завершает все входы пользователя и пишет запись «2FA снята с консоли сервера» в журнал безопасности (пишется всегда). Через веб-панель снять чужую 2FA нельзя — только с консоли сервера.
+
 ## 8. Логи
 
 Сервис пишет в journald:
@@ -338,7 +372,7 @@ journalctl -u enotdesk -p err              # только ошибки
 
 Установщик `install-server.sh` по умолчанию сам разворачивает TURN и TLS — вручную ставить ничего не нужно:
 
-- **TURN (coturn)**: apt-пакет; `/etc/turnserver.conf` с `use-auth-secret` и `static-auth-secret` (секрет генерируется один раз и хранится в env-файле `/etc/enotdesk/enotdesk.env`, 0600, как `ENOT_TURN_SECRET` — повторные запуски дают те же креды); realm и `external-ip` берутся из `ENOT_PUBLIC_URL`; креды для клиентов (`ENOT_TURN_URLS`, `ENOT_TURN_USERNAME`, `ENOT_TURN_PASSWORD`) пишутся в тот же env-файл. Порты: `3478` tcp/udp, relay `49160–49200`/udp. Существующий `/etc/turnserver.conf` без пометки EnotDesk сохраняется как `*.bak-<штамп>`. Повторные запуски и `--update` уже настроенный стек не пересоздают (только обновляют env-файл), внешний TURN с `ENOT_TURN_URLS` в env не трогают; принудительная перенастройка — `--reset-turn`.
+- **TURN (coturn)**: apt-пакет; `/etc/turnserver.conf` с `use-auth-secret` и `static-auth-secret` (секрет генерируется один раз и хранится в env-файле `/etc/enotdesk/enotdesk.env`, 0600, как `ENOT_TURN_SECRET` — повторные запуски дают те же креды); realm и `external-ip` берутся из `ENOT_PUBLIC_URL`; креды для клиентов (`ENOT_TURN_URLS`, `ENOT_TURN_USERNAME`, `ENOT_TURN_PASSWORD`) пишутся в тот же env-файл. Порты: `3478` tcp/udp, relay `49160–49999`/udp. Существующий `/etc/turnserver.conf` без пометки EnotDesk сохраняется как `*.bak-<штамп>`. Повторные запуски и `--update` уже настроенный стек не пересоздают (только обновляют env-файл), внешний TURN с `ENOT_TURN_URLS` в env не трогают; принудительная перенастройка — `--reset-turn`.
 - **TLS (Caddy)**: apt-пакет из официального репозитория; `/etc/caddy/Caddyfile` — `домен → reverse_proxy 127.0.0.1:PORT`, сертификат Let's Encrypt автоматически; сервер переводится на `ENOT_HOST=127.0.0.1`, публичный URL — `https://<домен>`. Существующий `Caddyfile` без пометки EnotDesk сохраняется как `*.bak-<штамп>`. Управляемый `Caddyfile` перезаписывается при каждом `--update`/деплое, поэтому другие сайты на этом же Caddy кладите отдельными файлами `/etc/caddy/sites.d/<имя>.caddy` — последней строкой он делает `import /etc/caddy/sites.d/*.caddy`, и они переживают деплой.
 - Домен берётся из `ENOT_PUBLIC_URL` (например, `ENOT_PUBLIC_URL=https://example.com`). Если домена нет — TLS честно пропускается с предупреждением в логе установки (незащищённый локальный http-режим), TURN при этом ставится (realm = IP).
 - Отказ: `--no-turn` и/или `--no-tls`; план без изменений: `--dry-run`.
@@ -351,7 +385,10 @@ journalctl -u enotdesk -p err              # только ошибки
 curl -fsS https://example.com/api/v1/health
 systemctl status coturn caddy
 ss -ulnp | grep -E ':3478|4916'   # слушает coturn
+journalctl -u coturn -b | grep -i 'config file'   # пусто — конфиг прочитан
 ```
+
+Если в журнале coturn есть «Cannot find config file», служба (пользователь `turnserver`) не может прочитать `/etc/turnserver.conf` и работает на настройках по умолчанию — без секрета и realm, ретрансляция не выдаётся. Так было у установок до 0.6.29: файл получал права `root:root 0600`. Исправление: `sudo chgrp turnserver /etc/turnserver.conf && sudo chmod 0640 /etc/turnserver.conf && sudo systemctl restart coturn` (или повторный `install-server.sh --update --reset-turn`). В строках этого файла не пишите комментарии после значения (`опция  # текст`) — coturn их не понимает.
 
 ### 9.1. Caddy вручную (fallback)
 
@@ -421,7 +458,7 @@ static-auth-secret=$TURN_SECRET
 realm=example.com
 server-name=example.com
 min-port=49160
-max-port=49200
+max-port=49999
 no-cli
 no-multicast-peers
 external-ip=<публичный-IP>
@@ -441,7 +478,7 @@ TURN_PASSWORD="$(printf '%s' "$TURN_USERNAME" | openssl dgst -sha1 -hmac "$TURN_
 # ENOT_TURN_PASSWORD=$TURN_PASSWORD
 ```
 
-Порты в файрволе: `ufw allow 3478/tcp`, `ufw allow 3478/udp`, `ufw allow 49160:49200/udp`.
+Порты в файрволе: `ufw allow 3478/tcp`, `ufw allow 3478/udp`, `ufw allow 49160:49999/udp`.
 
 Если TLS не настроен и сервер работает по http без домена, установщик предупреждает об этом в логе и в итоговом сообщении установки, а страницы `/downloads` и `/invite` дополнительно показывают предупреждающую плашку о небезопасном режиме (её рисует сервер при http без домена).
 

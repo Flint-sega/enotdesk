@@ -9,7 +9,7 @@
 
 import nodeDgram from 'node:dgram';
 import { createInputGate } from './protocol.mjs';
-import { createInputArbiter } from './input-arbiter.mjs';
+import { createInputArbiter, participantsMessage, parseControlMessage } from './input-arbiter.mjs';
 import { createWakeSender } from './wol.mjs';
 import { parseChatMessage, chatMessage } from './chat.mjs';
 
@@ -247,22 +247,31 @@ export function createAgent({ api, signal, native, policy, termHost, rtc, notify
     // Гранты уходят по input-каналам всех операторов; события не-активного
     // отбрасываются ДО хелпера/нативного пайплайна (оба пути за одним арбитром).
     const opInputs = new Map(); // op → input-канал оператора (адаптер моста)
-    const sendInputGrants = (activeOp) => {
+    // ADR 0035: вместе с грантом каждый оператор получает список участников
+    // (кто в сеансе, у кого управление, кто только смотрит); имена ставит хост.
+    const sendParticipants = (op, ch, parts) => {
+      try { ch.send(JSON.stringify(participantsMessage(parts, op, opName))); } catch { /* канал закрывается */ }
+    };
+    const sendInputGrants = (activeOp, _ops, parts) => {
       for (const [op, ch] of opInputs) {
         if (ch.readyState !== 'open') continue;
         try { ch.send(JSON.stringify({ type: 'input-grant', granted: op === activeOp })); } catch { /* канал закрывается */ }
+        if (parts) sendParticipants(op, ch, parts);
       }
     };
+    const broadcastParticipants = () => sendInputGrants(arbiter.active(), null, arbiter.participants());
     const arbiter = createInputArbiter({ onChange: sendInputGrants });
     // Служебные claim/release перехватываются до валидации событий; события
     // не-активного оператора не доходят до инъекции (обёртка над каналом).
     const gateOperatorInput = (op, m) => {
       if (typeof m?.data === 'string') {
-        let svc = null;
-        try { svc = JSON.parse(m.data); } catch { /* мусор — не служебное */ }
-        if (svc && typeof svc === 'object') {
-          if (svc.type === 'claim-input') { arbiter.claim(op); return false; }
-          if (svc.type === 'release-input') { arbiter.release(op); return false; }
+        const svc = parseControlMessage(m.data);
+        if (svc) {
+          if (svc.type === 'claim-input') arbiter.claim(op);
+          else if (svc.type === 'release-input') arbiter.release(op);
+          else if (svc.type === 'pass-input') arbiter.pass(op, svc.to);
+          else if (svc.type === 'view-only') arbiter.setViewOnly(op, svc.on);
+          return false; // служебное (и битое служебное) в инъекцию не идёт
         }
       }
       return arbiter.isAllowed(op);
@@ -337,6 +346,7 @@ export function createAgent({ api, signal, native, policy, termHost, rtc, notify
         // если оператор уже учтён (operator-joined пришёл раньше канала) —
         // сливаем текущее состояние арбитража новому каналу явно.
         try { ch.send(JSON.stringify({ type: 'input-grant', granted: arbiter.active() === op })); } catch { /* канал закрывается */ }
+        broadcastParticipants(); // новый канал узнаёт состав, остальные — о новичке
         const gated = gatedInputChannel(ch, op);
         if (inputSink) { inputSink.handleChannel(gated); return; }
         video?.handleInputChannel?.(gated);
@@ -455,10 +465,12 @@ const unsubscribe = client.onMessage((msg) => {
       if (msg.type === 'operator-joined' && msg.claimId) {
         // W-C2: pc поднимется по offer самого оператора (офферит оператор);
         // участник фиксируется для арбитража ввода (W-C4) и аудита.
-        arbiter.attach(msg.claimId);
-        // G2: отображаемое имя присоединившегося — для подписи его чата
+        // G2: отображаемое имя присоединившегося — для подписи его чата и
+        // списка участников (ADR 0035): имя ставится ДО attach, чтобы первая
+        // рассылка списка уже шла с именем
         const joinedName = msg.operator?.name ?? msg.operator?.login;
         if (typeof joinedName === 'string' && joinedName) opNames.set(msg.claimId, joinedName);
+        arbiter.attach(msg.claimId);
         log.info(`Агент: оператор ${msg.operator?.name ?? msg.operator?.login ?? msg.claimId} присоединился (${msg.claimId})`);
       }
       if (msg.type === 'operator-left' && msg.claimId) {

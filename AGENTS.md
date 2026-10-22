@@ -23,20 +23,20 @@ client/agent-bridge/  скрытое окно с RTCPeerConnection для маш
 client/lib/  модули без Electron: protocol, input-pipeline, input-arbiter, native-input (koffi), notify, term, agent, video-host, session-spawn, win-service, adaptive-bitrate, rtc-stats, i18n, first-run, updater, join и др.
 client/renderer/  UI клиента помощи (host) и карточка окна оператора (app.js, session-media.js, session-services.js, views/client-view.js); dom.js/state.js импортирует и /operator
 client/locales/   ru.mjs, en.mjs (паритет ключей проверяет тест)
-client/agent-service/  службы агента: Windows (sc.exe), Linux (systemd), macOS (LaunchDaemon) + install/remove
+client/agent-service/  службы агента: Windows (sc.exe), Linux (systemd), macOS (LaunchAgent пользователя, ADR 0038) + install/remove
 web/         единственная программа оператора /operator, её же показывает desktop (operator.html, operator.mjs, input-source.mjs, team.js, records.js — контакты/история/журнал/CSV, account.js — пароль и 2FA; ADR 0033)
 helper/video/  Rust-хелпер Windows: захват DXGI/GDI и ввод в консольной сессии, named pipe (ADR 0027)
 docker/ Dockerfile compose.yaml   серверный стек
-scripts/     quick-setup.sh, install-server.sh, deploy-server.sh, smoke-local.mjs, smoke-remote.mjs, make-icons.mjs, make-mascot.mjs
+scripts/     quick-setup.sh, install-server.sh, deploy-server.sh, smoke-local.mjs, smoke-remote.mjs, make-icons.mjs, make-mascot.mjs, make-social.mjs (картинки соцпревью)
 site/        публичная витрина (GitHub Pages)
-docs/        SESSION_PROTOCOL, SERVER, AGENT, WEB-OPERATOR, BUILD, MANUAL-QA, ROADMAP, LAB, adr/0001–0033
+docs/        SESSION_PROTOCOL, SERVER, AGENT, WEB-OPERATOR, BUILD, ACCEPTANCE-1.0 (определение готовности 1.0), MANUAL-QA, ROADMAP, LAB, adr/0001–0038
 ```
 
 ## Архитектура (кратко; подробности в docs/ и ADR)
 - **Attended:** клиент `POST /api/v1/sessions` → sessionId (9 цифр) + пароль + hostToken. Оператор делает claim, хост даёт согласие, оба подключаются к WS `/signal`. Сервер пересылает только offer/answer/ICE; **хост офферит**, отдельный pc на каждого оператора. Обрыв WS в approved — грейс `ENOT_GRACE_MS`; до согласия — fail-closed (ADR 0013).
 - **Unattended:** админ создаёт машину → одноразовый onboarding-код → агент (`EDESK_AGENT=1`) меняет его на токен. Claim оператора требует причину и PIN (политика на сервере), агент соглашается автоматически. **Оператор офферит**, pc агента живёт в скрытом окне моста. Windows: служба `EnotDeskAgent` = SCM-родитель на koffi (`EDESK_AGENT_SVC=1`, ADR 0026), видео и ввод — через хелпер в консольной сессии (ADR 0027); хелпер из Program Files запускается от SYSTEM и следует за рабочим столом ввода — экран входа и блокировки (ADR 0036). Linux/X11: видео через getDisplayMedia в мосту (ADR 0031), ввод — XTest.
 - **Сервисы сеанса** — DataChannel: `input`, `chat`, `clip`, `file`, `term` (ADR 0014/0021). Relay сервера не расширяется; у файлов есть серверный fallback `/relay`.
-- **Мультиоператор:** адресация `to/from` по claimId, арбитраж ввода в main (`input-arbiter`), до 3 видеослотов (ADR 0030); join к машине — по паролю из claim (ADR 0032).
+- **Мультиоператор:** адресация `to/from` по claimId, арбитраж ввода в main (`input-arbiter`), до 3 видеослотов (ADR 0030); join к машине — по паролю из claim (ADR 0032); список участников, передача управления и «только смотреть» (ADR 0035).
 - **Решение о вводе** принимает только main хоста по реальному состоянию WS (`gate.isOpen()`), рендереру и браузеру не доверяем.
 - **RBAC** admin/operator/auditor на каждом запросе; audit и history пишутся только сервером; срок хранения, очистка и выключатель рутинных записей — у админа, события безопасности пишутся всегда (ADR 0034); TOTP-2FA (`ENOT_SECRET_KEY`, AES-256-GCM); webhooks с HMAC-подписью; ретенция БД раз в час.
 - **TURN:** `/rtc-config` выдаёт эфемерные креды coturn REST (HMAC-SHA1 от `ENOT_TURN_SECRET`, TTL 1 ч).
@@ -48,7 +48,7 @@ docs/        SESSION_PROTOCOL, SERVER, AGENT, WEB-OPERATOR, BUILD, MANUAL-QA, RO
 - Всё входящее проходит allowlist и лимиты. Недоступная платформа честно сообщает код причины (`native-unavailable`, `wayland-unsupported-control`, `video-unsupported-platform`, `no-active-session`, `term-busy`…), фейковый успех запрещён.
 - Токены, пароли и коды в БД — только хешами; шифруемые секреты — AES-256-GCM от `ENOT_SECRET_KEY`; токены не попадают в рендерер; секреты не идут в argv и логи.
 - Пользовательские тексты — через словари `client/locales/{ru,en}.mjs` (ключи совпадают, `error.code` не локализуется).
-- ADR в `docs/adr/`: следующий номер — 0037.
+- ADR в `docs/adr/`: следующий номер — 0039.
 - README.md (en) ↔ README.ru.md. Лицензия AGPL-3.0.
 
 ## Окружение
@@ -56,7 +56,7 @@ docs/        SESSION_PROTOCOL, SERVER, AGENT, WEB-OPERATOR, BUILD, MANUAL-QA, RO
 
 ## Тесты
 - Серверные HTTP/WS-циклы, lib-шимы без Electron (koffi, spawn, net — инъекцией), контракт рендерера и web-оператора («анти-мёртвые кнопки», i18n), Hub на фейках сети. `client/test/agent-term-bridge.test.mjs` исполняет настоящий `bridge.mjs`.
-- Ожидания событий в серверных тестах — через `ws.wait(pred)` с дедлайном `WAIT_MS` (6 с, `ENOT_TEST_WAIT_MS`). Отрицательные проверки («сообщения не будет») передают ms явно. Тесты с короткими lease/grace чувствительны к сильной загрузке машины.
+- Ожидания событий в серверных тестах — через `ws.wait(pred)` с дедлайном `WAIT_MS` (10 с, `ENOT_TEST_WAIT_MS`). Отрицательные проверки («сообщения не будет») передают ms явно. Тесты с короткими lease/grace чувствительны к сильной загрузке машины.
 - Не покрыто автотестами (ручная приёмка `docs/MANUAL-QA.md`): живая инъекция ввода, WebRTC между машинами, службы на живых ОС, реальный PTY, тосты Windows, живой IMAP/SMTP, `enotdesk://join` на живых ОС. Докладывать честно.
 
 ## Ловушки

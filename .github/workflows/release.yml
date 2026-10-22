@@ -1,11 +1,16 @@
 # Релизы (истории 33-36): пуш тега v* → три платформы → артефакты + SHA256 → GitHub Release.
 # Этот же workflow — источник фида автообновления: рядом с артефактами уходят
-# latest-mac.yml / latest.yml / latest-linux.yml (их пишет electron-builder, когда
-# задан publish.provider=generic; URL фида = .../releases/latest/download/), а клиент
+# latest.yml / latest-linux.yml (их пишет electron-builder, когда задан
+# publish.provider=generic; URL фида = .../releases/latest/download/), а клиент
 # (client/main.mjs startUpdater) читает их generic-провайдером electron-updater.
-# Сборки НЕ подписаны (бюджета на сертификаты нет) — запуск без подписи описан в
-# README «Unsigned builds» и в теле релиза; блок подписи ниже закомментирован и
-# включается без переделки (история 36).
+# latest-mac.yml НЕ публикуется (22.10.2026): неподписанный mac самообновиться не
+# может (Squirrel.Mac), прежние 0.6.x по нему скачивали обновление, закрывались и
+# снова стартовали старой версией. Mac узнаёт версию из latest.yml и показывает
+# уведомление (client/lib/updater.mjs notifyFeedName). Подписанной сборке — новый
+# канал с другим именем фида, чтобы старые клиенты его не видели.
+# Сборки не подписаны покупными сертификатами (ADR 0037) — запуск без подписи
+# описан в README «Unsigned builds» и в теле релиза; mac-сборка подписывается
+# собственным сертификатом проекта, если он задан в секретах (job build).
 # + серверный тарболл enotdesk-server.tar.gz (job server-tarball, без Node):
 # состав = scripts/deploy-server.sh; чексумма попадает в checksums-sha256.txt
 # автоматически — шаг релиза считает sha256 по всем файлам в dist/.
@@ -45,10 +50,40 @@ jobs:
       - name: Sync version from tag
         shell: bash
         run: npm version "${GITHUB_REF_NAME#v}" --no-git-tag-version --allow-same-version
+      # Подпись собственным сертификатом проекта (ADR 0037): если в секретах есть
+      # MAC_SELF_SIGN_P12 (base64 .p12) и MAC_SELF_SIGN_PASSWORD — временный
+      # keychain, build/mac-self-sign.cjs подписывает .app в afterPack, гейт
+      # проверяет подпись внутри zip. Без секретов сборка, как раньше, без подписи.
+      - name: Import self-sign certificate (macOS)
+        if: runner.os == 'macOS'
+        shell: bash
+        env:
+          MAC_SELF_SIGN_P12: ${{ secrets.MAC_SELF_SIGN_P12 }}
+          MAC_SELF_SIGN_PASSWORD: ${{ secrets.MAC_SELF_SIGN_PASSWORD }}
+        run: |
+          if [ -z "$MAC_SELF_SIGN_P12" ] || [ -z "$MAC_SELF_SIGN_PASSWORD" ]; then echo "сертификата нет — mac-сборка без подписи"; exit 0; fi
+          KC="$RUNNER_TEMP/enot-sign.keychain-db"; KP="$(openssl rand -hex 16)"
+          printf '%s' "$MAC_SELF_SIGN_P12" | base64 --decode > "$RUNNER_TEMP/sign.p12"
+          security create-keychain -p "$KP" "$KC"
+          security set-keychain-settings -lut 3600 "$KC"
+          security unlock-keychain -p "$KP" "$KC"
+          security import "$RUNNER_TEMP/sign.p12" -k "$KC" -P "$MAC_SELF_SIGN_PASSWORD" -T /usr/bin/codesign >/dev/null
+          security set-key-partition-list -S apple-tool:,apple: -s -k "$KP" "$KC" >/dev/null
+          rm -f "$RUNNER_TEMP/sign.p12"
+          echo "ENOT_MAC_SIGN_KEYCHAIN=$KC" >> "$GITHUB_ENV"
+          echo "ENOT_MAC_SIGN_IDENTITY=EnotDesk Project Signing" >> "$GITHUB_ENV"
       - name: Pack (macOS, zip and dmg)
         if: runner.os == 'macOS'
         shell: bash
         run: npx electron-builder --config build/electron-builder.yml -c.publish.provider=generic -c.publish.url="$ENOT_FEED_URL" --mac --publish never
+      - name: "Gate: подпись mac-сборки (если сертификат задан)"
+        if: runner.os == 'macOS' && env.ENOT_MAC_SIGN_KEYCHAIN != ''
+        shell: bash
+        run: |
+          rm -rf "$RUNNER_TEMP/zipcheck" && mkdir -p "$RUNNER_TEMP/zipcheck"
+          ditto -x -k dist/EnotDesk-mac-arm64.zip "$RUNNER_TEMP/zipcheck"
+          codesign --verify --deep --strict "$RUNNER_TEMP/zipcheck/EnotDesk.app"
+          codesign -dr - "$RUNNER_TEMP/zipcheck/EnotDesk.app" 2>&1 | grep -q 'certificate root = H"'
       - name: Build video helper (Windows, ADR 0027)
         if: runner.os == 'Windows'
         shell: bash
@@ -91,7 +126,6 @@ jobs:
           if-no-files-found: error
           path: |
             dist/EnotDesk-*
-            dist/latest-mac.yml
             dist/latest.yml
             dist/latest-linux.yml
 
@@ -136,50 +170,11 @@ jobs:
             | sort -z | xargs -0 sha256sum > checksums-sha256.txt
           cat checksums-sha256.txt
 
-      # ==== Подпись (история 36): включается позже, без переделки workflow ====
-      #
-      # macOS — Developer ID Application + нотаризация:
-      #   1. Секреты репозитория: MAC_CERTS (P12 в base64),
-      #      MAC_CERTS_PASSWORD (пароль P12), APPLE_ID, APPLE_APP_SPECIFIC_PASSWORD
-      #      (пароль приложения из appleid.apple.com), APPLE_TEAM_ID.
-      #   2. Раскомментировать два шага ниже; electron-builder сам подпишет
-      #      (CSC_LINK) и отправит на нотаризацию (notarize: true).
-      #
-      # Windows — Authenticode:
-      #   1. Секреты репозитория: WINDOWS_CERTIFICATE (PFX в base64),
-      #      WINDOWS_CERTIFICATE_PASSWORD (пароль PFX).
-      #   2. Раскомментировать шаг импорта; electron-builder найдёт сертификат
-      #      в хранилище и подпишет portable exe.
-      #
-      # - name: Import macOS signing certificate
-      #   if: runner.os == 'macOS'
-      #   env:
-      #     MAC_CERTS: ${{ secrets.MAC_CERTS }}
-      #     MAC_CERTS_PASSWORD: ${{ secrets.MAC_CERTS_PASSWORD }}
-      #   run: |
-      #     echo "$MAC_CERTS" | base64 --decode > signing.p12
-      #     security create-keychain -p build build.keychain
-      #     security default-keychain -s build.keychain
-      #     security unlock-keychain -p build build.keychain
-      #     security import signing.p12 -k build.keychain -P "$MAC_CERTS_PASSWORD" -T /usr/bin/codesign
-      #     security set-key-partition-list -S apple-tool:,apple: -s -k build build.keychain
-      # - name: Import Windows signing certificate
-      #   if: runner.os == 'Windows'
-      #   env:
-      #     WINDOWS_CERTIFICATE: ${{ secrets.WINDOWS_CERTIFICATE }}
-      #   shell: pwsh
-      #   run: |
-      #     $pfx = [IO.Path]::GetTempFileName()
-      #     [IO.File]::WriteAllBytes($pfx, [Convert]::FromBase64String($env:WINDOWS_CERTIFICATE))
-      #     Import-PfxCertificate -FilePath $pfx -CertStoreLocation Cert:\LocalMachine\My -Password (ConvertTo-SecureString -String "${{ secrets.WINDOWS_CERTIFICATE_PASSWORD }}" -AsPlainText -Force)
-      #     Remove-Item $pfx
-      #
-      # В шагах Pack (macOS) при этом добавить флаги окружения:
-      #   CSC_LINK: ${{ secrets.MAC_CERTS }}
-      #   CSC_KEY_PASSWORD: ${{ secrets.MAC_CERTS_PASSWORD }}
-      #   APPLE_ID: ${{ secrets.APPLE_ID }}
-      #   APPLE_APP_SPECIFIC_PASSWORD: ${{ secrets.APPLE_APP_SPECIFIC_PASSWORD }}
-      #   APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+      # Подпись (ADR 0037, решение владельца 22.10: сертификаты не покупаем):
+      # macOS — собственный сертификат проекта, шаг «Import self-sign certificate»
+      # в job build (job release — ubuntu, шаги macOS/Windows здесь не сработали
+      # бы; прежний закомментированный блок удалён). Windows — бесплатная
+      # SignPath Foundation (подпись снаружи CI-раннера) или без подписи.
 
       - name: Create GitHub Release
         uses: softprops/action-gh-release@v2
@@ -193,24 +188,23 @@ jobs:
 
             **Без подписи — как запустить**
 
-            - **macOS**: `EnotDesk-mac-arm64.dmg` — **установщик**: откройте и перетащите EnotDesk в «Программы»; `EnotDesk-mac-arm64.zip` — портативная версия (её же использует автообновление). При первом запуске: правая кнопка по EnotDesk → «Открыть» → «Открыть» (или `xattr -cr /Applications/EnotDesk.app`), затем разрешите «Запись экрана» и «Универсальный доступ».
+            - **macOS**: `EnotDesk-mac-arm64.dmg` — **установщик**: откройте и перетащите EnotDesk в «Программы»; `EnotDesk-mac-arm64.zip` — портативная версия. При первом запуске macOS скажет, что не может проверить разработчика: нажмите «Готово», откройте «Системные настройки» → «Конфиденциальность и безопасность», внизу — «Всё равно открыть» для EnotDesk и подтвердите (на macOS 14 и старше работает и правая кнопка → «Открыть»; либо `xattr -cr /Applications/EnotDesk.app`). Затем разрешите «Запись экрана» и «Универсальный доступ». Новые версии Mac-сборка не ставит сама — она сообщает о них, а скачать нужно отсюда.
             - **Windows**: SmartScreen → «Подробнее» → «Выполнить в любом случае».
               - `EnotDesk-win-x64.exe` — **портативная** версия: один файл, без установки, запуск двойным кликом.
               - `EnotDesk-win-x64-setup.exe` — **установщик**: ставит программу в систему (Program Files), создаёт ярлыки.
             - **Linux**: `chmod +x EnotDesk-linux-*.AppImage` и запустите двойным кликом.
 
             EN:
-            - **macOS**: `EnotDesk-mac-arm64.dmg` — **installer**: open it and drag EnotDesk to Applications; `EnotDesk-mac-arm64.zip` — portable (also used by auto-update). On first launch: right-click EnotDesk → Open → Open (or `xattr -cr /Applications/EnotDesk.app`), then grant Screen Recording and Accessibility.
+            - **macOS**: `EnotDesk-mac-arm64.dmg` — **installer**: open it and drag EnotDesk to Applications; `EnotDesk-mac-arm64.zip` — portable. On first launch macOS says it cannot verify the developer: click Done, open System Settings → Privacy & Security, scroll down to “Open Anyway” for EnotDesk and confirm (on macOS 14 and older right-click → Open also works; or `xattr -cr /Applications/EnotDesk.app`). Then grant Screen Recording and Accessibility. The Mac build does not install new versions by itself — it tells you about them; download them here.
             - **Windows**: SmartScreen → More info → Run anyway.
               - `EnotDesk-win-x64.exe` — **portable**: single file, no installation, just run it.
               - `EnotDesk-win-x64-setup.exe` — **installer**: installs to the system (Program Files) with shortcuts.
             - **Linux**: `chmod +x EnotDesk-linux-*.AppImage` and run it.
 
-            Целостность: `sha256sum -c checksums-sha256.txt`. Клиент проверяет обновление раз в сутки по фиду этого релиза (latest*.yml); Windows-сборка portable обновляется скачиванием новой версии со страницы релизов.
+            Целостность: `sha256sum -c checksums-sha256.txt`. Клиент проверяет обновление раз в сутки по фиду этого релиза (latest.yml / latest-linux.yml); установленная Windows-сборка и Linux обновляются сами после подтверждения, Windows portable и macOS — скачиванием новой версии со страницы релизов.
           files: |
             dist/EnotDesk-*
             dist/enotdesk-server.tar.gz
             dist/checksums-sha256.txt
-            dist/latest-mac.yml
             dist/latest.yml
             dist/latest-linux.yml

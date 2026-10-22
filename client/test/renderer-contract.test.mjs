@@ -85,8 +85,8 @@ test('app.js: сигналинг главного окна — только host
     'answer/ICE роутятся в персональный pc оператора по сеансу клиента');
   assert.match(src, /case 'operator-joined':[\s\S]{0,300}attachOperator\(msg\.claimId/,
     'operator-joined поднимает персональный pc по claimId');
-  assert.match(src, /attachOperator\(msg\.claimId, op\.name \?\? ''\)\.catch/,
-    'attachOperator вызывается с .catch — не роняет approved-ветку');
+  assert.match(src, /attachOperator\(msg\.claimId, op\.name \?\? '', \{ rejoin: true \}\)\.catch/,
+    'attachOperator вызывается с .catch — не роняет approved-ветку; operator-joined — как rejoin');
   assert.match(src, /case 'operator-left':[\s\S]{0,200}dropOperator\(msg\.claimId\)/,
     'operator-left снимает персональный pc, сеанс живёт');
   // живая приёмка v0.6.2: sync-функция с ранними return + .catch() снаружи =
@@ -94,6 +94,10 @@ test('app.js: сигналинг главного окна — только host
   const media = readFileSync(path.join(dir, 'session-media.js'), 'utf8');
   assert.match(media, /export async function attachOperator\(/,
     'attachOperator — async: ранние выходы возвращают Promise, .catch снаружи безопасен');
+  // живая находка 22.10: повторный operator-joined того же claim с pc без ответа
+  // (offer ушёл, пока WS оператора ещё не было) — пересоздать pc с новым offer
+  assert.match(media, /const alive = pc && pc\.remoteDescription && \['connected', 'connecting'\]\.includes\(pc\.connectionState\);\s*if \(!rejoin \|\| alive\) return;\s*dropOperator\(claimId\);/,
+    'rejoin: живой pc не трогаем, неотвеченный/упавший — пересоздаём');
   assert.match(src, /case 'ended':[\s\S]{0,300}clientShow\('ended'\)/, 'конец сеанса — экран завершения клиента');
 });
 
@@ -304,8 +308,11 @@ test('W-C4: события ввода уходят в main с opKey; claim/relea
     'claim-input уходит в main IPC-мостом');
   assert.match(services, /svc\.type === 'release-input'[\s\S]{0,120}enot\.inputRelease\(opKey\)/,
     'release-input уходит в main IPC-мостом');
-  assert.match(services, /claim-input[\s\S]{0,200}return;/,
-    'служебное сообщение не падает в enot.input');
+  assert.match(services, /parseControlMessage\(m\.data\)[\s\S]{0,700}return;[^\n]*\r?\n[\s\S]{0,40}\}\r?\n\s*enot\.input\(m\.data, opKey\)/,
+    'служебное сообщение (в т.ч. битое служебное) не падает в enot.input');
+  // ADR 0035: передача конкретному и «только смотреть» — тоже в main
+  assert.match(services, /svc\.type === 'pass-input'[\s\S]{0,120}enot\.inputPass\?\.\(opKey, svc\.to\)/);
+  assert.match(services, /svc\.type === 'view-only'[\s\S]{0,120}enot\.inputViewOnly\?\.\(opKey, svc\.on\)/);
 });
 
 test('W-C4: main держит фильтр арбитража ДО idle-таймера и инъекции; кнопки/статус в разметке', () => {

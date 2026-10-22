@@ -438,7 +438,7 @@ test('паритет каналов: литералы preload.cjs повторя
 
 // ADR 0031 (волна D): Linux-захват без хелпера — структурный контракт по
 // исходникам (DOM-страница юнит-тестом не покрывается; живая приёмка VM103).
-test('волна D: gdm-захват в мосту — приоритет хелпера, честные статусы, вкл. только linux', () => {
+test('волна D: gdm-захват в мосту — приоритет хелпера, честные статусы, вкл. на linux и macOS (ADR 0038)', () => {
   const dir = path.dirname(fileURLToPath(import.meta.url));
   const bridge = fs.readFileSync(path.join(dir, '..', 'agent-bridge', 'bridge.mjs'), 'utf8');
   const main = fs.readFileSync(path.join(dir, '..', 'main.mjs'), 'utf8');
@@ -449,8 +449,9 @@ test('волна D: gdm-захват в мосту — приоритет хел
   assert.match(bridge, /helperLive/, 'живой флаг приоритета хелпера');
   assert.match(bridge, /stopGdm\('helper'\)/, 'кадры хелпера останавливают gdm');
   assert.match(bridge, /gdmStatus\?\.\('unavailable'/, 'отказ захвата честно репортится');
-  // main: хендлер авто-экрана только в агент-режиме на linux + env-выключатель
-  assert.match(main, /process\.platform === 'linux'[\s\S]{0,400}setDisplayMediaRequestHandler/, 'хендлер ставится на linux');
+  // main: хендлер авто-экрана только в агент-режиме на linux/macOS + env-выключатель
+  assert.match(main, /const BRIDGE_CAPTURE = \(process\.platform === 'linux' \|\| process\.platform === 'darwin'\)/, 'захват в мосту — linux и macOS');
+  assert.match(main, /if \(BRIDGE_CAPTURE\) \{\s*session\.defaultSession\.setDisplayMediaRequestHandler/, 'хендлер ставится только при BRIDGE_CAPTURE');
   assert.match(main, /getPrimaryDisplay\(\)/, 'авто-выбор первичного экрана');
   assert.match(main, /EDESK_AGENT_VIDEO !== 'off'/, "env-выключатель EDESK_AGENT_VIDEO=off");
   assert.match(main, /'enot:bridge-gdm'/, 'статус gdm слушается и пишется в svc-diag');

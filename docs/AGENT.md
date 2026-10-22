@@ -18,7 +18,7 @@
 |---|---|---|
 | Windows (служба от LocalSystem) | `C:\Windows\System32\config\systemprofile\AppData\Roaming\EnotDesk\agent` | `...\agent\agent-token.json` |
 | Linux (user `enotdesk-agent`) | `/var/lib/enotdesk-agent/.config/EnotDesk/agent` | `...\agent\agent-token.json` |
-| macOS (LaunchDaemon от root) | `/var/root/Library/Application Support/EnotDesk/agent` | `...\agent\agent-token.json` |
+| macOS (LaunchAgent в сеансе пользователя, ADR 0038) | `~/Library/Application Support/EnotDesk/agent` | `.../agent/agent-token.json` |
 
 В профиле: `settings.json` (адрес сервера; если запускаете агент вручную в своей сессии —
 `%APPDATA%\EnotDesk\agent` / `~/.config/EnotDesk/agent` / `~/Library/Application Support/EnotDesk/agent`).
@@ -46,7 +46,8 @@ onboarding-код. Отзыв на стороне сервера: список �
 - **Linux**: systemd unit с хардненингом как у сервера (`NoNewPrivileges`, `ProtectSystem=strict`,
   `ReadWritePaths` на профиль, `Restart=always`). См. `client/agent-service/linux.md`,
   скрипты `install-linux.sh` / `remove-linux.sh`.
-- **macOS**: LaunchDaemon (`RunAtLoad`, `KeepAlive`). См. `client/agent-service/macos.md`,
+- **macOS**: LaunchAgent в графическом сеансе пользователя (`LimitLoadToSessionType=Aqua`,
+  `RunAtLoad`, `KeepAlive`), установка без sudo — ADR 0038. См. `client/agent-service/macos.md`,
   скрипты `install-macos.sh` / `remove-macos.sh`.
 
 Порядок на любой ОС один: (1) распаковать сборку; (2) первая регистрация вручную с
@@ -71,7 +72,7 @@ onboarding-код. Отзыв на стороне сервера: список �
 |---|---|
 | Windows | **в v1 файлов логов нет** — у процесса службы нет консоли, stdout теряется. Диагностика: остановить службу и запустить exe в консоли с `EDESK_AGENT=1` (подробности в windows.md). SCM-ошибки запуска — в Event Viewer (System). |
 | Linux | `journalctl -u enotdesk-agent -f` |
-| macOS | `/var/log/enotdesk-agent.log` (StandardOutPath/StandardErrorPath), плюс Console.app |
+| macOS | `~/Library/Logs/enotdesk-agent.log` (StandardOutPath/StandardErrorPath), плюс Console.app |
 
 ## Ограничение session 0 (Windows) — честно
 
@@ -89,17 +90,16 @@ onboarding-код. Отзыв на стороне сервера: список �
   выполнен, DXGI подтверждён).
 
 Аналогичные честные ограничения других ОС: Wayland на Linux — управление вводом не поддерживается
-(`wayland-unsupported-control`); macOS LaunchDaemon — выдача TCC-разрешений (Screen Recording,
-Accessibility) службе от root без MDM ограничена, до их выдачи захват/ввод честно сообщают
-об отсутствии разрешения. Детали — в соответствующих `client/agent-service/*.md`.
+(`wayland-unsupported-control`); macOS — агент работает только в сеансе вошедшего пользователя
+(экран входа macOS — ограничение 1.0), видео и управление требуют один раз выданных разрешений
+«Запись экрана» и «Универсальный доступ», до их выдачи честно сообщают об отсутствии разрешения. Детали — в соответствующих `client/agent-service/*.md`.
 
 ## Ограничения Linux/macOS unattended — честно (волна 0.6.19)
 
-- **Unattended-видео за пределами Windows не существует**: хелпер захвата (ADR 0027) —
-  Windows-only, мост рисует только его кадры. На Linux/macOS терминал, чат и ввод работают,
-  а видео честно сообщает `video-unsupported-platform` (в панели оператора — локализованная
-  фраза «Видео на этой машине не поддерживается…»). Реализация Linux-захвата (getDisplayMedia
-  в мосте + permission-wiring агент-режима) — отдельное решение, в v1 не заявлено.
+- **Unattended-видео вне Windows** идёт через захват getDisplayMedia в скрытом окне-мосте:
+  Linux X11 — ADR 0031, macOS — ADR 0038 (агент в сеансе пользователя). Если захват недоступен
+  (нет разрешения, Wayland без портала, нет графического сеанса), оператор видит честный статус,
+  а не чёрный экран.
 - **Wayland-сессии**: управление честно отказывает (`wayland-unsupported-control`); видео через
   Xwayland показывало бы не все окна (нативные Wayland-окна невидимы) — потому и не заявлено.
 - **Email-ретенция хаба**: дедуп-окно `email_seen` — 90 дней (часовой уборщик). Ответ на

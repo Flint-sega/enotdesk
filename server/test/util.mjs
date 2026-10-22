@@ -10,7 +10,9 @@ import os from 'node:os';
 // настоящем дефекте, проверки не ослабляются. 2 с хватало на тихой машине, но под
 // нагрузкой (load avg 100+, гигиена 19.10) давало ложные «не дождались сообщения».
 // Отрицательные проверки («сообщения НЕ будет») обязаны передавать ms явно.
-export const WAIT_MS = Number(process.env.ENOT_TEST_WAIT_MS) || 6000;
+// 22.10: 6 с оставляли ~1 с запаса над грейсом 5 с — под нагрузкой (load avg
+// 20–46 на машине разработки, windows-раннер релиза) ложные падения грейс-тестов.
+export const WAIT_MS = Number(process.env.ENOT_TEST_WAIT_MS) || 10000;
 
 export function tmpDb(t) {
   const file = path.join(os.tmpdir(), `enot-test-${Date.now()}-${Math.random().toString(36).slice(2)}.db`);

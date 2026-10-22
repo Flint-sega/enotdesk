@@ -5,7 +5,8 @@
 import { $, enot, text, setBusyAll, errorText } from './dom.js';
 import { state } from './state.js';
 import { t } from '../lib/i18n.mjs';
-import { wireHostChannel, resetFileReceivers } from './session-services.js';
+import { wireHostChannel, resetFileReceivers, operatorName } from './session-services.js';
+import { participantsMessage } from '../lib/input-arbiter.mjs';
 import { videoAllowed } from '../lib/multiop-limits.mjs';
 import { setVideoEnabled } from '../lib/media-toggle.mjs';
 import { summarizeStats } from '../lib/rtc-stats.mjs';
@@ -269,9 +270,20 @@ export function routeOperatorSignal(from, data) {
 // async не для await: все ранние выходы обязаны возвращать Promise —
 // вызывающие вешают .catch (живая приёмка v0.6.2: undefined.catch ронял
 // startHostRtc в «Не удалось начать» сразу после «Разрешить»)
-export async function attachOperator(claimId, name = '') {
+export async function attachOperator(claimId, name = '', { rejoin = false } = {}) {
   if (!claimId || typeof claimId !== 'string') return;
-  if (state.operators.has(claimId)) return; // уже подключён (upsert не нужен)
+  if (state.operators.has(claimId)) {
+    // Повторный operator-joined того же claim (WS оператора (пере)подключился):
+    // живой pc не трогаем; pc без ответа или упавший — пересоздаём с новым offer.
+    // Живая находка 22.10: при join сервер шлёт operator-joined и при claim, и
+    // при WS-аутентификации; offer на первый уходил, пока WS оператора ещё нет,
+    // сервер его отбрасывал, а второй operator-joined игнорировался — у оператора
+    // навсегда чёрный экран (повторный вход в живой сеанс, перезагрузка страницы).
+    const pc = state.operators.get(claimId).pc;
+    const alive = pc && pc.remoteDescription && ['connected', 'connecting'].includes(pc.connectionState);
+    if (!rejoin || alive) return;
+    dropOperator(claimId);
+  }
   if (!state.localStream || !state.session) {
     pendingAttaches.set(claimId, name); // захват ещё не готов — доиграем после (с именем)
     return;
@@ -378,12 +390,17 @@ function videoOperatorCount() {
 
 // Арбитраж (W-C4): main сменил активного вводчика — grants уходят всем
 // операторам по их input-каналам, клиенту честный бейдж «кто управляет».
-enot.onInputActive?.(({ claimId } = {}) => {
+enot.onInputActive?.(({ claimId, participants } = {}) => {
   state.inputActiveClaimId = claimId ?? null; // кэш для начального гранта (P3-1)
+  state.inputParticipants = Array.isArray(participants) ? participants : null;
   for (const [opId, op] of state.operators) {
     const ch = op.dcs?.input;
     if (!ch || ch.readyState !== 'open') continue;
     try { ch.send(JSON.stringify({ type: 'input-grant', granted: opId === claimId })); } catch { /* канал закрывается */ }
+    // ADR 0035: каждому — список участников с отметкой «вы»
+    if (state.inputParticipants) {
+      try { ch.send(JSON.stringify(participantsMessage(state.inputParticipants, opId, operatorName))); } catch { /* канал закрывается */ }
+    }
   }
   const note = $('client-control-note');
   if (!note) return;

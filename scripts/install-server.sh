@@ -14,6 +14,9 @@
 # ENOT_SECRET_KEY и ENOT_TRUSTED_PROXY опциональны: заданы — уходят в env-файл
 # (сервер читает их из окружения, не из argv), пустые — в env-файл не пишутся.
 set -euo pipefail
+# Node ставится симлинком в /usr/local/bin; у root-оболочек без логина (контейнеры,
+# pct exec, часть cloud-init и cron) этого каталога в PATH нет (учения 22.10.2026).
+case ":$PATH:" in *:/usr/local/bin:*) ;; *) PATH="/usr/local/sbin:/usr/local/bin:$PATH"; export PATH ;; esac
 
 ENOT_USER="enotdesk"
 OPT_DIR="/opt/enotdesk"
@@ -32,7 +35,7 @@ HUB_PORT="${ENOT_HUB_PORT:-8090}"
 ENABLE_HUB=0
 NODE_PREFIX="/opt/node-24"
 
-NODE_VERSION="${NODE_VERSION:-24.12.0}"
+NODE_VERSION="${NODE_VERSION:-24.22.1}"
 PORT="${ENOT_PORT:-8080}"
 BIND="${ENOT_BIND:-0.0.0.0}"
 DB_PATH="${ENOT_DB:-$DATA_DIR/enotdesk.db}"
@@ -98,14 +101,14 @@ EnotDesk — установщик сервера.
   ENOT_BIND          адрес привязки (по умолчанию 0.0.0.0; при TLS принудительно 127.0.0.1)
   ENOT_PUBLIC_URL    публичный URL (по умолчанию http://<первый IP>:<порт>; https://<домен> включает TLS)
   ENOT_DB            путь к БД (по умолчанию /var/lib/enotdesk/enotdesk.db)
-  NODE_VERSION       версия Node.js из tarball nodejs.org (по умолчанию 24.12.0)
+  NODE_VERSION       версия Node.js из tarball nodejs.org (по умолчанию 24.22.1)
   ENOT_TURN_URLS, ENOT_TURN_USERNAME, ENOT_TURN_PASSWORD — внешний TURN (--no-turn)
   ENOT_SECRET_KEY    ключ шифрования 2FA-секретов и секретов webhooks (AES-256-GCM);
                      пусто — их включение честно отказывает (secret_key_missing)
   ENOT_TRUSTED_PROXY доверенные обратные прокси: IP или IPv4-CIDR через запятую
                      (доверие X-Forwarded-For); пусто — заголовок не доверяется
 
-По умолчанию установщик сам ставит TURN (coturn: порт 3478 tcp/udp, relay 49160–49200/udp,
+По умолчанию установщик сам ставит TURN (coturn: порт 3478 tcp/udp, relay 49160–49999/udp,
 static-auth-secret генерируется в env-файл 0600, realm — из ENOT_PUBLIC_URL) и TLS
 (Caddy из официального репозитория: авто-HTTPS на 80/443 tcp+udp, домен из ENOT_PUBLIC_URL
 → 127.0.0.1:PORT). Уже настроенный внешний TURN из env-файла не перезаписывается;
@@ -440,15 +443,27 @@ setup_turn() {
     echo "realm=$REALM"
     echo "server-name=$REALM"
     echo "min-port=49160"
-    echo "max-port=49200"
+    echo "max-port=49999"
     echo "no-cli"
     echo "no-multicast-peers"
     [ -n "$external_ip" ] && echo "external-ip=$external_ip"
   } > "$TURN_CONF"
-  chmod 0600 "$TURN_CONF"
+  # Debian-юнит coturn работает от User=turnserver: конфиг root:root 0600 он не
+  # прочитает и молча стартует на дефолтах — без realm и static-auth-secret, то есть
+  # TURN не выдаёт ретрансляцию (живой прод, 27.09–22.10.2026: «Cannot find config file»).
+  # Поэтому группа turnserver и 0640: секрет читает только служба.
+  if getent group turnserver >/dev/null 2>&1; then
+    chgrp turnserver "$TURN_CONF"
+    chmod 0640 "$TURN_CONF"
+  else
+    chmod 0600 "$TURN_CONF"
+  fi
+  if id turnserver >/dev/null 2>&1 && ! runuser -u turnserver -- test -r "$TURN_CONF"; then
+    die "служба coturn (пользователь turnserver) не может прочитать $TURN_CONF — проверьте права"
+  fi
   systemctl enable --now coturn >/dev/null 2>&1 || die "не удалось включить службу coturn (journalctl -u coturn)"
   systemctl restart coturn || die "coturn не запустился — смотрите journalctl -u coturn"
-  info "coturn настроен: 3478 tcp/udp, relay 49160–49200/udp, креды TURN — в env-файле"
+  info "coturn настроен: 3478 tcp/udp, relay 49160–49999/udp, креды TURN — в env-файле"
 }
 
 # Волна A (100%): клиентские сборки из последнего GitHub-релиза → $DIST_DIR,
@@ -688,7 +703,7 @@ print_plan() {
       echo "  TURN (coturn):      пропущен — в env уже есть ENOT_TURN_URLS (внешний TURN; перенастроить: --reset-turn)"
     else
       echo "  TURN (coturn):      поставить apt-пакет; realm $REALM; static-auth-secret — в env-файл (0600)"
-      echo "                      порты: 3478 tcp/udp, relay 49160–49200/udp"
+      echo "                      порты: 3478 tcp/udp, relay 49160–49999/udp"
     fi
   else
     echo "  TURN (coturn):      пропущен (--no-turn)"
@@ -715,7 +730,7 @@ print_plan() {
   if [ "$OPEN_FIREWALL" = "1" ]; then
     local fw_ports=""
     if [ "$TLS_ACTIVE" = "1" ]; then fw_ports="80,443/tcp, 443/udp (HTTP/3)"; else fw_ports="$PORT/tcp"; fi
-    if [ "$SETUP_TURN" = "1" ]; then fw_ports="$fw_ports, 3478 tcp/udp, 49160:49200/udp"; fi
+    if [ "$SETUP_TURN" = "1" ]; then fw_ports="$fw_ports, 3478 tcp/udp, 49160:49999/udp"; fi
     echo "  ufw:                открыть $fw_ports, если ufw активен"
   else
     echo "  ufw:                не трогать"
@@ -988,8 +1003,8 @@ if [ "$OPEN_FIREWALL" = "1" ]; then
     if [ "$SETUP_TURN" = "1" ]; then
       ufw allow 3478/tcp >/dev/null
       ufw allow 3478/udp >/dev/null
-      ufw allow 49160:49200/udp >/dev/null
-      info "ufw: открыты 3478 tcp/udp и 49160:49200/udp (TURN)"
+      ufw allow 49160:49999/udp >/dev/null
+      info "ufw: открыты 3478 tcp/udp и 49160:49999/udp (TURN)"
     fi
   else
     info "ufw не установлен или неактивен — правила не добавлены; откройте порты вручную (см. docs/SERVER.md)"
@@ -1025,7 +1040,7 @@ if [ "$FETCH_BUILDS" = "1" ]; then
 fi
 
 if [ "$SETUP_TURN" = "1" ]; then
-  TURN_SUMMARY="coturn, realm $REALM (3478 tcp/udp, relay 49160–49200/udp), секрет в $ENV_FILE"
+  TURN_SUMMARY="coturn, realm $REALM (3478 tcp/udp, relay 49160–49999/udp), секрет в $ENV_FILE"
 else
   TURN_SUMMARY="пропущен (--no-turn)"
 fi

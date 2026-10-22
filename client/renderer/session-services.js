@@ -6,6 +6,7 @@ import { $, enot, text } from './dom.js';
 import { state } from './state.js';
 import { t } from '../lib/i18n.mjs';
 import { parseChatMessage, chatMessage } from '../lib/chat.mjs';
+import { participantsMessage, parseControlMessage } from '../lib/input-arbiter.mjs';
 // Чистый модуль без node-импортов: lib/term.mjs тянет node:child_process,
 // который в sandbox-рендерере блокируется CSP и роняет весь модульный граф.
 import { rejectTermChannel } from '../lib/term-protocol.mjs';
@@ -54,6 +55,9 @@ $('client-chat-input').addEventListener('keydown', (e) => {
   if (e.key === 'Enter') { e.preventDefault(); sendChat(); }
 });
 
+// Имя оператора для списка участников (ADR 0035): из operator-joined.
+export const operatorName = (id) => state.operators.get(id)?.name ?? '';
+
 // Host-сторона: приём каналов оператора. opKey (claimId) различает операторов —
 // каналы keyed `${label}:${opKey}`; ввод ЛЮБОГО оператора идёт в одну очередь
 // инъекции (last-write-wins, модель RustDesk).
@@ -69,13 +73,13 @@ export function wireHostChannel(ch, opKey = 'primary') {
     // ввода; события уходят в main с opKey — не-активного оператора main отбросит
     // до инъекции (idle-таймер считает только разрешённые).
     ch.onmessage = (m) => {
-      if (typeof m.data === 'string') {
-        let svc = null;
-        try { svc = JSON.parse(m.data); } catch { /* мусор — не служебное */ }
-        if (svc && typeof svc === 'object' && svc !== null) {
-          if (svc.type === 'claim-input') { enot.inputClaim(opKey).catch(() => {}); return; }
-          if (svc.type === 'release-input') { enot.inputRelease(opKey).catch(() => {}); return; }
-        }
+      const svc = parseControlMessage(m.data);
+      if (svc) {
+        if (svc.type === 'claim-input') enot.inputClaim(opKey).catch(() => {});
+        else if (svc.type === 'release-input') enot.inputRelease(opKey).catch(() => {});
+        else if (svc.type === 'pass-input') enot.inputPass?.(opKey, svc.to).catch(() => {});
+        else if (svc.type === 'view-only') enot.inputViewOnly?.(opKey, svc.on).catch(() => {});
+        return; // служебное (и битое служебное) в инъекцию не идёт
       }
       enot.input(m.data, opKey).catch(() => {});
     };
@@ -85,6 +89,10 @@ export function wireHostChannel(ch, opKey = 'primary') {
     // состояние арбитража оператору в момент готовности его канала.
     const sendInitialGrant = () => {
       try { ch.send(JSON.stringify({ type: 'input-grant', granted: state.inputActiveClaimId === opKey })); } catch { /* канал закрывается */ }
+      // ADR 0035: и текущий состав сеанса — список мог разойтись до открытия канала
+      if (state.inputParticipants) {
+        try { ch.send(JSON.stringify(participantsMessage(state.inputParticipants, opKey, operatorName))); } catch { /* канал закрывается */ }
+      }
     };
     // W-C5: деградация без видео — честный статус по input-каналу оператора,
     // как только канал открыт (каналы открываются после answer)

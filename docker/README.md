@@ -7,7 +7,7 @@
 | Сервис | Что делает | Порты |
 |---|---|---|
 | `enotdesk` | сервер (control plane + сигналинг), собирается из этого репозитория (`Dockerfile`, node:24-alpine) | `127.0.0.1:8080` (только loopback) |
-| `coturn` | TURN/STUN-релей для видео, `use-auth-secret` из `TURN_SECRET`, realm из `DOMAIN` | `3478/tcp+udp`, релей `49160-49200/udp` (host-сеть) |
+| `coturn` | TURN/STUN-релей для видео, `use-auth-secret` из `TURN_SECRET`, realm из `DOMAIN` | `3478/tcp+udp`, релей `49160-49999/udp` (host-сеть) |
 | `caddy` | обратный прокси + сертификат Let's Encrypt при заданном `DOMAIN`; без домена — HTTP `:80` с предупреждением в логах | `80`, `443` (tcp+udp) |
 
 Все три контейнера захарднены: корневая ФС только для чтения (`read_only`), `cap_drop: ALL` (caddy и coturn добавляют только `NET_BIND_SERVICE` — 80/443 у caddy и file-capability бинарника turnserver), `no-new-privileges`. `TURN_SECRET` нигде не попадает в argv: entrypoint coturn (`docker/coturn/entrypoint.sh`) генерирует конфиг `/run/turnserver.conf` (tmpfs, 0600) и запускает `turnserver -c`, а серверу секрет уходит переменной `ENOT_TURN_SECRET` (эфемерные TURN-креды). `DOMAIN`/`ENOT_PUBLIC_URL` проверяются на формат хостнейма до интерполяции в конфиги — посторонние символы честно отклоняются.
@@ -17,7 +17,7 @@
 ## Требования
 
 - Docker + compose v2.
-- Домен, указывающий на сервер (для HTTPS и TURN), и открытые порты: `80/tcp`, `443/tcp+udp`, `3478/tcp+udp`, `49160-49200/udp`.
+- Домен, указывающий на сервер (для HTTPS и TURN), и открытые порты: `80/tcp`, `443/tcp+udp`, `3478/tcp+udp`, `49160-49999/udp`.
 - coturn работает в `network_mode: host` (релейным кандидатам нужен внешний адрес машины) — это Linux-хост, то есть обычный VPS. На Docker Desktop (mac/win) стек поднимется и health ответит, но TURN-релей может не заработать — для боевого использования берите Linux VPS (2 vCPU / 2–4 ГБ RAM / 20 ГБ SSD достаточно).
 
 ## Быстрый старт (~5 минут)
@@ -60,5 +60,5 @@ docker compose up -d
 ## Известные границы v1
 
 - TURN over TLS (5349) не настроен — видео идёт через `turn:$DOMAIN:3478` (udp/tcp).
-- coturn в host-сети: порты 3478 и 49160-49200 заняты на хосте напрямую.
+- coturn в host-сети: порты 3478 и 49160-49999 заняты на хосте напрямую.
 - Сборки клиента для `/downloads` кладутся в том `enotdesk-dist`: `docker cp путь/к/файлу enotdesk-enotdesk-1:/data/dist/` (имена файлов — по allowlist сервера).

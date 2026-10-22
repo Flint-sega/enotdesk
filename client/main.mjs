@@ -40,13 +40,18 @@ import { createSessionSpawner, helperLaunchPlan } from './lib/session-spawn.mjs'
 import { createVideoHost } from './lib/video-host.mjs';
 import { inputEventToCommands } from './lib/input-translate.mjs';
 import { resolveConsoleUser, noNewPrivs } from './lib/console-user.mjs';
-import { UPDATE_REPO, updateFeedUrl, platformFeedName, updateDecision, updateInstallDecision } from './lib/updater.mjs';
+import { UPDATE_REPO, updateFeedUrl, notifyFeedName, updateDecision, updateInstallDecision } from './lib/updater.mjs';
 import { isNewerVersion } from './lib/version-check.mjs';
 import { t, setLocale } from './lib/i18n.mjs';
 import { createSvcDiag, envDiagSlice, maskJoinTokens } from './lib/svc-diag.mjs';
 import { createKeepAwake } from './lib/keep-awake.mjs';
 import { createBootLog } from './lib/boot-log.mjs';
+import { gdmVideoStatus } from './lib/gdm-status.mjs';
 import { applyDesktopEntry } from './lib/desktop-entry.mjs';
+
+// Вехи старта (мс от начала процесса, performance.now): смоук печатает их строкой
+// SMOKE timing — замер «до/после» оптимизаций запуска без внешних инструментов.
+const bootMarks = { imports: Math.round(performance.now()) };
 
 // Диагностика Windows-службы (W-U2): первый маркер каждого запуска процесса —
 // ДО ветки службы. Если svc-ветка НЕ вошла, а эта строка в логе есть —
@@ -161,6 +166,9 @@ const BAKED_SERVER_URL = pkg.ENOT_BAKED_SERVER_URL || process.env.ENOT_BAKED_SER
 // срабатывало); приводим к строке.
 const TEST_AUTO_SESSION = String(pkg.ENOT_AUTO_SESSION) === '1';
 const TEST_AUTO_CONSENT = String(pkg.ENOT_AUTO_CONSENT) === '1';
+// Видео машинного сеанса без хелпера — захват getDisplayMedia в скрытом мосту:
+// Linux (ADR 0031) и macOS (ADR 0038). EDESK_AGENT_VIDEO=off — выключатель.
+const BRIDGE_CAPTURE = (process.platform === 'linux' || process.platform === 'darwin') && process.env.EDESK_AGENT_VIDEO !== 'off';
 
 let win = null;
 let settingsPath = null;
@@ -337,7 +345,7 @@ let idleWarned = false; // уже показывали предупрежден�
 // в main (конвенция продукта). Рендерер получает события смены и сам рассылает
 // grants по input-каналам операторов (каналы живут в рендерере host-стороны).
 const inputArbiter = createInputArbiter({
-  onChange: (activeOp, operators) => sendToRenderer('enot:input-active', { claimId: activeOp, operators }),
+  onChange: (activeOp, operators, participants) => sendToRenderer('enot:input-active', { claimId: activeOp, operators, participants }),
 });
 let droppedInputCount = 0; // события не-активных операторов (svc-diag, без тел событий)
 let droppedInputLoggedAt = 0;
@@ -435,13 +443,19 @@ function startUpdater() {
   if (SMOKE || AGENT || !app.isPackaged) return;
   const feedUrl = updateFeedUrl(UPDATE_REPO);
   const notify = (payload) => sendToRenderer('enot:update', payload);
+  // mac без подписи (флаг сборки ENOT_MAC_SELF_UPDATE не вшит) — только
+  // уведомление: Squirrel.Mac неподписанное приложение не ставит (updater.mjs).
+  const macSelfUpdate = pkg.ENOT_MAC_SELF_UPDATE === true || pkg.ENOT_MAC_SELF_UPDATE === 'true';
+  const installPolicy = updateInstallDecision({ platform: process.platform, winInstalled: WIN_INSTALLED, macSelfUpdate });
   let autoUpdater = null;
-  try { autoUpdater = createRequire(import.meta.url)('electron-updater').autoUpdater; } catch { autoUpdater = null; }
+  if (process.platform !== 'darwin' || macSelfUpdate) {
+    try { autoUpdater = createRequire(import.meta.url)('electron-updater').autoUpdater; } catch { autoUpdater = null; }
+  }
   if (!autoUpdater) {
-    console.log(`[enotdesk] автообновление выключено: пакет electron-updater не установлен (уведомления о версиях по фиду ${feedUrl} продолжаются)`);
+    bootLog.write('update', `только уведомления о версиях: фид ${feedUrl}${notifyFeedName(process.platform, { macSelfUpdate })}`);
     const check = async () => {
       try {
-        const res = await fetch(feedUrl + platformFeedName(process.platform));
+        const res = await fetch(feedUrl + notifyFeedName(process.platform, { macSelfUpdate }));
         const d = updateDecision({ current: app.getVersion(), feedText: res.ok ? await res.text() : null });
         if (d.update) notify({ version: d.version, auto: false });
       } catch { /* баннер не критичен, следующий цикл через сутки */ }
@@ -455,7 +469,6 @@ function startUpdater() {
   // (диалог на update-downloaded ниже). Дефолт — не ставить. Портативный
   // .exe Windows самоустановку не поддерживает (запущенный самораспаковщик
   // не заменить) — только уведомление.
-  const installPolicy = updateInstallDecision({ platform: process.platform, winInstalled: WIN_INSTALLED });
   autoUpdater.autoDownload = installPolicy.autoDownload;
   autoUpdater.autoInstallOnAppQuit = false;
   // Решения updater'а (в т.ч. отказ ставить при выходе, ошибки запуска
@@ -1220,6 +1233,15 @@ function registerIpc() {
     // машине — приёмка 02.10): дисплей и система бодрствуют от создания сеанса
     // до его завершения; на не-Windows/без koffi — no-op внутри либы.
     if (operation === 'session.create' && result.status === 201) keepAwake.acquire();
+    // Тестовая сборка (ENOT_AUTO_SESSION): ID и пароль сеанса — в файл профиля,
+    // чтобы автопрогон приёмки на стенде подключался без ручного ввода (ADR 0037).
+    // В prod-релизах флага нет — файла нет.
+    if (TEST_AUTO_SESSION && operation === 'session.create' && result.status === 201) {
+      try {
+        const report = { hostId: settings.hostId, sessionId: result.body?.sessionId ?? null, password: helpPassword, at: new Date().toISOString() };
+        fs.writeFileSync(path.join(app.getPath('userData'), 'auto-session.json'), JSON.stringify(report), { mode: 0o600 });
+      } catch (err) { bootLog.write('main', `auto-session: отчёт не записан: ${err?.message ?? err}`); }
+    }
     if (operation === 'session.end') keepAwake.release();
     // Ошибки HTTP приходят рендереру как {status, body:{error}} — честно, без выдуманных данных
     return result;
@@ -1330,6 +1352,20 @@ function registerIpc() {
     guard(e);
     if (typeof opKey !== 'string' || !opKey) throw new Error('Некорректный оператор');
     inputArbiter.release(opKey);
+    return { ok: true };
+  });
+  // ADR 0035: передача ввода конкретному участнику и «только смотреть» —
+  // тоже от оператора по его input-каналу; решает арбитр в main
+  ipcMain.handle('enot:input-pass', (e, opKey, to) => {
+    guard(e);
+    if (typeof opKey !== 'string' || !opKey || typeof to !== 'string' || !to || to.length > 128) throw new Error('Некорректный оператор');
+    inputArbiter.pass(opKey, to);
+    return { ok: true };
+  });
+  ipcMain.handle('enot:input-view-only', (e, opKey, on) => {
+    guard(e);
+    if (typeof opKey !== 'string' || !opKey || typeof on !== 'boolean') throw new Error('Некорректный оператор');
+    inputArbiter.setViewOnly(opKey, on);
     return { ok: true };
   });
   ipcMain.handle('enot:input-attach', (e, claimId) => {
@@ -1504,6 +1540,7 @@ function createWindow() {
   // слушатели (client-view) уже установлены (R04)
   win.webContents.on('did-finish-load', () => {
     winLoaded = true;
+    bootMarks.loaded ??= Math.round(performance.now());
     bootLog.write('win', 'страница загружена');
     flushPendingJoin();
     // Тестовая сборка (ENOT_AUTO_SESSION): сеанс создаётся сам при старте —
@@ -1528,9 +1565,10 @@ function createAgentRtc({ fetchIceServers, videoForward = null } = {}) {
     // ADR 0031: Linux unattended-видео — getDisplayMedia в мосту требует
     // хендлер источника. Интерактивного пикера нет (и не должно быть: согласие
     // даёт операторский claim зачисленной машины) — авто-выбор первичного
-    // экрана. Ставится только в агент-режиме на linux; attended-окно ставит
-    // свой хендлер в createWindow() (там пикер по selectedSource).
-    if (process.platform === 'linux') {
+    // экрана. Ставится только в агент-режиме на linux и macOS (ADR 0038: на
+    // Mac агент живёт LaunchAgent'ом в сеансе пользователя); attended-окно
+    // ставит свой хендлер в createWindow() (там пикер по selectedSource).
+    if (BRIDGE_CAPTURE) {
       session.defaultSession.setDisplayMediaRequestHandler((_opts, callback) => {
         desktopCapturer.getSources({ types: ['screen'], thumbnailSize: { width: 0, height: 0 } })
           .then((sources) => {
@@ -1566,6 +1604,7 @@ function createAgentRtc({ fetchIceServers, videoForward = null } = {}) {
       return null;
     }
     bootLog.write('bridge', 'мост RTC создан (скрытое окно)');
+    videoForward?.setGdm?.(null); // новый мост — захват ещё не стартовал
     win.on('closed', () => { win = null; });
     // Тот же контур, что у главного окна (SEC-003): мост не открывает окна
     // и не навигируется — страница фиксированная (client/agent-bridge/page.html).
@@ -1596,6 +1635,7 @@ function createAgentRtc({ fetchIceServers, videoForward = null } = {}) {
       const handler = (e, payload) => {
         if (win && !win.isDestroyed() && e.sender === win.webContents) {
           svcDiag.write('video', `gdm ${payload?.state ?? '?'}${payload?.reason ? ` (${payload.reason})` : ''}`);
+          videoForward?.setGdm?.({ state: payload?.state, reason: payload?.reason });
         }
       };
       ipcMain.on('enot:bridge-gdm', handler);
@@ -1603,9 +1643,9 @@ function createAgentRtc({ fetchIceServers, videoForward = null } = {}) {
     }
     win.webContents.on('did-finish-load', () => {
       relay.markReady(); // мост готов получать offer
-      // ADR 0031: включаем Linux-захват в мосту (gdm) — только linux, env
+      // ADR 0031/0038: включаем захват в мосту (gdm) — linux и macOS, env
       // EDESK_AGENT_VIDEO=off отключает; кадры Windows-хелпера приоритетнее.
-      if (process.platform === 'linux' && process.env.EDESK_AGENT_VIDEO !== 'off') {
+      if (BRIDGE_CAPTURE) {
         win.webContents.send('enot:video-mode', { gdm: true });
       }
     });
@@ -1687,6 +1727,15 @@ function startAgentMode() {
     setRelay(fn) { this.relay = fn; },
   };
   const videoStatusCb = { fn: null };
+  // ADR 0031: на Linux видео даёт мост (getDisplayMedia) — оператору уходит
+  // его реальный статус захвата; createAgentRtc передаёт сюда состояние моста.
+  const gdmVideo = BRIDGE_CAPTURE;
+  let gdmState = null;
+  videoForward.setGdm = (payload) => {
+    gdmState = payload;
+    const s = gdmVideoStatus(payload);
+    if (s) videoStatusCb.fn?.(s);
+  };
   let spawnKoffi;
   try { spawnKoffi = createRequire(import.meta.url)('koffi'); } catch { spawnKoffi = null; } // честный spawn-koffi-unavailable
   // Портативная сборка самораспаковывается в %TEMP%\<случай>\ с SYSTEM-only ACL
@@ -1764,6 +1813,12 @@ function startAgentMode() {
   const video = {
     bind: () => {}, // relay привязывается в createAgentRtc (videoForward.setRelay)
     start: () => {
+      if (!videoHost && gdmVideo) {
+        // мост ещё не отчитался — «запускается»; running/unavailable придут от моста
+        const s = gdmVideoStatus(gdmState) ?? { state: 'connecting' };
+        videoStatusCb.fn?.(s);
+        return s;
+      }
       if (!videoHost) {
         const s = { state: 'error', reason: 'video-unsupported-platform' };
         videoStatusCb.fn?.(s);
@@ -1803,12 +1858,17 @@ function startAgentMode() {
 
   // v0.6.4: на Linux хелпера нет — ввод machine-сеанса идёт нативному адаптеру
   // (X11/XTest); размер дисплея берётся из самого адаптера, Electron screen у
-  // службы отсутствует. Только linux: у macOS-адаптера size() нет — sink давал
-  // бы молчаливые клики в угол экрана (ревизия 06.10); macOS machine-ввод
-  // честно не заявляется. Windows — прежний путь через хелпер.
-  const inputSink = process.platform === 'linux' ? createAgentInputSink({
+  // службы отсутствует. У macOS-адаптера size() нет (ревизия 06.10: sink давал
+  // бы клики в угол) — границы даёт Electron screen (ниже). Windows — прежний
+  // путь через хелпер.
+  // ADR 0038: на macOS агент работает в сеансе пользователя (LaunchAgent),
+  // поэтому у него есть Electron screen — границы первичного экрана в точках,
+  // в тех же координатах, что CGEvent. Без GUI-сеанса (старый LaunchDaemon)
+  // screen бросает — sink честно молчит (no-bounds), видео тоже не стартует.
+  const macBounds = () => { try { return screen.getPrimaryDisplay().bounds; } catch { return null; } };
+  const inputSink = (process.platform === 'linux' || process.platform === 'darwin') ? createAgentInputSink({
     nativeInput,
-    getBounds: () => nativeInput.bounds(),
+    getBounds: () => (process.platform === 'darwin' ? macBounds() : nativeInput.bounds()),
     log: { warn: (...a) => { console.warn(...a); svcDiag.write('input', a.map(String).join(' ')); } },
   }) : null;
 
@@ -1940,6 +2000,7 @@ app.on('window-all-closed', () => {
 });
 
 app.whenReady().then(() => {
+  bootMarks.ready = Math.round(performance.now());
   bootLog.write('main', 'app ready');
   if (!gotLock) return; // второй экземпляр уже уходит через app.quit()
   if (SMOKE) {
@@ -1989,6 +2050,7 @@ app.whenReady().then(() => {
   if (SMOKE) {
     setTimeout(async () => {
       const lines = [];
+      lines.push(`SMOKE timing: ${JSON.stringify(bootMarks)}`);
       lines.push(`SMOKE window: ${win ? 'created' : 'MISSING'}`);
       lines.push(`SMOKE title: ${win ? win.getTitle() : 'n/a'}`);
       lines.push(`SMOKE native input status: ${JSON.stringify(nativeInput.status())}`);
