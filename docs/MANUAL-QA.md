@@ -1661,3 +1661,7 @@ settings will be used» и пустой realm. Значит, coturn работа
 (`runuser -u turnserver -- test -r`); тест-контракт `server/test/install-turn-config.test.mjs`; раздел 9 SERVER.md.
 Лаба: конфиг staging переписан без комментариев (бэкап рядом) — Electron 44 с `iceTransportPolicy: relay` получает
 relay-кандидаты по UDP и TCP. Рабочий сервер: исправление прав + перезапуск coturn — по слову владельца.
+Рабочий сервер исправлен 22.10 (~08:10Z) по слову владельца: `chgrp turnserver` + `chmod 0640` + перезапуск coturn;
+в журнале coturn — «Default realm: support.ruenot.site»; `turnutils_uclient` на сервере с эфемерными кредами той же
+схемы, что выдаёт `/rtc-config` (HMAC-SHA1 от общего секрета), получает ретрансляцию по UDP и TCP: 12/12 пакетов,
+0% потерь. Сеанс через интернет с принудительной ретрансляцией — следующий шаг (строки N-1…N-4 ACCEPTANCE-1.0).
