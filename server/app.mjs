@@ -5,7 +5,7 @@ import crypto from 'node:crypto';
 import dns from 'node:dns';
 import { WebSocketServer } from 'ws';
 import {
-  openDb, endLiveSessions, auditLog, runRetention, retentionPolicy, setSetting,
+  openDb, endLiveSessions, auditLog, runRetention, retentionPolicy, setSetting, getSetting,
   purgeAudit, purgeHistory, RETENTION_CHOICES,
 } from './db.mjs';
 import { sanitizeFileName } from '../client/lib/file-transfer.mjs';
@@ -238,6 +238,11 @@ function addrTrusted(addr, entry) {
   const mask = (0xFFFFFFFF << (32 - len)) >>> 0;
   return (ai & mask) === (bi & mask);
 }
+
+// ADR 0037 (Р11): что доступно админу, пока он не включил обязательную 2FA.
+const TOTP_SETUP_ALLOWED = new Set([
+  'GET /auth/me', 'POST /auth/logout', 'PATCH /auth/password', 'POST /auth/totp/enable',
+]);
 
 function validSignalData(data) {
   if (!data || typeof data !== 'object') return false;
@@ -902,6 +907,16 @@ export function createServer(opts = {}) {
     }
 
     const user = authUser(req);
+    // ADR 0037 (Р11): обязательная 2FA для администраторов. Пока у админа 2FA не
+    // включена, ему доступны только «кто я», выход, смена пароля и включение 2FA —
+    // остальное честно отвечает totp_setup_required (панель ведёт в «Аккаунт»).
+    if (user) {
+      user.totpSetupRequired = user.role === 'admin' && !user.totpEnabled
+        && getSetting(db, 'security.adminTotpRequired', '0') === '1';
+      if (user.totpSetupRequired && !TOTP_SETUP_ALLOWED.has(`${req.method} ${p}`)) {
+        return err(res, 403, 'totp_setup_required', t('err.totp_setup_required', {}, pickLocale(req.headers['accept-language'])));
+      }
+    }
 
     if (p === '/auth/me' && req.method === 'GET') {
       if (!user) return err(res, 401, 'unauthorized', 'Требуется авторизация');
@@ -1268,6 +1283,26 @@ export function createServer(opts = {}) {
       const deleted = purgeHistory(db, days);
       auditLog(db, user.id, 'history.purge', null, { deleted, olderThanDays: days });
       return ok(res, 200, { deleted });
+    }
+    if (p === '/settings/security' && req.method === 'GET') {
+      if (!user) return err(res, 401, 'unauthorized', 'Требуется авторизация');
+      if (!['admin', 'auditor'].includes(user.role)) return err(res, 403, 'forbidden', 'Недостаточно прав');
+      return ok(res, 200, { adminTotpRequired: getSetting(db, 'security.adminTotpRequired', '0') === '1' });
+    }
+    if (p === '/settings/security' && req.method === 'POST') {
+      if (!user) return err(res, 401, 'unauthorized', 'Требуется авторизация');
+      if (user.role !== 'admin') return err(res, 403, 'forbidden', 'Недостаточно прав');
+      const want = body?.adminTotpRequired;
+      if (typeof want !== 'boolean') return err(res, 400, 'bad_request', 'Некорректное значение');
+      // Включает требование только админ с уже включённой 2FA — иначе он сразу
+      // запер бы себя (и, если он единственный админ, всю панель) до настройки.
+      if (want && !user.totpEnabled) {
+        return err(res, 409, 'totp_required_self', t('err.totp_required_self', {}, pickLocale(req.headers['accept-language'])));
+      }
+      const before = getSetting(db, 'security.adminTotpRequired', '0') === '1';
+      setSetting(db, 'security.adminTotpRequired', want ? '1' : '0');
+      auditLog(db, user.id, 'security.config', null, { adminTotpRequired: { before, after: want } });
+      return ok(res, 200, { adminTotpRequired: want });
     }
     if (p === '/settings/retention' && req.method === 'GET') {
       if (!user) return err(res, 401, 'unauthorized', 'Требуется авторизация');

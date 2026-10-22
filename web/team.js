@@ -89,10 +89,23 @@ export async function renderTeam({ api, t, getMe = () => null, getLocale = () =>
     if (count) count.textContent = String(total);
     const purge = document.getElementById('team-archive-purge');
     if (purge) purge.disabled = total === 0;
+    await renderSecurity({ api });
     teamLoaded = true;
   } catch (e) {
     err().textContent = e.message;
   }
+}
+
+// ADR 0037 (Р11): переключатель «требовать 2FA у администраторов» — виден и
+// меняется только админом (сервер: GET admin/auditor, POST admin).
+async function renderSecurity({ api }) {
+  const box = document.getElementById('team-security');
+  const box2 = document.getElementById('team-require-admin-totp');
+  if (!box || !box2) return;
+  const r = await api('GET', '/settings/security');
+  if (r.status !== 200) { box.classList.add('hidden'); return; }
+  box2.checked = Boolean(r.body?.adminTotpRequired);
+  box.classList.remove('hidden');
 }
 
 export function teamRoute({ api, t, getMe, getLocale } = {}) {
@@ -132,6 +145,21 @@ export function bindTeam({ api, t, showOnly, getMe, getLocale, onOpenMachines = 
       err().textContent = e2.message;
     } finally {
       createBtn.disabled = false;
+    }
+  });
+  // ADR 0037 (Р11): требование 2FA у администраторов; отказ сервера (у себя
+  // 2FA нет) — честная ошибка и возврат галочки
+  document.getElementById('team-require-admin-totp')?.addEventListener('change', async (e) => {
+    const box = e.target;
+    box.disabled = true;
+    try {
+      const r = await api('POST', '/settings/security', { adminTotpRequired: box.checked });
+      if (r.status !== 200) { fail(r); box.checked = !box.checked; }
+    } catch (e2) {
+      err().textContent = e2.message;
+      box.checked = !box.checked;
+    } finally {
+      box.disabled = false;
     }
   });
   // смена роли — сразу при выборе; при отказе сервера (последний админ) список перечитывается
