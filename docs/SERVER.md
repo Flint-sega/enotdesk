@@ -298,7 +298,7 @@ systemctl start enotdesk
 curl -fsS http://127.0.0.1:8080/api/v1/health
 ```
 
-В env-файле секретов нет, кроме пароля TURN (если задан), — его тоже стоит сохранить, но не вместе с бэкапами на публичном диске.
+**Env-файл `/etc/enotdesk/enotdesk.env` — секретный и без него бэкап неполон.** В нём `ENOT_SECRET_KEY` (им зашифрованы секреты 2FA: база, восстановленная без этого ключа, не пустит пользователей с включённой 2FA — см. `reset-2fa` ниже), `ENOT_TURN_SECRET` (общий секрет с coturn) и остальные настройки. Храните его копию отдельно от бэкапов базы — например, в менеджере паролей владельца сервера, — а не рядом с ними на том же диске.
 
 ### 7.1. Встроенный бэкап без sqlite3 (рекомендуется)
 
@@ -320,6 +320,40 @@ sudo bash /tmp/enotdesk-install/install-server.sh --backup
 sudo -u enotdesk /opt/node-24/bin/node /opt/enotdesk/current/server/backup.mjs \
   /var/lib/enotdesk/enotdesk.db /var/lib/enotdesk/backups 10
 ```
+
+### 7.2. Что хранить вне сервера и как восстановиться на новом
+
+Ежедневный таймер установщика (`enotdesk-backup.timer`, 04:30) кладёт дампы **обеих** баз — `enotdesk.db` и `hub.db` (префикс `hub-`) — в `/var/lib/enotdesk/backups`, то есть на тот же диск. Если пропадёт сам сервер, пропадут и они. Минимум, который должен жить вне сервера:
+
+1. свежий дамп `enotdesk-*.db` и `hub-*.db` (раз в сутки — например, `rsync`/`rclone` на второй сервер или в объектное хранилище, шифруя копию);
+2. копия `/etc/enotdesk/enotdesk.env` (отдельно от дампов, см. выше);
+3. при своём домене — ничего больше: Caddy заново получит сертификат, coturn конфиг пересоздаст установщик из env-файла.
+
+Восстановление на чистом сервере:
+
+```bash
+# 1) поставить ту же или более новую версию тем же установщиком (без bootstrap)
+sudo bash install-server.sh            # отвечает на вопросы, ставит Node, coturn, Caddy
+# 2) вернуть env-файл со старыми секретами и базы
+sudo systemctl stop enotdesk enotdesk-hub 2>/dev/null || true
+sudo install -m 0600 -o root -g root enotdesk.env /etc/enotdesk/enotdesk.env
+sudo install -m 0640 -o enotdesk -g enotdesk enotdesk-<штамп>.db /var/lib/enotdesk/enotdesk.db
+sudo install -m 0640 -o enotdesk -g enotdesk hub-<штамп>.db /var/lib/enotdesk/hub.db   # если был хаб
+sudo rm -f /var/lib/enotdesk/*.db-wal /var/lib/enotdesk/*.db-shm
+# 3) пересоздать конфиг coturn из секрета env-файла и запустить всё
+sudo bash install-server.sh --update --reset-turn
+curl -fsS http://127.0.0.1:8080/api/v1/health
+```
+
+Миграции схемы применятся сами при старте. Машины переподключатся сами (их токены в базе), если адрес сервера не изменился.
+
+**Аварийное снятие 2FA.** Если администратор потерял телефон и резервные коды или база восстановлена без прежнего `ENOT_SECRET_KEY`, снимите 2FA с консоли сервера:
+
+```bash
+sudo -u enotdesk env ENOT_DB=/var/lib/enotdesk/enotdesk.db /opt/node-24/bin/node /opt/enotdesk/current/server/main.mjs reset-2fa <логин>
+```
+
+Команда выключает 2FA, удаляет резервные коды, завершает все входы пользователя и пишет запись «2FA снята с консоли сервера» в журнал безопасности (пишется всегда). Через веб-панель снять чужую 2FA нельзя — только с консоли сервера.
 
 ## 8. Логи
 

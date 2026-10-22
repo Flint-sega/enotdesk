@@ -1,12 +1,16 @@
 import { readFileSync } from 'node:fs';
 import { createServer } from './app.mjs';
-import { runCli } from './bootstrap.mjs';
+import { runCli, runResetTotpCli } from './bootstrap.mjs';
 
 const pkg = JSON.parse(readFileSync(new URL('../package.json', import.meta.url), 'utf8'));
 
 if (process.argv[2] === 'bootstrap') {
   const dbPath = process.env.ENOT_DB || 'enotdesk.db';
   await runCli(dbPath);
+  process.exit(process.exitCode || 0);
+}
+if (process.argv[2] === 'reset-2fa') {
+  runResetTotpCli(process.env.ENOT_DB || 'enotdesk.db', process.argv[3]);
   process.exit(process.exitCode || 0);
 }
 
