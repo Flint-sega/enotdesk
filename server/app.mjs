@@ -2161,7 +2161,14 @@ export function createServer(opts = {}) {
       send(ws, { type: 'ready', sessionId: s.id, role, state: fresh.state, graceMs: cfg.graceMs });
       if (role === 'host' && fresh.state === 'pending-consent' && s.claim_id) {
         const op = db.prepare('SELECT id, name FROM users WHERE id = ?').get(s.operator_id);
-        send(ws, { type: 'claim', claimId: s.claim_id, operator: op });
+        // ADR 0037 (Р5): машине — причина подключения для сообщения человеку за
+        // компьютером. Берётся из записи machine.claim (пишется всегда, ADR 0034).
+        let reason;
+        if (s.machine_id) {
+          const row = db.prepare("SELECT detail FROM audit WHERE action = 'machine.claim' AND target_id = ? ORDER BY id DESC LIMIT 1").get(s.id);
+          try { reason = typeof JSON.parse(row?.detail ?? '{}').reason === 'string' ? JSON.parse(row.detail).reason.slice(0, 200) : undefined; } catch { reason = undefined; }
+        }
+        send(ws, { type: 'claim', claimId: s.claim_id, operator: op, ...(reason ? { reason } : {}) });
       }
       if (role === 'host' && fresh.state === 'approved') {
         // replay после переподключения: ворота ввода открывает только реальный approved
