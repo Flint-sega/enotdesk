@@ -131,7 +131,7 @@ jobs:
           case "$RUNNER_OS" in
             macOS) node scripts/smoke-artifact.mjs dist/mac-arm64/EnotDesk.app/Contents/MacOS/EnotDesk ;;
             Windows) node scripts/smoke-artifact.mjs dist/win-unpacked/EnotDesk.exe ;;
-            Linux) xvfb-run -a node scripts/smoke-artifact.mjs dist/linux-unpacked/enotdesk --no-sandbox ;;
+            Linux) xvfb-run -a node scripts/smoke-artifact.mjs dist/linux-unpacked/enotdesk --no-sandbox --disable-gpu ;;
           esac
       - uses: actions/upload-artifact@v6
         with:
