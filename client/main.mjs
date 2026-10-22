@@ -166,6 +166,9 @@ const BAKED_SERVER_URL = pkg.ENOT_BAKED_SERVER_URL || process.env.ENOT_BAKED_SER
 // срабатывало); приводим к строке.
 const TEST_AUTO_SESSION = String(pkg.ENOT_AUTO_SESSION) === '1';
 const TEST_AUTO_CONSENT = String(pkg.ENOT_AUTO_CONSENT) === '1';
+// Видео машинного сеанса без хелпера — захват getDisplayMedia в скрытом мосту:
+// Linux (ADR 0031) и macOS (ADR 0038). EDESK_AGENT_VIDEO=off — выключатель.
+const BRIDGE_CAPTURE = (process.platform === 'linux' || process.platform === 'darwin') && process.env.EDESK_AGENT_VIDEO !== 'off';
 
 let win = null;
 let settingsPath = null;
@@ -1553,9 +1556,10 @@ function createAgentRtc({ fetchIceServers, videoForward = null } = {}) {
     // ADR 0031: Linux unattended-видео — getDisplayMedia в мосту требует
     // хендлер источника. Интерактивного пикера нет (и не должно быть: согласие
     // даёт операторский claim зачисленной машины) — авто-выбор первичного
-    // экрана. Ставится только в агент-режиме на linux; attended-окно ставит
-    // свой хендлер в createWindow() (там пикер по selectedSource).
-    if (process.platform === 'linux') {
+    // экрана. Ставится только в агент-режиме на linux и macOS (ADR 0038: на
+    // Mac агент живёт LaunchAgent'ом в сеансе пользователя); attended-окно
+    // ставит свой хендлер в createWindow() (там пикер по selectedSource).
+    if (BRIDGE_CAPTURE) {
       session.defaultSession.setDisplayMediaRequestHandler((_opts, callback) => {
         desktopCapturer.getSources({ types: ['screen'], thumbnailSize: { width: 0, height: 0 } })
           .then((sources) => {
@@ -1630,9 +1634,9 @@ function createAgentRtc({ fetchIceServers, videoForward = null } = {}) {
     }
     win.webContents.on('did-finish-load', () => {
       relay.markReady(); // мост готов получать offer
-      // ADR 0031: включаем Linux-захват в мосту (gdm) — только linux, env
+      // ADR 0031/0038: включаем захват в мосту (gdm) — linux и macOS, env
       // EDESK_AGENT_VIDEO=off отключает; кадры Windows-хелпера приоритетнее.
-      if (process.platform === 'linux' && process.env.EDESK_AGENT_VIDEO !== 'off') {
+      if (BRIDGE_CAPTURE) {
         win.webContents.send('enot:video-mode', { gdm: true });
       }
     });
@@ -1716,7 +1720,7 @@ function startAgentMode() {
   const videoStatusCb = { fn: null };
   // ADR 0031: на Linux видео даёт мост (getDisplayMedia) — оператору уходит
   // его реальный статус захвата; createAgentRtc передаёт сюда состояние моста.
-  const gdmVideo = process.platform === 'linux' && process.env.EDESK_AGENT_VIDEO !== 'off';
+  const gdmVideo = BRIDGE_CAPTURE;
   let gdmState = null;
   videoForward.setGdm = (payload) => {
     gdmState = payload;
@@ -1831,12 +1835,17 @@ function startAgentMode() {
 
   // v0.6.4: на Linux хелпера нет — ввод machine-сеанса идёт нативному адаптеру
   // (X11/XTest); размер дисплея берётся из самого адаптера, Electron screen у
-  // службы отсутствует. Только linux: у macOS-адаптера size() нет — sink давал
-  // бы молчаливые клики в угол экрана (ревизия 06.10); macOS machine-ввод
-  // честно не заявляется. Windows — прежний путь через хелпер.
-  const inputSink = process.platform === 'linux' ? createAgentInputSink({
+  // службы отсутствует. У macOS-адаптера size() нет (ревизия 06.10: sink давал
+  // бы клики в угол) — границы даёт Electron screen (ниже). Windows — прежний
+  // путь через хелпер.
+  // ADR 0038: на macOS агент работает в сеансе пользователя (LaunchAgent),
+  // поэтому у него есть Electron screen — границы первичного экрана в точках,
+  // в тех же координатах, что CGEvent. Без GUI-сеанса (старый LaunchDaemon)
+  // screen бросает — sink честно молчит (no-bounds), видео тоже не стартует.
+  const macBounds = () => { try { return screen.getPrimaryDisplay().bounds; } catch { return null; } };
+  const inputSink = (process.platform === 'linux' || process.platform === 'darwin') ? createAgentInputSink({
     nativeInput,
-    getBounds: () => nativeInput.bounds(),
+    getBounds: () => (process.platform === 'darwin' ? macBounds() : nativeInput.bounds()),
     log: { warn: (...a) => { console.warn(...a); svcDiag.write('input', a.map(String).join(' ')); } },
   }) : null;
 
