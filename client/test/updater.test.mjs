@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { updateFeedUrl, platformFeedName, updateDecision, updateInstallDecision } from '../lib/updater.mjs';
+import { updateFeedUrl, platformFeedName, notifyFeedName, updateDecision, updateInstallDecision } from '../lib/updater.mjs';
 
 // Фид — то, что release.yml прикладывает к релизу рядом с артефактами:
 // минимальный формат latest*.yml от electron-builder. Ожидания разобраны вручную
@@ -61,20 +61,20 @@ test('фид с несколькими платформенными файлам
 // SEC-010: автоустановка — только после явного подтверждения; Windows portable —
 // всегда только уведомление; дефолт (без подтверждения) — только уведомление.
 
-test('SEC-010: mac/linux без подтверждения — скачать можно, ставить при выходе нельзя', () => {
+test('SEC-010: mac (подписанный)/linux без подтверждения — скачать можно, ставить при выходе нельзя', () => {
   for (const platform of ['darwin', 'linux']) {
     assert.deepEqual(
-      updateInstallDecision({ platform }),
+      updateInstallDecision({ platform, macSelfUpdate: true }),
       { autoDownload: true, autoInstallOnAppQuit: false, askConfirm: true },
       platform,
     );
   }
 });
 
-test('SEC-010: mac/linux после явного подтверждения — автоустановка при выходе включена', () => {
+test('SEC-010: mac (подписанный)/linux после явного подтверждения — автоустановка при выходе включена', () => {
   for (const platform of ['darwin', 'linux']) {
     assert.deepEqual(
-      updateInstallDecision({ platform, confirmed: true }),
+      updateInstallDecision({ platform, confirmed: true, macSelfUpdate: true }),
       { autoDownload: true, autoInstallOnAppQuit: true, askConfirm: false },
       platform,
     );
@@ -109,7 +109,46 @@ test('SEC-010: win32 установленная (NSIS) — обновляетс�
 });
 
 test('SEC-010: подтверждение принимается только явным true', () => {
-  assert.equal(updateInstallDecision({ platform: 'darwin', confirmed: 'yes' }).autoInstallOnAppQuit, false);
-  assert.equal(updateInstallDecision({ platform: 'darwin', confirmed: 1 }).autoInstallOnAppQuit, false);
-  assert.equal(updateInstallDecision({ platform: 'darwin', confirmed: null }).askConfirm, true);
+  assert.equal(updateInstallDecision({ platform: 'linux', confirmed: 'yes' }).autoInstallOnAppQuit, false);
+  assert.equal(updateInstallDecision({ platform: 'linux', confirmed: 1 }).autoInstallOnAppQuit, false);
+  assert.equal(updateInstallDecision({ platform: 'linux', confirmed: null }).askConfirm, true);
+});
+
+// 22.10.2026: неподписанный mac не самообновляется (Squirrel.Mac) — только
+// уведомление, версия — из общего latest.yml; latest-mac.yml в релиз не идёт.
+
+test('mac без подписи — только уведомление, даже после подтверждения', () => {
+  for (const confirmed of [false, true]) {
+    assert.deepEqual(
+      updateInstallDecision({ platform: 'darwin', confirmed }),
+      { autoDownload: false, autoInstallOnAppQuit: false, askConfirm: false },
+    );
+  }
+  assert.equal(updateInstallDecision({ platform: 'darwin', macSelfUpdate: 'true' }).autoDownload, false, 'флаг принимается только явным true');
+});
+
+test('mac с самообновлением (подписанная сборка) — как linux: качает, ставит после подтверждения', () => {
+  assert.deepEqual(
+    updateInstallDecision({ platform: 'darwin', macSelfUpdate: true }),
+    { autoDownload: true, autoInstallOnAppQuit: false, askConfirm: true },
+  );
+  assert.deepEqual(
+    updateInstallDecision({ platform: 'darwin', macSelfUpdate: true, confirmed: true }),
+    { autoDownload: true, autoInstallOnAppQuit: true, askConfirm: false },
+  );
+});
+
+test('фид уведомлений: mac без подписи читает latest.yml, остальные — свой', () => {
+  assert.equal(notifyFeedName('darwin'), 'latest.yml');
+  assert.equal(notifyFeedName('darwin', { macSelfUpdate: true }), 'latest-mac.yml');
+  assert.equal(notifyFeedName('win32'), 'latest.yml');
+  assert.equal(notifyFeedName('linux'), 'latest-linux.yml');
+});
+
+test('release.yml не публикует latest-mac.yml (петля обновления неподписанных mac 0.6.x)', async () => {
+  const { readFile } = await import('node:fs/promises');
+  const yml = await readFile(new URL('../../.github/workflows/release.yml', import.meta.url), 'utf8');
+  const uploads = yml.split('\n').filter((l) => /^\s+dist\/latest/.test(l)).map((l) => l.trim());
+  assert.ok(uploads.length >= 2, 'фиды win/linux публикуются');
+  assert.ok(!uploads.includes('dist/latest-mac.yml'), 'latest-mac.yml не публикуется');
 });

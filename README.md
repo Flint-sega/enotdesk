@@ -113,7 +113,7 @@ Artifacts are branded EnotDesk (`assets/icon.icns` / `icon.ico` / `icon.png`).
 
 ## Releases and updates
 
-Pushing a tag `v…` runs [.github/workflows/release.yml](.github/workflows/release.yml): the three platforms are packed on GitHub runners, lint and tests gate the build, and the artifacts are attached to a GitHub Release together with `checksums-sha256.txt` (verify with `sha256sum -c`) and the auto-update feed files (`latest-mac.yml`, `latest.yml`, `latest-linux.yml`).
+Pushing a tag `v…` runs [.github/workflows/release.yml](.github/workflows/release.yml): the three platforms are packed on GitHub runners, lint and tests gate the build, and the artifacts are attached to a GitHub Release together with `checksums-sha256.txt` (verify with `sha256sum -c`) and the auto-update feed files (`latest.yml`, `latest-linux.yml`). The unsigned macOS build cannot install updates by itself, so it has no install feed: it reads the version from `latest.yml` and only notifies.
 
 The packaged client checks that feed once a day (electron-updater, generic provider): on macOS and Linux the update downloads in the background and applies on the next restart — never in the middle of a session. On Windows the v1 build is a portable `.exe` that cannot replace itself, so the client shows a notification with a link to the releases page. The updater is disabled in development (`npm start`), smoke runs (`EDESK_SMOKE=1`) and the headless agent.
 
