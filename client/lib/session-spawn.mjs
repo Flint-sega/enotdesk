@@ -84,18 +84,21 @@ export function createSessionSpawner({ koffi, log = console, tokenMode = 'user' 
     const own = Buffer.alloc(8);
     if (!dll.openProcessToken(dll.getCurrentProcess(), TOKEN_ALL_ACCESS, own)) return null;
     const ownToken = koffi.decode(own, 0, 'void *');
+    let dup = null;
+    let ok = false;
     try {
       const dupBuf = Buffer.alloc(8);
       if (!dll.duplicateTokenEx(ownToken, MAXIMUM_ALLOWED, null, SECURITY_IMPERSONATION, TOKEN_PRIMARY, dupBuf)) return null;
-      const dup = koffi.decode(dupBuf, 0, 'void *');
+      dup = koffi.decode(dupBuf, 0, 'void *');
       const sess = Buffer.alloc(4);
       sess.writeUInt32LE(sessionId, 0);
-      if (!dll.setTokenInformation(dup, TOKEN_SESSION_ID, sess, 4)) {
-        try { dll.closeHandle(dup); } catch { /* токен уже мёртв */ }
-        return null;
-      }
+      if (!dll.setTokenInformation(dup, TOKEN_SESSION_ID, sess, 4)) return null;
+      ok = true;
       return dup;
     } finally {
+      // Ревью безопасности 22.10 (P3-3): дубликат закрывается при ЛЮБОМ неуспехе,
+      // в том числе если вызов бросил исключение, — токен SYSTEM не утекает.
+      if (!ok && dup) { try { dll.closeHandle(dup); } catch { /* токен уже мёртв */ } }
       try { dll.closeHandle(ownToken); } catch { /* токен уже мёртв */ }
     }
   }
