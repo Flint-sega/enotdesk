@@ -439,6 +439,12 @@ video.fit-cover{object-fit:cover}
         </details>
         <h2 data-i18n="web.team.membersTitle">Участники</h2>
         <div id="team-members" class="team-list"></div>
+        <!-- ADR 0037 (Р11): обязательная 2FA для администраторов — только админ -->
+        <div class="team-security hidden" id="team-security">
+          <h2 data-i18n="web.team.securityTitle">Безопасность</h2>
+          <label class="check" for="team-require-admin-totp"><input type="checkbox" id="team-require-admin-totp"> <span data-i18n="web.team.requireAdminTotp">Требовать двухфакторную защиту у администраторов</span></label>
+          <p class="note" data-i18n="web.team.requireAdminTotpNote">Администратор без 2FA сможет только включить её в «Аккаунте». Включить требование можно, когда 2FA уже есть у вас.</p>
+        </div>
       </section>
       <section id="view-history" class="card hidden">
         <h1 data-i18n="history.title">История сеансов</h1>
@@ -535,6 +541,7 @@ video.fit-cover{object-fit:cover}
       <h1 data-i18n="web.account.title">Мой аккаунт</h1>
       <button id="btn-account-back" class="btn ghost" type="button" data-i18n="common.back">← Назад</button>
     </div>
+    <p class="form-error hidden" id="account-totp-required" role="alert" data-i18n="err.totp_setup_required">Администратору нужно включить двухфакторную защиту.</p>
     <div class="acct-grid">
     <div class="acct-box">
     <h2 data-i18n="password.title">Сменить пароль</h2>

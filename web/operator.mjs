@@ -71,7 +71,16 @@ async function api(method, path, body) {
     showOnly('view-login');
     text($('login-error'), t('web.session.expired'));
   }
-  return { status: res.status, body: await res.json().catch(() => null) };
+  const json = await res.json().catch(() => null);
+  // ADR 0037 (Р11): админу без обязательной 2FA сервер отвечает totp_setup_required —
+  // ведём в «Аккаунт» с объяснением, а не показываем непонятную ошибку на месте
+  if (res.status === 403 && json?.error?.code === 'totp_setup_required') requireTotpSetup();
+  return { status: res.status, body: json };
+}
+
+function requireTotpSetup() {
+  show($('account-totp-required'));
+  showOnly('view-account');
 }
 
 // ---- сигналинг: нативный WebSocket вместо createSignalClient (тот mjs тянет 'ws') ----
@@ -1436,7 +1445,8 @@ function wire() {
       $('login-totp').value = '';
       hide($('field-login-totp'));
       rememberAfterLogin();
-      showLanding(res.body.user.role);
+      if (res.body.user.totpSetupRequired) requireTotpSetup();
+      else showLanding(res.body.user.role);
     } finally {
       setBusy(btn, false);
     }
@@ -1625,7 +1635,7 @@ function wire() {
 
   // B6 этап 1: адресная книга, история, журнал (паритет с desktop)
   records = bindRecords({ api, t, getLocale, showOnly, $, getRole: () => currentRole });
-  account = bindAccount({ api, t, showOnly, $, onBack: () => showLanding(currentRole) });
+  account = bindAccount({ api, t, showOnly, $, onBack: () => { hide($('account-totp-required')); showLanding(currentRole); } });
   $('btn-nav-account').addEventListener('click', () => account.show());
   $('btn-nav-contacts')?.addEventListener('click', () => records.showContacts());
   $('btn-nav-history')?.addEventListener('click', () => records.showHistory());
@@ -1702,7 +1712,8 @@ function wire() {
     account.setUser(user);
     currentUserId = user.id;
     applyRoleUi(user.role);
-    showLanding(user.role);
+    if (user.totpSetupRequired) requireTotpSetup();
+    else showLanding(user.role);
     return;
   }
   // Токена в памяти нет (перезагрузка страницы) или он истёк. Cookie хранит
