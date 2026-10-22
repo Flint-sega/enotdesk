@@ -1030,7 +1030,11 @@ fn capture_session(
     // нет — один снимок GDI (BitBlt) уходит как стартовый, дальше снова DXGI.
     // Один раз на каждый новый дубликат; ENOT_VIDEO_SEED=off — выключатель.
     let seed_enabled = std::env::var("ENOT_VIDEO_SEED").map_or(true, |v| v != "off");
-    let mut dup_since: Option<Instant> = None;
+    // Отсчёт — от начала сеанса ИЛИ от создания дубликата: дубликат DXGI
+    // переживает переподключение пайпа, и при отсчёте только от make_dup()
+    // новый сеанс на уже живом дубликате стартового кадра не получал
+    // (живьём на Win11-ВМ 22.10: ни одного события seed в журнале).
+    let mut dup_since: Option<Instant> = Some(Instant::now());
     let mut seeded = false;
 
     loop {
