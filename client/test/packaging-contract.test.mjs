@@ -206,3 +206,14 @@ test('packaging: svc-diag не пишет тела ввода — только �
   assert.ok(!mainJs.includes('input msg: ${m.data'), 'логирование сырого тела ввода запрещено');
   assert.match(mainJs, /input msg: type=/, 'логируется только ev.type');
 });
+
+// 22.10.2026: при ОБНОВЛЕНИИ (старый деинсталлятор запускается с --updated)
+// служба не удаляется — только останавливается, и её Environment (имя машины,
+// выключатели вроде ENOT_VIDEO_ATTACH) переживает обновление.
+test('packaging: при обновлении деинсталлятор не удаляет службу (isUpdated)', () => {
+  const un = installerNsh.slice(installerNsh.indexOf('!macro customUnInstall'));
+  const del = un.indexOf('sc.exe delete EnotDeskAgent');
+  const guard = un.lastIndexOf('${ifNot} ${isUpdated}', del);
+  assert.ok(guard > 0 && guard < del, 'sc delete — только внутри ${ifNot} ${isUpdated}');
+  assert.ok(un.indexOf('${endif}', del) > del, 'ветка закрыта');
+});

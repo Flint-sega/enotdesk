@@ -11,7 +11,10 @@
 ;     we re-create it: an update first runs the previous version's
 ;     uninstaller, which deletes the service (finding 10.10.2026);
 ;   - on uninstall we stop the agent and delete the service registration,
-;     otherwise a service pointing into a deleted directory stays registered.
+;     otherwise a service pointing into a deleted directory stays registered;
+;     on UPDATE (--updated) the old uninstaller keeps it (stopped), so the
+;     service Environment survives (22.10.2026). The heal above still covers
+;     updates from versions whose uninstaller deleted the service.
 ; Hooks are the documented electron-builder extension points (installer.nsi,
 ; installSection.nsh, uninstaller.nsh). ASCII-only text: this file is compiled
 ; into both the installer and the uninstaller and input encoding is not
@@ -100,6 +103,14 @@ ed_no_agent:
   Pop $R0
   ; pause so the service exits before delete (sc stop is async)
   Sleep 1500
-  nsExec::Exec "$SYSDIR\sc.exe delete EnotDeskAgent"
-  Pop $R0
+  ; UPDATE (the new installer runs this uninstaller with --updated): keep the
+  ; service registration, only stopped -- its Environment (machine name,
+  ; operator-set switches such as ENOT_VIDEO_ATTACH) survives, and
+  ; customInstall simply starts it again. Live finding 22.10.2026: a silent
+  ; update over an enrolled machine re-created the service with default
+  ; Environment and dropped the switches. Real uninstall still deletes it.
+  ${ifNot} ${isUpdated}
+    nsExec::Exec "$SYSDIR\sc.exe delete EnotDeskAgent"
+    Pop $R0
+  ${endif}
 !macroend
