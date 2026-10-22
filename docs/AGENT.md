@@ -5,9 +5,10 @@
 токен машины, затем живёт как служба: auto-reconnect с backoff, heartbeat каждые 5с, переживает ребут
 и обрывы связи, принимает claim оператора (причина обязательна, PIN-политика сервера — на сервере).
 
-Конфиги служб и install/remove-скрипты: `client/agent-service/` (windows.md, linux.md, macos.md).
-Свой инсталлятор ОС в v1 не пишется — установка по этой доке (spec §службы). Живая установка —
-ручная приёмка по `docs/MANUAL-QA.md`.
+Пошаговое руководство для людей — [guides/unattended.md](guides/unattended.md). Одноразовый код машины
+выдаёт админ в программе оператора: «Машины» → «Добавить машину». Windows: служба ставится из самого
+приложения (Настройки → «Машина (постоянный доступ)», ADR 0029); Linux и macOS — скрипты
+`client/agent-service/` (windows.md, linux.md, macos.md). Живая установка — ручная приёмка по `docs/MANUAL-QA.md`.
 
 ## Где что лежит (профиль агента)
 
@@ -17,11 +18,11 @@
 | ОС | Профиль агента | Токен машины |
 |---|---|---|
 | Windows (служба от LocalSystem) | `C:\Windows\System32\config\systemprofile\AppData\Roaming\EnotDesk\agent` | `...\agent\agent-token.json` |
-| Linux (user `enotdesk-agent`) | `/var/lib/enotdesk-agent/.config/EnotDesk/agent` | `...\agent\agent-token.json` |
+| Linux (user `enotdesk-agent`) | `/var/lib/enotdesk-agent/.config/enotdesk/agent` (строчные — имя пакета) | `.../agent/agent-token.json` |
 | macOS (LaunchAgent в сеансе пользователя, ADR 0038) | `~/Library/Application Support/EnotDesk/agent` | `.../agent/agent-token.json` |
 
 В профиле: `settings.json` (адрес сервера; если запускаете агент вручную в своей сессии —
-`%APPDATA%\EnotDesk\agent` / `~/.config/EnotDesk/agent` / `~/Library/Application Support/EnotDesk/agent`).
+`%APPDATA%\EnotDesk\agent` / `~/.config/enotdesk/agent` / `~/Library/Application Support/EnotDesk/agent`).
 
 **Токен машины** — секрет, дающий право занимать слот машины. Файл 0600. «Забыть» машину на этой
 железке: удалить `agent-token.json` (или весь `agent/`) — при следующем старте понадобится новый
@@ -58,10 +59,12 @@ onboarding-код. Отзыв на стороне сервера: список �
 
 Токен живёт в профиле агента и переживает замену файлов сборки:
 
-1. Остановить службу: `sc stop EnotDeskAgent` / `systemctl stop enotdesk-agent` /
-   `launchctl bootout system/com.enotdesk.agent`.
-2. Заменить файлы сборки (exe / каталог сборки / `.app`).
-3. Запустить службу обратно.
+- **Windows, установленная сборка** (служба поставлена из приложения) обновляется сама; служба
+  переживает обновление (ADR 0029, installer.nsh).
+- **Windows вручную, Linux:** остановить службу (`sc stop EnotDeskAgent` / `systemctl stop enotdesk-agent`),
+  заменить файлы сборки, запустить обратно.
+- **macOS:** заменить `/Applications/EnotDesk.app` и перезапустить агент:
+  `launchctl kickstart -k gui/$(id -u)/com.enotdesk.agent`.
 
 Версию машины видно на сервере в списке машин (агент отчитывается `version` при регистрации).
 Если машина не поднялась после обновления — логи (ниже), там честная причина.
@@ -70,29 +73,29 @@ onboarding-код. Отзыв на стороне сервера: список �
 
 | ОС | Где логи |
 |---|---|
-| Windows | **в v1 файлов логов нет** — у процесса службы нет консоли, stdout теряется. Диагностика: остановить службу и запустить exe в консоли с `EDESK_AGENT=1` (подробности в windows.md). SCM-ошибки запуска — в Event Viewer (System). |
+| Windows | `enotdesk-boot.log` в профиле агента (таблица выше) — запуск и обновления; `C:\ProgramData\EnotDesk\enotdesk-video.log` — видео и ввод хелпера; по маркеру `C:\ProgramData\EnotDesk\svc-diag.enabled` — подробный `svc-diag.log` службы. SCM-ошибки запуска — в Event Viewer (System). |
 | Linux | `journalctl -u enotdesk-agent -f` |
 | macOS | `~/Library/Logs/enotdesk-agent.log` (StandardOutPath/StandardErrorPath), плюс Console.app |
 
-## Ограничение session 0 (Windows) — честно
+## Windows: что умеет служба — честно
 
-Служба Windows исполняется в session 0 и **не имеет доступа к интерактивному рабочему столу
-пользователя**. В v1 это осознанное ограничение (история 31):
+Служба работает в session 0, а экран и ввод обслуживает видеохелпер `enotdesk-video.exe`, который
+служба запускает в консольном сеансе пользователя (ADR 0027): захват DXGI (на адаптерах без него — GDI),
+ввод SendInput.
 
-- работает: регистрация, online/heartbeat, claim с причиной, PIN-политика, чат (в одну сторону:
-  текст оператора показывается тостом консольному пользователю), файлы (в одну сторону:
-  оператор → общая папка `%PUBLIC%\EnotDesk Files`), терминал, автоперезапуск и переживание
-  ребутов;
-- не работает: захват экрана консольной сессии и инъекция ввода в неё (пустые источники/чёрный кадр,
-  `SendInput` не доходит до сессии пользователя); буфер обмена (clip-канал в machine-сеансе
-  не создаётся — у службы session 0 нет пользовательского буфера). Unattended-поддержка активной
-  консоли Windows требует helper-процесса в пользовательской сессии — план в ADR 0027 (спайк
-  выполнен, DXGI подтверждён).
+- работает: регистрация, онлайн, причина и PIN, видео рабочего стола и управление (проверено на
+  виртуальных машинах стенда; на реальном ПК — проверяется, ACCEPTANCE W-3/W-4), терминал от SYSTEM,
+  сообщение на экран, чат (в одну сторону: текст оператора показывается сообщением), файлы (в одну
+  сторону: в общую папку `%PUBLIC%\EnotDesk Files`), автоперезапуск и переживание перезагрузок;
+- пока нет: экран блокировки, экран входа и окно UAC (ветка ADR 0036, сливается после проверки на
+  реальном ПК); буфер обмена в сеансе машины; на ВМ с адаптером без DDA ввод требует
+  `ENOT_VIDEO_ATTACH=off` в Environment службы.
 
 Аналогичные честные ограничения других ОС: Wayland на Linux — управление вводом не поддерживается
-(`wayland-unsupported-control`); macOS — агент работает только в сеансе вошедшего пользователя
-(экран входа macOS — ограничение 1.0), видео и управление требуют один раз выданных разрешений
-«Запись экрана» и «Универсальный доступ», до их выдачи честно сообщают об отсутствии разрешения. Детали — в соответствующих `client/agent-service/*.md`.
+(`wayland-unsupported-control`); Linux без графического сеанса — агент в безэкранном режиме (без видео и
+ввода); macOS — агент работает только в сеансе вошедшего пользователя (экран входа macOS — ограничение
+1.0), видео и управление требуют один раз выданных разрешений «Запись экрана» и «Универсальный доступ».
+Детали — в соответствующих `client/agent-service/*.md`.
 
 ## Ограничения Linux/macOS unattended — честно (волна 0.6.19)
 

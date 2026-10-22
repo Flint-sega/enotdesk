@@ -81,9 +81,29 @@ test('packaging: enotdesk-agent.service содержит лабовый hardenin
 // boot-лога — контракт на уровне текста: регрессия «убрал флаг/лог» ловится здесь.
 const mainJs = readFileSync(fileURLToPath(new URL('../main.mjs', import.meta.url)), 'utf8');
 
-test('packaging: main.mjs форсирует --ozone-platform=x11 на linux', () => {
+test('packaging: main.mjs выбирает --ozone-platform на linux (x11, агент без DISPLAY — headless)', () => {
   assert.match(mainJs, /process\.platform === 'linux' && !app\.commandLine\.hasSwitch\('ozone-platform'\)/, 'нужен гвард linux + уважение пользовательского флага');
-  assert.match(mainJs, /appendSwitch\('ozone-platform', 'x11'\)/);
+  assert.match(mainJs, /linuxOzonePlatform\(\{ agent: process\.env\.EDESK_AGENT === '1', env: process\.env \}\)/);
+  assert.match(mainJs, /appendSwitch\('ozone-platform', ozone\)/);
+});
+
+test('ozone: клиент всегда x11; агент без DISPLAY/WAYLAND_DISPLAY — headless (лаба 22.10)', async () => {
+  const { linuxOzonePlatform } = await import('../lib/ozone.mjs');
+  assert.equal(linuxOzonePlatform({ agent: false, env: {} }), 'x11');
+  assert.equal(linuxOzonePlatform({ agent: false, env: { WAYLAND_DISPLAY: 'wayland-0' } }), 'x11');
+  assert.equal(linuxOzonePlatform({ agent: true, env: {} }), 'headless');
+  assert.equal(linuxOzonePlatform({ agent: true, env: { DISPLAY: ':0' } }), 'x11');
+  assert.equal(linuxOzonePlatform({ agent: true, env: { WAYLAND_DISPLAY: 'wayland-0' } }), 'x11');
+});
+
+test('install-linux.sh и install-macos.sh: регистрация по AGENT_CODE_FILE без кода в argv; http — с явной галочкой', () => {
+  const macSh = readFileSync(fileURLToPath(new URL('../agent-service/install-macos.sh', import.meta.url)), 'utf8');
+  assert.match(installSh, /AGENT_CODE_FILE="\$\{AGENT_CODE_FILE:-\}"/);
+  assert.match(installSh, /EDESK_AGENT_CODE="\$\(head -n1 "\$AGENT_CODE_FILE"\)"[^\n]*\\\r?\n\s+runuser -u "\$AGENT_USER" -- "\$APP_DIR\/enotdesk"/, 'код — в окружении runuser, не аргументом');
+  assert.match(installSh, /rm -f "\$AGENT_CODE_FILE"/, 'файл кода удаляется после регистрации');
+  for (const [name, sh] of [['linux', installSh], ['macos', macSh]]) {
+    assert.match(sh, /allowInsecureHttp/, `${name}: http-адрес без allowInsecureHttp агент молча заменял на 127.0.0.1`);
+  }
 });
 
 test('packaging: boot-лог always-on и покрывает жизненные события окна', () => {
@@ -216,4 +236,26 @@ test('packaging: при обновлении деинсталлятор не у�
   const guard = un.lastIndexOf('${ifNot} ${isUpdated}', del);
   assert.ok(guard > 0 && guard < del, 'sc delete — только внутри ${ifNot} ${isUpdated}');
   assert.ok(un.indexOf('${endif}', del) > del, 'ветка закрыта');
+});
+
+// Смоук собранной программы (ACCEPTANCE U-5): релиз не публикуется, пока
+// упакованный EnotDesk на каждой ОС не поднял окно и не прошёл ворота ввода.
+test('packaging: release.yml гоняет смоук собранной программы на трёх ОС до загрузки артефактов', () => {
+  const rel = readFileSync(fileURLToPath(new URL('../../.github/workflows/release.yml', import.meta.url)), 'utf8');
+  const gate = rel.indexOf('Gate: смоук собранной программы');
+  const upload = rel.indexOf('uses: actions/upload-artifact', gate);
+  assert.ok(gate > 0 && upload > gate, 'шаг смоука стоит перед upload-artifact');
+  for (const exe of ['dist/mac-arm64/EnotDesk.app/Contents/MacOS/EnotDesk', 'dist/win-unpacked/EnotDesk.exe', 'xvfb-run -a node scripts/smoke-artifact.mjs dist/linux-unpacked/enotdesk']) {
+    assert.ok(rel.includes(exe), `release.yml: нет смоука «${exe}»`);
+  }
+  const pre = readFileSync(fileURLToPath(new URL('../../.github/workflows/build-pre.yml', import.meta.url)), 'utf8');
+  assert.match(pre, /node scripts\/smoke-artifact\.mjs dist\/win-unpacked\/EnotDesk\.exe/);
+});
+
+test('smoke-artifact.mjs проверяет окно, ворота ввода, снимок и самостоятельный выход', () => {
+  const script = readFileSync(fileURLToPath(new URL('../../scripts/smoke-artifact.mjs', import.meta.url)), 'utf8');
+  for (const marker of ['SMOKE window: created', 'SMOKE gate closed before approved: true', 'SMOKE gate open after approved: true', 'SMOKE OK', "code === 0 && signal == null", 'EDESK_SMOKE_LOG']) {
+    assert.ok(script.includes(marker), `smoke-artifact.mjs: нет проверки «${marker}»`);
+  }
+  assert.match(mainJs, /process\.env\.EDESK_SMOKE_LOG/, 'main.mjs пишет итог смоука в файл для CI');
 });

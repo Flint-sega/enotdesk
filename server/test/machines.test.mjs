@@ -417,7 +417,9 @@ test('полный цикл: код → регистрация → claim с пр
   const host = wsConnect(port);
   const ready = await wsAuth(host, { type: 'auth', role: 'host', sessionId, token: reg.token });
   assert.equal(ready.state, 'pending-consent');
-  assert.equal((await host.wait((m) => m.type === 'claim')).claimId, claimId);
+  const claimMsg = await host.wait((m) => m.type === 'claim');
+  assert.equal(claimMsg.claimId, claimId);
+  assert.equal(claimMsg.reason, 'Плановое обслуживание СКУД', 'ADR 0037 Р5: машина получает причину — для сообщения человеку за компьютером');
 
   const op = wsConnect(port);
   await wsAuth(op, { type: 'auth', role: 'operator', sessionId, token: operator.token, claimId });

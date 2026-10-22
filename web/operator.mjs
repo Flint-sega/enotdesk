@@ -48,6 +48,7 @@ function saveRoleCookie(role) {
 
 function forgetSession() {
   token = null;
+  closeMachineAdd(); // одноразовый код машины не остаётся в DOM после выхода
   $('btn-nav-account')?.classList.add('hidden'); // без входа раздел аккаунта недоступен
   // «Выйти» видна всегда: до входа она уводит на главную (/downloads), владелец 20.10
   document.cookie = `${COOKIE}=; path=/operator; Max-Age=0; SameSite=Strict`;
@@ -71,7 +72,16 @@ async function api(method, path, body) {
     showOnly('view-login');
     text($('login-error'), t('web.session.expired'));
   }
-  return { status: res.status, body: await res.json().catch(() => null) };
+  const json = await res.json().catch(() => null);
+  // ADR 0037 (Р11): админу без обязательной 2FA сервер отвечает totp_setup_required —
+  // ведём в «Аккаунт» с объяснением, а не показываем непонятную ошибку на месте
+  if (res.status === 403 && json?.error?.code === 'totp_setup_required') requireTotpSetup();
+  return { status: res.status, body: json };
+}
+
+function requireTotpSetup() {
+  show($('account-totp-required'));
+  showOnly('view-account');
 }
 
 // ---- сигналинг: нативный WebSocket вместо createSignalClient (тот mjs тянет 'ws') ----
@@ -1287,6 +1297,64 @@ function closeMachineClaim() {
   hide($('machines-claim'));
 }
 
+// «Добавить машину» (admin): POST /machines отдаёт одноразовый код регистрации
+// агента ровно один раз (в БД остаётся хеш). Код живёт только в карточке и
+// стирается при закрытии; копирование — выделением, как у «Подключения коллег»
+// (SEC-002: одна точка записи буфера на странице).
+const MACHINE_NAME_MAX = 120;
+const MACHINE_GROUP_MAX = 60;
+
+function openMachineAdd() {
+  closeMachineClaim();
+  clearMachineAddResult();
+  $('machines-add-name').value = '';
+  $('machines-add-group').value = '';
+  text($('machines-add-error'), '');
+  show($('machines-add-form'));
+  show($('machines-add'));
+  $('machines-add-name').focus();
+}
+
+function clearMachineAddResult() {
+  text($('machines-add-code'), '');
+  text($('machines-add-server'), '');
+  text($('machines-add-done'), '');
+  hide($('machines-add-result'));
+}
+
+function closeMachineAdd() {
+  clearMachineAddResult();
+  hide($('machines-add'));
+}
+
+async function submitMachineAdd() {
+  const name = $('machines-add-name').value.trim();
+  const group = $('machines-add-group').value.trim();
+  if (!name || name.length > MACHINE_NAME_MAX) { text($('machines-add-error'), t('machines.nameLength')); return; }
+  if (group.length > MACHINE_GROUP_MAX) { text($('machines-add-error'), t('machines.groupLength')); return; }
+  const btn = $('btn-machines-add-submit');
+  setBusy(btn, true, t('web.machines.addBusy'));
+  try {
+    const res = await api('POST', '/machines', group ? { name, group } : { name });
+    if (res.status !== 201 || typeof res.body?.code !== 'string') {
+      text($('machines-add-error'), res.body?.error?.message ?? t('common.serverError'));
+      return;
+    }
+    text($('machines-add-error'), '');
+    hide($('machines-add-form'));
+    const until = new Date(res.body.expiresAt).toLocaleString(getLocale());
+    text($('machines-add-done'), t('web.machines.addDone', { name: res.body.machine?.name ?? name, date: until }));
+    text($('machines-add-code'), res.body.code);
+    text($('machines-add-server'), location.origin);
+    $('machines-add-code').title = t('web.machines.joinCopyHint');
+    $('machines-add-server').title = t('web.machines.joinCopyHint');
+    show($('machines-add-result'));
+    void renderMachines(); // новая машина в списке со статусом «нет агента»
+  } finally {
+    setBusy(btn, false);
+  }
+}
+
 // G1 (мультиоператор машинных сеансов): после успешного claim сервер отдаёт
 // пароль сеанса — карточка «Подключение коллег» показывает ID и пароль, чтобы
 // передать их коллеге для обычной join-формы (ID + пароль). Значения
@@ -1316,7 +1384,7 @@ function selectNodeContents(el) {
   sel.addRange(range);
 }
 
-for (const id of ['op-join-id', 'op-join-pass']) {
+for (const id of ['op-join-id', 'op-join-pass', 'machines-add-code', 'machines-add-server']) {
   $(id)?.addEventListener('click', (e) => selectNodeContents(e.currentTarget));
 }
 
@@ -1328,6 +1396,7 @@ function showTeam() {
 function showMachines() {
   if (state.connect) return; // во время сеанса панель машин недоступна
   closeMachineClaim();
+  closeMachineAdd(); // код новой машины не переживает уход с панели
   showOnly('view-machines');
   void renderMachines();
 }
@@ -1436,7 +1505,8 @@ function wire() {
       $('login-totp').value = '';
       hide($('field-login-totp'));
       rememberAfterLogin();
-      showLanding(res.body.user.role);
+      if (res.body.user.totpSetupRequired) requireTotpSetup();
+      else showLanding(res.body.user.role);
     } finally {
       setBusy(btn, false);
     }
@@ -1610,6 +1680,13 @@ function wire() {
     }
   });
   $('btn-machines-claim-cancel')?.addEventListener('click', () => closeMachineClaim());
+  $('btn-machines-add')?.addEventListener('click', () => openMachineAdd());
+  $('machines-add-form')?.addEventListener('submit', (e) => {
+    e.preventDefault();
+    void submitMachineAdd();
+  });
+  $('btn-machines-add-cancel')?.addEventListener('click', () => closeMachineAdd());
+  $('btn-machines-add-close')?.addEventListener('click', () => closeMachineAdd());
 
   $('btn-nav-machines')?.addEventListener('click', () => showMachines());
   $('btn-nav-team')?.addEventListener('click', () => {
@@ -1625,7 +1702,7 @@ function wire() {
 
   // B6 этап 1: адресная книга, история, журнал (паритет с desktop)
   records = bindRecords({ api, t, getLocale, showOnly, $, getRole: () => currentRole });
-  account = bindAccount({ api, t, showOnly, $, onBack: () => showLanding(currentRole) });
+  account = bindAccount({ api, t, showOnly, $, onBack: () => { hide($('account-totp-required')); showLanding(currentRole); } });
   $('btn-nav-account').addEventListener('click', () => account.show());
   $('btn-nav-contacts')?.addEventListener('click', () => records.showContacts());
   $('btn-nav-history')?.addEventListener('click', () => records.showHistory());
@@ -1702,7 +1779,8 @@ function wire() {
     account.setUser(user);
     currentUserId = user.id;
     applyRoleUi(user.role);
-    showLanding(user.role);
+    if (user.totpSetupRequired) requireTotpSetup();
+    else showLanding(user.role);
     return;
   }
   // Токена в памяти нет (перезагрузка страницы) или он истёк. Cookie хранит

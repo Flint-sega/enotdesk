@@ -120,6 +120,9 @@ video.fit-cover{object-fit:cover}
 .machines-page{color:var(--text-3);font:500 13px var(--font-mono)}
 .machines-claim{margin-top:16px;display:flex;flex-direction:column;gap:10px}
 .machines-claim-row{display:flex;gap:10px;flex-wrap:wrap}
+.machines-add-result{display:flex;flex-direction:column;gap:10px}
+.machines-add-result h3{font:600 15px/1.3 var(--font-display);margin-top:4px}
+.machines-add-steps{margin:0;padding-left:20px;display:flex;flex-direction:column;gap:6px;color:var(--text-2);font-size:14px;overflow-wrap:anywhere}
 /* B6 этап 1: адресная книга, история, журнал — те же карточки, что у машин */
 .records-search{display:flex;gap:10px;align-items:center;flex-wrap:wrap;margin-top:14px}
 .records-search>label{flex-basis:100%}
@@ -382,6 +385,41 @@ video.fit-cover{object-fit:cover}
         <div class="machines-head">
           <h1 data-i18n="web.machines.title">Машины</h1>
           <button id="btn-nav-connect" class="btn ghost" type="button" data-i18n="web.machines.backConnect">К подключению</button>
+          <button id="btn-machines-add" class="btn" type="button" data-i18n="web.machines.add">Добавить машину</button>
+        </div>
+        <div class="card machines-claim hidden" id="machines-add">
+          <h2 data-i18n="web.machines.addTitle">Новая машина</h2>
+          <form class="form-stack" id="machines-add-form">
+            <div class="field">
+              <label for="machines-add-name" data-i18n="web.machines.addName">Название</label>
+              <input id="machines-add-name" name="machine-name" maxlength="120" autocomplete="off" data-lpignore="true" data-1p-ignore data-bwignore>
+            </div>
+            <div class="field">
+              <label for="machines-add-group" data-i18n="web.machines.addGroup">Группа (необязательно)</label>
+              <input id="machines-add-group" name="machine-group" maxlength="60" autocomplete="off" data-lpignore="true" data-1p-ignore data-bwignore>
+            </div>
+            <div class="machines-claim-row form-actions">
+              <button id="btn-machines-add-submit" class="btn" type="submit" data-i18n="web.machines.addSubmit">Создать и получить код</button>
+              <button id="btn-machines-add-cancel" class="btn ghost" type="button" data-i18n="web.machines.claimCancel">Отмена</button>
+            </div>
+          </form>
+          <p class="form-error" id="machines-add-error" aria-live="polite"></p>
+          <div class="machines-add-result hidden" id="machines-add-result">
+            <p class="note" id="machines-add-done"></p>
+            <div class="join-creds">
+              <div class="row"><span class="note" data-i18n="web.machines.addCodeLabel">Код машины</span> <code id="machines-add-code" class="join-code" title=""></code></div>
+              <div class="row"><span class="note" data-i18n="web.machines.addServerLabel">Адрес сервера</span> <code id="machines-add-server" class="join-code" title=""></code></div>
+            </div>
+            <h3 data-i18n="web.machines.addStepsTitle">Как поставить на компьютер</h3>
+            <ul class="machines-add-steps">
+              <li data-i18n="web.machines.addStepWin"></li>
+              <li data-i18n="web.machines.addStepUnix"></li>
+              <li data-i18n="web.machines.addStepAfter"></li>
+            </ul>
+            <div class="machines-claim-row form-actions">
+              <button id="btn-machines-add-close" class="btn" type="button" data-i18n="web.machines.addClose">Готово</button>
+            </div>
+          </div>
         </div>
         <p class="form-error" id="machines-error" aria-live="polite"></p>
         <div id="machines-list" class="machines-list"></div>
@@ -439,6 +477,12 @@ video.fit-cover{object-fit:cover}
         </details>
         <h2 data-i18n="web.team.membersTitle">Участники</h2>
         <div id="team-members" class="team-list"></div>
+        <!-- ADR 0037 (Р11): обязательная 2FA для администраторов — только админ -->
+        <div class="team-security hidden" id="team-security">
+          <h2 data-i18n="web.team.securityTitle">Безопасность</h2>
+          <label class="check" for="team-require-admin-totp"><input type="checkbox" id="team-require-admin-totp"> <span data-i18n="web.team.requireAdminTotp">Требовать двухфакторную защиту у администраторов</span></label>
+          <p class="note" data-i18n="web.team.requireAdminTotpNote">Администратор без 2FA сможет только включить её в «Аккаунте». Включить требование можно, когда 2FA уже есть у вас.</p>
+        </div>
       </section>
       <section id="view-history" class="card hidden">
         <h1 data-i18n="history.title">История сеансов</h1>
@@ -535,6 +579,7 @@ video.fit-cover{object-fit:cover}
       <h1 data-i18n="web.account.title">Мой аккаунт</h1>
       <button id="btn-account-back" class="btn ghost" type="button" data-i18n="common.back">← Назад</button>
     </div>
+    <p class="form-error hidden" id="account-totp-required" role="alert" data-i18n="err.totp_setup_required">Администратору нужно включить двухфакторную защиту.</p>
     <div class="acct-grid">
     <div class="acct-box">
     <h2 data-i18n="password.title">Сменить пароль</h2>

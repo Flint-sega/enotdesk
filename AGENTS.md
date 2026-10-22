@@ -29,7 +29,7 @@ helper/video/  Rust-хелпер Windows: захват DXGI/GDI и ввод в �
 docker/ Dockerfile compose.yaml   серверный стек
 scripts/     quick-setup.sh, install-server.sh, deploy-server.sh, smoke-local.mjs, smoke-remote.mjs, make-icons.mjs, make-mascot.mjs, make-social.mjs (картинки соцпревью)
 site/        публичная витрина (GitHub Pages)
-docs/        SESSION_PROTOCOL, SERVER, AGENT, WEB-OPERATOR, BUILD, ACCEPTANCE-1.0 (определение готовности 1.0), MANUAL-QA, ROADMAP, LAB, adr/0001–0038
+docs/        guides/ (руководства людям: клиенту, оператору, админу, постоянный доступ, «если что-то не так», откат выпуска), SESSION_PROTOCOL, SERVER, AGENT, WEB-OPERATOR, BUILD, ACCEPTANCE-1.0 (определение готовности 1.0), MANUAL-QA, ROADMAP, LAB, adr/0001–0038
 ```
 
 ## Архитектура (кратко; подробности в docs/ и ADR)
@@ -52,7 +52,7 @@ docs/        SESSION_PROTOCOL, SERVER, AGENT, WEB-OPERATOR, BUILD, ACCEPTANCE-1.
 - README.md (en) ↔ README.ru.md. Лицензия AGPL-3.0.
 
 ## Окружение
-Сервер: `ENOT_HOST`, `ENOT_PORT`, `ENOT_DB`, `ENOT_DIST_DIR`, `ENOT_PUBLIC_URL`, `ENOT_TURN_URLS`, `ENOT_TURN_SECRET`, `ENOT_TURN_USERNAME`, `ENOT_TURN_PASSWORD`, `ENOT_GRACE_MS`, `ENOT_RETENTION_DAYS`, `ENOT_MAX_SESSIONS`, `ENOT_SECRET_KEY`, `ENOT_TRUSTED_PROXY`. Hub: `ENOT_HUB_HOST`, `ENOT_HUB_PORT`, `ENOT_HUB_DB`, `ENOTDESK_URL`, `HUB_URL`. Compose: `DOMAIN`, `TURN_SECRET` (обязателен), `HUB`, `COMPOSE_PROFILES=hub`. Сборка: `ENOT_BAKED_SERVER_URL` (через `-c.extraMetadata.…`). Клиент и агент: `EDESK_SMOKE`, `EDESK_SMOKE_PATH`, `EDESK_SMOKE_FIRSTRUN`, `EDESK_ALLOW_MULTI`, `EDESK_AGENT=1`, `EDESK_AGENT_NAME`, `EDESK_AGENT_CODE` (только первая регистрация), `EDESK_AGENT_SVC`, `EDESK_AGENT_VIDEO=off`. Значения не коммитятся (шаблон `.env.example`).
+Сервер: `ENOT_HOST`, `ENOT_PORT`, `ENOT_DB`, `ENOT_DIST_DIR`, `ENOT_PUBLIC_URL`, `ENOT_TURN_URLS`, `ENOT_TURN_SECRET`, `ENOT_TURN_USERNAME`, `ENOT_TURN_PASSWORD`, `ENOT_GRACE_MS`, `ENOT_RETENTION_DAYS`, `ENOT_MAX_SESSIONS`, `ENOT_MIN_CLIENT_VERSION`, `ENOT_SECRET_KEY`, `ENOT_TRUSTED_PROXY`. Hub: `ENOT_HUB_HOST`, `ENOT_HUB_PORT`, `ENOT_HUB_DB`, `ENOTDESK_URL`, `HUB_URL`. Compose: `DOMAIN`, `TURN_SECRET` (обязателен), `HUB`, `COMPOSE_PROFILES=hub`. Сборка: `ENOT_BAKED_SERVER_URL` (через `-c.extraMetadata.…`). Клиент и агент: `EDESK_SMOKE`, `EDESK_SMOKE_PATH`, `EDESK_SMOKE_FIRSTRUN`, `EDESK_ALLOW_MULTI`, `EDESK_AGENT=1`, `EDESK_AGENT_NAME`, `EDESK_AGENT_CODE` (только первая регистрация), `EDESK_AGENT_SVC`, `EDESK_AGENT_VIDEO=off`. Значения не коммитятся (шаблон `.env.example`).
 
 ## Тесты
 - Серверные HTTP/WS-циклы, lib-шимы без Electron (koffi, spawn, net — инъекцией), контракт рендерера и web-оператора («анти-мёртвые кнопки», i18n), Hub на фейках сети. `client/test/agent-term-bridge.test.mjs` исполняет настоящий `bridge.mjs`.

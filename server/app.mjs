@@ -5,7 +5,7 @@ import crypto from 'node:crypto';
 import dns from 'node:dns';
 import { WebSocketServer } from 'ws';
 import {
-  openDb, endLiveSessions, auditLog, runRetention, retentionPolicy, setSetting,
+  openDb, endLiveSessions, auditLog, runRetention, retentionPolicy, setSetting, getSetting,
   purgeAudit, purgeHistory, RETENTION_CHOICES,
 } from './db.mjs';
 import { sanitizeFileName } from '../client/lib/file-transfer.mjs';
@@ -239,6 +239,11 @@ function addrTrusted(addr, entry) {
   return (ai & mask) === (bi & mask);
 }
 
+// ADR 0037 (Р11): что доступно админу, пока он не включил обязательную 2FA.
+const TOTP_SETUP_ALLOWED = new Set([
+  'GET /auth/me', 'POST /auth/logout', 'PATCH /auth/password', 'POST /auth/totp/enable',
+]);
+
 function validSignalData(data) {
   if (!data || typeof data !== 'object') return false;
   const keys = Object.keys(data);
@@ -372,6 +377,9 @@ export function createServer(opts = {}) {
     relayMax: opts.relayMax ?? 200 * 1024 * 1024,
     // потолок живых (WS) сеансов — защита памяти публичного сервера
     maxSessions: opts.maxSessions ?? 200,
+    // ADR 0037: минимальная поддерживаемая версия клиента (x.y.z) — клиенты
+    // старше видят «обновите программу»; пусто — поле в health не отдаётся
+    minClientVersion: /^\d+\.\d+\.\d+$/.test(String(opts.minClientVersion ?? '')) ? String(opts.minClientVersion) : null,
     authTimeoutMs: opts.authTimeoutMs ?? 5000,
     bodyLimit: opts.bodyLimit ?? 64 * 1024,
     limits: {
@@ -798,6 +806,7 @@ export function createServer(opts = {}) {
         // оператора с сервера, только если уровень не ниже своего; 1 — паритет
         // с desktop (контакты, история, журнал, CSV, аудитор «только журнал»)
         operatorUi: 1,
+        ...(cfg.minClientVersion ? { minClientVersion: cfg.minClientVersion } : {}),
         activeSessions: live.size,
         uptimeSec: Math.round(process.uptime()),
       });
@@ -902,6 +911,16 @@ export function createServer(opts = {}) {
     }
 
     const user = authUser(req);
+    // ADR 0037 (Р11): обязательная 2FA для администраторов. Пока у админа 2FA не
+    // включена, ему доступны только «кто я», выход, смена пароля и включение 2FA —
+    // остальное честно отвечает totp_setup_required (панель ведёт в «Аккаунт»).
+    if (user) {
+      user.totpSetupRequired = user.role === 'admin' && !user.totpEnabled
+        && getSetting(db, 'security.adminTotpRequired', '0') === '1';
+      if (user.totpSetupRequired && !TOTP_SETUP_ALLOWED.has(`${req.method} ${p}`)) {
+        return err(res, 403, 'totp_setup_required', t('err.totp_setup_required', {}, pickLocale(req.headers['accept-language'])));
+      }
+    }
 
     if (p === '/auth/me' && req.method === 'GET') {
       if (!user) return err(res, 401, 'unauthorized', 'Требуется авторизация');
@@ -1268,6 +1287,26 @@ export function createServer(opts = {}) {
       const deleted = purgeHistory(db, days);
       auditLog(db, user.id, 'history.purge', null, { deleted, olderThanDays: days });
       return ok(res, 200, { deleted });
+    }
+    if (p === '/settings/security' && req.method === 'GET') {
+      if (!user) return err(res, 401, 'unauthorized', 'Требуется авторизация');
+      if (!['admin', 'auditor'].includes(user.role)) return err(res, 403, 'forbidden', 'Недостаточно прав');
+      return ok(res, 200, { adminTotpRequired: getSetting(db, 'security.adminTotpRequired', '0') === '1' });
+    }
+    if (p === '/settings/security' && req.method === 'POST') {
+      if (!user) return err(res, 401, 'unauthorized', 'Требуется авторизация');
+      if (user.role !== 'admin') return err(res, 403, 'forbidden', 'Недостаточно прав');
+      const want = body?.adminTotpRequired;
+      if (typeof want !== 'boolean') return err(res, 400, 'bad_request', 'Некорректное значение');
+      // Включает требование только админ с уже включённой 2FA — иначе он сразу
+      // запер бы себя (и, если он единственный админ, всю панель) до настройки.
+      if (want && !user.totpEnabled) {
+        return err(res, 409, 'totp_required_self', t('err.totp_required_self', {}, pickLocale(req.headers['accept-language'])));
+      }
+      const before = getSetting(db, 'security.adminTotpRequired', '0') === '1';
+      setSetting(db, 'security.adminTotpRequired', want ? '1' : '0');
+      auditLog(db, user.id, 'security.config', null, { adminTotpRequired: { before, after: want } });
+      return ok(res, 200, { adminTotpRequired: want });
     }
     if (p === '/settings/retention' && req.method === 'GET') {
       if (!user) return err(res, 401, 'unauthorized', 'Требуется авторизация');
@@ -2161,7 +2200,14 @@ export function createServer(opts = {}) {
       send(ws, { type: 'ready', sessionId: s.id, role, state: fresh.state, graceMs: cfg.graceMs });
       if (role === 'host' && fresh.state === 'pending-consent' && s.claim_id) {
         const op = db.prepare('SELECT id, name FROM users WHERE id = ?').get(s.operator_id);
-        send(ws, { type: 'claim', claimId: s.claim_id, operator: op });
+        // ADR 0037 (Р5): машине — причина подключения для сообщения человеку за
+        // компьютером. Берётся из записи machine.claim (пишется всегда, ADR 0034).
+        let reason;
+        if (s.machine_id) {
+          const row = db.prepare("SELECT detail FROM audit WHERE action = 'machine.claim' AND target_id = ? ORDER BY id DESC LIMIT 1").get(s.id);
+          try { reason = typeof JSON.parse(row?.detail ?? '{}').reason === 'string' ? JSON.parse(row.detail).reason.slice(0, 200) : undefined; } catch { reason = undefined; }
+        }
+        send(ws, { type: 'claim', claimId: s.claim_id, operator: op, ...(reason ? { reason } : {}) });
       }
       if (role === 'host' && fresh.state === 'approved') {
         // replay после переподключения: ворота ввода открывает только реальный approved

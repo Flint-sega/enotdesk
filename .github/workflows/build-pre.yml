@@ -64,6 +64,9 @@ jobs:
         run: |
           test -f dist/win-unpacked/locales/en-US.pak
           test -f dist/win-unpacked/locales/ru.pak
+      - name: "Gate: смоук собранной программы (ACCEPTANCE U-5)"
+        shell: bash
+        run: node scripts/smoke-artifact.mjs dist/win-unpacked/EnotDesk.exe
       - uses: actions/upload-artifact@v6
         with:
           name: dist-pre-win

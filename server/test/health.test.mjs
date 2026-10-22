@@ -35,3 +35,14 @@ test('API-ответы не кешируются (Cache-Control: no-store), бр
   assert.equal(asset.status, 200);
   assert.equal(asset.headers.get('x-content-type-options'), 'nosniff', 'nosniff на статике оператора');
 });
+
+// ADR 0037: минимальная поддерживаемая версия клиента — только корректный x.y.z;
+// не задана или мусор — поля в health нет (клиент ничего не показывает).
+test('health: minClientVersion отдаётся, только если задана корректно', async (t) => {
+  const plain = await startServer(t);
+  assert.equal('minClientVersion' in (await api(plain.base, 'GET', '/health')).json, false);
+  const set = await startServer(t, { minClientVersion: '0.6.29' });
+  assert.equal((await api(set.base, 'GET', '/health')).json.minClientVersion, '0.6.29');
+  const junk = await startServer(t, { minClientVersion: '1.0; rm -rf' });
+  assert.equal('minClientVersion' in (await api(junk.base, 'GET', '/health')).json, false);
+});

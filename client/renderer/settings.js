@@ -63,6 +63,16 @@ async function checkHealth() {
     const ok = health?.status === 200;
     const version = ok ? (health.body?.version ?? '—') : '—';
     setChip(ok ? 'server-chip--ok' : 'server-chip--down', ok ? 'server.statusOk' : 'server.statusDown', { version });
+    // ADR 0037: сервер называет минимальную поддерживаемую версию клиента —
+    // устаревший клиент честно просит обновиться (ссылка — страница загрузок)
+    const min = ok ? health.body?.minClientVersion : null;
+    if (min) {
+      const s = await enot.getSettings().catch(() => null);
+      if (s?.version && isNewerVersion(s.version, min)) {
+        text($('update-banner'), t('settings.clientTooOld', { version: min }));
+        show($('update-banner'));
+      }
+    }
     return { ok, version, error: ok ? null : t('settings.serverBad') };
   } catch (e) {
     setChip('server-chip--down', 'server.statusDown');

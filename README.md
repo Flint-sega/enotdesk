@@ -4,7 +4,7 @@ English | [Русский](README.ru.md)
 
 [![tests](https://github.com/Flint-sega/enotdesk/actions/workflows/test.yml/badge.svg)](https://github.com/Flint-sega/enotdesk/actions/workflows/test.yml)
 
-EnotDesk is a self-hosted remote-support application for Windows, macOS and Linux, licensed under **AGPL-3.0**. In the default **attended** mode the person receiving help runs a portable app with no installation, gets a one-time ID and password, and passes them to the operator through their usual chat; closing the app immediately ends access — no services, no autostart, no background processes. Optionally, **unattended access** (agent): on Windows the service is installed right from the app (Settings → “Machine”), on Linux and macOS with the scripts in `client/agent-service/` (on macOS the agent runs in the user's session, with video and input — ADR 0038); the operator claims the machine with a mandatory reason and an optional PIN. Operators can work from the desktop client or a plain browser, and the optional EnotDesk Hub adds a ticket desk with a chat widget, one-click join and an email channel.
+EnotDesk is a self-hosted remote-support application for Windows, macOS and Linux, licensed under **AGPL-3.0**. In the default **attended** mode the person receiving help runs a portable app with no installation, gets a one-time ID and password, and passes them to the operator through their usual chat; closing the app immediately ends access — no services, no autostart, no background processes. Optionally, **unattended access** (agent): an admin creates the machine in the operator app (“Machines” → “Add machine”) and gets a one-time code; on Windows the service is installed with that code right from the app (Settings → “Machine”), on Linux and macOS with the scripts in `client/agent-service/` (on macOS the agent runs in the user's session, with video and input — ADR 0038); the operator claims the machine with a mandatory reason and an optional PIN. Operators can work from the desktop client or a plain browser, and the optional EnotDesk Hub adds a ticket desk with a chat widget, one-click join and an email channel.
 
 ## Screenshots
 
@@ -33,6 +33,10 @@ An interactive version of this diagram (pan, path and lens views) is published o
 - **Client (receives help):** runs the portable app → “Get help” → shares the one-time ID and password with the operator via their own chat → approves the specific operator’s connection → chats, can hide the screen with one button (pause streaming) and switch the shared screen on the fly → closes the window when done. Access exists only while the app is open.
 - **Operator (provides help):** signs in on the EnotDesk server → takes the ID/password from the chat (paste the whole message — fields fill themselves) → connects → after the client’s consent sees the screen and controls input (keyboard works on any layout). During the session: chat, two-way clipboard sync, file transfer, session timer and connection-quality indicator; session history and audit log with CSV export.
 - **Transport:** video — WebRTC (DTLS/SRTP) peer-to-peer; signaling — through your EnotDesk server; input, chat, clipboard and files — over DataChannels with strict allowlists and size limits. A short network drop does not kill the session: 30 seconds (configurable) to reconnect with the same tokens; before consent the session ends immediately.
+
+## Guides
+
+Step-by-step guides for end users and admins (in Russian for now): [getting help](docs/guides/client.md), [operator](docs/guides/operator.md), [server admin](docs/guides/server-admin.md), [unattended access](docs/guides/unattended.md), [troubleshooting](docs/guides/troubleshooting.md) (where the logs are and how to report a problem).
 
 ## Quick start
 

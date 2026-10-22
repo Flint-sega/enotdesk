@@ -324,7 +324,7 @@ export function purgeAudit(db, olderThanDays, nowMs = Date.now()) {
 // журнал действий (ADR 0034): входы, пароли и 2FA, участники и приглашения,
 // подключения к машинам без согласия (unattended), права машин и любые
 // изменения самого журнала.
-const AUDIT_ALWAYS_PREFIX = ['login.', 'totp.', 'member.', 'invite.', 'audit.', 'history.'];
+const AUDIT_ALWAYS_PREFIX = ['login.', 'totp.', 'member.', 'invite.', 'audit.', 'history.', 'security.'];
 const AUDIT_ALWAYS = new Set([
   'logout', 'password.change', 'webhooks.config', 'retention.config', 'bootstrap.admin',
   'machine.claim', 'machine.claim.deny', 'machine.pin', 'machine.revoke', 'machine.delete',

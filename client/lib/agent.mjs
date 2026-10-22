@@ -89,7 +89,7 @@ export function createIceServersFetcher({ api, tokenLoad, timeoutMs = 5000 }) {
   };
 }
 
-export function createAgent({ api, signal, native, policy, termHost, rtc, notify, services, video, inputSink }) {
+export function createAgent({ api, signal, native, policy, termHost, rtc, notify, services, video, inputSink, noticeText }) {
   const missing = !api || typeof api.register !== 'function' || typeof api.session !== 'function'
     || typeof api.heartbeat !== 'function' || typeof api.decision !== 'function' ? 'api (register/session/heartbeat/decision)'
     : typeof signal !== 'function' ? 'signal (фабрика сигнальных клиентов)'
@@ -120,6 +120,17 @@ export function createAgent({ api, signal, native, policy, termHost, rtc, notify
   // Toast (R08): показчик сообщений с машины (notify.mjs) может отсутствовать —
   // тогда запрос честно отвечает 'notify-unavailable', оператор не ждёт впустую.
   const showToast = typeof notify === 'function' ? notify : null;
+  // ADR 0037 (Р5): человек за компьютером видит, что к машине подключились, и
+  // когда сеанс закончился. noticeText(kind, {operator, reason}) — строка из
+  // словаря main; нет показчика или текста — честно молчим (сеанс не зависит).
+  const noticed = new Set(); // sessionId, о котором уже сообщили (повторный claim после обрыва — без дубля)
+  const notice = (kind, data) => {
+    if (!showToast || typeof noticeText !== 'function') return;
+    let text;
+    try { text = noticeText(kind, data); } catch { text = null; }
+    if (typeof text !== 'string' || !text) return;
+    Promise.resolve(showToast(text)).catch(() => { /* сообщение не критично для сеанса */ });
+  };
 
   let running = false;
   let state = 'idle'; // idle|registering|waiting|connecting|online|backoff|revoked|error|stopped
@@ -448,6 +459,13 @@ const unsubscribe = client.onMessage((msg) => {
       if (msg.type === 'claim' && msg.claimId) {
         // G2: имя автора claim'а — для подписи его сообщений чата в релее
         if (typeof msg.operator?.name === 'string' && msg.operator.name) opNames.set(msg.claimId, msg.operator.name);
+        if (!noticed.has(body.sessionId)) {
+          noticed.add(body.sessionId);
+          notice('start', {
+            operator: typeof msg.operator?.name === 'string' ? msg.operator.name.slice(0, 120) : '',
+            reason: typeof msg.reason === 'string' ? msg.reason.slice(0, 200) : '',
+          });
+        }
         // причина/PIN уже проверены сервером до claim — агент соглашается
         api.decision({ sessionId: body.sessionId, token, claimId: msg.claimId, allow: true })
           .then((r) => {
@@ -635,6 +653,7 @@ const unsubscribe = client.onMessage((msg) => {
           session = ss.body;
           const outcome = await runSession(ss.body);
           session = null;
+          if (outcome === 'over' && noticed.delete(ss.body?.sessionId)) notice('end', {});
           if (!running) return;
           if (outcome === 'over') {
             attempt = 0;

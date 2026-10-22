@@ -42,7 +42,11 @@ fi
 echo "==> профиль агента: $PROFILE"
 mkdir -p "$PROFILE" "$(dirname "$PLIST_DST")" "$(dirname "$LOG_FILE")"
 chmod 0700 "$PROFILE"
-printf '{"serverUrl": "%s"}\n' "$SERVER_URL" > "$PROFILE/settings.json"
+# http:// без allowInsecureHttp агент отбрасывает (как галочка в настройках
+# клиента) и молча уходит на 127.0.0.1 — явный http-адрес = согласие на http.
+INSECURE=false
+case "$SERVER_URL" in http://*) INSECURE=true; echo "внимание: $SERVER_URL без HTTPS — трафик не шифруется (только для тестового сервера)" >&2 ;; esac
+printf '{"serverUrl": "%s", "allowInsecureHttp": %s}\n' "$SERVER_URL" "$INSECURE" > "$PROFILE/settings.json"
 chmod 0600 "$PROFILE/settings.json"
 
 launchctl bootout "gui/$(id -u)/$LABEL" 2>/dev/null || true
