@@ -45,7 +45,7 @@
 | ID | Сценарий и критерий | ОС / среда | Сейчас |
 |---|---|---|---|
 | O-1 | `/operator`: вход, подключение, видео, ввод | Chrome, Edge | PASS |
-| O-2 | То же | Firefox | НЕТ |
+| O-2 | То же | Firefox | PASS 22.10 (Firefox ESR 153, Debian 13: вход, подключение к машине с причиной, видео 1280×800 ~16 к/с, курсор с точностью 1 px, клик и клавиши; найдено и исправлено — кнопка «картинка в картинке» поверх экрана) |
 | O-3 | То же | Safari macOS, iPad Safari | НЕТ |
 | O-4 | Окно оператора в приложении + «Запомнить меня» | Win DPAPI / mac Keychain / Linux keyring | Win PASS 19.10; mac ЧАСТ 20.10; Linux НЕТ (MANUAL-QA:1499) |
 | O-5 | Команда: роли admin/operator/auditor, приглашение | браузер | admin и auditor PASS; operator НЕТ (MANUAL-QA:1476) |

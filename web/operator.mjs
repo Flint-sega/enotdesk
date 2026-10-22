@@ -647,15 +647,21 @@ function renderParticipants(msg) {
     }
     return li;
   }));
-  const observe = $('op-observe');
-  if (observe) observe.checked = me?.viewOnly === true;
+  setObserve(me?.viewOnly === true);
   (list.length ? show : hide)(box);
+}
+
+// Подсказка описывает режим «только смотреть» — видна, только пока он включён
+// (Firefox-приёмка 22.10: при снятой галочке читалось «управление вам не передаётся»)
+function setObserve(on) {
+  const observe = $('op-observe');
+  if (observe) observe.checked = on;
+  (on ? show : hide)($('op-observe-hint'));
 }
 
 function resetParticipants() {
   $('op-participants-list')?.replaceChildren();
-  const observe = $('op-observe');
-  if (observe) observe.checked = false;
+  setObserve(false);
   hide($('op-participants'));
 }
 
@@ -668,7 +674,11 @@ $('op-participants-list')?.addEventListener('click', (e) => {
   const id = e.target instanceof Element ? e.target.closest('[data-pass]')?.getAttribute('data-pass') : null;
   if (id) sendControl({ type: 'pass-input', to: id });
 });
-$('op-observe')?.addEventListener('change', (e) => sendControl({ type: 'view-only', on: e.target.checked === true }));
+$('op-observe')?.addEventListener('change', (e) => {
+  const on = e.target.checked === true;
+  (on ? show : hide)($('op-observe-hint'));
+  sendControl({ type: 'view-only', on });
+});
 
 function sendControlMessage(type) {
   const dc = state.dcs?.input;
