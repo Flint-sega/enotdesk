@@ -35,7 +35,7 @@ HUB_PORT="${ENOT_HUB_PORT:-8090}"
 ENABLE_HUB=0
 NODE_PREFIX="/opt/node-24"
 
-NODE_VERSION="${NODE_VERSION:-24.12.0}"
+NODE_VERSION="${NODE_VERSION:-24.22.1}"
 PORT="${ENOT_PORT:-8080}"
 BIND="${ENOT_BIND:-0.0.0.0}"
 DB_PATH="${ENOT_DB:-$DATA_DIR/enotdesk.db}"
@@ -101,7 +101,7 @@ EnotDesk — установщик сервера.
   ENOT_BIND          адрес привязки (по умолчанию 0.0.0.0; при TLS принудительно 127.0.0.1)
   ENOT_PUBLIC_URL    публичный URL (по умолчанию http://<первый IP>:<порт>; https://<домен> включает TLS)
   ENOT_DB            путь к БД (по умолчанию /var/lib/enotdesk/enotdesk.db)
-  NODE_VERSION       версия Node.js из tarball nodejs.org (по умолчанию 24.12.0)
+  NODE_VERSION       версия Node.js из tarball nodejs.org (по умолчанию 24.22.1)
   ENOT_TURN_URLS, ENOT_TURN_USERNAME, ENOT_TURN_PASSWORD — внешний TURN (--no-turn)
   ENOT_SECRET_KEY    ключ шифрования 2FA-секретов и секретов webhooks (AES-256-GCM);
                      пусто — их включение честно отказывает (secret_key_missing)
