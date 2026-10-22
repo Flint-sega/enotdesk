@@ -246,9 +246,16 @@ test('грейс: переподключение другим токеном и 
   await wsAuth(h2, { type: 'auth', role: 'host', sessionId: reg.json.sessionId, token: reg.json.hostToken });
   await api(base, 'POST', `/sessions/${reg.json.sessionId}/claim`, { token: admin.token, body: { password: reg.json.password } });
   h2.close();
-  await new Promise((r) => setTimeout(r, 150));
-  const h = await api(base, 'GET', '/history', { token: admin.token });
-  const row = h.json.items.find((it) => it.id === reg.json.sessionId);
+  // Ждём, пока сервер обработает закрытие сокета: фиксированные 150 мс под
+  // нагрузкой (релизный windows-раннер, 21.10) давали ложное «ещё не ended».
+  // Поллинг до WAIT_MS — верхняя граница, не окно: проверка не ослабляется.
+  let row = null;
+  for (const t0 = Date.now(); Date.now() - t0 < WAIT_MS;) {
+    const h = await api(base, 'GET', '/history', { token: admin.token });
+    row = h.json.items.find((it) => it.id === reg.json.sessionId);
+    if (row?.state === 'ended') break;
+    await new Promise((r) => setTimeout(r, 50));
+  }
   assert.equal(row.state, 'ended');
   assert.equal(row.endReason, 'host-lost');
   void host;
