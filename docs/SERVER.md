@@ -90,7 +90,7 @@ export ENOT_DEPLOY_PROTO=http
 Node ставится официальным tarball-ом с nodejs.org — без apt и NodeSource. Это важно на серверах, где `apt update` зависает (зеркала отвечают `Ign`): нужны только `curl`, `tar` и `xz`.
 
 ```bash
-NODE_VERSION=24.12.0
+NODE_VERSION=24.22.1
 cd /tmp
 curl -fsSLO "https://nodejs.org/dist/v$NODE_VERSION/node-v$NODE_VERSION-linux-x64.tar.xz"
 curl -fsSLO "https://nodejs.org/dist/v$NODE_VERSION/SHASUMS256.txt"
@@ -100,10 +100,10 @@ tar -xJf "node-v$NODE_VERSION-linux-x64.tar.xz" -C /opt/node-24 --strip-componen
 ln -sfn /opt/node-24/bin/node /usr/local/bin/node
 ln -sfn /opt/node-24/bin/npm  /usr/local/bin/npm
 ln -sfn /opt/node-24/bin/npx  /usr/local/bin/npx
-node -v    # ожидается v24.12.0
+node -v    # ожидается v24.22.1
 ```
 
-Если `node -v` уже равен нужной версии, шаг можно пропустить. Установщик `install-server.sh` делает то же самое идемпотентно (версия переопределяется `NODE_VERSION`). На arm64 скачайте tarball `linux-arm64` и повторите распаковку/симлинки — автоматически поддерживается только x86_64.
+Если `node -v` уже равен нужной версии, шаг можно пропустить. Исправления безопасности Node 24 ставьте в течение двух недель после выхода (ADR 0037): `install-server.sh --update` сам заменит Node, если версия в установщике новее установленной. Установщик `install-server.sh` делает то же самое идемпотентно (версия переопределяется `NODE_VERSION`). На arm64 скачайте tarball `linux-arm64` и повторите распаковку/симлинки — автоматически поддерживается только x86_64.
 
 ### 2.2. Пользователь и каталоги
 
