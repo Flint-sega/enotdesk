@@ -32,7 +32,8 @@ use windows::Win32::Graphics::Imaging::{
     WICBitmapEncoderNoCache,
 };
 use windows::Win32::Storage::FileSystem::{
-    FILE_FLAG_FIRST_PIPE_INSTANCE, PIPE_ACCESS_DUPLEX,
+    GetFileInformationByHandle, BY_HANDLE_FILE_INFORMATION, FILE_FLAG_FIRST_PIPE_INSTANCE,
+    PIPE_ACCESS_DUPLEX,
 };
 use windows::Win32::System::Com::StructuredStorage::{IPropertyBag2, PROPBAG2};
 use windows::Win32::System::Com::{
@@ -1413,4 +1414,47 @@ pub fn set_cursor_pos_probe(x: i32, y: i32) -> String {
 /// manual diagnostics and stays.
 pub fn set_cursor_pos_xy(x: i32, y: i32) -> bool {
     unsafe { SetCursorPos(x, y).is_ok() }
+}
+
+// ---------------------------------------------------------------------------
+// Journal file under %ProgramData%\EnotDesk (security review 22.10, P2-5).
+// The helper may run as SYSTEM (ADR 0036), and ProgramData lets any user
+// pre-create subfolders: a junction in place of the folder, or a symlink or a
+// hard link in place of the log, would turn our append into a SYSTEM write to
+// someone else's file. The service hardens the folder on start
+// (client/lib/programdata-acl.mjs); here every open re-checks the path, so a
+// failed hardening means "no file log", never "write through a link".
+// ---------------------------------------------------------------------------
+
+const FILE_ATTRIBUTE_REPARSE_POINT: u32 = 0x400;
+const FILE_FLAG_OPEN_REPARSE_POINT: u32 = 0x0020_0000;
+
+/// Open `dir\name` for append only if neither the folder nor the file is a
+/// reparse point (junction, symlink) and the file has exactly one link.
+pub fn open_journal(dir: &str, name: &str) -> Option<std::fs::File> {
+    use std::os::windows::fs::{MetadataExt, OpenOptionsExt};
+    use std::os::windows::io::AsRawHandle;
+    let dmeta = std::fs::symlink_metadata(dir).ok()?;
+    if !dmeta.is_dir() || dmeta.file_attributes() & FILE_ATTRIBUTE_REPARSE_POINT != 0 {
+        return None;
+    }
+    let f = std::fs::OpenOptions::new()
+        .create(true)
+        .append(true)
+        .custom_flags(FILE_FLAG_OPEN_REPARSE_POINT)
+        .open(format!("{dir}\\{name}"))
+        .ok()?;
+    let meta = f.metadata().ok()?;
+    if !meta.is_file() || meta.file_attributes() & FILE_ATTRIBUTE_REPARSE_POINT != 0 {
+        return None;
+    }
+    let mut info = BY_HANDLE_FILE_INFORMATION::default();
+    // SAFETY: the handle belongs to `f`, alive for the whole call.
+    let ok = unsafe {
+        GetFileInformationByHandle(HANDLE(f.as_raw_handle() as *mut core::ffi::c_void), &mut info)
+    };
+    if ok.is_err() || info.nNumberOfLinks != 1 {
+        return None;
+    }
+    Some(f)
 }

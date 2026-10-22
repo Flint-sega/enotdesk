@@ -44,6 +44,7 @@ import { UPDATE_REPO, updateFeedUrl, notifyFeedName, updateDecision, updateInsta
 import { isNewerVersion } from './lib/version-check.mjs';
 import { t, setLocale } from './lib/i18n.mjs';
 import { createSvcDiag, envDiagSlice, maskJoinTokens } from './lib/svc-diag.mjs';
+import { secureProgramDataDir } from './lib/programdata-acl.mjs';
 import { createKeepAwake } from './lib/keep-awake.mjs';
 import { createBootLog } from './lib/boot-log.mjs';
 import { linuxOzonePlatform } from './lib/ozone.mjs';
@@ -97,7 +98,10 @@ try {
 // exe с EDESK_AGENT=1). Без StartServiceCtrlDispatcher SCM убивает процесс
 // по 1053 (живой сеанс 28.09, W-U2). Ветка стоит ДО любого обращения к app.
 if (process.env.EDESK_AGENT_SVC === '1' && process.platform === 'win32') {
+  // P2-5 (ревью 22.10): до первой записи от SYSTEM — права на ProgramData\EnotDesk
+  const acl = secureProgramDataDir();
   svcDiag.write('svc', 'svc-ветка вошла (EDESK_AGENT_SVC=1 доставлен)');
+  svcDiag.write('svc', `ProgramData\\EnotDesk: ${acl.ok ? 'права выставлены' : `права НЕ выставлены (шаг ${acl.step}: ${acl.error})`}${acl.moved ? `; подменённая папка отодвинута в ${acl.moved}` : ''}${acl.removed.length ? `; удалены ссылки: ${acl.removed.join(', ')}` : ''}`);
   try {
     const { runAsScmParent } = await import('./lib/win-service.mjs');
     await runAsScmParent({

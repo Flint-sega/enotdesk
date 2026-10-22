@@ -206,16 +206,16 @@ fn log_line(line: &str) {
     // the tick/err lines are the only helper-side telemetry (v0.6.0 приёмка).
     // TEMP is absent in the service-built environment — ProgramData is the
     // directory the rest of EnotDesk already uses (svc-diag).
-    if let Some(dir) = std::env::var("ProgramData")
-        .ok()
-        .or_else(|| std::env::var("TEMP").ok())
-    {
-        if let Ok(mut f) = std::fs::OpenOptions::new()
-            .create(true)
-            .append(true)
-            .open(format!("{dir}\\EnotDesk\\enotdesk-video.log"))
-        {
+    // Links in place of the folder or the file mean no file log (P2-5,
+    // win::open_journal). The service closes %ProgramData%\EnotDesk to SYSTEM
+    // and Administrators, so a helper on the user token (fallback path) logs
+    // to its own TEMP instead.
+    let primary = std::env::var("ProgramData").ok().map(|d| format!("{d}\\EnotDesk"));
+    let fallback = std::env::var("TEMP").ok();
+    for dir in primary.into_iter().chain(fallback) {
+        if let Some(mut f) = win::open_journal(&dir, "enotdesk-video.log") {
             let _ = writeln!(f, "{line}");
+            break;
         }
     }
 }

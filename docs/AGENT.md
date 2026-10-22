@@ -73,7 +73,7 @@ onboarding-код. Отзыв на стороне сервера: список �
 
 | ОС | Где логи |
 |---|---|
-| Windows | `enotdesk-boot.log` в профиле агента (таблица выше) — запуск и обновления; `C:\ProgramData\EnotDesk\enotdesk-video.log` — видео и ввод хелпера; по маркеру `C:\ProgramData\EnotDesk\svc-diag.enabled` — подробный `svc-diag.log` службы. SCM-ошибки запуска — в Event Viewer (System). |
+| Windows | `enotdesk-boot.log` в профиле агента (таблица выше) — запуск и обновления; `C:\ProgramData\EnotDesk\enotdesk-video.log` — видео и ввод хелпера; по маркеру `C:\ProgramData\EnotDesk\svc-diag.enabled` — подробный `svc-diag.log` службы. Папку `C:\ProgramData\EnotDesk` служба на старте закрывает: читать журналы и класть маркер может только администратор (ADR 0036). Хелпер, запущенный от токена пользователя (`ENOT_VIDEO_TOKEN=user` или программа не в Program Files), пишет `enotdesk-video.log` в `%TEMP%` этого пользователя. SCM-ошибки запуска — в Event Viewer (System). |
 | Linux | `journalctl -u enotdesk-agent -f` |
 | macOS | `~/Library/Logs/enotdesk-agent.log` (StandardOutPath/StandardErrorPath), плюс Console.app |
 
