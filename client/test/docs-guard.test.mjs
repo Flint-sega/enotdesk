@@ -2,6 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync, readdirSync, existsSync } from 'node:fs';
 import path from 'node:path';
+import { execFileSync } from 'node:child_process';
 
 // Гигиена 19.10 (B1/B5): AGENTS.md стал публичным (лежит в git). Приватное —
 // лаба, прод, доступы, история волн — живёт в .local/AGENTS.private.md. Тест
@@ -49,10 +50,20 @@ test('AGENTS.md: пути в бэктиках существуют в репоз
   assert.deepEqual(missing, [], `в AGENTS.md ссылки на несуществующие пути: ${missing.join(', ')}`);
 });
 
-test('CLAUDE.md (публичный) ссылается только на файлы из репозитория', () => {
-  const claude = read('CLAUDE.md');
-  for (const m of claude.matchAll(/@([\w./-]+)/g)) {
-    assert.ok(!m[1].startsWith('.local/'), `CLAUDE.md не должен тянуть приватный ${m[1]} — для этого CLAUDE.local.md`);
-    assert.ok(existsSync(path.join(root, m[1])), `CLAUDE.md ссылается на отсутствующий ${m[1]}`);
+// Файл инструкций агента живёт только локально (в git не хранится с 22.10): если он
+// лежит рядом — проверяем, что ссылается лишь на файлы репозитория, а приватное
+// тянет отдельный локальный файл; в CI его нет — проверять нечего.
+const AGENT_FILE = 'CLAUDE.md';
+test('файл инструкций агента (локальный) ссылается только на файлы из репозитория', (t) => {
+  if (!existsSync(path.join(root, AGENT_FILE))) return t.skip('файла инструкций агента нет — он только локальный');
+  const text = read(AGENT_FILE);
+  for (const m of text.matchAll(/@([\w./-]+)/g)) {
+    assert.ok(!m[1].startsWith('.local/'), `${AGENT_FILE} не должен тянуть приватный ${m[1]} — для этого локальный файл заметок`);
+    assert.ok(existsSync(path.join(root, m[1])), `${AGENT_FILE} ссылается на отсутствующий ${m[1]}`);
   }
+});
+
+test('файл инструкций агента не хранится в git', () => {
+  const tracked = execFileSync('git', ['ls-files', '--', AGENT_FILE], { cwd: root, encoding: 'utf8' }).trim();
+  assert.equal(tracked, '', `${AGENT_FILE} снова попал в git — он только локальный (.git/info/exclude)`);
 });
