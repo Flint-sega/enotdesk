@@ -14,6 +14,9 @@ AGENT_NAME="${AGENT_NAME:-$(hostname)}"
 # Служебный пользователь и его домашний каталог (профиль агента).
 AGENT_USER="${AGENT_USER:-enotdesk-agent}"
 AGENT_HOME="${AGENT_HOME:-/var/lib/enotdesk-agent}"
+# Файл с одноразовым кодом машины (первая строка) - нужен только при первой
+# установке. Код не попадает в argv; после регистрации файл удаляется.
+AGENT_CODE_FILE="${AGENT_CODE_FILE:-}"
 ENV_FILE="/etc/enotdesk-agent/agent.env"
 UNIT_FILE="/etc/systemd/system/enotdesk-agent.service"
 
@@ -43,7 +46,11 @@ PROFILE="$AGENT_HOME/.config/enotdesk/agent"
 mkdir -p "$PROFILE"
 chown -R "$AGENT_USER:$AGENT_USER" "$AGENT_HOME/.config"
 chmod 0700 "$PROFILE"
-printf '{"serverUrl": "%s"}\n' "$SERVER_URL" > "$PROFILE/settings.json"
+# http:// без allowInsecureHttp агент отбрасывает (как галочка в настройках
+# клиента) и молча уходит на 127.0.0.1 - явный http-адрес = согласие на http.
+INSECURE=false
+case "$SERVER_URL" in http://*) INSECURE=true; echo "внимание: $SERVER_URL без HTTPS - трафик не шифруется (только для тестового сервера)" >&2 ;; esac
+printf '{"serverUrl": "%s", "allowInsecureHttp": %s}\n' "$SERVER_URL" "$INSECURE" > "$PROFILE/settings.json"
 chown "$AGENT_USER:$AGENT_USER" "$PROFILE/settings.json"
 chmod 0600 "$PROFILE/settings.json"
 
@@ -56,6 +63,36 @@ install -d -m 0750 /etc/enotdesk-agent
   # XAUTHORITY=/etc/enotdesk-agent/xauth
 } > "$ENV_FILE"
 chmod 0600 "$ENV_FILE"
+
+TOKEN="$PROFILE/agent-token.json"
+if [ ! -f "$TOKEN" ]; then
+  if [ -z "$AGENT_CODE_FILE" ] || [ ! -s "$AGENT_CODE_FILE" ]; then
+    echo "ошибка: машина ещё не зарегистрирована - укажите AGENT_CODE_FILE с одноразовым кодом" >&2
+    echo "        (код выдаёт администратор: программа оператора -> «Машины» -> «Добавить машину»)" >&2
+    exit 1
+  fi
+  REG_LOG="$AGENT_HOME/register.log"
+  echo "==> регистрация машины «$AGENT_NAME» на $SERVER_URL"
+  # Код - только в окружении процесса (не в argv). runuser без -l оставляет
+  # окружение, HOME берёт из passwd служебного пользователя.
+  EDESK_AGENT_CODE="$(head -n1 "$AGENT_CODE_FILE")" EDESK_AGENT=1 EDESK_AGENT_NAME="$AGENT_NAME" \
+    runuser -u "$AGENT_USER" -- "$APP_DIR/enotdesk" >"$REG_LOG" 2>&1 &
+  PID=$!
+  for _ in $(seq 1 90); do
+    [ -f "$TOKEN" ] && break
+    kill -0 "$PID" 2>/dev/null || break
+    sleep 1
+  done
+  kill "$PID" 2>/dev/null || true
+  wait "$PID" 2>/dev/null || true
+  if [ ! -f "$TOKEN" ]; then
+    echo "ошибка: регистрация не прошла, журнал: $REG_LOG" >&2
+    tail -n 20 "$REG_LOG" >&2 || true
+    exit 1
+  fi
+  rm -f "$AGENT_CODE_FILE"
+  echo "==> зарегистрирована, одноразовый код удалён"
+fi
 
 echo "==> unit $UNIT_FILE"
 sed "s|ExecStart=.*|ExecStart=$APP_DIR/enotdesk|" "$(dirname "$0")/enotdesk-agent.service" > "$UNIT_FILE"
