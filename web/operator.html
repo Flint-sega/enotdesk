@@ -665,7 +665,7 @@ video.fit-cover{object-fit:cover}
   <section id="op-remote" class="session hidden">
     <div class="stage">
       <div class="video-box">
-        <video id="remote-video" tabindex="0" autoplay playsinline data-i18n-aria-label="web.aria.video" aria-label="Экран удалённого компьютера"></video>
+        <video id="remote-video" tabindex="0" autoplay playsinline disablepictureinpicture data-i18n-aria-label="web.aria.video" aria-label="Экран удалённого компьютера"></video>
       </div>
       <div class="stage-bar">
         <button id="btn-fullscreen" class="btn ghost" type="button" data-i18n="web.session.fullscreen">Во весь экран</button>
@@ -692,7 +692,7 @@ video.fit-cover{object-fit:cover}
         <h2 data-i18n="op.participants.title">Участники</h2>
         <ul class="participants" id="op-participants-list"></ul>
         <label class="check"><input type="checkbox" id="op-observe"><span data-i18n="op.participants.observe">Только смотреть</span></label>
-        <p class="muted" data-i18n="op.participants.observeHint"></p>
+        <p class="muted hidden" id="op-observe-hint" data-i18n="op.participants.observeHint"></p>
       </div>
       <div class="card">
         <h2 data-i18n="web.chat.title">Чат</h2>
