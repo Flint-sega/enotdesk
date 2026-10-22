@@ -3,6 +3,7 @@
 
 import test from 'node:test';
 import assert from 'node:assert/strict';
+import { EventEmitter } from 'node:events';
 import {
   createVideoHost, createFrameReader, encodeMessage,
   FRAME_MAGIC, MSG, PIPE_NAME,
@@ -177,4 +178,32 @@ test('обрыв pipe посреди работы — статус error pipe-cl
 
 test('PIPE_NAME — формат Windows named pipe', () => {
   assert.ok(PIPE_NAME.startsWith('\\\\.\\pipe\\'));
+});
+
+// Ревью безопасности 22.10 (P1-1): фиксированное имя пайпа мог заранее занять
+// локальный пользователь (pipe squatting). Теперь имя своё на каждый start(),
+// хелпер получает его в --pipe, служба подключается именно к нему.
+test('имя пайпа случайное на каждый запуск и уходит хелперу в --pipe', async () => {
+  const spawned = [];
+  const connected = [];
+  const host = createVideoHost({
+    spawner: { spawnInConsoleSession: async ({ commandLine }) => { spawned.push(commandLine); return { ok: true, pid: 1 }; } },
+    netFactory: (name) => {
+      connected.push(name);
+      const ee = new EventEmitter();
+      ee.destroy = () => {}; ee.write = () => true;
+      return ee;
+    },
+    exePath: 'C:\\Program Files\\EnotDesk\\resources\\enotdesk-video.exe',
+    connectTimeoutMs: 10, connectRetries: 1,
+  });
+  await host.start(); host.stop();
+  await host.start(); host.stop();
+  assert.equal(spawned.length, 2);
+  const pipes = spawned.map((cl) => cl.match(/--pipe (\S+)/)?.[1]);
+  for (const p of pipes) assert.match(p, /^\\\\\.\\pipe\\enotdesk-video-[0-9a-f]{32}$/);
+  assert.notEqual(pipes[0], pipes[1], 'у каждого запуска своё имя');
+  assert.deepEqual(connected, pipes, 'служба подключается к тому имени, что передала хелперу');
+  assert.match(spawned[0], /^"C:\\Program Files\\EnotDesk\\resources\\enotdesk-video\.exe" --token [0-9a-f]{32} --pipe /);
+  assert.ok(!pipes.includes(PIPE_NAME), 'фиксированное имя больше не используется');
 });

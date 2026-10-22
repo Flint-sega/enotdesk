@@ -59,6 +59,10 @@ test('resolveInstallSource: портативка -> скачать setup; Progra
   assert.equal(localFwd.mode, 'local');
 
   assert.equal(resolveInstallSource({ execPath: 'D:\\any\\EnotDesk.exe', portableFile: '' }), null);
+  // ревью безопасности 22.10 (P2-6): «\program files\» где-то в середине пути — не установка
+  assert.equal(resolveInstallSource({ execPath: 'C:\\Users\\u\\Downloads\\program files\\EnotDesk.exe', portableFile: '' }), null);
+  assert.equal(resolveInstallSource({ execPath: 'C:\\Program Files\\..\\Users\\u\\EnotDesk.exe', portableFile: '' }), null);
+  assert.equal(resolveInstallSource({ execPath: 'D:\\Apps\\EnotDesk\\EnotDesk.exe', portableFile: '', programFiles: 'D:\\Apps' }).mode, 'local');
   assert.equal(resolveInstallSource({ execPath: '', portableFile: '' }), null);
 });
 
