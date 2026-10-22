@@ -117,7 +117,7 @@ enot.onSignal(async (msg) => {
     case 'operator-joined': {
       // Мультиоператор: хост поднимает ПЕРСОНАЛЬНЫЙ pc этому оператору
       const op = msg.operator ?? {};
-      attachOperator(msg.claimId, op.name ?? '').catch(() => {});
+      attachOperator(msg.claimId, op.name ?? '', { rejoin: true }).catch(() => {});
       text($('client-operators'), t('client.operatorJoined', { name: op.name ?? '', login: op.login ?? '' }));
       break;
     }
