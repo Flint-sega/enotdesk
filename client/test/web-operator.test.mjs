@@ -141,6 +141,7 @@ test('web/*.mjs: панель машин показывается только a
   const machinePaths = paths.filter((p) => p.includes('/machines'));
   assert.ok(machinePaths.length >= 5, 'панель машин должна использовать machines API (список, claim, pin, revoke, delete, toast)');
   const allowed = [
+    /^'\/machines'$/, // «Добавить машину»: POST /machines → одноразовый код
     /^`\/machines\?[^`]*`$/, // список с пагинацией limit/offset
     /^`\/machines\/\$\{[^`]+\}\/(claim|pin|revoke|toast|wol)`$/, // действия одной машины
     /^`\/machines\/\$\{[^`]+\}`$/, // GET/DELETE одной машины
@@ -153,6 +154,23 @@ test('web/*.mjs: панель машин показывается только a
   assert.ok(machinePaths.some((p) => /toast/.test(p)), 'toast-маршрут вызывается со страницы машин');
   assert.ok(machinePaths.some((p) => /wol/.test(p)), 'wol-маршрут вызывается со страницы машин');
   assert.ok(!machinePaths.some((p) => /inventory/.test(p)), 'отдельного inventory-маршрута на странице нет');
+});
+
+test('«Добавить машину»: POST /machines, код показывается один раз и стирается при закрытии', () => {
+  assert.match(operatorJs, /api\('POST', '\/machines', /, 'создание машины идёт в POST /machines');
+  for (const id of ['btn-machines-add', 'machines-add-form', 'machines-add-code', 'machines-add-server', 'btn-machines-add-close']) {
+    assert.ok(new RegExp(`id="${id}"`).test(html), `нет id «${id}» в web/operator.html`);
+  }
+  const clear = /function clearMachineAddResult\(\) \{[\s\S]*?\n\}/.exec(operatorJs)?.[0] ?? '';
+  assert.match(clear, /text\(\$\('machines-add-code'\), ''\)/, 'закрытие стирает код из DOM');
+  const close = /function closeMachineAdd\(\) \{[\s\S]*?\n\}/.exec(operatorJs)?.[0] ?? '';
+  assert.match(close, /clearMachineAddResult\(\)/, 'closeMachineAdd стирает результат');
+  for (const fn of ['showMachines', 'forgetSession']) {
+    const body = new RegExp(`function ${fn}\\(\\) \\{[\\s\\S]*?\\n\\}`).exec(operatorJs)?.[0] ?? '';
+    assert.match(body, /closeMachineAdd\(\)/, `${fn} закрывает карточку с кодом`);
+  }
+  const submit = /async function submitMachineAdd\(\) \{[\s\S]*?\n\}/.exec(operatorJs)?.[0] ?? '';
+  assert.ok(!/clipboard|localStorage|sessionStorage|console\./.test(submit), 'код не уходит в буфер, хранилище или консоль');
 });
 
 test('web/*.mjs: действия строк машин подключены через data-action (анти-мёртвые-кнопки)', () => {
