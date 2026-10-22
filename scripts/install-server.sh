@@ -14,6 +14,9 @@
 # ENOT_SECRET_KEY и ENOT_TRUSTED_PROXY опциональны: заданы — уходят в env-файл
 # (сервер читает их из окружения, не из argv), пустые — в env-файл не пишутся.
 set -euo pipefail
+# Node ставится симлинком в /usr/local/bin; у root-оболочек без логина (контейнеры,
+# pct exec, часть cloud-init и cron) этого каталога в PATH нет (учения 22.10.2026).
+case ":$PATH:" in *:/usr/local/bin:*) ;; *) PATH="/usr/local/sbin:/usr/local/bin:$PATH"; export PATH ;; esac
 
 ENOT_USER="enotdesk"
 OPT_DIR="/opt/enotdesk"

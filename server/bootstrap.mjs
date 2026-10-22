@@ -85,3 +85,46 @@ export async function runCli(dbPath) {
     if (rl) rl.close();
   }
 }
+
+// Аварийное снятие 2FA (ADR 0037, учения восстановления): админ потерял телефон
+// и резервные коды, или база восстановлена без прежнего ENOT_SECRET_KEY. Только
+// с консоли сервера (доступ к файлу БД = доступ ко всему), не через API. Снимает
+// секрет и резервные коды, отзывает токены входа пользователя; запись в журнал
+// безопасности пишется всегда (префикс totp.).
+export function resetTotp(dbPath, login) {
+  const norm = String(login ?? '').trim().toLowerCase();
+  if (!norm) return { ok: false, reason: 'no_login' };
+  if (!fs.existsSync(dbPath)) return { ok: false, reason: 'no_db' };
+  const db = openDb(dbPath);
+  try {
+    const user = db.prepare('SELECT id, totp_enabled FROM users WHERE login = ?').get(norm);
+    if (!user) return { ok: false, reason: 'not_found' };
+    db.exec('BEGIN');
+    try {
+      db.prepare('UPDATE users SET totp_enabled = 0, totp_secret_enc = NULL, totp_last_counter = NULL WHERE id = ?').run(user.id);
+      const codes = db.prepare('DELETE FROM totp_backup_codes WHERE user_id = ?').run(user.id).changes;
+      const tokens = db.prepare('DELETE FROM auth_tokens WHERE user_id = ?').run(user.id).changes;
+      auditLog(db, null, 'totp.reset.console', user.id, { login: norm, wasEnabled: user.totp_enabled === 1, codes, tokens });
+      db.exec('COMMIT');
+      return { ok: true, wasEnabled: user.totp_enabled === 1, tokens };
+    } catch (e) {
+      db.exec('ROLLBACK');
+      throw e;
+    }
+  } finally {
+    db.close();
+  }
+}
+
+export function runResetTotpCli(dbPath, login) {
+  const r = resetTotp(dbPath, login);
+  if (!r.ok) {
+    const msg = { no_login: 'укажите логин: node server/main.mjs reset-2fa <логин>', no_db: `нет базы ${dbPath} (задайте ENOT_DB)`, not_found: 'пользователь не найден' }[r.reason];
+    console.log(`Ошибка: ${msg}.`);
+    process.exitCode = 1;
+    return;
+  }
+  console.log(r.wasEnabled
+    ? `Готово: 2FA снята, входы пользователя завершены (${r.tokens}). Пусть войдёт по паролю и включит 2FA заново.`
+    : 'Готово: 2FA у пользователя и так была выключена; входы завершены.');
+}

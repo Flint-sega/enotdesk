@@ -369,6 +369,7 @@ export default {
   "audit.action.totp.setup": "Настройка 2FA",
   "audit.action.totp.enable": "2FA включена",
   "audit.action.totp.disable": "2FA отключена",
+  "audit.action.totp.reset.console": "2FA снята с консоли сервера",
   "audit.action.member.role": "Роль участника изменена",
   "audit.action.member.enable": "Участник включён",
   "audit.action.member.disable": "Участник отключён",
