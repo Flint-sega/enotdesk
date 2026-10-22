@@ -144,6 +144,7 @@ export default {
   "settings.unreachable": "Server unreachable: {message}",
   "settings.macosScreen": "Screen recording is not allowed on macOS — enable it in System Settings.",
   "settings.nativeInput": "Native input is unavailable: mouse/keyboard control will not work.",
+  "settings.clientTooOld": "This EnotDesk version is too old for your server — {version} or newer is required. Download it from the server's downloads page.",
   "settings.updateBanner": "Version {version} is available — update the client from the downloads page of your EnotDesk server.",
   "settings.agent.title": "Machine (unattended access)",
   "settings.agent.hint": "Install the agent service so operators can connect to this computer without anyone present. You will need administrator rights and a one-time machine code from the server administrator.",

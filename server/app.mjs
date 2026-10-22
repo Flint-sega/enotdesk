@@ -377,6 +377,9 @@ export function createServer(opts = {}) {
     relayMax: opts.relayMax ?? 200 * 1024 * 1024,
     // потолок живых (WS) сеансов — защита памяти публичного сервера
     maxSessions: opts.maxSessions ?? 200,
+    // ADR 0037: минимальная поддерживаемая версия клиента (x.y.z) — клиенты
+    // старше видят «обновите программу»; пусто — поле в health не отдаётся
+    minClientVersion: /^\d+\.\d+\.\d+$/.test(String(opts.minClientVersion ?? '')) ? String(opts.minClientVersion) : null,
     authTimeoutMs: opts.authTimeoutMs ?? 5000,
     bodyLimit: opts.bodyLimit ?? 64 * 1024,
     limits: {
@@ -803,6 +806,7 @@ export function createServer(opts = {}) {
         // оператора с сервера, только если уровень не ниже своего; 1 — паритет
         // с desktop (контакты, история, журнал, CSV, аудитор «только журнал»)
         operatorUi: 1,
+        ...(cfg.minClientVersion ? { minClientVersion: cfg.minClientVersion } : {}),
         activeSessions: live.size,
         uptimeSec: Math.round(process.uptime()),
       });
