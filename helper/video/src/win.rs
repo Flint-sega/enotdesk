@@ -32,7 +32,7 @@ use windows::Win32::Graphics::Imaging::{
     WICBitmapEncoderNoCache,
 };
 use windows::Win32::Storage::FileSystem::{
-    PIPE_ACCESS_DUPLEX,
+    FILE_FLAG_FIRST_PIPE_INSTANCE, PIPE_ACCESS_DUPLEX,
 };
 use windows::Win32::System::Com::StructuredStorage::{IPropertyBag2, PROPBAG2};
 use windows::Win32::System::Com::{
@@ -108,34 +108,6 @@ fn is_win32(e: &windows::core::Error, code: u32) -> bool {
     e.code() == windows::core::HRESULT(((0x8007u32 << 16) | (code & 0xFFFF)) as i32)
 }
 
-/// Fixed pipe name as a UTF-16 literal (the pipe name never changes, so a
-/// const array beats any macro or runtime conversion).
-const PIPE_NAME_WIDE: &[u16] = &[
-    b'\\' as u16,
-    b'\\' as u16,
-    b'.' as u16,
-    b'\\' as u16, // \\.\ (device namespace)
-    b'p' as u16,
-    b'i' as u16,
-    b'p' as u16,
-    b'e' as u16,
-    b'\\' as u16, // pipe\
-    b'e' as u16,
-    b'n' as u16,
-    b'o' as u16,
-    b't' as u16,
-    b'd' as u16,
-    b'e' as u16,
-    b's' as u16,
-    b'k' as u16,
-    b'-' as u16,
-    b'v' as u16,
-    b'i' as u16,
-    b'd' as u16,
-    b'e' as u16,
-    b'o' as u16,
-    0, // NUL terminator required by Win32
-];
 
 // ---------------------------------------------------------------------------
 // Named pipe server (the helper is the server; the Node service is the client)
@@ -149,7 +121,14 @@ pub struct PipeServer {
 }
 
 impl PipeServer {
-    pub fn new() -> Result<PipeServer, String> {
+    // Имя пайпа — своё на каждый запуск хелпера (`--pipe`, ревью безопасности
+    // 22.10, P1-1): фиксированное имя мог заранее занять локальный пользователь
+    // (pipe squatting) — служба подключилась бы к нему и отдала hello-токен,
+    // ввод оператора (пароли UAC/входа) и приняла бы поддельные кадры.
+    // FILE_FLAG_FIRST_PIPE_INSTANCE: если экземпляр с этим именем уже есть
+    // (чужой), CreateNamedPipeW честно падает, а не делит пайп.
+    pub fn new(name: &str) -> Result<PipeServer, String> {
+        let name_wide: Vec<u16> = name.encode_utf16().chain(std::iter::once(0)).collect();
         // Byte mode, one instance, duplex. 64 KiB buffers are only hints --
         // frames are larger and WriteFile simply blocks until the service
         // drains, which is the entire v1 backpressure story.
@@ -174,8 +153,8 @@ impl PipeServer {
         // DACL: сетевые учётки — не SYSTEM и не локальные Администраторы.
         let h = unsafe {
             let h = CreateNamedPipeW(
-                PCWSTR(PIPE_NAME_WIDE.as_ptr()),
-                PIPE_ACCESS_DUPLEX,
+                PCWSTR(name_wide.as_ptr()),
+                PIPE_ACCESS_DUPLEX | FILE_FLAG_FIRST_PIPE_INSTANCE,
                 PIPE_TYPE_BYTE | PIPE_READMODE_BYTE,
                 1,
                 64 * 1024,
@@ -187,7 +166,7 @@ impl PipeServer {
                 return Err(format!(
                     "CreateNamedPipeW failed, GetLastError={:?} (openMode=0x{:X}, absolute SD)",
                     GetLastError(),
-                    PIPE_ACCESS_DUPLEX.0,
+                    (PIPE_ACCESS_DUPLEX | FILE_FLAG_FIRST_PIPE_INSTANCE).0,
                 ));
             }
             h

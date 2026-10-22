@@ -1780,7 +1780,8 @@ function startAgentMode() {
         log: { warn: (...a) => { console.warn(...a); svcDiag.write('video', a.map(String).join(' ')); } },
       }),
       netFactory: (p) => net.connect(p),
-      killer: (pid) => { nodeSpawn('taskkill', ['/PID', String(pid), '/T', '/F'], { windowsHide: true }); },
+      // Абсолютный путь (ревью безопасности 22.10, P3-1): голое имя искалось бы по PATH.
+      killer: (pid) => { nodeSpawn(path.join(process.env.SystemRoot || 'C:\\Windows', 'System32', 'taskkill.exe'), ['/PID', String(pid), '/T', '/F'], { windowsHide: true }); },
       exePath: helperExe,
       log: { warn: (...a) => { console.warn(...a); svcDiag.write('video', a.map(String).join(' ')); } },
       onFrame: (jpeg) => videoForward.relay?.(BRIDGE_IPC.VIDEO_FRAME, jpeg),

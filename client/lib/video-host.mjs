@@ -57,7 +57,10 @@ export function createFrameReader() {
 }
 
 export function createVideoHost({
-  spawner, netFactory, killer = null, pipeName = PIPE_NAME,
+  // pipeName: null → своё случайное имя на КАЖДЫЙ start() (ревью безопасности
+  // 22.10, P1-1: фиксированное имя мог заранее занять локальный пользователь —
+  // pipe squatting); явное значение — только для юнит-тестов с инъекциями.
+  spawner, netFactory, killer = null, pipeName = null,
   exePath, commandLine,
   // null → свежий токен на КАЖДЫЙ start() (аудит 15.10 P2-2: токен обязан быть
   // одноразовым — переиспользуемый argv-токен живёт вечно); явное значение —
@@ -72,6 +75,7 @@ export function createVideoHost({
   let pid = null;
   let stopped = true;
   let activeToken = null;
+  let activePipe = null;
   const setStatus = (s, extra) => {
     state = s;
     try { onStatus({ state, ...extra }); } catch { /* потребитель не роняет хост */ }
@@ -79,7 +83,7 @@ export function createVideoHost({
 
   function connectPipe(attempt) {
     if (stopped) return;
-    const socket = netFactory(pipeName);
+    const socket = netFactory(activePipe);
     const timer = setTimeout(() => {
       try { socket.destroy(); } catch { /* уже мёртв */ }
       retryOr('connect-timeout');
@@ -146,7 +150,8 @@ export function createVideoHost({
       // Токен и argv строятся на каждый спавн (аудит 15.10 P2-2): argv хелпера
       // виден процессам того же пользователя, вечный токен = накопленный риск.
       activeToken = token ?? crypto.randomBytes(16).toString('hex');
-      const cl = commandLine ?? `"${exePath}" --token ${activeToken}`;
+      activePipe = pipeName ?? `${PIPE_NAME}-${crypto.randomBytes(16).toString('hex')}`;
+      const cl = commandLine ?? `"${exePath}" --token ${activeToken} --pipe ${activePipe}`;
       const r = await spawner.spawnInConsoleSession({ exePath, commandLine: cl });
       if (!r.ok) {
         setStatus('error', { reason: `spawn-${r.reason}` });

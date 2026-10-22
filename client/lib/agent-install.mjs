@@ -52,13 +52,22 @@ export function setupFeedUrl(repo = UPDATE_REPO) {
   return base ? `${base}EnotDesk-win-x64-setup.exe` : null;
 }
 
-export function resolveInstallSource({ execPath = '', portableFile = process.env.PORTABLE_EXECUTABLE_FILE ?? '' } = {}) {
+// Ревью безопасности 22.10 (P2-6): «уже установлено» — только если exe лежит
+// ВНУТРИ самой папки Program Files (сравнение префикса), а не где угодно с
+// «\program files\» в пути (например, Downloads\program files\…): служба от
+// LocalSystem получила бы binPath на файл, который пользователь может подменить.
+export function resolveInstallSource({
+  execPath = '', portableFile = process.env.PORTABLE_EXECUTABLE_FILE ?? '',
+  programFiles = process.env.ProgramW6432 || process.env.ProgramFiles || 'C:\\Program Files',
+} = {}) {
   if (portableFile) {
     const setupUrl = setupFeedUrl();
     return setupUrl ? { mode: 'download', setupUrl } : null;
   }
-  const p = String(execPath ?? '').toLowerCase().replace(/\//g, '\\');
-  if (p.includes('\\program files\\')) return { mode: 'local', appExe: String(execPath) };
+  const norm = (x) => String(x ?? '').toLowerCase().replace(/\//g, '\\').replace(/\\+$/, '');
+  const p = norm(execPath);
+  const root = norm(programFiles);
+  if (root && !p.includes('\\..\\') && p.startsWith(`${root}\\`)) return { mode: 'local', appExe: String(execPath) };
   return null;
 }
 

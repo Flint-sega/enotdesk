@@ -250,18 +250,42 @@ fn run() -> Result<i32, String> {
     // ACL (same-session/same-user), which is the v1 boundary recorded in the
     // helper README.
     let mut token_value = String::new();
+    let mut pipe_name = PIPE_NAME.to_string();
     let mut args = std::env::args().skip(1);
     while let Some(a) = args.next() {
         if a == "--token" {
             token_value = args.next().unwrap_or_default();
+        } else if a == "--pipe" {
+            pipe_name = args.next().unwrap_or_default();
         }
     }
     let token = Arc::new(token_value.trim().to_string());
     if token.is_empty() {
         return Err("no --token argument".into());
     }
+    // Ревью безопасности 22.10 (P1-1): имя пайпа служба задаёт на каждый запуск
+    // (`enotdesk-video-<hex>`); без `--pipe` — прежнее фиксированное имя, только
+    // для ручной диагностики. Любое другое имя — честный отказ.
+    if pipe_name != PIPE_NAME && !valid_pipe_name(&pipe_name) {
+        return Err("bad --pipe argument".into());
+    }
 
     let shared = Arc::new(Shared::new());
+    // Сторож первого клиента (P2-3): служба подключается за секунды после
+    // спавна; если за FIRST_CLIENT_TIMEOUT аутентифицированного клиента так и
+    // не было (служба умерла между спавном и подключением), хелпер выходит сам.
+    {
+        std::thread::Builder::new()
+            .name("first-client-watchdog".into())
+            .spawn(move || {
+                std::thread::sleep(FIRST_CLIENT_TIMEOUT);
+                if !EVER_AUTHENTICATED.load(Ordering::SeqCst) {
+                    log_exit(EXIT_OK, "no authenticated client within first-client timeout");
+                    std::process::exit(EXIT_OK);
+                }
+            })
+            .map_err(|e| format!("first-client watchdog: {e}"))?;
+    }
     // X3 step 0 (spec rev 3): the diagnostic mouse trace is opt-in via the
     // environment. Read once, before any thread that could log it.
     VIDEO_TRACE.store(
@@ -368,7 +392,7 @@ fn run() -> Result<i32, String> {
 
     log_line(&format!(
         "{{\"ev\":\"start\",\"pipe\":\"{}\",\"desktop\":\"{}\",\"session\":{}}}",
-        proto::jstr(PIPE_NAME),
+        proto::jstr(&pipe_name),
         proto::jstr(&ascii(&win::thread_desktop_name())),
         win::current_session_id()
     ));
@@ -397,7 +421,7 @@ fn run() -> Result<i32, String> {
         // starts unauthenticated -- the reader thread flips the shared flag
         // only after a verified hello (audit P1-1).
         shared.authenticated.store(false, Ordering::SeqCst);
-        let pipe = win::PipeServer::new()?;
+        let pipe = win::PipeServer::new(&pipe_name)?;
         if let Err(e) = pipe.connect() {
             // Rare: client vanished between create and connect. Recreate.
             set_last_err(&shared, &format!("pipe: {e}"));
@@ -475,6 +499,15 @@ fn run() -> Result<i32, String> {
             // Loop, recreate the pipe instance and wait for the next client.
             SessionEnd::Broken => {
                 shared.fps.store(0, Ordering::Relaxed);
+                // Ревью безопасности 22.10 (P2-3): служба запускает свежий хелпер
+                // (новые токен и имя пайпа) на каждый сеанс и к старому не
+                // переподключается. После конца аутентифицированного сеанса
+                // хелпер выходит — иначе, переживши службу, он висел бы (от
+                // SYSTEM) на ConnectNamedPipe вечно и держал файлы и рабочий стол.
+                if shared.authenticated.load(Ordering::SeqCst) {
+                    log_line("{\"ev\":\"exit\",\"reason\":\"session-ended\"}");
+                    return Ok(EXIT_OK);
+                }
                 std::thread::sleep(Duration::from_millis(100));
             }
         }
@@ -571,6 +604,7 @@ fn reader_thread(
             }
             // Frames and statuses are gated on this flag (audit P1-1).
             shared.authenticated.store(true, Ordering::SeqCst);
+            EVER_AUTHENTICATED.store(true, Ordering::SeqCst);
         } else {
             handle_command(&shared, &privacy_sleep, &String::from_utf8_lossy(&payload), &input_tx);
         }
@@ -588,6 +622,17 @@ const PIPE_POLL_PERIOD: Duration = Duration::from_millis(30);
 // connection; past it the session is torn down and the helper returns to
 // waiting (reader thread).
 const HELLO_TIMEOUT: Duration = Duration::from_secs(5);
+const FIRST_CLIENT_TIMEOUT: Duration = Duration::from_secs(60);
+static EVER_AUTHENTICATED: AtomicBool = AtomicBool::new(false);
+
+/// Имя пайпа, которое служба передаёт в `--pipe`: `\\.\pipe\enotdesk-video-`
+/// и 16–64 шестнадцатеричных символа.
+fn valid_pipe_name(name: &str) -> bool {
+    match name.strip_prefix(r"\\.\pipe\enotdesk-video-") {
+        Some(rest) => (16..=64).contains(&rest.len()) && rest.bytes().all(|b| b.is_ascii_hexdigit()),
+        None => false,
+    }
+}
 
 fn handle_command(
     shared: &Shared,
