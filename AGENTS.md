@@ -29,7 +29,7 @@ helper/video/  Rust-хелпер Windows: захват DXGI/GDI и ввод в �
 docker/ Dockerfile compose.yaml   серверный стек
 scripts/     quick-setup.sh, install-server.sh, deploy-server.sh, smoke-local.mjs, smoke-remote.mjs, make-icons.mjs, make-mascot.mjs, make-social.mjs (картинки соцпревью)
 site/        публичная витрина (GitHub Pages)
-docs/        SESSION_PROTOCOL, SERVER, AGENT, WEB-OPERATOR, BUILD, MANUAL-QA, ROADMAP, LAB, adr/0001–0033
+docs/        SESSION_PROTOCOL, SERVER, AGENT, WEB-OPERATOR, BUILD, ACCEPTANCE-1.0 (определение готовности 1.0), MANUAL-QA, ROADMAP, LAB, adr/0001–0037
 ```
 
 ## Архитектура (кратко; подробности в docs/ и ADR)
@@ -48,7 +48,7 @@ docs/        SESSION_PROTOCOL, SERVER, AGENT, WEB-OPERATOR, BUILD, MANUAL-QA, RO
 - Всё входящее проходит allowlist и лимиты. Недоступная платформа честно сообщает код причины (`native-unavailable`, `wayland-unsupported-control`, `video-unsupported-platform`, `no-active-session`, `term-busy`…), фейковый успех запрещён.
 - Токены, пароли и коды в БД — только хешами; шифруемые секреты — AES-256-GCM от `ENOT_SECRET_KEY`; токены не попадают в рендерер; секреты не идут в argv и логи.
 - Пользовательские тексты — через словари `client/locales/{ru,en}.mjs` (ключи совпадают, `error.code` не локализуется).
-- ADR в `docs/adr/`: следующий номер — 0036.
+- ADR в `docs/adr/`: следующий номер — 0038 (0036 — ветка экрана входа Windows).
 - README.md (en) ↔ README.ru.md. Лицензия AGPL-3.0.
 
 ## Окружение
