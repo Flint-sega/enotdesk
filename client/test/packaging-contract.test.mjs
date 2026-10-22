@@ -237,3 +237,25 @@ test('packaging: при обновлении деинсталлятор не у�
   assert.ok(guard > 0 && guard < del, 'sc delete — только внутри ${ifNot} ${isUpdated}');
   assert.ok(un.indexOf('${endif}', del) > del, 'ветка закрыта');
 });
+
+// Смоук собранной программы (ACCEPTANCE U-5): релиз не публикуется, пока
+// упакованный EnotDesk на каждой ОС не поднял окно и не прошёл ворота ввода.
+test('packaging: release.yml гоняет смоук собранной программы на трёх ОС до загрузки артефактов', () => {
+  const rel = readFileSync(fileURLToPath(new URL('../../.github/workflows/release.yml', import.meta.url)), 'utf8');
+  const gate = rel.indexOf('Gate: смоук собранной программы');
+  const upload = rel.indexOf('uses: actions/upload-artifact', gate);
+  assert.ok(gate > 0 && upload > gate, 'шаг смоука стоит перед upload-artifact');
+  for (const exe of ['dist/mac-arm64/EnotDesk.app/Contents/MacOS/EnotDesk', 'dist/win-unpacked/EnotDesk.exe', 'xvfb-run -a node scripts/smoke-artifact.mjs dist/linux-unpacked/enotdesk']) {
+    assert.ok(rel.includes(exe), `release.yml: нет смоука «${exe}»`);
+  }
+  const pre = readFileSync(fileURLToPath(new URL('../../.github/workflows/build-pre.yml', import.meta.url)), 'utf8');
+  assert.match(pre, /node scripts\/smoke-artifact\.mjs dist\/win-unpacked\/EnotDesk\.exe/);
+});
+
+test('smoke-artifact.mjs проверяет окно, ворота ввода, снимок и самостоятельный выход', () => {
+  const script = readFileSync(fileURLToPath(new URL('../../scripts/smoke-artifact.mjs', import.meta.url)), 'utf8');
+  for (const marker of ['SMOKE window: created', 'SMOKE gate closed before approved: true', 'SMOKE gate open after approved: true', 'SMOKE OK', "code === 0 && signal == null", 'EDESK_SMOKE_LOG']) {
+    assert.ok(script.includes(marker), `smoke-artifact.mjs: нет проверки «${marker}»`);
+  }
+  assert.match(mainJs, /process\.env\.EDESK_SMOKE_LOG/, 'main.mjs пишет итог смоука в файл для CI');
+});
