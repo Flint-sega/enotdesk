@@ -99,7 +99,7 @@ test('ozone: клиент всегда x11; агент без DISPLAY/WAYLAND_DI
 test('install-linux.sh и install-macos.sh: регистрация по AGENT_CODE_FILE без кода в argv; http — с явной галочкой', () => {
   const macSh = readFileSync(fileURLToPath(new URL('../agent-service/install-macos.sh', import.meta.url)), 'utf8');
   assert.match(installSh, /AGENT_CODE_FILE="\$\{AGENT_CODE_FILE:-\}"/);
-  assert.match(installSh, /EDESK_AGENT_CODE="\$\(head -n1 "\$AGENT_CODE_FILE"\)"[^\n]*\\\n\s+runuser -u "\$AGENT_USER" -- "\$APP_DIR\/enotdesk"/, 'код — в окружении runuser, не аргументом');
+  assert.match(installSh, /EDESK_AGENT_CODE="\$\(head -n1 "\$AGENT_CODE_FILE"\)"[^\n]*\\\r?\n\s+runuser -u "\$AGENT_USER" -- "\$APP_DIR\/enotdesk"/, 'код — в окружении runuser, не аргументом');
   assert.match(installSh, /rm -f "\$AGENT_CODE_FILE"/, 'файл кода удаляется после регистрации');
   for (const [name, sh] of [['linux', installSh], ['macos', macSh]]) {
     assert.match(sh, /allowInsecureHttp/, `${name}: http-адрес без allowInsecureHttp агент молча заменял на 127.0.0.1`);
