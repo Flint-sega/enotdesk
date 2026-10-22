@@ -9,7 +9,7 @@
 - Исходящий интернет: nodejs.org (tarball Node 24) и npm registry (зависимости).
 - Порт сервера: `8080` по умолчанию для тестового HTTP-режима, либо `80`/`443` при TLS через Caddy.
 - Для TURN (coturn) и TLS (Caddy), которые установщик ставит по умолчанию, нужен работающий `apt` и исходящий доступ к репозиториям Debian/Ubuntu и Caddy; флаги `--no-turn` / `--no-tls` отключают их.
-- Порты TURN: `3478` tcp/udp (сигналинг) и `49160–49200`/udp (relay) — откройте их в файрволе или группе безопасности облака (установщик умеет сам, см. `--open-firewall`).
+- Порты TURN: `3478` tcp/udp (сигналинг) и `49160–49999`/udp (relay) — откройте их в файрволе или группе безопасности облака (установщик умеет сам, см. `--open-firewall`). Один сеанс с одним оператором занимает около 5 портов ретрансляции (замер 22.10.2026), так что диапазон рассчитан примерно на 165 одновременных сеансов. Установки до 0.6.29 имели диапазон 49160–49200 (около 7 сеансов) — расширьте его: `install-server.sh --update --reset-turn` и откройте новые порты в файрволе.
 - Свободное место: ~300 МБ на Node.js + релиз + `node_modules`.
 - Архитектура x86_64 (установщик ставит tarball `linux-x64`; на arm64 Node ставится вручную).
 
@@ -372,7 +372,7 @@ journalctl -u enotdesk -p err              # только ошибки
 
 Установщик `install-server.sh` по умолчанию сам разворачивает TURN и TLS — вручную ставить ничего не нужно:
 
-- **TURN (coturn)**: apt-пакет; `/etc/turnserver.conf` с `use-auth-secret` и `static-auth-secret` (секрет генерируется один раз и хранится в env-файле `/etc/enotdesk/enotdesk.env`, 0600, как `ENOT_TURN_SECRET` — повторные запуски дают те же креды); realm и `external-ip` берутся из `ENOT_PUBLIC_URL`; креды для клиентов (`ENOT_TURN_URLS`, `ENOT_TURN_USERNAME`, `ENOT_TURN_PASSWORD`) пишутся в тот же env-файл. Порты: `3478` tcp/udp, relay `49160–49200`/udp. Существующий `/etc/turnserver.conf` без пометки EnotDesk сохраняется как `*.bak-<штамп>`. Повторные запуски и `--update` уже настроенный стек не пересоздают (только обновляют env-файл), внешний TURN с `ENOT_TURN_URLS` в env не трогают; принудительная перенастройка — `--reset-turn`.
+- **TURN (coturn)**: apt-пакет; `/etc/turnserver.conf` с `use-auth-secret` и `static-auth-secret` (секрет генерируется один раз и хранится в env-файле `/etc/enotdesk/enotdesk.env`, 0600, как `ENOT_TURN_SECRET` — повторные запуски дают те же креды); realm и `external-ip` берутся из `ENOT_PUBLIC_URL`; креды для клиентов (`ENOT_TURN_URLS`, `ENOT_TURN_USERNAME`, `ENOT_TURN_PASSWORD`) пишутся в тот же env-файл. Порты: `3478` tcp/udp, relay `49160–49999`/udp. Существующий `/etc/turnserver.conf` без пометки EnotDesk сохраняется как `*.bak-<штамп>`. Повторные запуски и `--update` уже настроенный стек не пересоздают (только обновляют env-файл), внешний TURN с `ENOT_TURN_URLS` в env не трогают; принудительная перенастройка — `--reset-turn`.
 - **TLS (Caddy)**: apt-пакет из официального репозитория; `/etc/caddy/Caddyfile` — `домен → reverse_proxy 127.0.0.1:PORT`, сертификат Let's Encrypt автоматически; сервер переводится на `ENOT_HOST=127.0.0.1`, публичный URL — `https://<домен>`. Существующий `Caddyfile` без пометки EnotDesk сохраняется как `*.bak-<штамп>`. Управляемый `Caddyfile` перезаписывается при каждом `--update`/деплое, поэтому другие сайты на этом же Caddy кладите отдельными файлами `/etc/caddy/sites.d/<имя>.caddy` — последней строкой он делает `import /etc/caddy/sites.d/*.caddy`, и они переживают деплой.
 - Домен берётся из `ENOT_PUBLIC_URL` (например, `ENOT_PUBLIC_URL=https://example.com`). Если домена нет — TLS честно пропускается с предупреждением в логе установки (незащищённый локальный http-режим), TURN при этом ставится (realm = IP).
 - Отказ: `--no-turn` и/или `--no-tls`; план без изменений: `--dry-run`.
@@ -458,7 +458,7 @@ static-auth-secret=$TURN_SECRET
 realm=example.com
 server-name=example.com
 min-port=49160
-max-port=49200
+max-port=49999
 no-cli
 no-multicast-peers
 external-ip=<публичный-IP>
@@ -478,7 +478,7 @@ TURN_PASSWORD="$(printf '%s' "$TURN_USERNAME" | openssl dgst -sha1 -hmac "$TURN_
 # ENOT_TURN_PASSWORD=$TURN_PASSWORD
 ```
 
-Порты в файрволе: `ufw allow 3478/tcp`, `ufw allow 3478/udp`, `ufw allow 49160:49200/udp`.
+Порты в файрволе: `ufw allow 3478/tcp`, `ufw allow 3478/udp`, `ufw allow 49160:49999/udp`.
 
 Если TLS не настроен и сервер работает по http без домена, установщик предупреждает об этом в логе и в итоговом сообщении установки, а страницы `/downloads` и `/invite` дополнительно показывают предупреждающую плашку о небезопасном режиме (её рисует сервер при http без домена).
 

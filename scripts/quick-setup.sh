@@ -765,7 +765,7 @@ print_plan() {
       echo "  порт:            $PORT"
       echo "  firewall (ufw):  $fw_label"
     else
-      echo "  порты:           127.0.0.1:8080 (сервер), 80/443 (Caddy), 3478 + 49160-49200/udp (coturn)"
+      echo "  порты:           127.0.0.1:8080 (сервер), 80/443 (Caddy), 3478 + 49160-49999/udp (coturn)"
       echo "  каталог:         ./enotdesk-docker (compose.yaml, Dockerfile, docker/, .env 0600)"
     fi
     echo "  TURN secret:     $turn_label"
@@ -807,7 +807,7 @@ print_plan() {
       echo "  port:            $PORT"
       echo "  firewall (ufw):  $fw_label"
     else
-      echo "  ports:           127.0.0.1:8080 (server), 80/443 (Caddy), 3478 + 49160-49200/udp (coturn)"
+      echo "  ports:           127.0.0.1:8080 (server), 80/443 (Caddy), 3478 + 49160-49999/udp (coturn)"
       echo "  directory:       ./enotdesk-docker (compose.yaml, Dockerfile, docker/, .env 0600)"
     fi
     echo "  TURN secret:     $turn_label"
