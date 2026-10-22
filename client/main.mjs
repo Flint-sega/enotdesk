@@ -1233,6 +1233,15 @@ function registerIpc() {
     // машине — приёмка 02.10): дисплей и система бодрствуют от создания сеанса
     // до его завершения; на не-Windows/без koffi — no-op внутри либы.
     if (operation === 'session.create' && result.status === 201) keepAwake.acquire();
+    // Тестовая сборка (ENOT_AUTO_SESSION): ID и пароль сеанса — в файл профиля,
+    // чтобы автопрогон приёмки на стенде подключался без ручного ввода (ADR 0037).
+    // В prod-релизах флага нет — файла нет.
+    if (TEST_AUTO_SESSION && operation === 'session.create' && result.status === 201) {
+      try {
+        const report = { hostId: settings.hostId, sessionId: result.body?.sessionId ?? null, password: helpPassword, at: new Date().toISOString() };
+        fs.writeFileSync(path.join(app.getPath('userData'), 'auto-session.json'), JSON.stringify(report), { mode: 0o600 });
+      } catch (err) { bootLog.write('main', `auto-session: отчёт не записан: ${err?.message ?? err}`); }
+    }
     if (operation === 'session.end') keepAwake.release();
     // Ошибки HTTP приходят рендереру как {status, body:{error}} — честно, без выдуманных данных
     return result;
