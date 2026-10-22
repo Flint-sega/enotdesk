@@ -2237,6 +2237,32 @@ export function createServer(opts = {}) {
       }
     });
 
+    function secureDesktopAudit(rt, s, msg) {
+      const base = { unattended: true, machineId: s.machine_id };
+      const count = Number.isSafeInteger(msg.secureInputs) && msg.secureInputs >= 0 ? msg.secureInputs : null;
+      const prev = rt.secureInputs ?? 0;
+      let left = false; // ввод этого heartbeat'а уже учтён записью выхода
+      if (typeof msg.secureDesktop === 'boolean' && msg.secureDesktop !== (rt.secureDesktop ?? false)) {
+        rt.secureDesktop = msg.secureDesktop;
+        if (msg.secureDesktop) {
+          rt.secureEnterInputs = prev;
+          rt.secureInputLogged = false;
+          auditLog(db, s.machine_id, 'security.desktop.enter', s.id, base);
+        } else {
+          const inputs = Math.max(0, (count ?? prev) - (rt.secureEnterInputs ?? prev));
+          auditLog(db, s.machine_id, 'security.desktop.leave', s.id, { ...base, inputs });
+          left = true;
+        }
+      }
+      if (count !== null && count > prev && !left) {
+        if (!rt.secureDesktop || !rt.secureInputLogged) {
+          auditLog(db, s.machine_id, 'security.input', s.id, { ...base, inputs: count - prev });
+        }
+        if (rt.secureDesktop) rt.secureInputLogged = true;
+      }
+      if (count !== null) rt.secureInputs = Math.max(prev, count);
+    }
+
     function handleMessage(ws, raw) {
       let msg;
       try { msg = JSON.parse(raw.toString('utf8')); } catch { return send(ws, { type: 'error', code: 'bad_message', message: 'Некорректное сообщение' }); }
@@ -2264,6 +2290,12 @@ export function createServer(opts = {}) {
             host: !s.machine_id, unattended: !!s.machine_id, ...(s.machine_id ? { machineId: s.machine_id } : {}),
           });
         }
+        // P2-8 (ревью 22.10): защищённый рабочий стол машины (экран входа и
+        // блокировки, UAC). Пишутся переходы и первый ввод за период, не каждый
+        // heartbeat; события security.* пишутся всегда (ADR 0034). Ввод мог
+        // пройти между двумя heartbeat'ами (короткое окно UAC) — тогда рост
+        // счётчика пишется и без перехода.
+        if (rtBeat && s.machine_id) secureDesktopAudit(rtBeat, s, msg);
         // частый стук не нагружает БД: lease пишем не чаще половины интервала
         if (rtBeat && rtBeat.lastBeat && nowMs - rtBeat.lastBeat < cfg.heartbeatMs / 2) {
           return send(ws, { type: 'heartbeat' });

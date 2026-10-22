@@ -287,12 +287,31 @@ export function createAgent({ api, signal, native, policy, termHost, rtc, notify
       }
       return arbiter.isAllowed(op);
     };
+    // P2-8 (ревью 22.10): ввод на защищённый рабочий стол (экран входа и
+    // блокировки, окно UAC) — в журнал сервера. Состояние стола сообщает
+    // хелпер (status: locked/uac), ввод считает хост; сервер пишет переходы
+    // по heartbeat (security.desktop.*, security.input).
+    const secure = { desktop: false, inputs: 0 };
+    const SECURE_INPUT_TYPES = new Set(['button', 'key', 'scroll']);
+    const noteSecureInput = (m) => {
+      if (!secure.desktop || typeof m?.data !== 'string') return;
+      let ev;
+      try { ev = JSON.parse(m.data); } catch { return; }
+      if (SECURE_INPUT_TYPES.has(ev?.type)) secure.inputs += 1;
+    };
+    const noteVideoStatus = (s) => {
+      const h = s?.helper;
+      if (h && typeof h === 'object' && (typeof h.locked === 'boolean' || typeof h.uac === 'boolean')) {
+        secure.desktop = h.locked === true || h.uac === true;
+      }
+    };
     const gatedInputChannel = (ch, op) => ({
       label: ch.label,
       get onmessage() { return ch.onmessage; },
       set onmessage(cb) {
         ch.onmessage = (m) => {
           if (!gateOperatorInput(op, m)) return;
+          noteSecureInput(m);
           cb(m);
         };
       },
@@ -477,7 +496,10 @@ const unsubscribe = client.onMessage((msg) => {
         openRtc();
         // v0.6 (ADR 0027): хелпер видео/ввода живёт в сеансе — спавн в
         // консольном сеансе + pipe; статусы релеются операторам.
-        video?.onStatus?.((s) => { try { client.sendMachineVideo(s); } catch { /* WS мёртв */ } });
+        video?.onStatus?.((s) => {
+          noteVideoStatus(s);
+          try { client.sendMachineVideo(s); } catch { /* WS мёртв */ }
+        });
         video?.start?.();
       }
       if (msg.type === 'operator-joined' && msg.claimId) {
@@ -536,7 +558,11 @@ const unsubscribe = client.onMessage((msg) => {
     });
     const wsBeat = setInterval(() => {
       try {
-        client.heartbeat({ termActive: term ? !!term.isActive() : false });
+        client.heartbeat({
+          termActive: term ? !!term.isActive() : false,
+          secureDesktop: secure.desktop,
+          secureInputs: secure.inputs,
+        });
       } catch { /* сокет уже мёртв — разрыв обработается выше */ }
     }, heartbeatMs);
     try {

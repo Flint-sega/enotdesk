@@ -1143,3 +1143,46 @@ test('toast API: анонимные запросы не выедают IP-бак
   assert.notEqual(op.status, 429, 'бакет не тронут анонимными запросами');
   assert.equal(op.status, 409, 'оператор дошёл до машинной логики (машина офлайн)');
 });
+
+// P2-8 (ревью 22.10): защищённый рабочий стол машины в журнале — переход
+// входа и выхода, первый ввод за период (не каждый), ввод между двумя
+// heartbeat'ами без перехода; события security.* пишутся и при выключенном журнале.
+test('heartbeat машины: экран входа/UAC и ввод на него — в журнале переходами', async (t) => {
+  const { base, port, admin } = await setup(t);
+  const { created, reg } = await onboardAndRegister(base, admin);
+  const claimed = await api(base, 'POST', `/machines/${created.machine.id}/claim`, { token: admin.token, body: { reason: 'Экран входа' } });
+  const { sessionId, claimId } = claimed.json;
+  // рутинный журнал выключен — события безопасности всё равно пишутся (ADR 0034)
+  assert.equal((await api(base, 'POST', '/settings/retention', { token: admin.token, body: { auditEnabled: false, auditDays: 0, historyDays: 90 } })).status, 200);
+  const host = wsConnect(port);
+  await wsAuth(host, { type: 'auth', role: 'host', sessionId, token: reg.token });
+  await host.wait((m) => m.type === 'claim');
+  await api(base, 'POST', `/sessions/${sessionId}/decision`, { token: reg.token, body: { claimId, allow: true } });
+  await host.wait((m) => m.type === 'approved');
+  // ответ сервера на каждый heartbeat — по одному; ждём N-й, а не первый из буфера
+  let beats = 0;
+  const replies = () => host.log.filter((m) => m?.type === 'heartbeat').length;
+  const beat = async (extra) => {
+    beats += 1;
+    const want = beats;
+    host.send(JSON.stringify({ type: 'heartbeat', ...extra }));
+    if (replies() < want) await host.wait(() => replies() >= want);
+  };
+  await beat({ secureDesktop: false, secureInputs: 0 });
+  await beat({ secureDesktop: true, secureInputs: 0 }); // экран блокировки
+  await beat({ secureDesktop: true, secureInputs: 3 }); // ввод пароля
+  await beat({ secureDesktop: true, secureInputs: 5 }); // ещё ввод — без новой записи
+  await beat({ secureDesktop: false, secureInputs: 6 }); // вошли
+  await beat({ secureDesktop: false, secureInputs: 8 }); // короткое окно UAC между heartbeat'ами
+  await beat({ secureDesktop: 'да', secureInputs: -1 }); // мусор не меняет состояние
+  const audit = await api(base, 'GET', '/audit?limit=100', { token: admin.token });
+  const sec = audit.json.items.filter((a) => a.action.startsWith('security.') && a.targetId === sessionId).reverse();
+  assert.deepEqual(sec.map((a) => a.action), ['security.desktop.enter', 'security.input', 'security.desktop.leave', 'security.input']);
+  assert.equal(sec[1].detail.inputs, 3);
+  assert.equal(sec[2].detail.inputs, 6, 'выход: весь ввод за период');
+  assert.equal(sec[3].detail.inputs, 2);
+  for (const a of sec) {
+    assert.equal(a.actorId, created.machine.id);
+    assert.equal(a.detail.unattended, true);
+  }
+});
