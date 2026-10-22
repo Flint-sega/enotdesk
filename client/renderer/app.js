@@ -79,6 +79,9 @@ enot.onSignal(async (msg) => {
       if (state.localStream) { rehomeOperators(); break; }
       clientShow('connected');
       text($('connected-operator'), document.getElementById('consent-operator').textContent);
+      // «оператор видит ваш экран» — только когда захват действительно пошёл
+      // (startHostRtc); на Wayland его ещё ждёт системное окно GNOME (стенд 22.10)
+      hide($('connected-intro'));
       try { await startHostRtc(); } catch (e) {
         // 'ended' мог прийти во время await: не затираем экран завершения
         if (state.session) {

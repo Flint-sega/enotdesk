@@ -10,6 +10,7 @@ contextBridge.exposeInMainWorld('enot', {
   request: (operation, payload) => ipcRenderer.invoke('enot:request', operation, payload),
   openSignal: (params) => ipcRenderer.invoke('enot:openSignal', params),
   sendSignal: (message) => ipcRenderer.invoke('enot:sendSignal', message),
+  captureStatus: (state, reason) => ipcRenderer.invoke('enot:captureStatus', { state, reason }),
   closeSignal: () => ipcRenderer.invoke('enot:closeSignal'),
   sources: () => ipcRenderer.invoke('enot:sources'),
   selectSource: (id) => ipcRenderer.invoke('enot:selectSource', id),

@@ -2,7 +2,7 @@
 // пауза трансляции, персональные pc операторов, адаптивный битрейт.
 // Операторская сторона — программа оператора с сервера (ADR 0033, этап 3).
 
-import { $, enot, text, setBusyAll, errorText } from './dom.js';
+import { $, enot, text, show, setBusyAll, errorText } from './dom.js';
 import { state } from './state.js';
 import { t } from '../lib/i18n.mjs';
 import { wireHostChannel, resetFileReceivers, operatorName } from './session-services.js';
@@ -143,10 +143,21 @@ async function showCaptureDenied(err) {
 // показан), 'os' — ОС/Chromium отказал в самом захвате (perm-текст + версия).
 async function acquirePrimaryStream() {
   let sel;
+  // Wayland (GNOME): список экранов открывает системное окно «поделиться экраном»
+  // и ждёт выбора человека — подсказываем ему и честно говорим оператору, что
+  // изображения пока нет (стенд 22.10: клиент писал «оператор видит ваш экран»,
+  // оператор бесконечно ждал без объяснения)
+  const perms = await enot.permissions().catch(() => ({}));
+  if (perms.wayland) {
+    portalPending = true;
+    text($('client-live-note'), t('client.waylandPick'));
+    enot.captureStatus('connecting', 'wayland-portal').catch(() => {});
+  }
   // macOS без «Записи экрана» отказывает уже на списке экранов (desktopCapturer
   // бросает «Failed to get sources») — это тот же отказ ОС, а не сбой сеанса
-  try { sel = await enot.selectPrimaryScreen(); } catch (err) { return showCaptureDenied(err); }
+  try { sel = await enot.selectPrimaryScreen(); } catch (err) { captureFailedStatus(); return showCaptureDenied(err); }
   if (!sel.ok) {
+    captureFailedStatus();
     text($('client-error-text'), sel.error ?? t('client.sourceUnavailable'));
     clientShow('error');
     return { stream: null, reason: 'sel' };
@@ -154,7 +165,23 @@ async function acquirePrimaryStream() {
   try {
     return { stream: await navigator.mediaDevices.getDisplayMedia({ video: true, audio: false }), reason: null };
   } catch (err) {
+    captureFailedStatus();
     return showCaptureDenied(err);
+  }
+}
+
+// Статус показа экрана операторам (через сервер, как статус видео машины):
+// без него сбой захвата у клиента оператор видел как вечное «ожидаем экран»
+let portalPending = false;
+function captureFailedStatus() {
+  portalPending = false;
+  enot.captureStatus('error', 'capture-denied').catch(() => {});
+}
+function captureStartedStatus() {
+  show($('connected-intro'));
+  if (portalPending) {
+    portalPending = false;
+    enot.captureStatus('running').catch(() => {});
   }
 }
 
@@ -183,6 +210,7 @@ export async function startHostRtc() {
     const stream = got.stream;
     if (epoch !== hostRtcEpoch) { stream.getTracks().forEach((track) => track.stop()); return; }
     state.localStream = stream;
+    captureStartedStatus();
     // Пауза трансляции переживает грейс-переподключение: новый стрим обязан
     // наследовать «Скрыть экран», иначе после reconnect'а оператор снова видит
     // экран при UI «на паузе» (ревью v0.4.3, приватность).
