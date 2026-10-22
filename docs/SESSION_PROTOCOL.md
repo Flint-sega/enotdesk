@@ -63,7 +63,7 @@
 | `ended` | сервер → все | `{reason}` — сеанс окончен. |
 | `idle-warning` | хост → операторы | `{remainingSec}` до завершения по бездействию. |
 | `idle-clear` | хост → операторы | Бездействие снято. |
-| `machine-video` | хост → операторы | Статус видеохелпера машины: `{state: spawning|connecting|running|error|off, reason?}`. |
+| `machine-video` | хост → операторы | Статус видео: у машины — видеохелпера, у клиента помощи — показа экрана (`reason: wayland-portal` — ждём выбор экрана в системном окне GNOME, `capture-denied` — захват не начался): `{state: spawning|connecting|running|error|off, reason?}`. |
 | `file-link` | хост ↔ операторы | Ссылка на файл в резервном релее `/api/v1/relay/…` (`{name, size, url}`). |
 | `error` | сервер → участник | `{code, message}` — ошибка без закрытия (например `not_approved`, `rate_limited`, `bad_signal`). |
 

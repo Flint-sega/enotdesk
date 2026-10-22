@@ -778,6 +778,10 @@ async function onSignal(msg) {
       // не показывать ложное «недоступно» ~13 с); error/off — честная причина
       // поверх качества.
       if (msg.state === 'running') setVideoStatus(null);
+      // клиент помощи на Wayland: изображение появится после выбора экрана в
+      // системном окне GNOME; отказ или отмена захвата — честно, не «ожидаем»
+      else if (msg.reason === 'wayland-portal') setVideoStatus(t('web.video.waylandPortal'));
+      else if (msg.reason === 'capture-denied') setVideoStatus(t('web.video.captureDenied'));
       else if (msg.state === 'spawning' || msg.state === 'connecting') setVideoStatus(t('web.video.starting'));
       // волна 0.6.19: вне Windows захвата нет — осмысленный статус вместо
       // spawn-native-unavailable (throw koffi.load('kernel32.dll') на Linux).

@@ -156,3 +156,28 @@ test('WS: первый пакет должен быть auth в течение �
   ws.send(JSON.stringify({ type: 'signal', data: OFFER }));
   assert.equal(await ws.closeCode(), 4002);
 });
+
+// A-2w (стенд 22.10): клиент помощи сообщает операторам статус показа экрана тем же
+// machine-video, что и машина: ждём системное окно Wayland / захват не удался.
+// Сервер пересылает только allowlist (state, короткая reason) и только в approved.
+test('attended: статус показа экрана клиента (machine-video) доходит до оператора', async (t) => {
+  const { base, port, admin } = await setup(t);
+  const reg = await api(base, 'POST', '/sessions');
+  const { sessionId, password, hostToken } = reg.json;
+  const host = wsConnect(port);
+  await wsAuth(host, { type: 'auth', role: 'host', sessionId, token: hostToken });
+  const claim = await api(base, 'POST', `/sessions/${sessionId}/claim`, { token: admin.token, body: { password, contactId: null } });
+  const { claimId } = claim.json;
+  const op = wsConnect(port);
+  await wsAuth(op, { type: 'auth', role: 'operator', sessionId, token: admin.token, claimId });
+  const approvedOP = op.wait((m) => m.type === 'approved');
+  await api(base, 'POST', `/sessions/${sessionId}/decision`, { token: hostToken, body: { claimId, allow: true } });
+  await approvedOP;
+  host.send(JSON.stringify({ type: 'machine-video', state: 'connecting', reason: 'wayland-portal', extra: 'x'.repeat(500) }));
+  const mv = await op.wait((m) => m.type === 'machine-video');
+  assert.deepEqual(mv, { type: 'machine-video', state: 'connecting', reason: 'wayland-portal' });
+  host.send(JSON.stringify({ type: 'machine-video', state: 'error', reason: 'capture-denied' }));
+  const mv2 = await op.wait((m) => m.type === 'machine-video' && m.state === 'error');
+  assert.equal(mv2.reason, 'capture-denied');
+  host.close(); op.close();
+});

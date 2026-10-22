@@ -1277,6 +1277,17 @@ function registerIpc() {
     return startSignal(params);
   });
 
+  // Статус показа экрана клиента помощи операторам — тем же сообщением, что статус
+  // видео машины (machine-video): ждём системное окно Wayland, захват пошёл,
+  // захват не удался. Только allowlist состояний и причин.
+  ipcMain.handle('enot:captureStatus', (e, status) => {
+    guard(e);
+    const st = ['connecting', 'running', 'error'].includes(status?.state) ? status.state : null;
+    const reason = ['wayland-portal', 'capture-denied'].includes(status?.reason) ? status.reason : '';
+    if (!st || !signal) return false;
+    try { signal.sendMachineVideo({ state: st, ...(reason ? { reason } : {}) }); return true; } catch { return false; }
+  });
+
   ipcMain.handle('enot:sendSignal', (e, message) => {
     guard(e);
     if (!signal) throw new Error('Сигнальное соединение закрыто');
