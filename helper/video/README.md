@@ -23,14 +23,21 @@ proven `spike/video-dxgi` — removed from the repo on 2026-10-19, see git histo
 ## Launch contract
 
 1. Service (SYSTEM) starts the helper in the console session (token of the
-   logged-on user, `CreateProcessAsUser`) with `--token <hex>` on the command
-   line (v0.6: DETACHED spawn has no stdin; the command line is visible only
-   within the same trust domain as the pipe DACL — same session/user).
-2. No/empty `--token` -> exit code 1.
+   logged-on user, `CreateProcessAsUser`) with `--token <hex> --pipe <name>`
+   on the command line (v0.6: DETACHED spawn has no stdin). Both are fresh for
+   every spawn: the token is 32 hex chars, the pipe name is
+   `\\.\pipe\enotdesk-video-<32 hex>` (security review 22.10: a fixed name
+   could be pre-created by a local user — pipe squatting).
+2. No/empty `--token` or a `--pipe` outside `\\.\pipe\enotdesk-video-<16..64 hex>`
+   -> exit code 1 (without `--pipe` the legacy fixed name is used, manual
+   diagnostics only).
 3. Helper creates the pipe server with an explicit protected DACL granting
    GENERIC_ALL only to SYSTEM (S-1-5-18) and Administrators (S-1-5-32-544);
-   Everyone and anonymous have no entry — plus `PIPE_REJECT_REMOTE_CLIENTS` —
-   then blocks in `ConnectNamedPipe`. The DACL is built the canonical ABSOLUTE
+   Everyone and anonymous have no entry, and with
+   `FILE_FLAG_FIRST_PIPE_INSTANCE` (an existing instance with that name makes
+   creation fail instead of sharing it). `PIPE_REJECT_REMOTE_CLIENTS` is NOT
+   set (live Windows 10 rejects it with error 87); remote SMB clients are cut
+   by the DACL. Then the helper blocks in `ConnectNamedPipe`. The DACL is built the canonical ABSOLUTE
    way (see "Pipe security" below).
 4. Service connects, then MUST send `hello` (type 0) with the same token as the
    first message, within 5 seconds of connecting. Mismatch -> session torn
@@ -38,8 +45,12 @@ proven `spike/video-dxgi` — removed from the repo on 2026-10-19, see git histo
    (`{"ev":"hello","result":"timeout"}` on stdout), helper returns to waiting.
 5. Until the hello is verified, no byte leaves the helper: no frames, no
    status documents.
-6. Shutdown: the service kills the helper (`taskkill /T /F` by pid). There is
-   no stdin-based shutdown signal (no stdin at all).
+6. Shutdown: the service kills the helper (`taskkill /T /F` by pid). The
+   helper also exits by itself after its authenticated session ends (the
+   service spawns a fresh helper per session and never reconnects) and when
+   no client authenticates within 60 s of start — an orphan must not outlive
+   a dead service. The NSIS installer also stops `enotdesk-video.exe` by name
+   before replacing files.
 
 stdout carries **only ASCII JSON diagnostic lines**: one `start` event, one
 `tick` every 10 s (`{"ev":"tick","state":"waiting|live","mode":"dxgi|gdi",

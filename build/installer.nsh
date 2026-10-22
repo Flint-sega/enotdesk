@@ -34,6 +34,10 @@
   Pop $R1
   nsExec::Exec "$SYSDIR\taskkill.exe /F /IM EnotDesk.exe /T"
   Pop $R1
+  ; The video helper may outlive a killed agent (security review 22.10, P2-3)
+  ; and would keep its exe in resources locked: stop it by name too.
+  nsExec::Exec "$SYSDIR\taskkill.exe /F /IM enotdesk-video.exe /T"
+  Pop $R1
   ; Wait until the exe is free (up to 30 x 500ms): sc stop is async, the
   ; service process may take a moment to exit. Probe = open the exe for
   ; write; for a running process that fails with a sharing violation.
