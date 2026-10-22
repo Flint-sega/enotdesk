@@ -1,8 +1,13 @@
 # Релизы (истории 33-36): пуш тега v* → три платформы → артефакты + SHA256 → GitHub Release.
 # Этот же workflow — источник фида автообновления: рядом с артефактами уходят
-# latest-mac.yml / latest.yml / latest-linux.yml (их пишет electron-builder, когда
-# задан publish.provider=generic; URL фида = .../releases/latest/download/), а клиент
+# latest.yml / latest-linux.yml (их пишет electron-builder, когда задан
+# publish.provider=generic; URL фида = .../releases/latest/download/), а клиент
 # (client/main.mjs startUpdater) читает их generic-провайдером electron-updater.
+# latest-mac.yml НЕ публикуется (22.10.2026): неподписанный mac самообновиться не
+# может (Squirrel.Mac), прежние 0.6.x по нему скачивали обновление, закрывались и
+# снова стартовали старой версией. Mac узнаёт версию из latest.yml и показывает
+# уведомление (client/lib/updater.mjs notifyFeedName). Подписанной сборке — новый
+# канал с другим именем фида, чтобы старые клиенты его не видели.
 # Сборки НЕ подписаны (бюджета на сертификаты нет) — запуск без подписи описан в
 # README «Unsigned builds» и в теле релиза; блок подписи ниже закомментирован и
 # включается без переделки (история 36).
@@ -91,7 +96,6 @@ jobs:
           if-no-files-found: error
           path: |
             dist/EnotDesk-*
-            dist/latest-mac.yml
             dist/latest.yml
             dist/latest-linux.yml
 
@@ -193,24 +197,23 @@ jobs:
 
             **Без подписи — как запустить**
 
-            - **macOS**: `EnotDesk-mac-arm64.dmg` — **установщик**: откройте и перетащите EnotDesk в «Программы»; `EnotDesk-mac-arm64.zip` — портативная версия (её же использует автообновление). При первом запуске: правая кнопка по EnotDesk → «Открыть» → «Открыть» (или `xattr -cr /Applications/EnotDesk.app`), затем разрешите «Запись экрана» и «Универсальный доступ».
+            - **macOS**: `EnotDesk-mac-arm64.dmg` — **установщик**: откройте и перетащите EnotDesk в «Программы»; `EnotDesk-mac-arm64.zip` — портативная версия. При первом запуске macOS скажет, что не может проверить разработчика: нажмите «Готово», откройте «Системные настройки» → «Конфиденциальность и безопасность», внизу — «Всё равно открыть» для EnotDesk и подтвердите (на macOS 14 и старше работает и правая кнопка → «Открыть»; либо `xattr -cr /Applications/EnotDesk.app`). Затем разрешите «Запись экрана» и «Универсальный доступ». Новые версии Mac-сборка не ставит сама — она сообщает о них, а скачать нужно отсюда.
             - **Windows**: SmartScreen → «Подробнее» → «Выполнить в любом случае».
               - `EnotDesk-win-x64.exe` — **портативная** версия: один файл, без установки, запуск двойным кликом.
               - `EnotDesk-win-x64-setup.exe` — **установщик**: ставит программу в систему (Program Files), создаёт ярлыки.
             - **Linux**: `chmod +x EnotDesk-linux-*.AppImage` и запустите двойным кликом.
 
             EN:
-            - **macOS**: `EnotDesk-mac-arm64.dmg` — **installer**: open it and drag EnotDesk to Applications; `EnotDesk-mac-arm64.zip` — portable (also used by auto-update). On first launch: right-click EnotDesk → Open → Open (or `xattr -cr /Applications/EnotDesk.app`), then grant Screen Recording and Accessibility.
+            - **macOS**: `EnotDesk-mac-arm64.dmg` — **installer**: open it and drag EnotDesk to Applications; `EnotDesk-mac-arm64.zip` — portable. On first launch macOS says it cannot verify the developer: click Done, open System Settings → Privacy & Security, scroll down to “Open Anyway” for EnotDesk and confirm (on macOS 14 and older right-click → Open also works; or `xattr -cr /Applications/EnotDesk.app`). Then grant Screen Recording and Accessibility. The Mac build does not install new versions by itself — it tells you about them; download them here.
             - **Windows**: SmartScreen → More info → Run anyway.
               - `EnotDesk-win-x64.exe` — **portable**: single file, no installation, just run it.
               - `EnotDesk-win-x64-setup.exe` — **installer**: installs to the system (Program Files) with shortcuts.
             - **Linux**: `chmod +x EnotDesk-linux-*.AppImage` and run it.
 
-            Целостность: `sha256sum -c checksums-sha256.txt`. Клиент проверяет обновление раз в сутки по фиду этого релиза (latest*.yml); Windows-сборка portable обновляется скачиванием новой версии со страницы релизов.
+            Целостность: `sha256sum -c checksums-sha256.txt`. Клиент проверяет обновление раз в сутки по фиду этого релиза (latest.yml / latest-linux.yml); установленная Windows-сборка и Linux обновляются сами после подтверждения, Windows portable и macOS — скачиванием новой версии со страницы релизов.
           files: |
             dist/EnotDesk-*
             dist/enotdesk-server.tar.gz
             dist/checksums-sha256.txt
-            dist/latest-mac.yml
             dist/latest.yml
             dist/latest-linux.yml

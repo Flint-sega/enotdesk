@@ -40,7 +40,7 @@ import { createSessionSpawner } from './lib/session-spawn.mjs';
 import { createVideoHost } from './lib/video-host.mjs';
 import { inputEventToCommands } from './lib/input-translate.mjs';
 import { resolveConsoleUser, noNewPrivs } from './lib/console-user.mjs';
-import { UPDATE_REPO, updateFeedUrl, platformFeedName, updateDecision, updateInstallDecision } from './lib/updater.mjs';
+import { UPDATE_REPO, updateFeedUrl, notifyFeedName, updateDecision, updateInstallDecision } from './lib/updater.mjs';
 import { isNewerVersion } from './lib/version-check.mjs';
 import { t, setLocale } from './lib/i18n.mjs';
 import { createSvcDiag, envDiagSlice, maskJoinTokens } from './lib/svc-diag.mjs';
@@ -440,13 +440,19 @@ function startUpdater() {
   if (SMOKE || AGENT || !app.isPackaged) return;
   const feedUrl = updateFeedUrl(UPDATE_REPO);
   const notify = (payload) => sendToRenderer('enot:update', payload);
+  // mac без подписи (флаг сборки ENOT_MAC_SELF_UPDATE не вшит) — только
+  // уведомление: Squirrel.Mac неподписанное приложение не ставит (updater.mjs).
+  const macSelfUpdate = pkg.ENOT_MAC_SELF_UPDATE === true || pkg.ENOT_MAC_SELF_UPDATE === 'true';
+  const installPolicy = updateInstallDecision({ platform: process.platform, winInstalled: WIN_INSTALLED, macSelfUpdate });
   let autoUpdater = null;
-  try { autoUpdater = createRequire(import.meta.url)('electron-updater').autoUpdater; } catch { autoUpdater = null; }
+  if (process.platform !== 'darwin' || macSelfUpdate) {
+    try { autoUpdater = createRequire(import.meta.url)('electron-updater').autoUpdater; } catch { autoUpdater = null; }
+  }
   if (!autoUpdater) {
-    console.log(`[enotdesk] автообновление выключено: пакет electron-updater не установлен (уведомления о версиях по фиду ${feedUrl} продолжаются)`);
+    bootLog.write('update', `только уведомления о версиях: фид ${feedUrl}${notifyFeedName(process.platform, { macSelfUpdate })}`);
     const check = async () => {
       try {
-        const res = await fetch(feedUrl + platformFeedName(process.platform));
+        const res = await fetch(feedUrl + notifyFeedName(process.platform, { macSelfUpdate }));
         const d = updateDecision({ current: app.getVersion(), feedText: res.ok ? await res.text() : null });
         if (d.update) notify({ version: d.version, auto: false });
       } catch { /* баннер не критичен, следующий цикл через сутки */ }
@@ -460,7 +466,6 @@ function startUpdater() {
   // (диалог на update-downloaded ниже). Дефолт — не ставить. Портативный
   // .exe Windows самоустановку не поддерживает (запущенный самораспаковщик
   // не заменить) — только уведомление.
-  const installPolicy = updateInstallDecision({ platform: process.platform, winInstalled: WIN_INSTALLED });
   autoUpdater.autoDownload = installPolicy.autoDownload;
   autoUpdater.autoInstallOnAppQuit = false;
   // Решения updater'а (в т.ч. отказ ставить при выходе, ошибки запуска
