@@ -46,6 +46,7 @@ import { t, setLocale } from './lib/i18n.mjs';
 import { createSvcDiag, envDiagSlice, maskJoinTokens } from './lib/svc-diag.mjs';
 import { createKeepAwake } from './lib/keep-awake.mjs';
 import { createBootLog } from './lib/boot-log.mjs';
+import { linuxOzonePlatform } from './lib/ozone.mjs';
 import { gdmVideoStatus } from './lib/gdm-status.mjs';
 import { applyDesktopEntry } from './lib/desktop-entry.mjs';
 
@@ -76,10 +77,17 @@ const earlyNotes = [];
 // Wayland-сессии (лаба 05.10): Electron 44 переменную ELECTRON_OZONE_PLATFORM_HINT
 // игнорирует и без флага падает при старте на Wayland. Явно ведём клиент через
 // Xwayland (на X11-сессиях флаг no-op). Пользовательский --ozone-platform не перекрываем.
+// Агент без графического сеанса — headless (см. client/lib/ozone.mjs).
 try {
   if (process.platform === 'linux' && !app.commandLine.hasSwitch('ozone-platform')) {
-    app.commandLine.appendSwitch('ozone-platform', 'x11');
-    earlyNotes.push('linux: --ozone-platform=x11 (без флага Electron 44 падает на Wayland-сессиях)');
+    const ozone = linuxOzonePlatform({ agent: process.env.EDESK_AGENT === '1', env: process.env });
+    app.commandLine.appendSwitch('ozone-platform', ozone);
+    // без дисплея GPU-процесс не инициализируется и сыплет ошибками EGL/ANGLE —
+    // окон у агента нет, ускорение ему не нужно
+    if (ozone === 'headless') app.commandLine.appendSwitch('disable-gpu');
+    earlyNotes.push(ozone === 'headless'
+      ? 'linux: --ozone-platform=headless (агент без DISPLAY: видео и ввод недоступны)'
+      : 'linux: --ozone-platform=x11 (без флага Electron 44 падает на Wayland-сессиях)');
   }
 } catch { /* commandLine недоступен до ready — живём как есть */ }
 

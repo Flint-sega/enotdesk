@@ -81,9 +81,29 @@ test('packaging: enotdesk-agent.service содержит лабовый hardenin
 // boot-лога — контракт на уровне текста: регрессия «убрал флаг/лог» ловится здесь.
 const mainJs = readFileSync(fileURLToPath(new URL('../main.mjs', import.meta.url)), 'utf8');
 
-test('packaging: main.mjs форсирует --ozone-platform=x11 на linux', () => {
+test('packaging: main.mjs выбирает --ozone-platform на linux (x11, агент без DISPLAY — headless)', () => {
   assert.match(mainJs, /process\.platform === 'linux' && !app\.commandLine\.hasSwitch\('ozone-platform'\)/, 'нужен гвард linux + уважение пользовательского флага');
-  assert.match(mainJs, /appendSwitch\('ozone-platform', 'x11'\)/);
+  assert.match(mainJs, /linuxOzonePlatform\(\{ agent: process\.env\.EDESK_AGENT === '1', env: process\.env \}\)/);
+  assert.match(mainJs, /appendSwitch\('ozone-platform', ozone\)/);
+});
+
+test('ozone: клиент всегда x11; агент без DISPLAY/WAYLAND_DISPLAY — headless (лаба 22.10)', async () => {
+  const { linuxOzonePlatform } = await import('../lib/ozone.mjs');
+  assert.equal(linuxOzonePlatform({ agent: false, env: {} }), 'x11');
+  assert.equal(linuxOzonePlatform({ agent: false, env: { WAYLAND_DISPLAY: 'wayland-0' } }), 'x11');
+  assert.equal(linuxOzonePlatform({ agent: true, env: {} }), 'headless');
+  assert.equal(linuxOzonePlatform({ agent: true, env: { DISPLAY: ':0' } }), 'x11');
+  assert.equal(linuxOzonePlatform({ agent: true, env: { WAYLAND_DISPLAY: 'wayland-0' } }), 'x11');
+});
+
+test('install-linux.sh и install-macos.sh: регистрация по AGENT_CODE_FILE без кода в argv; http — с явной галочкой', () => {
+  const macSh = readFileSync(fileURLToPath(new URL('../agent-service/install-macos.sh', import.meta.url)), 'utf8');
+  assert.match(installSh, /AGENT_CODE_FILE="\$\{AGENT_CODE_FILE:-\}"/);
+  assert.match(installSh, /EDESK_AGENT_CODE="\$\(head -n1 "\$AGENT_CODE_FILE"\)"[^\n]*\\\r?\n\s+runuser -u "\$AGENT_USER" -- "\$APP_DIR\/enotdesk"/, 'код — в окружении runuser, не аргументом');
+  assert.match(installSh, /rm -f "\$AGENT_CODE_FILE"/, 'файл кода удаляется после регистрации');
+  for (const [name, sh] of [['linux', installSh], ['macos', macSh]]) {
+    assert.match(sh, /allowInsecureHttp/, `${name}: http-адрес без allowInsecureHttp агент молча заменял на 127.0.0.1`);
+  }
 });
 
 test('packaging: boot-лог always-on и покрывает жизненные события окна', () => {

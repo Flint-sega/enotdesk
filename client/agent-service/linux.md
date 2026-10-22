@@ -8,13 +8,25 @@ Unit с тем же хардненингом, что у серверного (`s
 
 ## Установка
 
-1. Распакуйте сборку клиента, например в `/opt/enotdesk-agent/EnotDesk` (бинарник `enotdesk` внутри).
-2. Запустите установщик с адресом сервера:
+1. Распакуйте AppImage в каталог службы:
+
+```bash
+chmod +x EnotDesk-<версия>-linux-x86_64.AppImage
+./EnotDesk-<версия>-linux-x86_64.AppImage --appimage-extract
+sudo mv squashfs-root /opt/enotdesk-agent/EnotDesk
+sudo chown -R root:root /opt/enotdesk-agent/EnotDesk && sudo chmod -R a+rX /opt/enotdesk-agent/EnotDesk
+sudo chmod 4755 /opt/enotdesk-agent/EnotDesk/chrome-sandbox
+```
+
+2. Получите одноразовый код машины (программа оператора → «Машины» → «Добавить машину») и сохраните
+   его в файл, например `/root/code.txt` (первая строка).
+3. Запустите установщик:
 
 ```bash
 sudo SERVER_URL="https://enotdesk.example.com" \
      APP_DIR="/opt/enotdesk-agent/EnotDesk" \
      AGENT_NAME="nas-office" \
+     AGENT_CODE_FILE=/root/code.txt \
      ./install-linux.sh
 ```
 
@@ -22,20 +34,19 @@ sudo SERVER_URL="https://enotdesk.example.com" \
 `settings.json` (адрес сервера) в профиль `~/.config/enotdesk/agent` (0600; весь `.config`
 отдаётся агенту — Electron именует userData строчным именем пакета, регистр обязан совпадать),
 пишет `/etc/enotdesk-agent/agent.env` (0600: `EDESK_AGENT_NAME`, опционально `DISPLAY`/`XAUTHORITY`),
-копирует unit (подставляя ваш `APP_DIR`), делает `daemon-reload` + `enable --now`.
+**регистрирует машину по коду** (код передаётся только окружением процесса, не в командной строке;
+после регистрации файл кода удаляется, токен — `agent-token.json`, 0600; журнал регистрации —
+`/var/lib/enotdesk-agent/register.log`), копирует unit (подставляя ваш `APP_DIR`), делает
+`daemon-reload` + `enable --now`. Повторный запуск без кода (машина уже зарегистрирована) обновляет
+настройки и перезапускает службу с прежним токеном.
 
-## Первый запуск с onboarding-кодом
+Адрес `http://…` (без HTTPS) скрипт принимает с предупреждением и записывает согласие на HTTP
+(`allowInsecureHttp`) — только для тестового сервера. Без этого агент отбросил бы такой адрес.
 
-Как и на Windows, рекомендуемый порядок — код используется один раз и не хранится: перед установкой
-службы выполните вручную под будущим пользователем:
-
-```bash
-sudo -u enotdesk-agent \
-  env HOME=/var/lib/enotdesk-agent EDESK_AGENT=1 EDESK_AGENT_NAME=nas-office \
-      EDESK_AGENT_CODE=123456789 /opt/enotdesk-agent/EnotDesk/enotdesk
-```
-
-После «запущен» прервите (Ctrl+C) и ставьте службу — она стартует уже с токеном.
+**Без графического сеанса** (сервер, NAS, служба без `DISPLAY`) агент запускается в безэкранном режиме
+(`--ozone-platform=headless`, проверено 22.10 на Debian 13): регистрация, «онлайн», терминал,
+сообщения и файлы работают, видео и управление — нет (честный статус). Для экрана и управления
+нужен сеанс X11 (ниже).
 
 ## Ввод в консольную сессию: X11 vs Wayland — честно
 
