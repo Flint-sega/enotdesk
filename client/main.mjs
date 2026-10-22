@@ -1889,6 +1889,11 @@ function startAgentMode() {
     // Сообщение на экран машины (R08): платформа известна здесь, текст приходит
     // из heartbeat-ответа сервера. Показ не блокирует цикл (см. deliverToast).
     notify: (text) => showToast(process.platform, text),
+    // ADR 0037 (Р5): сообщение человеку за компьютером о подключении через
+    // службу и о конце сеанса — тексты из словаря.
+    noticeText: (kind, { operator = '', reason = '' } = {}) => (kind === 'start'
+      ? t(reason ? 'agent.notice.startReason' : 'agent.notice.start', { operator: operator || t('agent.notice.someone'), reason })
+      : t('agent.notice.end')),
     // W-U6 (v0.5): чат (тост консольному пользователю) и файлы (запись в общую
     // папку) из machine-сеанса. Диагностика — в svc-diag, как у агента.
     services: createMachineServices({

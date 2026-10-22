@@ -1130,3 +1130,45 @@ test('W-C1: offer от второго оператора (другой from) н�
     await sleep(10);
   }
 });
+
+// ADR 0037 (Р5): человеку за компьютером — сообщение о подключении через службу
+// (с причиной из claim) и о конце сеанса; повторный claim после обрыва — без дубля.
+test('уведомление человеку: начало с причиной один раз, конец — при ended', async () => {
+  const shown = [];
+  let sessionCalls = 0;
+  const { api } = fakeApi({
+    session: () => {
+      sessionCalls += 1;
+      return sessionCalls <= 2
+        ? { status: 200, body: { sessionId: 88, state: 'pending-consent', claimId: 'cl-9' } }
+        : { status: 204, body: null };
+    },
+  });
+  const sig = fakeSignalFactory();
+  const agent = createAgent({
+    api,
+    signal: sig.factory,
+    native: createNativeInput({ adapter: inertAdapter() }),
+    policy: { tokenStore: memoryStore(), heartbeatMs: 10, backoffBaseMs: 10, backoffMaxMs: 40 },
+    notify: async (text) => { shown.push(text); return { ok: true }; },
+    noticeText: (kind, d = {}) => (kind === 'start' ? `start:${d.operator}:${d.reason}` : 'end'),
+  });
+  try {
+    agent.start({ code: 'C1' });
+    await sleep(30);
+    sig.clients[0].emit({ type: 'claim', claimId: 'cl-9', operator: { id: 'u1', name: 'Анна' }, reason: 'обновить 1С' });
+    await sleep(10);
+    sig.clients[0].emit({ type: 'socket-closed', code: 1006, reason: 'net-drop' }); // обрыв — тот же сеанс
+    await sleep(60);
+    const c = sig.clients.at(-1);
+    c.emit({ type: 'claim', claimId: 'cl-9', operator: { id: 'u1', name: 'Анна' }, reason: 'обновить 1С' }); // replay
+    await sleep(10);
+    assert.deepEqual(shown, ['start:Анна:обновить 1С'], 'начало — один раз, с именем и причиной');
+    c.emit({ type: 'ended' });
+    await sleep(30);
+    assert.deepEqual(shown, ['start:Анна:обновить 1С', 'end'], 'конец сеанса — отдельным сообщением');
+  } finally {
+    agent.stop();
+    await sleep(10);
+  }
+});
