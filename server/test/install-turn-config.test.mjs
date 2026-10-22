@@ -27,3 +27,11 @@ test('install-server.sh: в строках конфига coturn нет комм
   assert.ok(lines.length >= 8, 'строки конфига найдены');
   for (const l of lines) assert.ok(!l.includes('#'), `строка конфига с комментарием: ${l}`);
 });
+
+test('install-server.sh и docker: диапазон ретрансляции 49160–49999 (замер 22.10: ~5 портов на сеанс)', () => {
+  assert.match(turnBlock, /echo "min-port=49160"/);
+  assert.match(turnBlock, /echo "max-port=49999"/);
+  assert.match(script, /ufw allow 49160:49999\/udp/, 'файрвол открывает тот же диапазон');
+  const entry = readFileSync(path.join(import.meta.dirname, '..', '..', 'docker', 'coturn', 'entrypoint.sh'), 'utf8');
+  assert.match(entry, /^max-port=49999$/m, 'docker-coturn — тот же диапазон');
+});

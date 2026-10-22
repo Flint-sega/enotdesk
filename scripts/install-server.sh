@@ -108,7 +108,7 @@ EnotDesk — установщик сервера.
   ENOT_TRUSTED_PROXY доверенные обратные прокси: IP или IPv4-CIDR через запятую
                      (доверие X-Forwarded-For); пусто — заголовок не доверяется
 
-По умолчанию установщик сам ставит TURN (coturn: порт 3478 tcp/udp, relay 49160–49200/udp,
+По умолчанию установщик сам ставит TURN (coturn: порт 3478 tcp/udp, relay 49160–49999/udp,
 static-auth-secret генерируется в env-файл 0600, realm — из ENOT_PUBLIC_URL) и TLS
 (Caddy из официального репозитория: авто-HTTPS на 80/443 tcp+udp, домен из ENOT_PUBLIC_URL
 → 127.0.0.1:PORT). Уже настроенный внешний TURN из env-файла не перезаписывается;
@@ -443,7 +443,7 @@ setup_turn() {
     echo "realm=$REALM"
     echo "server-name=$REALM"
     echo "min-port=49160"
-    echo "max-port=49200"
+    echo "max-port=49999"
     echo "no-cli"
     echo "no-multicast-peers"
     [ -n "$external_ip" ] && echo "external-ip=$external_ip"
@@ -463,7 +463,7 @@ setup_turn() {
   fi
   systemctl enable --now coturn >/dev/null 2>&1 || die "не удалось включить службу coturn (journalctl -u coturn)"
   systemctl restart coturn || die "coturn не запустился — смотрите journalctl -u coturn"
-  info "coturn настроен: 3478 tcp/udp, relay 49160–49200/udp, креды TURN — в env-файле"
+  info "coturn настроен: 3478 tcp/udp, relay 49160–49999/udp, креды TURN — в env-файле"
 }
 
 # Волна A (100%): клиентские сборки из последнего GitHub-релиза → $DIST_DIR,
@@ -703,7 +703,7 @@ print_plan() {
       echo "  TURN (coturn):      пропущен — в env уже есть ENOT_TURN_URLS (внешний TURN; перенастроить: --reset-turn)"
     else
       echo "  TURN (coturn):      поставить apt-пакет; realm $REALM; static-auth-secret — в env-файл (0600)"
-      echo "                      порты: 3478 tcp/udp, relay 49160–49200/udp"
+      echo "                      порты: 3478 tcp/udp, relay 49160–49999/udp"
     fi
   else
     echo "  TURN (coturn):      пропущен (--no-turn)"
@@ -730,7 +730,7 @@ print_plan() {
   if [ "$OPEN_FIREWALL" = "1" ]; then
     local fw_ports=""
     if [ "$TLS_ACTIVE" = "1" ]; then fw_ports="80,443/tcp, 443/udp (HTTP/3)"; else fw_ports="$PORT/tcp"; fi
-    if [ "$SETUP_TURN" = "1" ]; then fw_ports="$fw_ports, 3478 tcp/udp, 49160:49200/udp"; fi
+    if [ "$SETUP_TURN" = "1" ]; then fw_ports="$fw_ports, 3478 tcp/udp, 49160:49999/udp"; fi
     echo "  ufw:                открыть $fw_ports, если ufw активен"
   else
     echo "  ufw:                не трогать"
@@ -1003,8 +1003,8 @@ if [ "$OPEN_FIREWALL" = "1" ]; then
     if [ "$SETUP_TURN" = "1" ]; then
       ufw allow 3478/tcp >/dev/null
       ufw allow 3478/udp >/dev/null
-      ufw allow 49160:49200/udp >/dev/null
-      info "ufw: открыты 3478 tcp/udp и 49160:49200/udp (TURN)"
+      ufw allow 49160:49999/udp >/dev/null
+      info "ufw: открыты 3478 tcp/udp и 49160:49999/udp (TURN)"
     fi
   else
     info "ufw не установлен или неактивен — правила не добавлены; откройте порты вручную (см. docs/SERVER.md)"
@@ -1040,7 +1040,7 @@ if [ "$FETCH_BUILDS" = "1" ]; then
 fi
 
 if [ "$SETUP_TURN" = "1" ]; then
-  TURN_SUMMARY="coturn, realm $REALM (3478 tcp/udp, relay 49160–49200/udp), секрет в $ENV_FILE"
+  TURN_SUMMARY="coturn, realm $REALM (3478 tcp/udp, relay 49160–49999/udp), секрет в $ENV_FILE"
 else
   TURN_SUMMARY="пропущен (--no-turn)"
 fi

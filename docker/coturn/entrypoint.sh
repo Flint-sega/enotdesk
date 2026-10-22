@@ -30,7 +30,7 @@ use-auth-secret
 static-auth-secret=$TURN_SECRET
 realm=$REALM
 min-port=49160
-max-port=49200
+max-port=49999
 no-tls
 no-dtls
 no-multicast-peers
