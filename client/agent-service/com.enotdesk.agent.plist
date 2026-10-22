@@ -1,9 +1,12 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <!--
-  EnotDesk agent - LaunchDaemon (macOS).
-  Ставится в /Library/LaunchDaemons/com.enotdesk.agent.plist (root:wheel, 0644).
-  Скорректируйте EDESK_AGENT_NAME и путь в ProgramArguments под свою сборку.
+  EnotDesk agent - LaunchAgent (macOS, ADR 0038).
+  Ставится в ~/Library/LaunchAgents/com.enotdesk.agent.plist пользователя Mac
+  (install-macos.sh, без sudo). Работает в графическом сеансе пользователя
+  (LimitLoadToSessionType=Aqua): только там macOS даёт захват экрана и ввод.
+  Пока никто не вошёл в систему, агент не запущен — экран входа macOS
+  вне рамок 1.0 (ADR 0037). Путь и имя машины подставляет install-macos.sh.
 -->
 <plist version="1.0">
 <dict>
@@ -23,6 +26,12 @@
         <string>mac-mini</string>
     </dict>
 
+    <key>LimitLoadToSessionType</key>
+    <string>Aqua</string>
+
+    <key>ProcessType</key>
+    <string>Interactive</string>
+
     <key>RunAtLoad</key>
     <true/>
 
@@ -32,10 +41,10 @@
     <key>ThrottleInterval</key>
     <integer>10</integer>
 
-    <!-- Логи агента (stdout/stderr) - см. docs/AGENT.md, раздел "Логи" -->
+    <!-- Логи агента (stdout/stderr) - путь подставляет install-macos.sh -->
     <key>StandardOutPath</key>
-    <string>/var/log/enotdesk-agent.log</string>
+    <string>/tmp/enotdesk-agent.log</string>
     <key>StandardErrorPath</key>
-    <string>/var/log/enotdesk-agent.log</string>
+    <string>/tmp/enotdesk-agent.log</string>
 </dict>
 </plist>

@@ -23,7 +23,7 @@ client/agent-bridge/  скрытое окно с RTCPeerConnection для маш
 client/lib/  модули без Electron: protocol, input-pipeline, input-arbiter, native-input (koffi), notify, term, agent, video-host, session-spawn, win-service, adaptive-bitrate, rtc-stats, i18n, first-run, updater, join и др.
 client/renderer/  UI клиента помощи (host) и карточка окна оператора (app.js, session-media.js, session-services.js, views/client-view.js); dom.js/state.js импортирует и /operator
 client/locales/   ru.mjs, en.mjs (паритет ключей проверяет тест)
-client/agent-service/  службы агента: Windows (sc.exe), Linux (systemd), macOS (LaunchDaemon) + install/remove
+client/agent-service/  службы агента: Windows (sc.exe), Linux (systemd), macOS (LaunchAgent пользователя, ADR 0038) + install/remove
 web/         единственная программа оператора /operator, её же показывает desktop (operator.html, operator.mjs, input-source.mjs, team.js, records.js — контакты/история/журнал/CSV, account.js — пароль и 2FA; ADR 0033)
 helper/video/  Rust-хелпер Windows: захват DXGI/GDI и ввод в консольной сессии, named pipe (ADR 0027)
 docker/ Dockerfile compose.yaml   серверный стек
@@ -48,7 +48,7 @@ docs/        SESSION_PROTOCOL, SERVER, AGENT, WEB-OPERATOR, BUILD, MANUAL-QA, RO
 - Всё входящее проходит allowlist и лимиты. Недоступная платформа честно сообщает код причины (`native-unavailable`, `wayland-unsupported-control`, `video-unsupported-platform`, `no-active-session`, `term-busy`…), фейковый успех запрещён.
 - Токены, пароли и коды в БД — только хешами; шифруемые секреты — AES-256-GCM от `ENOT_SECRET_KEY`; токены не попадают в рендерер; секреты не идут в argv и логи.
 - Пользовательские тексты — через словари `client/locales/{ru,en}.mjs` (ключи совпадают, `error.code` не локализуется).
-- ADR в `docs/adr/`: следующий номер — 0036.
+- ADR в `docs/adr/`: следующий номер — 0039 (0036 — ветка экрана входа Windows, 0037 — границы 1.0).
 - README.md (en) ↔ README.ru.md. Лицензия AGPL-3.0.
 
 ## Окружение
