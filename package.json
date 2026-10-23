@@ -16,6 +16,7 @@
     "test": "node --test \"server/test/*.test.mjs\" \"client/test/*.test.mjs\" \"hub/test/*.test.mjs\"",
     "lint": "eslint .",
     "smoke:local": "node scripts/smoke-local.mjs",
+    "load": "node scripts/load-test.mjs",
     "icons": "node scripts/make-icons.mjs",
     "pack:mac": "electron-builder --config build/electron-builder.yml --mac",
     "pack:win": "electron-builder --config build/electron-builder.yml --win",

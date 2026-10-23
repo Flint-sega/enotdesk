@@ -8,6 +8,7 @@
 - `npm install` — node ≥ 24.12. Рантайм-зависимости клиента и сервера: `ws`, `koffi`, `electron-updater`; только Hub дополнительно использует `imapflow` и `nodemailer` (ленивый импорт). Пины точные.
 - `npm test` — node:test по `server/test`, `client/test`, `hub/test` (~724 теста, Electron не нужен). Один файл: `node --test server/test/lifecycle.test.mjs`.
 - `npm run lint` — ESLint. `npm run smoke:local` — полный цикл bootstrap → login → invite → session → claim → consent → WS relay → end на временной БД.
+- `npm run load` — нагрузочный прогон S-8 (`scripts/load-test.mjs`): свой сервер на временной БД, 300 агентов + 30 сеансов, критерий p95 API ≤200 мс; размеры — переменными `LOAD_*` (описаны в начале скрипта).
 - `npm run server` — сервер на `127.0.0.1:8080`, `GET /api/v1/health` → `{ok,version,activeSessions,uptimeSec}`. `npm run bootstrap` — первый админ. `node hub/main.mjs` — Hub на `127.0.0.1:8090`.
 - `npm start` — Electron-клиент. Смоук: `EDESK_SMOKE=1 npx electron@44.9.0 client/main.mjs --no-sandbox`. Второй экземпляр — `EDESK_ALLOW_MULTI=1`, профиль первого запуска — `EDESK_SMOKE_FIRSTRUN=1`.
 - `npm run pack:mac|pack:win|pack:linux` — electron-builder (`build/electron-builder.yml`). Релизы собирает `.github/workflows/release.yml` по тегу `v*`.
