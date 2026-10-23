@@ -47,6 +47,7 @@ import { createSvcDiag, envDiagSlice, maskJoinTokens } from './lib/svc-diag.mjs'
 import { createKeepAwake } from './lib/keep-awake.mjs';
 import { createBootLog } from './lib/boot-log.mjs';
 import { linuxOzonePlatform } from './lib/ozone.mjs';
+import { WEBRTC_MDNS_FEATURE, withDisabledFeature } from './lib/chromium-features.mjs';
 import { gdmVideoStatus } from './lib/gdm-status.mjs';
 import { applyDesktopEntry } from './lib/desktop-entry.mjs';
 
@@ -90,6 +91,15 @@ try {
       : 'linux: --ozone-platform=x11 (без флага Electron 44 падает на Wayland-сессиях)');
   }
 } catch { /* commandLine недоступен до ready — живём как есть */ }
+
+// Окно брандмауэра Windows при сеансе (лаба 23.10): слушатель mDNS (UDP 5353) у
+// WebRTC выключаем — см. client/lib/chromium-features.mjs. Пользовательские
+// --disable-features с командной строки сохраняются.
+try {
+  const current = app.commandLine.getSwitchValue('disable-features');
+  app.commandLine.appendSwitch('disable-features', withDisabledFeature(current, WEBRTC_MDNS_FEATURE));
+  earlyNotes.push(`webrtc: --disable-features=${WEBRTC_MDNS_FEATURE} (без слушателя mDNS и окна брандмауэра)`);
+} catch { /* commandLine недоступен — живём как есть */ }
 
 // Родительский режим Windows-службы (EDESK_AGENT_SVC=1, дефект №4): процесс
 // запущен SCM'ом как службу — Electron не инициализируем, работаем тонкой
