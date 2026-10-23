@@ -395,6 +395,16 @@ function rawGet(port, target) {
   });
 }
 
+test('консоль: фон theme.css (grain.svg) отдаётся из /hub/ — url() в CSS относителен файлу темы', async () => {
+  const h = await startHub({ enotFetch: fakeEnotDesk().enotFetch });
+  try {
+    const r = await fetch(`${h.base}/hub/grain.svg`);
+    assert.equal(r.status, 200);
+    assert.match(r.headers.get('content-type') ?? '', /image\/svg\+xml/);
+    assert.match(await r.text(), /feTurbulence/);
+  } finally { h.close(); }
+});
+
 test('traversal: сырой запрос (без нормализации fetch) не отдаёт файлы вне allowlist', async () => {
   const h = await startHub({ enotFetch: fakeEnotDesk().enotFetch });
   try {

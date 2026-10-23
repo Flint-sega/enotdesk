@@ -7,7 +7,34 @@ import { t, setLocale, getLocale } from '../lib/i18n.mjs';
 import { isNewerVersion, latestVersionFrom } from '../lib/version-check.mjs';
 
 $('btn-settings').addEventListener('click', openSettings);
-$('btn-settings-close').addEventListener('click', () => hide($('settings-overlay')));
+$('btn-settings-close').addEventListener('click', () => closeOverlay($('settings-overlay')));
+
+// Окна поверх приложения (настройки, первый запуск) ведут себя как модальные
+// (проход доступности 23.10): фон недоступен клавиатуре и диктору (inert),
+// Escape закрывает верхнее окно, фокус возвращается туда, откуда окно открыли.
+// окна лежат внутри <main> — закрываем не его, а всё, кроме самих окон
+const OVERLAY_BACKGROUND = ['.topbar', '#main > :not(.overlay)', '#app-footer'];
+let overlayReturnFocus = null;
+function openOverlay(el) {
+  if (!document.querySelector('.overlay:not(.hidden)')) overlayReturnFocus = document.activeElement;
+  for (const sel of OVERLAY_BACKGROUND) document.querySelectorAll(sel).forEach((n) => n.setAttribute('inert', ''));
+  show(el);
+}
+function closeOverlay(el) {
+  hide(el);
+  if (document.querySelector('.overlay:not(.hidden)')) return; // открыто другое окно — фон остаётся закрытым
+  for (const sel of OVERLAY_BACKGROUND) document.querySelectorAll(sel).forEach((n) => n.removeAttribute('inert'));
+  const back = overlayReturnFocus;
+  overlayReturnFocus = null;
+  if (back?.isConnected) back.focus();
+}
+document.addEventListener('keydown', (e) => {
+  if (e.key !== 'Escape') return;
+  const open = [...document.querySelectorAll('.overlay:not(.hidden)')].pop();
+  if (!open) return;
+  e.preventDefault();
+  closeOverlay(open);
+});
 
 // ---------- машина (постоянный доступ): установка службы из клиента ----------
 
@@ -93,7 +120,7 @@ export async function openSettings() {
   text($('settings-status'), s.firstRun ? t('settings.firstRun') : '');
   text($('settings-error'), '');
   text($('perm-report'), '');
-  show($('settings-overlay'));
+  openOverlay($('settings-overlay'));
   $('settings-url').focus();
 }
 
@@ -174,12 +201,12 @@ async function runFirstRunCheck() {
 export async function openFirstRun() {
   const s = await enot.getSettings();
   text($('firstrun-url'), s.serverUrl);
-  show($('firstrun-overlay'));
+  openOverlay($('firstrun-overlay'));
   await runFirstRunCheck();
 }
 
 $('btn-firstrun-check').addEventListener('click', runFirstRunCheck);
 $('btn-firstrun-settings').addEventListener('click', async () => {
-  hide($('firstrun-overlay'));
+  closeOverlay($('firstrun-overlay'));
   await openSettings();
 });

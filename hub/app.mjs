@@ -167,6 +167,7 @@ const HUB_ASSETS = {
   // общая дизайн-система веб-поверхностей (сайт/оператор/консоль); шрифты
   // при этом идут с серверного /brand/ — то же происхождение за Caddy
   'theme.css': { file: '../web/theme.css', type: 'text/css' },
+  'grain.svg': { file: '../web/grain.svg', type: 'image/svg+xml' }, // фон theme.css (url относительно /hub/theme.css)
   // енот в шапке консоли: под /hub/, чтобы отдавался хабом и без серверного /brand/
   'brand.webp': { file: '../assets/mascot-mini.webp', type: 'image/webp' },
   'widget/w.mjs': { file: './widget/w.mjs', type: 'text/javascript' },

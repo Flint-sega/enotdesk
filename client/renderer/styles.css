@@ -78,6 +78,8 @@ body {
 ::-webkit-scrollbar-thumb:hover { background: #245446; }
 
 :focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+/* заголовок, куда программа сама ставит фокус (запрос оператора), — без рамки: это не элемент управления */
+h2[tabindex="-1"]:focus { outline: none; }
 
 .hidden { display: none !important; }
 
@@ -224,7 +226,10 @@ p:last-child { margin-bottom: 0; }
 
 /* состояния шагов (data-state от clientShow): текущий — ореол, пройденный —
    залитый номер, будущий — приглушён */
-#view-client:is([data-state="idle"], [data-state="registering"]) :is(.step-2, .step-3) { opacity: .55; }
+/* будущие шаги приглушены без потери читаемости (проход доступности 23.10): прозрачность
+   только у номера, значений и кнопок копирования, текст — своим цветом с контрастом ≥4.5 */
+#view-client:is([data-state="idle"], [data-state="registering"]) :is(.step-2, .step-3) :is(.step-n, .cred-value, .copy-btn) { opacity: .55; }
+#view-client:is([data-state="idle"], [data-state="registering"]) :is(.step-2, .step-3) .step-body > b { color: var(--muted); }
 #view-client:is([data-state="idle"], [data-state="registering"]) .step-1 .step-n,
 #view-client[data-state="waiting"] .step-2 .step-n,
 #view-client[data-state="consent"] .step-3 .step-n { box-shadow: 0 0 0 4px rgba(26, 238, 178, .14); }

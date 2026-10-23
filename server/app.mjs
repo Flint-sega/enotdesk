@@ -154,7 +154,7 @@ const OPERATOR_ASSETS = {
       'operator.mjs': 'text/javascript', 'input-source.mjs': 'text/javascript',
       'team.js': 'text/javascript', 'invite.js': 'text/javascript', 'records.js': 'text/javascript',
       'account.js': 'text/javascript',
-      'theme.css': 'text/css',
+      'theme.css': 'text/css', 'grain.svg': 'image/svg+xml',
     },
   },
   'client/lib': {

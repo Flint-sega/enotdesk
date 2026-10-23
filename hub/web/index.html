@@ -124,7 +124,9 @@ main{flex:1;width:100%;max-width:1320px;margin:0 auto;padding:22px 24px 36px}
   #hub-thread-back{display:none}
 }
 @media (max-width:1180px){
-  #hub-user-role,.brand .badge,#hub-presence-box label{display:none}
+  #hub-user-role,.brand .badge{display:none}
+  /* подпись статуса прячется только визуально — у списка остаётся имя для диктора (проход доступности 23.10) */
+  #hub-presence-box label{position:absolute;width:1px;height:1px;margin:-1px;padding:0;border:0;overflow:hidden;clip-path:inset(50%);white-space:nowrap}
   .head .who .btn{padding:0 13px}
   .lang .btn{padding:0 10px}
 }
