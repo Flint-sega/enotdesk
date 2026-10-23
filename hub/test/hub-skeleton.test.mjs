@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdtempSync } from 'node:fs';
+import { mkdtempSync, rmSync, existsSync } from 'node:fs';
 import { createHash } from 'node:crypto';
 import net from 'node:net';
 import { tmpdir } from 'node:os';
@@ -41,6 +41,8 @@ function fakeEnotDesk(overrides = {}) {
 const deadFetch = async () => { throw new Error('connection refused'); };
 
 async function startHub({ enotFetch, publicUrl = 'http://hub.example', now, secretKey = '', trustedProxy } = {}) {
+  // папка с базой удаляется в close(), после закрытия хаба (до 24.10 не удалялась
+  // вовсе и копилась во временной папке тысячами); открытую базу Windows не удалит
   const dir = mkdtempSync(join(tmpdir(), 'enotdesk-hub-test-'));
   const inst = createHub({
     dbPath: join(dir, 'hub.db'),
@@ -54,7 +56,13 @@ async function startHub({ enotFetch, publicUrl = 'http://hub.example', now, secr
   });
   const port = await inst.start();
   const base = `http://127.0.0.1:${port}`;
-  return { inst, base, db: inst.db, dir, close: () => inst.close() };
+  return {
+    inst, base, db: inst.db, dir,
+    close: async () => {
+      await inst.close();
+      try { rmSync(dir, { recursive: true, force: true }); } catch { /* уборка не роняет тест */ }
+    },
+  };
 }
 
 async function hubLogin(base, { login = 'op', password = 'pw', totp } = {}) {
@@ -69,6 +77,14 @@ function sidFrom(res) {
   const cookie = res.headers.getSetCookie().find((c) => c.startsWith('enot_hub_sid='));
   return cookie ? cookie.split(';')[0] : '';
 }
+
+test('startHub: close() закрывает хаб и удаляет его временную папку вместе с базой', async () => {
+  const h = await startHub({ enotFetch: fakeEnotDesk().enotFetch });
+  assert.ok(existsSync(join(h.dir, 'hub.db')));
+  await h.close();
+  assert.equal(h.db.isOpen, false);
+  assert.equal(existsSync(h.dir), false);
+});
 
 test('hub.db: schema_version поднимается до текущей', async () => {
   const h = await startHub({ enotFetch: fakeEnotDesk().enotFetch });
