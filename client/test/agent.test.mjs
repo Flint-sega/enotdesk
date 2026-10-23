@@ -12,6 +12,17 @@ import { validateOutgoingSignal } from '../lib/protocol.mjs';
 
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
+// Ждать условие с дедлайном, а не фиксированный сон: на Windows-раннере таймеры идут
+// шагом ~15,6 мс, и двух heartbeat-ов за 30 мс могло не случиться (флейк CI 22.10).
+async function until(pred, ms = 2000) {
+  const end = Date.now() + ms;
+  while (!pred()) {
+    if (Date.now() > end) return false;
+    await sleep(5);
+  }
+  return true;
+}
+
 function memoryStore() {
   let t = null;
   return {
@@ -479,7 +490,7 @@ test('toast (R08): запрос из heartbeat показывается чере
   });
   try {
     assert.equal(agent.start({ code: 'C1' }).ok, true);
-    await sleep(40);
+    assert.ok(await until(() => calls.toastResults.length > 2), 'три heartbeat-а не прошли');
     assert.deepEqual(notifyCalls, ['покажите это'], 'текст дошёл до показчика без изменений');
     assert.equal(calls.toastResults[0], undefined, 'первый heartbeat без результата');
     assert.deepEqual(calls.toastResults[1], { id: 't-1', ok: true }, 'результат уехал следующим heartbeat-ом');
@@ -508,16 +519,18 @@ test('toast (R08): notify нет/упал — честный отказ вмес
   });
   try {
     assert.equal(agent.start({ code: 'C1' }).ok, true);
-    await sleep(40);
+    assert.ok(await until(() => calls.toastResults.length > 1), 'второй heartbeat не прошёл');
     assert.deepEqual(calls.toastResults[1], { id: 't-2', ok: false, reason: 'notify-unavailable' },
       'без показчика — честный отказ');
 
-    // notify выбрасывает исключение — цикл жив, отказ всё равно доезжает
+    // второй запрос: отказ снова доезжает, цикл жив
     beats.push({ status: 200, body: { ok: true, toast: { id: 't-3', text: 'текст' } } });
-    await sleep(30);
-    const seen = calls.toastResults.filter((r) => r?.id === 't-3');
-    assert.equal(seen.length, 1, 'отказ по t-3 уехал один раз');
-    assert.deepEqual(seen[0], { id: 't-3', ok: false, reason: 'notify-unavailable' });
+    const seen = () => calls.toastResults.filter((r) => r?.id === 't-3');
+    assert.ok(await until(() => seen().length > 0), 'отказ по t-3 не дошёл');
+    const after = calls.toastResults.length;
+    assert.ok(await until(() => calls.toastResults.length >= after + 3), 'heartbeat-ы после отказа не идут');
+    assert.equal(seen().length, 1, 'отказ по t-3 уехал один раз');
+    assert.deepEqual(seen()[0], { id: 't-3', ok: false, reason: 'notify-unavailable' });
     assert.equal(agent.status().state, 'waiting', 'упавший показчик не рвёт цикл');
   } finally {
     agent.stop();

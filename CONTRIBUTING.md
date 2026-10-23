@@ -25,7 +25,7 @@ Thank you for considering a contribution. EnotDesk is a remote-support tool that
 
 1. Fork / branch, keep the change focused.
 2. Add or extend tests for any behavior change — tests run through public seams (server HTTP/WS via `createServer()`, Electron-free lib shims, the renderer contract test).
-3. `npm test`, `npm run lint` and `npm run smoke:local` must pass locally; CI must be green on ubuntu (windows/macos jobs are advisory while those adapters are verified manually).
+3. `npm test`, `npm run lint` and `npm run smoke:local` must pass locally; CI must be green on ubuntu, windows and macos (all three jobs are blocking; live koffi/Electron adapters of each OS are still verified manually, see `docs/MANUAL-QA.md`).
 4. Describe in the PR what you changed and what you verified manually (e.g., “input injection tested on macOS only”).
 5. One-line commit summaries in Russian are the existing convention; matching it is appreciated but not required.
 

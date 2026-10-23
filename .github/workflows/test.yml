@@ -3,19 +3,19 @@ name: tests
 on:
   push:
   pull_request:
+  workflow_dispatch: # ручной прогон — проверка на флейки (R-3: 10 прогонов подряд)
 
 jobs:
   test:
     strategy:
-      # одно ОС не топит матрицу: win/mac — advisory, пока адаптеры не проверены вручную
+      # одна ОС не топит матрицу: видно, где именно упало
       fail-fast: false
       matrix:
         os: [ubuntu-latest, windows-latest, macos-latest]
     runs-on: ${{ matrix.os }}
-    # пометка: windows/macos не блокируют CI — koffi/электрон-адаптеры этих ОС
-    # проверяются вручную на живых машинах (README «Platforms»); падение инфраструктуры
-    # раннера не считается регрессией кода
-    continue-on-error: ${{ matrix.os != 'ubuntu-latest' }}
+    # Windows и macOS блокирующие с 24.10 (R-3 матрицы 1.0): до этого 14 прогонов подряд
+    # зелёные, флейк таймеров Windows в тесте тостов исправлен. Живые адаптеры koffi и
+    # Electron этих ОС по-прежнему проверяются вручную (docs/MANUAL-QA.md).
     steps:
       - uses: actions/checkout@v7
       - uses: actions/setup-node@v6
