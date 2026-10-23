@@ -129,6 +129,6 @@
 | K-3 | «Где журналы и как прислать», шаблон issue | ЧАСТ (22.10: [guides/troubleshooting.md](guides/troubleshooting.md) §2–3 и форма `.github/ISSUE_TEMPLATE`; пути журналов на живых ОС не перепроверялись) |
 | R-1 | Автопрогон attended + unattended, 3 раза подряд зелёный | НЕТ |
 | R-2 | Протокол хоста описан, сверяется тестом | PASS 22.10 ([SESSION_PROTOCOL.md](SESSION_PROTOCOL.md) переписан по коду; `server/test/session-protocol-doc.test.mjs` сверяет типы `/signal`, коды закрытия, причины завершения, маршруты, каналы и ввод в обе стороны) |
-| R-3 | Тесты Win/mac в CI блокирующие, 10 прогонов без флейка | НЕТ |
+| R-3 | Тесты Win/mac в CI блокирующие, 10 прогонов без флейка | PASS 24.10 (`test.yml` без `continue-on-error`; флейк таймеров Windows в тесте тостов исправлен; 11 прогонов ветки подряд зелёные на трёх ОС, до этого 14 — MANUAL-QA 24.10) |
 
 ---
