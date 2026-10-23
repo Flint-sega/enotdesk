@@ -1089,6 +1089,9 @@ const PIN_MAX = 128;
 // favorite (W1) — звезда «избранное»: подпись зависит от состояния машины,
 // поэтому её кнопка собирается отдельно в machineActionButton.
 const MACHINE_ACTIONS = ['favorite', 'toast', 'wol', 'terminal', 'pin', 'revoke', 'deleteAction'];
+// Управление машиной — только admin, как на сервере (PIN, отзыв, удаление); оператору
+// рабочие действия: ☆, сообщение, разбудить, терминал (решение владельца 24.10)
+const ADMIN_MACHINE_ACTIONS = ['pin', 'revoke', 'deleteAction'];
 let machinesOffset = 0;
 let machinesTotal = 0;
 let machinesCache = []; // текущая страница: данные строк для действий по data-id
@@ -1189,7 +1192,10 @@ function renderMachineRows(items) {
     row.appendChild(grow);
     const actions = document.createElement('div');
     actions.className = 'machine-actions';
-    for (const action of MACHINE_ACTIONS) actions.appendChild(machineActionButton(m, action));
+    for (const action of MACHINE_ACTIONS) {
+      if (currentRole !== 'admin' && ADMIN_MACHINE_ACTIONS.includes(action)) continue;
+      actions.appendChild(machineActionButton(m, action));
+    }
     row.appendChild(actions);
     box.appendChild(row);
   }
@@ -1198,7 +1204,7 @@ function renderMachineRows(items) {
 async function renderMachines() {
   const res = await api('GET', `/machines?limit=${MACHINES_PAGE}&offset=${machinesOffset}&sort=recent`);
   if (res.status !== 200) {
-    // отказ сервера честен: не-admin получит свой 403, остальные — свой текст
+    // отказ сервера честен: аудитор получит свой 403, остальные — свой текст
     text($('machines-error'), res.body?.error?.message ?? t('common.serverError'));
     return;
   }
@@ -1427,8 +1433,10 @@ function applyRoleUi(role) {
   currentRole = role;
   const staff = CONNECT_ROLES.includes(role);
   show($('btn-nav-account')); // аккаунт — у любой вошедшей роли
-  for (const id of ['btn-nav-machines', 'btn-nav-team', 'btn-nav-audit']) (role === 'admin' ? show : hide)($(id));
-  for (const id of ['btn-nav-contacts', 'btn-nav-history', 'conn-contact-field', 'btn-history-back', 'btn-audit-back', 'btn-contacts-back']) (staff ? show : hide)($(id));
+  for (const id of ['btn-nav-team', 'btn-nav-audit', 'btn-machines-add']) (role === 'admin' ? show : hide)($(id));
+  // «Машины» — операция поддержки, как на сервере: список, подключение, сообщение и WoL
+  // у admin и operator; управление машиной — см. ADMIN_MACHINE_ACTIONS
+  for (const id of ['btn-nav-machines', 'btn-nav-contacts', 'btn-nav-history', 'conn-contact-field', 'btn-history-back', 'btn-audit-back', 'btn-contacts-back']) (staff ? show : hide)($(id));
   (role === 'admin' || role === 'auditor' ? show : hide)($('btn-history-audit'));
   if (staff) void records.loadContactsIntoSelect();
 }
