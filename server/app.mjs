@@ -853,6 +853,7 @@ export function createServer(opts = {}) {
       if (twoFactor && (typeof body?.totp !== 'string' || !body.totp.trim())) {
         return err(res, 401, 'totp_required', t('totp.loginRequired', {}, locale));
       }
+      let loginDetail = {};
       if (twoFactor) {
         // код из аутентификатора с replay-защитой (P2-7): шаг 30 с принимается
         // один раз, повтор (counter <= totp_last_counter) — отказ
@@ -888,6 +889,10 @@ export function createServer(opts = {}) {
               db.prepare('DELETE FROM totp_backup_codes WHERE user_id = ? AND code_hash = ?')
                 .run(user.id, matchedHash);
               codeOk = true;
+              // вход по резервному коду видно в журнале: потерян аутентификатор или
+              // утёк пароль вместе с кодом — и сколько кодов осталось (сам код не пишем)
+              const left = db.prepare('SELECT count(*) AS c FROM totp_backup_codes WHERE user_id = ?').get(user.id).c;
+              loginDetail = { backupCode: true, backupLeft: left };
             } else if (legacy) {
               // честный отказ: старые несолёные коды обесценены; вход по TOTP-коду
               // и перевыпуск (disable → enable) восстанавливают резервные коды
@@ -902,7 +907,7 @@ export function createServer(opts = {}) {
       const expiresAt = new Date(Date.now() + 8 * 3600 * 1000).toISOString();
       db.prepare('INSERT INTO auth_tokens (token_hash, user_id, expires_at, created_at) VALUES (?,?,?,?)')
         .run(sha256(token), user.id, expiresAt, new Date().toISOString());
-      auditLog(db, user.id, 'login.success', user.id, {});
+      auditLog(db, user.id, 'login.success', user.id, loginDetail);
       return ok(res, 200, {
         token,
         user: { id: user.id, login: user.login, name: user.name, role: user.role, active: !!user.active, totpEnabled: !!user.totp_enabled },

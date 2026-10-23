@@ -206,6 +206,13 @@ test('полный путь: включение → подтверждение �
   });
   assert.equal(bkAgain.status, 401);
 
+  // журнал отмечает вход по резервному коду и сколько кодов осталось; сам код не пишет (24.10)
+  const logins = (await api(base, 'GET', '/audit', auth)).json.items.filter((a) => a.action === 'login.success');
+  assert.deepEqual(logins[0].detail, { backupCode: true, backupLeft: 9 });
+  assert.deepEqual(logins[1].detail, {}, 'вход по коду из приложения — без пометки');
+  const bkDetail = JSON.stringify(logins[0].detail);
+  assert.ok(!bkDetail.includes(codes[0]) && !bkDetail.includes(normalizeBackupCode(codes[0])), 'кода в журнале нет');
+
   // в БД только scrypt-хеши (P2-6), использованный удалён
   const hashes = db.prepare('SELECT code_hash FROM totp_backup_codes WHERE user_id = ?').all(admin.user.id);
   assert.equal(hashes.length, 9);
