@@ -292,12 +292,14 @@ async function startServer(dbPath, admin) {
     },
     stdio: ['ignore', out, out],
   });
+  fs.closeSync(out); // у сервера своя копия; открытый лог Windows не даст удалить
   for (let i = 0; i < 100; i += 1) {
     const m = /listening on [^:]+:(\d+)/.exec(fs.readFileSync(logPath, 'utf8'));
     if (m) return { child, port: Number(m[1]), logPath };
     if (child.exitCode != null) break;
     await sleep(100);
   }
+  child.kill('SIGTERM'); // не оставлять сервер-сироту
   throw new Error(`сервер не стартовал: ${fs.readFileSync(logPath, 'utf8').slice(-400)}`);
 }
 
@@ -319,9 +321,12 @@ async function pool(items, n, fn) {
 async function main() {
   const loopLag = monitorEventLoopDelay({ resolution: 20 });
   loopLag.enable();
-  const dbPath = path.join(os.tmpdir(), `enotdesk-load-${process.pid}.db`);
+  // своя временная папка: база с -wal/-shm, лог и каталог relay сервера; в конце удаляется целиком
+  const workDir = fs.mkdtempSync(path.join(os.tmpdir(), 'enotdesk-load-'));
+  const removeWorkDir = () => { try { fs.rmSync(workDir, { recursive: true, force: true }); } catch { /* уборка не роняет прогон */ } };
+  const dbPath = path.join(workDir, 'load.db');
   const admin = { login: 'loadadmin', password: crypto.randomBytes(18).toString('base64url'), ip: '10.80.0.1' };
-  const srv = await startServer(dbPath, admin);
+  const srv = await startServer(dbPath, admin).catch((e) => { removeWorkDir(); throw e; });
   base = `http://127.0.0.1:${srv.port}`;
   const serverSamples = [];
   const sampler = setInterval(() => sampleServer(srv.child.pid, serverSamples), 5000);
@@ -405,7 +410,7 @@ async function main() {
     sampleServer(srv.child.pid, serverSamples);
     srv.child.kill('SIGTERM');
     await new Promise((r) => { if (srv.child.exitCode != null) r(); else { srv.child.once('exit', r); setTimeout(r, 5000); } });
-    for (const f of [dbPath, `${dbPath}-wal`, `${dbPath}-shm`, srv.logPath]) { try { fs.unlinkSync(f); } catch { /* не было */ } }
+    removeWorkDir();
     loopLag.disable();
   }
 

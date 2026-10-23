@@ -14,15 +14,29 @@ import os from 'node:os';
 // 20–46 на машине разработки, windows-раннер релиза) ложные падения грейс-тестов.
 export const WAIT_MS = Number(process.env.ENOT_TEST_WAIT_MS) || 10000;
 
+// Временная база теста живёт в своей папке: рядом SQLite держит -wal/-shm, а сервер —
+// каталог relay. После теста папка удаляется целиком, но сначала закрываются серверы
+// на этой базе. Раньше удалялся только файл базы, и до закрытия сервера (хуки t.after
+// идут в порядке регистрации): SQLite не делал чекпойнт и бросал -wal/-shm — к 24.10
+// во временной папке их накопилось на 5,8 ГБ (страж — tmp-cleanup.test.mjs).
+const serversOnDb = new Map(); // путь временной базы → серверы startServer на ней
+
 export function tmpDb(t) {
-  const file = path.join(os.tmpdir(), `enot-test-${Date.now()}-${Math.random().toString(36).slice(2)}.db`);
-  t.after(() => { try { fs.rmSync(file, { force: true }); } catch { /* удалять нечего */ } });
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'enot-test-'));
+  const file = path.join(dir, 'e.db');
+  serversOnDb.set(file, []);
+  t.after(async () => {
+    await Promise.all(serversOnDb.get(file).map((inst) => inst.close()));
+    serversOnDb.delete(file);
+    // базу, открытую мимо startServer, Windows удалить не даст — тест из-за уборки не падает
+    try { fs.rmSync(dir, { recursive: true, force: true }); } catch { /* останется во временной папке */ }
+  });
   return file;
 }
 
 export async function startServer(t, extra = {}) {
+  const dbPath = extra.dbPath ?? tmpDb(t);
   const inst = createServer({
-    dbPath: extra.dbPath ?? tmpDb(t),
     heartbeatMs: extra.heartbeatMs ?? 200,
     leaseMs: extra.leaseMs ?? 800,
     // 2 с, как в host-id/session-flow/operator-page: 500 мс под нагрузкой рвали
@@ -30,10 +44,12 @@ export async function startServer(t, extra = {}) {
     // один тест по умолчанию не проверяет)
     authTimeoutMs: extra.authTimeoutMs ?? 2000,
     ...extra,
+    dbPath,
   });
+  serversOnDb.get(dbPath)?.push(inst);
   const port = await inst.start();
   t.after(() => inst.close());
-  return { inst, port, base: `http://127.0.0.1:${port}` };
+  return { inst, port, base: `http://127.0.0.1:${port}`, dbPath };
 }
 
 export async function api(base, method, p, { token, body, headers = {} } = {}) {

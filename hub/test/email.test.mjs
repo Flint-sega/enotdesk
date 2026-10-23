@@ -427,7 +427,7 @@ test('креды: смена ENOT_SECRET_KEY — getEmail честно null (к�
 
 // ---- цикл 3: REST /api/hub/settings/email, авто-ответ в email-треде ----
 
-import { mkdtempSync } from 'node:fs';
+import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { createHub } from '../app.mjs';
@@ -443,6 +443,7 @@ function fakeEnotDesk(role = 'admin') {
 }
 
 async function startHub({ secretKey = 'k'.repeat(32), role = 'admin', imapCls, transporter, intervalMs } = {}) {
+  // папка с базой удаляется в close(), после закрытия хаба (как в hub-skeleton.test)
   const dir = mkdtempSync(join(tmpdir(), 'enotdesk-hub-email-'));
   const inst = createHub({
     dbPath: join(dir, 'hub.db'),
@@ -464,7 +465,10 @@ async function startHub({ secretKey = 'k'.repeat(32), role = 'admin', imapCls, t
   const cookie = res.headers.getSetCookie().find((c) => c.startsWith('enot_hub_sid='))?.split(';')[0] ?? '';
   return {
     inst, base, cookie, db: inst.db,
-    close: () => inst.close(),
+    close: async () => {
+      await inst.close();
+      try { rmSync(dir, { recursive: true, force: true }); } catch { /* уборка не роняет тест */ }
+    },
     api: async (method, path, body) => {
       const r = await fetch(`${base}/api/hub${path}`, {
         method,

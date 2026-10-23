@@ -12,11 +12,13 @@ import WebSocket from 'ws';
 const fail = (msg) => { console.error(`SMOKE FAIL: ${msg}`); process.exitCode = 1; };
 const ok = (msg) => console.log(`SMOKE ok: ${msg}`);
 
-const dbPath = path.join(os.tmpdir(), `enodesk-smoke-${process.pid}.db`);
-for (const f of [dbPath, `${dbPath}-wal`, `${dbPath}-shm`]) { try { fs.unlinkSync(f); } catch { /* файла могло не быть */ } }
+// своя временная папка: база с -wal/-shm и каталог relay сервера; в конце удаляется целиком
+const workDir = fs.mkdtempSync(path.join(os.tmpdir(), 'enotdesk-smoke-'));
+const dbPath = path.join(workDir, 'smoke.db');
+const removeWorkDir = () => { try { fs.rmSync(workDir, { recursive: true, force: true }); } catch { /* уборка не роняет смоук */ } };
 
 const boot = bootstrapAdmin(dbPath, { login: 'smokeadmin', name: 'Smoke Admin', password: 'smoke-pass-123' });
-if (!boot.ok) { fail(`bootstrap: ${boot.reason}`); process.exit(1); }
+if (!boot.ok) { fail(`bootstrap: ${boot.reason}`); removeWorkDir(); process.exit(1); }
 ok('bootstrap первого админа');
 
 const svc = createServer({ dbPath, host: '127.0.0.1', port: 0 });
@@ -111,5 +113,5 @@ try {
   fail(e.message);
 } finally {
   await svc.close();
-  for (const f of [dbPath, `${dbPath}-wal`, `${dbPath}-shm`]) { try { fs.unlinkSync(f); } catch { /* файла могло не быть */ } }
+  removeWorkDir();
 }

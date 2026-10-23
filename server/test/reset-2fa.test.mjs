@@ -10,15 +10,16 @@ import { bootstrapAdmin, resetTotp } from '../bootstrap.mjs';
 // коды, завершает входы пользователя, пишет запись безопасности даже при
 // выключенном журнале действий.
 
-function freshDb() {
+function freshDb(t) {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'enot-reset2fa-'));
+  t.after(() => fs.rmSync(dir, { recursive: true, force: true }));
   const dbPath = path.join(dir, 'e.db');
   assert.equal(bootstrapAdmin(dbPath, { login: 'Boss', name: 'Босс', password: 'correct-horse-1' }).ok, true);
   return dbPath;
 }
 
-test('reset-2fa: снимает секрет, резервные коды и входы; пишет журнал безопасности', () => {
-  const dbPath = freshDb();
+test('reset-2fa: снимает секрет, резервные коды и входы; пишет журнал безопасности', (t) => {
+  const dbPath = freshDb(t);
   const db = openDb(dbPath);
   const id = db.prepare("SELECT id FROM users WHERE login='boss'").get().id;
   db.prepare("UPDATE users SET totp_enabled=1, totp_secret_enc='x', totp_last_counter=5 WHERE id=?").run(id);
@@ -42,8 +43,8 @@ test('reset-2fa: снимает секрет, резервные коды и в�
   check.close();
 });
 
-test('reset-2fa: честные отказы — нет логина, нет базы, нет пользователя', () => {
-  const dbPath = freshDb();
+test('reset-2fa: честные отказы — нет логина, нет базы, нет пользователя', (t) => {
+  const dbPath = freshDb(t);
   assert.deepEqual(resetTotp(dbPath, ''), { ok: false, reason: 'no_login' });
   assert.deepEqual(resetTotp(path.join(os.tmpdir(), 'enot-no-such-db', 'x.db'), 'boss'), { ok: false, reason: 'no_db' });
   assert.deepEqual(resetTotp(dbPath, 'ghost'), { ok: false, reason: 'not_found' });

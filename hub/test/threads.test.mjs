@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdtempSync } from 'node:fs';
+import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { createHub } from '../app.mjs';
@@ -34,6 +34,7 @@ function fakeEnotDesk(overrides = {}) {
 }
 
 async function startHub({ enotFetch, now } = {}) {
+  // папка с базой удаляется в close(), после закрытия хаба (как в hub-skeleton.test)
   const dir = mkdtempSync(join(tmpdir(), 'enotdesk-hub-threads-'));
   const inst = createHub({
     dbPath: join(dir, 'hub.db'),
@@ -44,7 +45,13 @@ async function startHub({ enotFetch, now } = {}) {
     now,
   });
   const port = await inst.start();
-  return { inst, base: `http://127.0.0.1:${port}`, db: inst.db, dir, close: () => inst.close() };
+  return {
+    inst, base: `http://127.0.0.1:${port}`, db: inst.db, dir,
+    close: async () => {
+      await inst.close();
+      try { rmSync(dir, { recursive: true, force: true }); } catch { /* уборка не роняет тест */ }
+    },
+  };
 }
 
 async function loginCookie(base) {
