@@ -96,6 +96,22 @@ test('ozone: клиент всегда x11; агент без DISPLAY/WAYLAND_DI
   assert.equal(linuxOzonePlatform({ agent: true, env: { WAYLAND_DISPLAY: 'wayland-0' } }), 'x11');
 });
 
+test('packaging: main.mjs выключает слушатель mDNS у WebRTC (окно брандмауэра Windows, лаба 23.10)', () => {
+  assert.match(mainJs, /getSwitchValue\('disable-features'\)/, 'чужие --disable-features сохраняются');
+  assert.match(mainJs, /appendSwitch\('disable-features', withDisabledFeature\(current, WEBRTC_MDNS_FEATURE\)\)/);
+  // флаг ставится до ветки службы и до ready — как ozone
+  assert.ok(mainJs.indexOf('WEBRTC_MDNS_FEATURE))') < mainJs.indexOf("process.env.EDESK_AGENT_SVC === '1' && process.platform === 'win32'"));
+});
+
+test('chromium-features: имя функции и слияние --disable-features без потерь и повторов', async () => {
+  const { WEBRTC_MDNS_FEATURE, withDisabledFeature } = await import('../lib/chromium-features.mjs');
+  assert.equal(WEBRTC_MDNS_FEATURE, 'WebRtcHideLocalIpsWithMdns');
+  assert.equal(withDisabledFeature('', WEBRTC_MDNS_FEATURE), 'WebRtcHideLocalIpsWithMdns');
+  assert.equal(withDisabledFeature(undefined, 'A'), 'A');
+  assert.equal(withDisabledFeature('Foo, Bar', 'A'), 'Foo,Bar,A');
+  assert.equal(withDisabledFeature('A,Foo', 'A'), 'A,Foo');
+});
+
 test('install-linux.sh и install-macos.sh: регистрация по AGENT_CODE_FILE без кода в argv; http — с явной галочкой', () => {
   const macSh = readFileSync(fileURLToPath(new URL('../agent-service/install-macos.sh', import.meta.url)), 'utf8');
   assert.match(installSh, /AGENT_CODE_FILE="\$\{AGENT_CODE_FILE:-\}"/);
