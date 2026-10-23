@@ -12,6 +12,10 @@ export function clientShow(section) {
   show($('client-' + section));
   // Компактный экран: шаги 1–3 подсвечиваются по состоянию (CSS по data-state)
   $('view-client').dataset.state = section;
+  // Запрос оператора: фокус — на заголовок запроса (проход доступности 23.10), чтобы
+  // следующий Tab вёл к кнопкам, а диктор читал запрос. Не на «Разрешить»: случайный
+  // Enter не должен выдавать доступ к компьютеру.
+  if (section === 'consent') $('client-consent')?.querySelector('h2')?.focus();
   // До нажатия ID и пароль — прочерки: старый пароль после отмены уже недействителен
   if (section === 'idle') {
     text($('client-id'), '—');

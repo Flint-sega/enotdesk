@@ -134,7 +134,8 @@
   --bg-glows:
     radial-gradient(1100px 680px at 78% -12%, rgba(26, 238, 178, .12), transparent 62%),
     radial-gradient(900px 620px at -8% 108%, rgba(26, 238, 178, .07), transparent 60%);
-  --grain: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='180' height='180'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.8' numOctaves='2' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)' opacity='0.04'/%3E%3C/svg%3E");
+  /* зерно — отдельным файлом рядом с theme.css (/web/, /hub/): CSP страниц img-src 'self' не пускает data: */
+  --grain: url("grain.svg");
 
   /* шрифты */
   --font-display: 'Inter', -apple-system, 'Segoe UI', sans-serif;

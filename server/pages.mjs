@@ -236,7 +236,8 @@ function siteHeader(locale) {
     `<nav class="head-nav" aria-label="${esc(t('server.nav.ariaMain', {}, locale))}">` +
     `<a class="nav-btn" href="/downloads#how" aria-label="${esc(t('server.nav.ariaHelp', {}, locale))}">${icon('headset')}<span>${esc(t('server.nav.help', {}, locale))}</span></a>` +
     `<a class="nav-btn" href="/operator" aria-label="${esc(t('server.nav.ariaOperator', {}, locale))}">${icon('monitor')}<span>${esc(t('server.nav.operator', {}, locale))}</span></a>` +
-    `<a class="btn" href="/downloads#download">${icon('download')}<span>${esc(t('server.download', {}, locale))}</span></a>` +
+    // на узком экране подпись прячется (span display:none) — имя кнопки держит aria-label
+    `<a class="btn" href="/downloads#download" aria-label="${esc(t('server.download', {}, locale))}">${icon('download')}<span>${esc(t('server.download', {}, locale))}</span></a>` +
     `</nav></div></div></header>`;
 }
 

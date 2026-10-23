@@ -75,6 +75,12 @@ test('статика страницы оператора: модули и сло
   assert.equal((await fetch(`${base}/client/locales/de.mjs`)).status, 404, 'словари только ru/en');
   assert.equal((await fetch(`${base}/client/lib/../main.mjs`)).status, 404, 'вне allowlist ничего не отдаётся');
   assert.equal((await fetch(`${base}/web/nope.mjs`)).status, 404);
+  // фон темы — файлом рядом с theme.css: CSP страниц img-src 'self' не пускает data: (проход доступности 23.10)
+  const grain = await fetch(`${base}/web/grain.svg`);
+  assert.equal(grain.status, 200);
+  assert.match(grain.headers.get('content-type') ?? '', /image\/svg\+xml/);
+  const theme = await (await fetch(`${base}/web/theme.css`)).text();
+  assert.doesNotMatch(theme, /url\(\s*["']?data:/, 'theme.css без data:-картинок — их блокирует CSP img-src \'self\'');
 });
 
 test('браузерный цикл: login → claim → WS → offer/answer с фейк-пиром → end', async (t) => {

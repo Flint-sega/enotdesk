@@ -85,6 +85,8 @@ function threadRow(th) {
   row.className = currentThread?.id === th.id ? 'row active' : 'row';
   row.dataset.id = th.id;
   row.setAttribute('role', 'button');
+  row.tabIndex = 0; // с клавиатуры: Tab до строки, Enter или пробел открывают (проход доступности 23.10)
+  if (currentThread?.id === th.id) row.setAttribute('aria-current', 'true');
   const subjectLine = document.createElement('div');
   subjectLine.className = 'subject';
   subjectLine.appendChild(document.createTextNode(th.subject));
@@ -277,7 +279,11 @@ async function openThread(id) {
   renderMessages(res.body?.messages ?? []);
   showThreadView();
   hideCannedPop();
-  for (const row of document.querySelectorAll('#hub-list .row')) row.classList.toggle('active', row.dataset.id === currentThread?.id);
+  for (const row of document.querySelectorAll('#hub-list .row')) {
+    const on = row.dataset.id === currentThread?.id;
+    row.classList.toggle('active', on);
+    if (on) row.setAttribute('aria-current', 'true'); else row.removeAttribute('aria-current');
+  }
 }
 
 // Кнопка «Подключиться» (T05): join-токен + карточка клиенту и в тред.
@@ -324,7 +330,7 @@ function showNewView() {
   showPane('new');
   $('hub-new-error').textContent = '';
   $('hub-new-subject').focus();
-  for (const row of document.querySelectorAll('#hub-list .row.active')) row.classList.remove('active');
+  for (const row of document.querySelectorAll('#hub-list .row.active')) { row.classList.remove('active'); row.removeAttribute('aria-current'); }
 }
 
 // вкладки: «Обращения» и «Настройки» (только админ)
@@ -819,6 +825,14 @@ $('hub-f-reset').addEventListener('click', () => { resetFilters(); void loadInbo
 $('hub-list').addEventListener('click', (e) => {
   const row = e.target.closest?.('.row');
   if (row?.dataset.id) void openThread(row.dataset.id);
+});
+// строка — role=button: Enter и пробел работают как у настоящей кнопки
+$('hub-list').addEventListener('keydown', (e) => {
+  if (e.key !== 'Enter' && e.key !== ' ') return;
+  const row = e.target.closest?.('.row');
+  if (!row?.dataset.id || e.target !== row) return;
+  e.preventDefault();
+  void openThread(row.dataset.id);
 });
 $('hub-page-prev').addEventListener('click', () => {
   filters.offset = Math.max(0, filters.offset - PAGE_SIZE);
