@@ -175,8 +175,9 @@ test('main.mjs регистрирует протокол только в упа�
 
 test('join-ссылка не ослабляет настройки: allowInsecureHttp из ссылки не персистится', () => {
   const mainJs = readFileSync(path.join(root, 'main.mjs'), 'utf8');
-  const fn = mainJs.match(/function applyJoinLink\([\s\S]*?\n\}/)?.[0] ?? '';
-  assert.ok(fn.includes('function applyJoinLink'), 'applyJoinLink найдена');
+  // с 24.10 смену сервера ведёт startJoin (после «да» или для того же сервера)
+  const fn = mainJs.match(/function applyJoinLink\([\s\S]*?\nfunction flushPendingInvite/)?.[0] ?? '';
+  assert.ok(fn.includes('function startJoin'), 'applyJoinLink и startJoin найдены');
   assert.ok(!/allowInsecureHttp/.test(fn), 'join не должен трогать галочку «Разрешить HTTP»');
   // адрес сохраняется; решение о http-допуске остаётся за пользователем
   assert.match(fn, /settings\.serverUrl = parsed\.server;/);
@@ -203,4 +204,31 @@ test('electron-builder прописывает протокол enotdesk', () => 
 test('ключи join.* есть в обоих словарях (импорт модулей, не grep)', () => {
   assert.ok('join.reportOk' in ru && 'join.reportFailed' in ru, 'ru');
   assert.ok('join.reportOk' in en && 'join.reportFailed' in en, 'en');
+});
+
+// Ревью безопасности 1.13 (24.10): ссылка с чужой страницы молча меняла сервер.
+test('joinServerDecision: тот же сервер — сразу; другой https — вопрос; другой http — отказ', async () => {
+  const { joinServerDecision } = await import('../lib/join.mjs');
+  assert.equal(joinServerDecision({ linkServer: 'https://support.example.ru', currentServer: 'https://support.example.ru' }), 'same');
+  assert.equal(joinServerDecision({ linkServer: 'https://support.example.ru/', currentServer: 'https://support.example.ru' }), 'same');
+  assert.equal(joinServerDecision({ linkServer: 'http://10.0.0.5:8080', currentServer: 'http://10.0.0.5:8080' }), 'same', 'http-сервер, уже выбранный в настройках');
+  assert.equal(joinServerDecision({ linkServer: 'https://evil.example', currentServer: 'https://support.example.ru' }), 'confirm');
+  assert.equal(joinServerDecision({ linkServer: 'http://127.0.0.1:8080', currentServer: 'https://support.example.ru' }), 'confirm');
+  assert.equal(joinServerDecision({ linkServer: 'http://evil.example', currentServer: 'https://support.example.ru' }), 'reject');
+  assert.equal(joinServerDecision({ linkServer: 'https://support.example.ru:8443', currentServer: 'https://support.example.ru' }), 'confirm', 'другой порт — другой сервер');
+  assert.equal(joinServerDecision({ linkServer: 'мусор', currentServer: 'https://support.example.ru' }), 'reject');
+  assert.equal(joinServerDecision({ linkServer: 'https://support.example.ru', currentServer: undefined }), 'confirm');
+});
+
+test('main.mjs: смена сервера по join-ссылке — только после диалога main-процесса', () => {
+  const mainJs = readFileSync(path.join(root, 'main.mjs'), 'utf8');
+  const apply = mainJs.slice(mainJs.indexOf('function applyJoinLink(raw)'), mainJs.indexOf('async function confirmJoinServer'));
+  assert.match(apply, /joinServerDecision\(\{ linkServer: parsed\.server, currentServer: settings\.serverUrl \}\)/);
+  assert.match(apply, /if \(decision !== 'same'\) \{\s*void confirmJoinServer\(parsed, decision\)\.then\(\(yes\) => \{ if \(yes\) startJoin\(parsed\); \}\);/);
+  assert.doesNotMatch(apply, /settings\.serverUrl = /, 'сам applyJoinLink адрес не меняет');
+  const confirm = mainJs.slice(mainJs.indexOf('async function confirmJoinServer'), mainJs.indexOf('function startJoin(parsed)'));
+  assert.match(confirm, /cancelId: 1/);
+  assert.match(confirm, /defaultId: 1/, 'по умолчанию — «Отмена»');
+  assert.match(confirm, /return r\.response === 0;/);
+  assert.match(confirm, /catch \{\s*return false;/, 'нет диалога — сервер не меняется');
 });

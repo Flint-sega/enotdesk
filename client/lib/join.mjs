@@ -9,9 +9,9 @@ import { normalizeServerUrl } from './server-url.mjs';
 export const JOIN_TOKEN_RE = /^[A-Za-z0-9_-]{16,128}$/;
 
 // Валидна только схема enotdesk: с узлом join; адрес сервера проходит
-// normalizeServerUrl({allowInsecureHttp:true}) — loopback http допустим, https
-// всегда. Всё остальное — null: чужая строка никогда не становится действием
-// клиента (никаких throw — просто «не join-ссылка»).
+// normalizeServerUrl({allowInsecureHttp:true}) — разбор пускает и http, а можно ли
+// по ссылке перейти на этот сервер, решает joinServerDecision ниже. Всё остальное —
+// null: чужая строка никогда не становится действием клиента (никаких throw).
 export function parseJoinLink(url) {
   if (typeof url !== 'string') return null;
   const trimmed = url.trim();
@@ -30,6 +30,24 @@ export function parseJoinLink(url) {
   const server = normalizeServerUrl(serverRaw, { allowInsecureHttp: true });
   if (!server.ok) return null;
   return { server: server.url, token };
+}
+
+// Можно ли по ссылке перейти на её сервер (ревью безопасности 1.13, 24.10): раньше
+// ссылка с чужой страницы молча меняла и сохраняла адрес сервера и запускала сеанс,
+// а окно «Оператор» потом открывало чужую страницу входа. Теперь:
+//   'same'    — тот же сервер, что в настройках: как раньше, без вопросов;
+//   'confirm' — другой https (или loopback http) сервер: только после явного «да»;
+//   'reject'  — другой сервер по http не через loopback: только через настройки.
+const LOOPBACK = new Set(['localhost', '127.0.0.1', '[::1]', '::1']);
+export function joinServerDecision({ linkServer, currentServer } = {}) {
+  let link;
+  try { link = new URL(String(linkServer)); } catch { return 'reject'; }
+  let current;
+  try { current = new URL(String(currentServer)); } catch { current = null; }
+  if (current && link.origin === current.origin) return 'same';
+  if (link.protocol === 'https:') return 'confirm';
+  if (link.protocol === 'http:' && LOOPBACK.has(link.hostname)) return 'confirm';
+  return 'reject';
 }
 
 // Соглашение (spec §One-click): hub монтируется на том же домене, что и сервер
