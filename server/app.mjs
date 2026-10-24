@@ -1544,7 +1544,7 @@ export function createServer(opts = {}) {
       const r = webhooks.configure(url, secret, events ?? null);
       if (!r.ok) return err(res, 400, r.error, WEBHOOK_ERR_TEXT[r.error] || 'Некорректные настройки');
       // в журнал — только хост: у Slack/Telegram-подобных адресов секрет в пути (ревью 1.13)
-      let hookHost = null;
+      let hookHost;
       try { hookHost = r.url ? new URL(r.url).host : null; } catch { hookHost = null; }
       auditLog(db, user.id, 'webhooks.config', null, { host: hookHost, events: r.events });
       return ok(res, 200, webhooks.get());
