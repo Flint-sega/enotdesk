@@ -49,6 +49,18 @@ test('клиент помощи: на Wayland окно GNOME «поделить�
   assert.match(main, /function permissionsReport\(\) \{\s*const wayland = isWaylandSession\(\);/);
 });
 
+test('клиент помощи: «Сменить экран» на Wayland — одно окно GNOME и без второго списка', () => {
+  const list = main.slice(main.indexOf('async function listSources'), main.indexOf('const coordScale'));
+  assert.match(list, /listedSources = new Map\(isWaylandSession\(\) \? sources\.map\(\(s\) => \[s\.id, s\]\) : \[\]\);/);
+  const sel = main.slice(main.indexOf('async function selectSource'), main.indexOf('async function selectPrimaryScreen'));
+  assert.match(sel, /const listed = listedSources\.get\(id\);\s*const sources = listed \? \[listed\] : await desktopCapturer\.getSources/);
+  assert.match(main, /selectedSource = null;[^\n]*\n\s*listedSources = new Map\(\);/, 'конец сеанса забывает список');
+  assert.match(main, /ipcMain\.handle\('enot:sources', async \(e\) => \{ guard\(e\); return \{ items: await listSources\(\), systemPicked: isWaylandSession\(\) \}; \}\);/);
+  const picker = media.slice(media.indexOf('async function showSourcePicker'), media.indexOf('async function acquireStream'));
+  assert.match(picker, /if \(srcs\.systemPicked && srcs\.items\.length === 1\) return onChoose\(srcs\.items\[0\]\.id, document\.createElement\('div'\)\);/);
+  assert.ok(picker.indexOf('srcs.systemPicked') < picker.indexOf("document.createElement('div');\n  pick.className"), 'до показа своего списка');
+});
+
 test('клиент помощи: подсказка про окно GNOME уходит, когда захват пошёл', () => {
   const started = media.slice(media.indexOf('function captureStartedStatus'), media.indexOf('let hostRtcEpoch'));
   assert.match(started, /if \(portalPending\) \{\s*portalPending = false;[\s\S]*text\(\$\('client-live-note'\), streamPaused \? t\('client\.pausedNote'\) : ''\);/);

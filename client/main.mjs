@@ -643,6 +643,7 @@ function stopSignal() {
   if (gate.needInputReset()) nativeInput.end();
   signalRole = null;
   selectedSource = null; // разрешение 'media' привязано к источнику: сеанс кончился — гейт закрыт
+  listedSources = new Map();
   nativeInput.resetAdapter(); // koffi мог быть заблокирован SAC в прошлом сеансе — пробуем снова
   inputArbiter.reset(); // операторы сеанса ушли вместе с ним (W-C4)
 }
@@ -782,8 +783,12 @@ function startSignal(params) {
 }
 
 // Захват: main валидирует выбранный источник и хранит границы дисплея (R01.2/R19i)
+// Wayland: список уже выбран человеком в окне GNOME — selectSource берёт источник
+// отсюда, иначе окно открывалось второй раз (стенд 24.10, «Сменить экран»)
+let listedSources = new Map();
 async function listSources() {
   const sources = await desktopCapturer.getSources({ types: ['screen', 'window'], thumbnailSize: { width: 0, height: 0 }, fetchWindowIcons: false });
+  listedSources = new Map(isWaylandSession() ? sources.map((s) => [s.id, s]) : []);
   return sources.map((s) => ({ id: s.id, name: s.name }));
 }
 
@@ -794,7 +799,8 @@ async function listSources() {
 const coordScale = (display) => (process.platform === 'darwin' ? 1 : display.scaleFactor);
 
 async function selectSource(id) {
-  const sources = await desktopCapturer.getSources({ types: ['screen', 'window'], thumbnailSize: { width: 0, height: 0 } });
+  const listed = listedSources.get(id);
+  const sources = listed ? [listed] : await desktopCapturer.getSources({ types: ['screen', 'window'], thumbnailSize: { width: 0, height: 0 } });
   const src = sources.find((s) => s.id === id);
   if (!src) return { ok: false, error: 'Выбранный источник больше не доступен, выберите заново' };
   const displays = screen.getAllDisplays();
@@ -1385,7 +1391,8 @@ function registerIpc() {
 
   ipcMain.handle('enot:closeSignal', (e) => { guard(e); stopSignal(); return { ok: true }; });
 
-  ipcMain.handle('enot:sources', async (e) => { guard(e); return { items: await listSources() }; });
+  // systemPicked: на Wayland список — то, что человек уже выбрал в окне GNOME
+  ipcMain.handle('enot:sources', async (e) => { guard(e); return { items: await listSources(), systemPicked: isWaylandSession() }; });
 
   ipcMain.handle('enot:selectSource', async (e, id) => {
     guard(e);
