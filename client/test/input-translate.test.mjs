@@ -20,11 +20,13 @@ test('input-translate: button → down/up, неизвестная кнопка �
     [{ cmd: 'mouse', x: 0, y: 0, buttons: 'down', button: 'left' }]);
 });
 
-test('input-translate: scroll (строки) → wheel в дельтах ×40, dx отброшен', () => {
+test('input-translate: scroll (строки) → wheel в дельтах ×40 со знаком Windows, dx отброшен', () => {
   // v0.6.0 баг: кейс ловил несуществующий тип 'wheel' — скролл оператора
   // молча терялся (protocol.mjs выдаёт только 'scroll')
-  assert.deepEqual(inputEventToCommands({ type: 'scroll', dx: 2, dy: 3 }), [{ cmd: 'wheel', dy: 120 }]);
-  assert.deepEqual(inputEventToCommands({ type: 'scroll', dx: 0, dy: -1.4 }), [{ cmd: 'wheel', dy: -40 }]);
+  // 25.10: вниз (dy > 0) — отрицательная дельта, как у SendInput в native-input.mjs
+  assert.deepEqual(inputEventToCommands({ type: 'scroll', dx: 2, dy: 3 }), [{ cmd: 'wheel', dy: -120 }]);
+  assert.deepEqual(inputEventToCommands({ type: 'scroll', dx: 0, dy: -1.4 }), [{ cmd: 'wheel', dy: 40 }]);
+  assert.deepEqual(inputEventToCommands({ type: 'scroll', dx: 0, dy: 0.2 }), [{ cmd: 'wheel', dy: 0 }]);
   assert.deepEqual(inputEventToCommands({ type: 'scroll', dx: 0, dy: 'мусор' }), [{ cmd: 'wheel', dy: 0 }]);
   assert.deepEqual(inputEventToCommands({ type: 'scroll', dy: Infinity }), [{ cmd: 'wheel', dy: 0 }]);
 });

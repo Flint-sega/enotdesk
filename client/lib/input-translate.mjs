@@ -22,9 +22,12 @@ export function inputEventToCommands(ev) {
     case 'scroll': {
       // протокол передаёт строки колеса (1 щелчок ≈ 3), хелпер — сырые дельты
       // SendInput (WHEEL_DELTA=120 на щелчок → 40 на строку, калибровка
-      // native-input.mjs); горизонтальную ось хелпер не поддерживает — dx отброшен
+      // native-input.mjs); горизонтальную ось хелпер не поддерживает — dx отброшен.
+      // Знак как в native-input.mjs: в протоколе dy > 0 — вниз, у Windows
+      // положительная дельта — вверх (до 25.10 служба крутила в обратную сторону)
       const dy = Number(ev.dy);
-      return [{ cmd: 'wheel', dy: Number.isFinite(dy) ? Math.round(dy) * 40 : 0 }];
+      const lines = Number.isFinite(dy) ? Math.round(dy) : 0;
+      return [{ cmd: 'wheel', dy: lines === 0 ? 0 : -lines * 40 }];
     }
     case 'key':
       if (typeof ev.key !== 'string' || ev.key === '') return [];
