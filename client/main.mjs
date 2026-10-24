@@ -19,7 +19,7 @@ import { createInputArbiter } from './lib/input-arbiter.mjs';
 import { INPUT_KEYS } from './lib/protocol.mjs';
 import { normalizeServerUrl } from './lib/server-url.mjs';
 import { resolveServerUrl, DEFAULT_SERVER_URL } from './lib/first-run.mjs';
-import { safeCode, resolveInstallSource, buildInstallScript, RESULT_OK as INSTALL_RESULT_OK } from './lib/agent-install.mjs';
+import { safeCode, resolveInstallSource, buildInstallScript, installWorkRoot, RESULT_OK as INSTALL_RESULT_OK } from './lib/agent-install.mjs';
 import { parseJoinLink, reportJoin } from './lib/join.mjs';
 import { parseInviteLink } from './lib/invite-link.mjs';
 import { createAgent, createAgentApi, createIceServersFetcher } from './lib/agent.mjs';
@@ -1195,7 +1195,9 @@ function registerIpc() {
     if (!src) return { ok: false, reason: 'unsupported' };
     // Отдельный временный каталог: предсказуемые имена в общем %TEMP% —
     // конфликт двух установок и окно TOCTOU (ревью ADR 0029 P2-1).
-    const work = fs.mkdtempSync(path.join(app.getPath('temp'), 'enot-install-'));
+    // ASCII-путь: с кириллицей в имени пользователя cmd не находил свои файлы (ревью 1.13)
+    const workRoot = installWorkRoot({ tempDir: app.getPath('temp'), systemRoot: process.env.SystemRoot });
+    const work = fs.mkdtempSync(path.join(workRoot, 'enot-install-'));
     const scriptPath = path.join(work, 'install.cmd');
     const runPath = path.join(work, 'run.cmd');
     const logPath = path.join(work, 'install.log');
