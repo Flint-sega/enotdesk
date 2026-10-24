@@ -345,17 +345,22 @@ hub assets web client/{lib,renderer,locales}` → распаковка тарб�
   - `staging.conf`;
   - ssh-ключ `id_ed25519` и `known_hosts`;
   - зашифрованные копии — в `offsite-staging/`.
-- Юниты:
-  - `enotdesk-watch-staging.timer` — проверка раз в 5 минут;
-  - `enotdesk-offsite-staging.timer` — копия раз в сутки, 06:30.
-- **В простое оба таймера выключены**: настоящего канала оповещений (Healthchecks) пока нет. Учебный приёмник пингов `catcher.py` запускается только на время проверки — transient-юнитом с `RuntimeMaxSec`.
+- Юниты на каждый сервер (`staging`, `prod`):
+  - `enotdesk-watch-<имя>.timer` — проверка раз в 5 минут;
+  - `enotdesk-offsite-<имя>.timer` — копия раз в сутки, 05:30 UTC (через час после бэкапа сервера).
+- **Рабочий сервер (`prod.conf`, ключ `id_ed25519_prod`, копии в `offsite-prod/`) — таймеры включены с 24.10.** Пока
+  в конфиге нет URL пингов Healthchecks, итоги проверок видны только в журнале: `journalctl -u enotdesk-watch-prod`.
+- **Таймеры staging в простое выключены.** Учебный приёмник пингов `catcher.py` запускается только на время проверки — transient-юнитом с `RuntimeMaxSec`.
+- Остановить наблюдение: `systemctl disable --now enotdesk-watch-prod.timer enotdesk-offsite-prod.timer`.
+- Проверка рабочего сервера со стенда идёт около 30 с: AAAA-запросы DNS хоста отвечают через 5 с на каждое
+  подключение (A-запросы — мгновенно). На результат не влияет, лимит юнита — 4 мин. Сеть хоста не трогаем.
 - На staging (ВМ 100) появились:
   - `enotdesk-backup.timer`, такой же, как ставит `install-server.sh`; дампы — в `/var/lib/enotdesk/backups`;
   - пакет `age`;
   - `/usr/local/sbin/enotdesk-offsite`;
   - открытый ключ копий в `/etc/enotdesk/offsite-recipients.txt`;
   - строка ключа наблюдателя в `/root/.ssh/authorized_keys`: `restrict,from="<адрес хоста в сети ВМ>",command=…`. Копия прежнего файла — `authorized_keys.bak-offsite`.
-- Закрытый ключ копий staging хранится только на Mac: `~/enot-lab-secrets/enotdesk-offsite-staging.key`.
+- Закрытые ключи копий хранятся только на Mac: `~/enot-lab-secrets/enotdesk-offsite-staging.key` и `…-prod.key`; ключ прода — ещё и у владельца в менеджере паролей.
 - Грабля: вложенный `ssh` внутри скрипта, который пришёл через `bash -s`, съедает остаток скрипта со stdin. Нужен `ssh -n`.
 
 ## Агенты на Windows-VM (установка/переустановка)

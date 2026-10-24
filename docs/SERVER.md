@@ -439,7 +439,7 @@ WATCH_KEEP=30
 - «сервер»: период 5 минут, запас 5 минут — тревога о падении приходит не позже чем через 10 минут;
 - «копия»: период 1 сутки, запас 2 часа.
 
-Таймеры наблюдателя (systemd; время — местное время наблюдателя):
+Таймеры наблюдателя (systemd):
 
 ```ini
 # /etc/systemd/system/enotdesk-watch.service
@@ -461,10 +461,11 @@ Type=oneshot
 ExecStart=/usr/local/sbin/enotdesk-watch pull
 TimeoutStartSec=30min
 
-# /etc/systemd/system/enotdesk-offsite.timer — после ежедневного бэкапа сервера (04:30–05:00 по времени сервера)
+# /etc/systemd/system/enotdesk-offsite.timer — через час после бэкапа сервера (04:30 + до 30 мин по его часам);
+# пояс сервера указан явно: у наблюдателя он может быть другим
 [Timer]
-OnCalendar=*-*-* 06:30:00
-RandomizedDelaySec=20m
+OnCalendar=*-*-* 05:30:00 UTC
+RandomizedDelaySec=15m
 Persistent=true
 [Install]
 WantedBy=timers.target

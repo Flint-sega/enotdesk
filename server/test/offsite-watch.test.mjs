@@ -48,7 +48,7 @@ function stand(t) {
   fs.writeFileSync(age, `#!/bin/sh\nprintf '%s\\n' "$*" > "${dir}/age-args"\nprintf 'age-encryption.org/v1\\n'\nexec cat\n`, { mode: 0o755 });
   const ssh = path.join(dir, 'fake-ssh');
   // как sshd с принудительной командой: последний аргумент — SSH_ORIGINAL_COMMAND
-  fs.writeFileSync(ssh, `#!/bin/bash\nSSH_ORIGINAL_COMMAND="\${@: -1}" exec bash "${SERVE}"\n`, { mode: 0o755 });
+  fs.writeFileSync(ssh, `#!/bin/bash\nprintf '%s\\n' "$*" > "${dir}/ssh-args"\nSSH_ORIGINAL_COMMAND="\${@: -1}" exec bash "${SERVE}"\n`, { mode: 0o755 });
   const env = { ENOT_OFFSITE_BACKUPS: backups, ENOT_OFFSITE_DATA: dir, ENOT_OFFSITE_RECIPIENTS: recipients, ENOT_OFFSITE_AGE: age };
   return { dir, backups, recipients, age, ssh, env };
 }
@@ -160,6 +160,8 @@ test('watch-server check: всё в порядке — пинг успеха; he
   assert.equal(h.pings.at(-1).url, '/ping/check-uuid');
   assert.match(h.pings.at(-1).body, /сервер: версия 9\.9\.9/);
   assert.match(h.pings.at(-1).body, /на сервере: диск \d+%, дамп 4 ч/);
+  // -n: иначе ssh съедает stdin — так на стенде оборвался скрипт, пришедший через bash -s
+  assert.match(fs.readFileSync(path.join(s.dir, 'ssh-args'), 'utf8'), /^-n .*root@server status$/m);
 
   h.state.health = { status: 502, body: 'Bad Gateway' };
   r = await run('bash', [WATCH, 'check', cfg], s.env);
