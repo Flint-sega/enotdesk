@@ -328,6 +328,8 @@ const AUDIT_ALWAYS_PREFIX = ['login.', 'totp.', 'member.', 'invite.', 'audit.', 
 const AUDIT_ALWAYS = new Set([
   'logout', 'password.change', 'webhooks.config', 'retention.config', 'bootstrap.admin',
   'machine.claim', 'machine.claim.deny', 'machine.pin', 'machine.revoke', 'machine.delete',
+  // выпуск кода машины и регистрация агента (новый машинный токен) — тоже права (ревью 1.13)
+  'machine.create', 'machine.register',
 ]);
 
 export function isSecurityAction(action) {

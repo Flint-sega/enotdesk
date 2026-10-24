@@ -830,7 +830,11 @@ export function createServer(opts = {}) {
       const twoFactor = !!(user && user.active && user.totp_enabled);
       const fail = () => {
         cfg.limits.loginId.take(loginKey);
-        auditLog(db, null, 'login.failure', null, { login: String(login).slice(0, 120) });
+        // вставленный в поле логина пароль не должен лечь в журнал аудитора (ревью 1.13):
+        // логин — только похожий на логин, иначе пометка
+        const loginStr = String(login);
+        const loginNote = /^[\p{L}\p{N}._@+-]{1,64}$/u.test(loginStr) ? loginStr : '<invalid>';
+        auditLog(db, null, 'login.failure', null, { login: loginNote });
         return err(res, 401, 'invalid_credentials',
           twoFactor ? t('totp.invalidCredentials', {}, locale) : 'Неверный логин или пароль');
       };
@@ -1539,7 +1543,10 @@ export function createServer(opts = {}) {
       }
       const r = webhooks.configure(url, secret, events ?? null);
       if (!r.ok) return err(res, 400, r.error, WEBHOOK_ERR_TEXT[r.error] || 'Некорректные настройки');
-      auditLog(db, user.id, 'webhooks.config', null, { url: r.url, events: r.events });
+      // в журнал — только хост: у Slack/Telegram-подобных адресов секрет в пути (ревью 1.13)
+      let hookHost = null;
+      try { hookHost = r.url ? new URL(r.url).host : null; } catch { hookHost = null; }
+      auditLog(db, user.id, 'webhooks.config', null, { host: hookHost, events: r.events });
       return ok(res, 200, webhooks.get());
     }
 
@@ -2008,8 +2015,9 @@ export function createServer(opts = {}) {
       const group = OPERATOR_ASSETS[m[1]];
       let name;
       try { name = decodeURIComponent(m[2]); } catch { name = ''; }
-      const type = group?.files[name];
-      if (!type) return err(res, 404, 'not_found', 'Файл не найден');
+      // только собственные ключи allowlist: «constructor», «__proto__» — не файлы (ревью 1.13)
+      const type = group && Object.hasOwn(group.files, name) ? group.files[name] : null;
+      if (typeof type !== 'string') return err(res, 404, 'not_found', 'Файл не найден');
       let data;
       try { data = fs.readFileSync(new URL(group.dir + name, import.meta.url)); }
       catch { return err(res, 404, 'not_found', 'Файл не найден'); }
