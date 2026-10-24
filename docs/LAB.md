@@ -408,10 +408,14 @@ display из /tmp/.X11-unix); Wayland: `XDG_SESSION_TYPE=wayland` (адапте�
 purge'ем, накладывать заново): `.local/lab/scripts/vm103-unit-dropin.sh` (hardening →
 systemd-analyze 4.5 OK) и `.local/lab/scripts/vm103-ozone-dropin.sh` (`--ozone-platform=x11`,
 т.к. Electron 44 игнорирует `ELECTRON_OZONE_PLATFORM_HINT` и падает на Wayland-сессии).
+С 24.10 ozone-drop-in не нужен: unit продукта сам ставит `--ozone-platform=x11` при `DISPLAY` и
+`headless` без него (на 24.10 drop-in-ов на 103 нет). На 103 стоит агент из сборки main ветки
+`feature/linux-reinstall` (0.6.28 по номеру), прежний — в `/opt/enotdesk-agent/EnotDesk.prev`.
 
 **Сборка на 103** (`.local/lab/scripts/vm103-build.sh`): node 24 tarball → `/opt/node24`,
 исходники — tar worktree в `/var/tmp/enotdesk/`, `npm ci` + `pack:linux` →
-`/var/tmp/enotdesk/EnotDesk-built.AppImage` (первый прогон Linux-сборки, 05.10.2026).
+`/var/tmp/enotdesk/EnotDesk-built.AppImage` (первый прогон Linux-сборки, 05.10.2026). Без `nohup`: запускать
+в своей ssh-сессии (`sudo timeout 1500 bash build.sh`); 24.10 сборка ветки на 103 — ~2 мин.
 
 ## Хаб на staging + комбинированный origin :8081 (05.10.2026)
 

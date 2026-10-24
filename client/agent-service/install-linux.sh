@@ -83,8 +83,10 @@ if [ ! -f "$TOKEN" ]; then
   echo "==> регистрация машины «$AGENT_NAME» на $SERVER_URL"
   # Код - только в окружении процесса (не в argv). runuser без -l оставляет
   # окружение, HOME берёт из passwd служебного пользователя.
+  # Экран регистрации не нужен: headless явно в командной строке (Electron 44 выбирает
+  # платформу до кода программы; без DISPLAY с x11 процесс падал сразу, W-9 24.10).
   EDESK_AGENT_CODE="$(head -n1 "$AGENT_CODE_FILE")" EDESK_AGENT=1 EDESK_AGENT_NAME="$AGENT_NAME" \
-    runuser -u "$AGENT_USER" -- "$APP_DIR/enotdesk" >"$REG_LOG" 2>&1 &
+    runuser -u "$AGENT_USER" -- "$APP_DIR/enotdesk" --ozone-platform=headless >"$REG_LOG" 2>&1 &
   PID=$!
   for _ in $(seq 1 90); do
     [ -f "$TOKEN" ] && break
@@ -103,7 +105,8 @@ if [ ! -f "$TOKEN" ]; then
 fi
 
 echo "==> unit $UNIT_FILE"
-sed "s|ExecStart=.*|ExecStart=$APP_DIR/enotdesk|" "$(dirname "$0")/enotdesk-agent.service" > "$UNIT_FILE"
+# в ExecStart подставляется только путь к программе: обёртка выбора ozone остаётся
+sed "s|/opt/enotdesk-agent/EnotDesk/enotdesk|$APP_DIR/enotdesk|" "$(dirname "$0")/enotdesk-agent.service" > "$UNIT_FILE"
 chmod 0644 "$UNIT_FILE"
 
 systemctl daemon-reload
