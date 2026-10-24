@@ -54,6 +54,14 @@ test('packaging: install-linux.sh отдаёт .config агенту целико
   assert.ok(/chown -R .*AGENT_USER.*AGENT_HOME\/\.config/.test(installSh), 'нужен chown -R на $AGENT_HOME/.config — install -d оставлял родителей за root');
 });
 
+// W-9 на стенде 24.10: повторная установка (новый код после отзыва) при работающей
+// службе оставляла машину офлайн и стирала DISPLAY/XAUTHORITY админа.
+test('packaging: повторный install-linux.sh перезапускает службу и сохраняет env админа', () => {
+  assert.match(installSh, /^systemctl restart enotdesk-agent$/m, 'enable --now не трогает работающий процесс — нужен restart');
+  assert.doesNotMatch(installSh, /enable --now enotdesk-agent/);
+  assert.match(installSh, /grep -v '\^EDESK_AGENT_NAME=' "\$ENV_FILE"/, 'существующий agent.env дополняется, а не перезаписывается');
+});
+
 // Юнит агента: hardening, проверенный в лабе на Debian 13 (05.10, drop-in
 // переносится в продукт). Строки-маркеры обязаны быть в поставляемом unit.
 const unit = readFileSync(fileURLToPath(new URL('../agent-service/enotdesk-agent.service', import.meta.url)), 'utf8');

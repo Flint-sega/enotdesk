@@ -56,12 +56,20 @@ chmod 0600 "$PROFILE/settings.json"
 
 echo "==> env-файл $ENV_FILE"
 install -d -m 0750 /etc/enotdesk-agent
-{
-  echo "EDESK_AGENT_NAME=$AGENT_NAME"
-  # Для управления консольной X11-сессией раскомментируйте и поправьте:
-  # DISPLAY=:0
-  # XAUTHORITY=/etc/enotdesk-agent/xauth
-} > "$ENV_FILE"
+if [ -f "$ENV_FILE" ]; then
+  # Повторная установка: строки админа (DISPLAY, XAUTHORITY и др.) сохраняются,
+  # меняется только имя машины. Раньше файл перезаписывался, и агент молча терял
+  # экран и управление (W-9 на стенде 24.10).
+  { echo "EDESK_AGENT_NAME=$AGENT_NAME"; grep -v '^EDESK_AGENT_NAME=' "$ENV_FILE" || true; } > "$ENV_FILE.new"
+  mv "$ENV_FILE.new" "$ENV_FILE"
+else
+  {
+    echo "EDESK_AGENT_NAME=$AGENT_NAME"
+    # Для управления консольной X11-сессией раскомментируйте и поправьте:
+    # DISPLAY=:0
+    # XAUTHORITY=/etc/enotdesk-agent/xauth
+  } > "$ENV_FILE"
+fi
 chmod 0600 "$ENV_FILE"
 
 TOKEN="$PROFILE/agent-token.json"
@@ -99,7 +107,10 @@ sed "s|ExecStart=.*|ExecStart=$APP_DIR/enotdesk|" "$(dirname "$0")/enotdesk-agen
 chmod 0644 "$UNIT_FILE"
 
 systemctl daemon-reload
-systemctl enable --now enotdesk-agent
+systemctl enable enotdesk-agent
+# restart, а не enable --now: при повторной установке служба уже работает, и старый
+# процесс без нового токена оставлял машину офлайн до ручного перезапуска (W-9, 24.10)
+systemctl restart enotdesk-agent
 sleep 2
 systemctl --no-pager --lines=20 status enotdesk-agent || true
 echo
