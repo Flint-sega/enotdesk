@@ -181,6 +181,9 @@ function captureStartedStatus() {
   show($('connected-intro'));
   if (portalPending) {
     portalPending = false;
+    // подсказка «выберите экран в окне GNOME» отработала: не держать её рядом
+    // с «оператор видит ваш экран» (стенд 24.10)
+    text($('client-live-note'), streamPaused ? t('client.pausedNote') : '');
     enot.captureStatus('running').catch(() => {});
   }
 }

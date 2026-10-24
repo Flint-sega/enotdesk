@@ -35,6 +35,25 @@ test('клиент помощи: на Wayland подсказка и статус
   assert.match(media, /enot\.captureStatus\('running'\)/);
 });
 
+test('клиент помощи: на Wayland окно GNOME «поделиться экраном» — один раз', () => {
+  // стенд 24.10: getSources в selectPrimaryScreen и второй — в обработчике захвата
+  // открывали окно GNOME дважды; источник из первого выбора переиспользуется
+  const pick = main.slice(main.indexOf('async function selectPrimaryScreen'), main.indexOf('function permissionsReport'));
+  assert.match(pick, /selectedSource = \{[^}]*bounds, source: src \};/);
+  const pickAny = main.slice(main.indexOf('async function selectSource'), main.indexOf('async function selectPrimaryScreen'));
+  assert.equal((pickAny.match(/source: src \};/g) ?? []).length, 2, 'и при смене экрана');
+  const handler = main.slice(main.indexOf('session.defaultSession.setDisplayMediaRequestHandler((_opts'));
+  const reuse = handler.indexOf('if (isWaylandSession() && selectedSource.source) {');
+  assert.ok(reuse > 0 && reuse < handler.indexOf('desktopCapturer.getSources'), 'до повторного getSources');
+  assert.match(handler, /callback\(\{ video: selectedSource\.source \}\);\s*return;/);
+  assert.match(main, /function permissionsReport\(\) \{\s*const wayland = isWaylandSession\(\);/);
+});
+
+test('клиент помощи: подсказка про окно GNOME уходит, когда захват пошёл', () => {
+  const started = media.slice(media.indexOf('function captureStartedStatus'), media.indexOf('let hostRtcEpoch'));
+  assert.match(started, /if \(portalPending\) \{\s*portalPending = false;[\s\S]*text\(\$\('client-live-note'\), streamPaused \? t\('client\.pausedNote'\) : ''\);/);
+});
+
 test('мост: enot:captureStatus проверяет отправителя и пускает только allowlist', () => {
   assert.match(preload, /captureStatus: \(state, reason\) => ipcRenderer\.invoke\('enot:captureStatus', \{ state, reason \}\)/);
   const h = main.slice(main.indexOf("ipcMain.handle('enot:captureStatus'"), main.indexOf("ipcMain.handle('enot:sendSignal'"));
