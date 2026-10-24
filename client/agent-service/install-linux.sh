@@ -56,12 +56,20 @@ chmod 0600 "$PROFILE/settings.json"
 
 echo "==> env-файл $ENV_FILE"
 install -d -m 0750 /etc/enotdesk-agent
-{
-  echo "EDESK_AGENT_NAME=$AGENT_NAME"
-  # Для управления консольной X11-сессией раскомментируйте и поправьте:
-  # DISPLAY=:0
-  # XAUTHORITY=/etc/enotdesk-agent/xauth
-} > "$ENV_FILE"
+if [ -f "$ENV_FILE" ]; then
+  # Повторная установка: строки админа (DISPLAY, XAUTHORITY и др.) сохраняются,
+  # меняется только имя машины. Раньше файл перезаписывался, и агент молча терял
+  # экран и управление (W-9 на стенде 24.10).
+  { echo "EDESK_AGENT_NAME=$AGENT_NAME"; grep -v '^EDESK_AGENT_NAME=' "$ENV_FILE" || true; } > "$ENV_FILE.new"
+  mv "$ENV_FILE.new" "$ENV_FILE"
+else
+  {
+    echo "EDESK_AGENT_NAME=$AGENT_NAME"
+    # Для управления консольной X11-сессией раскомментируйте и поправьте:
+    # DISPLAY=:0
+    # XAUTHORITY=/etc/enotdesk-agent/xauth
+  } > "$ENV_FILE"
+fi
 chmod 0600 "$ENV_FILE"
 
 TOKEN="$PROFILE/agent-token.json"
@@ -75,8 +83,10 @@ if [ ! -f "$TOKEN" ]; then
   echo "==> регистрация машины «$AGENT_NAME» на $SERVER_URL"
   # Код - только в окружении процесса (не в argv). runuser без -l оставляет
   # окружение, HOME берёт из passwd служебного пользователя.
+  # Экран регистрации не нужен: headless явно в командной строке (Electron 44 выбирает
+  # платформу до кода программы; без DISPLAY с x11 процесс падал сразу, W-9 24.10).
   EDESK_AGENT_CODE="$(head -n1 "$AGENT_CODE_FILE")" EDESK_AGENT=1 EDESK_AGENT_NAME="$AGENT_NAME" \
-    runuser -u "$AGENT_USER" -- "$APP_DIR/enotdesk" >"$REG_LOG" 2>&1 &
+    runuser -u "$AGENT_USER" -- "$APP_DIR/enotdesk" --ozone-platform=headless >"$REG_LOG" 2>&1 &
   PID=$!
   for _ in $(seq 1 90); do
     [ -f "$TOKEN" ] && break
@@ -95,11 +105,15 @@ if [ ! -f "$TOKEN" ]; then
 fi
 
 echo "==> unit $UNIT_FILE"
-sed "s|ExecStart=.*|ExecStart=$APP_DIR/enotdesk|" "$(dirname "$0")/enotdesk-agent.service" > "$UNIT_FILE"
+# в ExecStart подставляется только путь к программе: обёртка выбора ozone остаётся
+sed "s|/opt/enotdesk-agent/EnotDesk/enotdesk|$APP_DIR/enotdesk|" "$(dirname "$0")/enotdesk-agent.service" > "$UNIT_FILE"
 chmod 0644 "$UNIT_FILE"
 
 systemctl daemon-reload
-systemctl enable --now enotdesk-agent
+systemctl enable enotdesk-agent
+# restart, а не enable --now: при повторной установке служба уже работает, и старый
+# процесс без нового токена оставлял машину офлайн до ручного перезапуска (W-9, 24.10)
+systemctl restart enotdesk-agent
 sleep 2
 systemctl --no-pager --lines=20 status enotdesk-agent || true
 echo

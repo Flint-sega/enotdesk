@@ -14,7 +14,11 @@ Environment=EDESK_AGENT=1
 # EDESK_AGENT_NAME и опциональные DISPLAY/XAUTHORITY - в EnvironmentFile (0600):
 EnvironmentFile=/etc/enotdesk-agent/agent.env
 # Путь к распакованной сборке клиента - скорректируйте при другом расположении.
-ExecStart=/opt/enotdesk-agent/EnotDesk/enotdesk
+# Ozone-платформу Electron 44 выбирает до запуска кода программы, поэтому флаг - здесь,
+# по факту окружения при каждом старте: есть DISPLAY/WAYLAND_DISPLAY - x11 (на Wayland через
+# Xwayland), нет - headless (без экрана агент иначе падал: «Missing X server», W-9 24.10).
+# $$ - буквальный $ для sh (systemd сам раскрывает $VAR).
+ExecStart=/bin/sh -c 'o=headless; [ -n "$${DISPLAY:-}$${WAYLAND_DISPLAY:-}" ] && o=x11; exec "$$0" --ozone-platform="$$o"' /opt/enotdesk-agent/EnotDesk/enotdesk
 Restart=always
 RestartSec=5
 # Хардненинг - тот же набор, что у серверного unit (scripts/install-server.sh).

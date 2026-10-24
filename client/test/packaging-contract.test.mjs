@@ -54,6 +54,24 @@ test('packaging: install-linux.sh отдаёт .config агенту целико
   assert.ok(/chown -R .*AGENT_USER.*AGENT_HOME\/\.config/.test(installSh), 'нужен chown -R на $AGENT_HOME/.config — install -d оставлял родителей за root');
 });
 
+// W-9 на стенде 24.10: повторная установка (новый код после отзыва) при работающей
+// службе оставляла машину офлайн и стирала DISPLAY/XAUTHORITY админа.
+test('packaging: повторный install-linux.sh перезапускает службу и сохраняет env админа', () => {
+  assert.match(installSh, /^systemctl restart enotdesk-agent$/m, 'enable --now не трогает работающий процесс — нужен restart');
+  assert.doesNotMatch(installSh, /enable --now enotdesk-agent/);
+  assert.match(installSh, /grep -v '\^EDESK_AGENT_NAME=' "\$ENV_FILE"/, 'существующий agent.env дополняется, а не перезаписывается');
+});
+
+// Electron 44 выбирает ozone до кода программы: appendSwitch в main.mjs без DISPLAY не
+// успевает, процесс падает «Missing X server» (W-9 на стенде 24.10). Флаг — в командной строке.
+test('packaging: ozone для агента Linux — в командной строке unit и регистрации', () => {
+  assert.match(unit, /^ExecStart=\/bin\/sh -c 'o=headless; \[ -n "\$\$\{DISPLAY:-\}\$\$\{WAYLAND_DISPLAY:-\}" \] && o=x11; exec "\$\$0" --ozone-platform="\$\$o"' \/opt\/enotdesk-agent\/EnotDesk\/enotdesk$/m,
+    'unit выбирает x11/headless по окружению при каждом старте');
+  assert.match(installSh, /runuser -u "\$AGENT_USER" -- "\$APP_DIR\/enotdesk" --ozone-platform=headless/, 'регистрации экран не нужен');
+  assert.match(installSh, /sed "s\|\/opt\/enotdesk-agent\/EnotDesk\/enotdesk\|\$APP_DIR\/enotdesk\|"/, 'установщик меняет только путь, обёртку не стирает');
+  assert.doesNotMatch(installSh, /s\|ExecStart=\.\*\|/);
+});
+
 // Юнит агента: hardening, проверенный в лабе на Debian 13 (05.10, drop-in
 // переносится в продукт). Строки-маркеры обязаны быть в поставляемом unit.
 const unit = readFileSync(fileURLToPath(new URL('../agent-service/enotdesk-agent.service', import.meta.url)), 'utf8');
