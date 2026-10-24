@@ -312,6 +312,10 @@ async function turnUrlVariants(url) {
 
 const CONTACT_LIMITS = { name: 120, notes: 2000, tags: 10, tag: 30 };
 const MACHINE_LIMITS = { name: 120, group: 60, reason: 500, pin: 128, toast: 500 };
+// PIN машины (решение владельца 24.10, ревью 1.13 P2-10): новый — не короче 6 символов
+// (старые продолжают работать); после PIN_LOCK_AFTER неверных подряд PIN блокируется.
+const PIN_MIN = 6;
+const PIN_LOCK_AFTER = 10;
 
 function validateContactInput(body) {
   if (typeof body !== 'object' || body === null) return 'Некорректный запрос';
@@ -361,6 +365,8 @@ export function createServer(opts = {}) {
     hostPingGraceMs: opts.hostPingGraceMs ?? 5000,
     // шаг свипера; опция — только для быстрых тестов (HOST_PING_MAX за секунды)
     sweeperMs: opts.sweeperMs ?? 1000,
+    // как часто живые WS операторов сверяются с входом и правилом 2FA (ревью 1.13 P2-8/P2-11)
+    opAuthCheckMs: opts.opAuthCheckMs ?? 5000,
     // toast на экран машины (R08): сколько ждать подтверждения агента и сколько
     // живёт не забранный агентом запрос (агент ходит heartbeat-ом раз в 5с)
     toastWaitMs: opts.toastWaitMs ?? 12_000,
@@ -610,8 +616,35 @@ export function createServer(opts = {}) {
     }
   }
 
+  // Живой WS оператора держится, только пока его вход действителен: токен не удалён
+  // (выход, смена пароля, отключение участника, reset-2fa с консоли — это другой процесс
+  // на той же базе) и админ без 2FA не попал под «2FA обязательна для админов». Иначе —
+  // закрыть сразу (решение владельца 24.10, ревью 1.13 P2-8/P2-11).
+  const adminTotpBlocked = (u) => u.role === 'admin' && !u.totpEnabled
+    && getSetting(db, 'security.adminTotpRequired', '0') === '1';
+  function opSocketAuthorized(meta) {
+    const row = db.prepare(`
+      SELECT u.role, u.totp_enabled FROM auth_tokens t JOIN users u ON u.id = t.user_id
+      WHERE t.token_hash = ? AND t.expires_at > ? AND u.active = 1 AND u.id = ?
+    `).get(meta.tokenHash, new Date().toISOString(), meta.userId);
+    return !!row && ['admin', 'operator'].includes(row.role) && !adminTotpBlocked({ role: row.role, totpEnabled: !!row.totp_enabled });
+  }
+  function closeRevokedOperators() {
+    for (const rt of live.values()) {
+      for (const [opWs, meta] of rt.opSockets) {
+        if (!meta.tokenHash || opSocketAuthorized(meta)) continue;
+        try { opWs.close(4003, 'auth-revoked'); } catch { /* уже закрыт */ }
+      }
+    }
+  }
+  let opAuthCheckedAt = 0;
+
   const sweeper = setInterval(() => {
     const nowMs = Date.now();
+    if (nowMs - opAuthCheckedAt >= cfg.opAuthCheckMs) {
+      opAuthCheckedAt = nowMs;
+      closeRevokedOperators();
+    }
     for (const [id, rt] of [...live]) {
       if (rt.hostLostAt != null && nowMs - rt.hostLostAt > cfg.graceMs) endSession(id, 'host-lost');
       else if (rt.opLostAt != null && nowMs - rt.opLostAt > cfg.graceMs) endSession(id, 'operator-lost');
@@ -1317,7 +1350,15 @@ export function createServer(opts = {}) {
       }
       const before = getSetting(db, 'security.adminTotpRequired', '0') === '1';
       setSetting(db, 'security.adminTotpRequired', want ? '1' : '0');
-      auditLog(db, user.id, 'security.config', null, { adminTotpRequired: { before, after: want } });
+      // Входы админов без 2FA завершаются: дальше — новый вход и настройка 2FA. Живые
+      // сеансы рвутся сразу, а не со следующей проверкой свипера (решение владельца 24.10).
+      let signedOut = 0;
+      if (want && !before) {
+        signedOut = db.prepare(`DELETE FROM auth_tokens WHERE user_id IN
+                                  (SELECT id FROM users WHERE role = 'admin' AND totp_enabled = 0)`).run().changes;
+        closeRevokedOperators();
+      }
+      auditLog(db, user.id, 'security.config', null, { adminTotpRequired: { before, after: want }, ...(signedOut ? { signedOut } : {}) });
       return ok(res, 200, { adminTotpRequired: want });
     }
     if (p === '/settings/retention' && req.method === 'GET') {
@@ -1617,13 +1658,22 @@ export function createServer(opts = {}) {
         return deny('reason_required', 'machines.reasonRequired', 400);
       }
       if (machine.pin_hash) {
+        // заблокированный PIN не проверяется вовсе: иначе подбор шёл бы дальше
+        if (machine.pin_locked_at) return deny('pin_locked', 'machines.pinLocked', 423);
         const pin = body?.pin;
         if (typeof pin !== 'string' || !pin) return deny('pin_required', 'machines.pinRequired', 400);
         if (!(await machinesStore.verifyPinAsync(machine, pin))) {
           // порог бьют только неудачные попытки: верный PIN не остаётся запертым
           cfg.limits.machineClaimId.take(`id:${machine.id}`);
+          const before = machinesStore.get(machine.id)?.pin_locked_at;
+          const fail = machinesStore.pinFailed(machine.id, PIN_LOCK_AFTER);
+          if (fail.locked && !before) {
+            auditLog(db, machine.id, 'machine.pin.locked', machine.id, { failures: fail.failures, operatorId: user.id });
+            return deny('pin_locked', 'machines.pinLocked', 423);
+          }
           return deny('bad_pin', 'machines.badPin', 403);
         }
+        machinesStore.pinSucceeded(machine.id);
       }
       // После await проверки PIN машину могли отозвать или занять параллельным claim'ом:
       // перепроверка и вставка сеанса — один синхронный участок без await (ревью 1.13, 24.10:
@@ -1684,12 +1734,23 @@ export function createServer(opts = {}) {
         auditLog(db, user.id, 'machine.pin', machine.id, { set: false });
         return ok(res, 200, { ok: true, hasPin: false });
       }
-      if (typeof pin !== 'string' || pin.length < 4 || pin.length > MACHINE_LIMITS.pin) {
+      if (typeof pin !== 'string' || pin.length < PIN_MIN || pin.length > MACHINE_LIMITS.pin) {
         return err(res, 400, 'bad_request', t('machines.pinLength', {}, locale));
       }
       machinesStore.setPin(machine.id, pin);
       auditLog(db, user.id, 'machine.pin', machine.id, { set: true });
       return ok(res, 200, { ok: true, hasPin: true });
+    }
+    m = p.match(/^\/machines\/([^/]+)\/pin\/unlock$/);
+    if (m && req.method === 'POST') {
+      if (!user) return err(res, 401, 'unauthorized', 'Требуется авторизация');
+      if (user.role !== 'admin') return err(res, 403, 'forbidden', 'Недостаточно прав');
+      const locale = pickLocale(req.headers['accept-language']);
+      const machine = machinesStore.get(m[1]);
+      if (!machine) return err(res, 404, 'not_found', t('machines.notFound', {}, locale));
+      const unlocked = machinesStore.unlockPin(machine.id);
+      if (unlocked) auditLog(db, user.id, 'machine.pin.unlock', machine.id, { failures: machine.pin_failures });
+      return ok(res, 200, { ok: true, unlocked });
     }
     m = p.match(/^\/machines\/([^/]+)\/revoke$/);
     if (m && req.method === 'POST') {
@@ -2164,6 +2225,8 @@ export function createServer(opts = {}) {
       } else if (msg.role === 'operator') {
         const u = authUser({ headers: { authorization: `Bearer ${msg.token}` }, socket: { remoteAddress: '' } });
         if (!u || !['admin', 'operator'].includes(u.role)) return ws.close(4003, 'invalid-session');
+        // как и REST (totp_setup_required): админ без 2FA при обязательной 2FA сеанс не открывает
+        if (adminTotpBlocked(u)) return ws.close(4003, 'totp-setup-required');
         // multi-operator (v0.4.0): основной оператор ИЛИ присоединённый (session_operators)
         const joinedOp = db.prepare(
           'SELECT 1 FROM session_operators WHERE session_id = ? AND user_id = ? AND claim_id = ?'
@@ -2213,7 +2276,7 @@ export function createServer(opts = {}) {
         // «вернувшимся» без реплея offer — видео у B не появлялось никогда)
         resumed = rt.opLostAt != null && rt.opLostUser === userId;
         rt.opLostAt = null;
-        rt.opSockets.set(ws, { userId, claimId: msg.claimId });
+        rt.opSockets.set(ws, { userId, claimId: msg.claimId, tokenHash: sha256(String(msg.token)) });
         // Мультиоператор: хост поднимает ПЕРСОНАЛЬНЫЙ pc на каждое присоединение
         // (offer адресуется по claimId). Сообщаем и при WS-(пере)подключении, не
         // только при claim-approve: reconnect оператора = новый attach.

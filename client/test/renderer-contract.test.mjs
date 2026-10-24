@@ -114,6 +114,16 @@ test('CSP: стили только styles.css, без inline-стилей и inl
   assert.ok(!/connect-src[^;]*file:/.test(csp), 'connect-src не должен содержать file: (словари — ES-модули)');
 });
 
+test('рендерер и словари не импортируют JSON: без connect-src file: такой импорт молча убил бы страницу (ревью 1.13 P2-17)', () => {
+  const root = path.join(import.meta.dirname, '..');
+  const files = [];
+  for (const d of ['renderer', 'renderer/views', 'locales', 'lib']) {
+    for (const f of readdirSync(path.join(root, d))) if (/\.(m?js)$/.test(f)) files.push(path.join(root, d, f));
+  }
+  const offenders = files.filter((f) => /(?:import[^;]*['"][^'"]+\.json['"])|(?:with\s*\{\s*type:\s*['"]json['"])/.test(readFileSync(f, 'utf8')));
+  assert.deepEqual(offenders.map((f) => path.relative(root, f)), []);
+});
+
 test('getSettings отдаёт фактическую версию, футер её показывает', () => {
   assert.match(mainJs, /createRequire\(import\.meta\.url\)\('\.\.\/package\.json'\)/);
   assert.match(mainJs, /version:\s*app\.isPackaged\s*\?\s*app\.getVersion\(\)\s*:\s*pkg\.version/);

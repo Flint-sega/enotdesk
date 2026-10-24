@@ -2,7 +2,7 @@
 // пауза трансляции, персональные pc операторов, адаптивный битрейт.
 // Операторская сторона — программа оператора с сервера (ADR 0033, этап 3).
 
-import { $, enot, text, show, setBusyAll, errorText } from './dom.js';
+import { $, enot, text, show, hide, setBusyAll, errorText } from './dom.js';
 import { state } from './state.js';
 import { t } from '../lib/i18n.mjs';
 import { wireHostChannel, resetFileReceivers, operatorName } from './session-services.js';
@@ -177,8 +177,18 @@ function captureFailedStatus() {
   portalPending = false;
   enot.captureStatus('error', 'capture-denied').catch(() => {});
 }
+// «Оператор видит ваш экран» — только когда захват идёт и хотя бы у одного оператора
+// с видео соединение установлено. В one-click из хаба claim и согласие проходят раньше,
+// чем оператор открыл окно сеанса: до этого — «оператор подключается…» (решение
+// владельца 24.10).
+export function updateSeenStatus() {
+  const seen = !!state.localStream
+    && [...state.operators.values()].some((op) => !op.noVideo && op.pc?.connectionState === 'connected');
+  if (seen) { show($('connected-intro')); hide($('connecting-intro')); } else { hide($('connected-intro')); show($('connecting-intro')); }
+}
+
 function captureStartedStatus() {
-  show($('connected-intro'));
+  updateSeenStatus();
   if (portalPending) {
     portalPending = false;
     // подсказка «выберите экран в окне GNOME» отработала: не держать её рядом
@@ -378,6 +388,7 @@ function makePcOperator(claimId, iceServers) {
   pc.onconnectionstatechange = () => {
     const op = state.operators.get(claimId);
     if (!op || op.pc !== pc) return; // оператор уже заменён/удалён — таймер чужой
+    updateSeenStatus();
     if (pc.connectionState === 'connected') {
       if (opGrace) { clearTimeout(opGrace); opGrace = null; }
       return;
@@ -408,6 +419,7 @@ export function dropOperator(claimId) {
   try { op.pc.close(); } catch { /* уже закрыт */ }
   for (const ch of Object.values(op.dcs)) { try { ch.close(); } catch { /* уже закрыт */ } }
   state.operators.delete(claimId);
+  updateSeenStatus();
   resetFileReceivers(claimId); // недокачанный файл этого оператора — вместе с каналом
   if (!state.operators.size) stopAdaptive(); // подписчиков нет — захват не крутится вхолостую (аналог has_subscribes у RustDesk)
 }

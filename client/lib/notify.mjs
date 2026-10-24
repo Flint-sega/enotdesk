@@ -30,11 +30,14 @@ export function sanitizeToastText(text) {
 // WinAPI: экран входа/сервисный режим → честный отказ 'no-active-session',
 // посылать некому). Затем wtsapi32!
 // WTSSendMessageW(WTS_CURRENT_SERVER_HANDLE=null, ЭТОТ sessionId, заголовок,
-// сообщение, MB_OK=0, timeout=0 — ждать ответа, bWait). Прототип объявлен
+// сообщение, MB_OK=0, timeout, bWait). timeout=0 — окно висит до нажатия
+// (сообщение оператора); >0 — Windows сама закрывает окно через столько секунд
+// (сообщение о подключении через службу: иначе окно посреди экрана забирает
+// первый клик оператора — решение владельца 24.10, X-2). Прототип объявлен
 // async: диалог может ждать нажатия минуты — цикл агента (heartbeat, сеансы)
 // не должен замерзать. Заголовок/сообщение передаются готовыми буферами
 // UTF-16LE + терминатор: длины в WinAPI считаются в байтах.
-function winToast(message, title, koffi) {
+function winToast(message, title, koffi, timeoutSec) {
   // koffi 3: объявления ТОЛЬКО прототипом-строкой. Форма `func(sig, {stdcall:true})`
   // уходит в классический парсер (имя, тип, параметры) и падает — тост в
   // агент-режиме честно отказывал native-unavailable (дефект №11, живой сеанс
@@ -60,7 +63,7 @@ function winToast(message, title, koffi) {
   // (err, res)-колбэком вместо koffi-2 опции {async:true}.
   return new Promise((resolve) => {
     try {
-      send.async(null, sessionId, titleBuf, titleBuf.length, msgBuf, msgBuf.length, MB_OK, 0, response, true,
+      send.async(null, sessionId, titleBuf, titleBuf.length, msgBuf, msgBuf.length, MB_OK, timeoutSec, response, true,
         (err, sent) => resolve(err || !sent ? { ok: false, reason: 'native-unavailable' } : { ok: true }));
     } catch {
       resolve({ ok: false, reason: 'native-unavailable' });
@@ -92,12 +95,14 @@ function linuxConsoleUser(spawnSync) {
   }
 }
 
-function linuxToast(message, title, spawnSync) {
+function linuxToast(message, title, spawnSync, timeoutSec) {
   const user = linuxConsoleUser(spawnSync);
   if (!user) return { ok: false, reason: 'no-console-user' };
   try {
-    // notify-send <summary> [body]: summary — заголовок, body — текст
-    const r = spawnSync('sudo', ['-u', user, 'notify-send', title, message], { timeout: 5000 });
+    // notify-send [-t мс] <summary> [body]: summary — заголовок, body — текст;
+    // -t — пожелание серверу уведомлений (GNOME может закрыть раньше)
+    const expire = timeoutSec > 0 ? ['-t', String(timeoutSec * 1000)] : [];
+    const r = spawnSync('sudo', ['-u', user, 'notify-send', ...expire, title, message], { timeout: 5000 });
     return r?.status === 0 ? { ok: true } : { ok: false, reason: 'notify-failed' };
   } catch {
     return { ok: false, reason: 'notify-failed' };
@@ -111,13 +116,15 @@ async function defaultKoffi() {
   return mod.default ?? mod;
 }
 
-export async function showToast(platform, text, { koffi = null, spawnSync = nodeSpawnSync, title = 'EnotDesk' } = {}) {
+// timeoutSec — через сколько секунд окно закрывается само (0 — ждать нажатия).
+export async function showToast(platform, text, { koffi = null, spawnSync = nodeSpawnSync, title = 'EnotDesk', timeoutSec = 0 } = {}) {
   const message = sanitizeToastText(text);
   if (!message) return { ok: false, reason: 'invalid:text' };
+  const timeout = Number.isInteger(timeoutSec) && timeoutSec > 0 ? Math.min(timeoutSec, 3600) : 0;
   try {
-    if (platform === 'win32') return await winToast(message, title, koffi ?? await defaultKoffi());
+    if (platform === 'win32') return await winToast(message, title, koffi ?? await defaultKoffi(), timeout);
     if (platform === 'darwin') return macToast(message, title, spawnSync);
-    if (platform === 'linux') return linuxToast(message, title, spawnSync);
+    if (platform === 'linux') return linuxToast(message, title, spawnSync, timeout);
   } catch {
     // библиотеки ОС могут отсутствовать — честный отказ вместо падения
     return { ok: false, reason: 'native-unavailable' };

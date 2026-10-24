@@ -2,7 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import path from 'node:path';
-import { createAgent, createAgentApi, createIceServersFetcher } from '../lib/agent.mjs';
+import { createAgent, createAgentApi, createIceServersFetcher, NOTICE_TIMEOUT_SEC } from '../lib/agent.mjs';
 import { createNativeInput, inertAdapter } from '../lib/native-input.mjs';
 import { validateOutgoingSignal } from '../lib/protocol.mjs';
 
@@ -1148,6 +1148,7 @@ test('W-C1: offer от второго оператора (другой from) н�
 // (с причиной из claim) и о конце сеанса; повторный claim после обрыва — без дубля.
 test('уведомление человеку: начало с причиной один раз, конец — при ended', async () => {
   const shown = [];
+  const shownOpts = [];
   let sessionCalls = 0;
   const { api } = fakeApi({
     session: () => {
@@ -1163,7 +1164,7 @@ test('уведомление человеку: начало с причиной 
     signal: sig.factory,
     native: createNativeInput({ adapter: inertAdapter() }),
     policy: { tokenStore: memoryStore(), heartbeatMs: 10, backoffBaseMs: 10, backoffMaxMs: 40 },
-    notify: async (text) => { shown.push(text); return { ok: true }; },
+    notify: async (text, opts) => { shown.push(text); shownOpts.push(opts); return { ok: true }; },
     noticeText: (kind, d = {}) => (kind === 'start' ? `start:${d.operator}:${d.reason}` : 'end'),
   });
   try {
@@ -1180,6 +1181,9 @@ test('уведомление человеку: начало с причиной 
     c.emit({ type: 'ended' });
     await sleep(30);
     assert.deepEqual(shown, ['start:Анна:обновить 1С', 'end'], 'конец сеанса — отдельным сообщением');
+    // X-2 (решение владельца 24.10): окно сообщения о подключении закрывается само
+    assert.deepEqual(shownOpts, [{ timeoutSec: NOTICE_TIMEOUT_SEC }, { timeoutSec: NOTICE_TIMEOUT_SEC }]);
+    assert.equal(NOTICE_TIMEOUT_SEC, 60);
   } finally {
     agent.stop();
     await sleep(10);

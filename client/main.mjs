@@ -1056,6 +1056,9 @@ async function openOperatorWindow({ inviteToken } = {}) {
   const guardNav = (e, url) => { if (!isAllowedNavigation(url, operatorOrigin)) e.preventDefault(); };
   wc.on('will-navigate', guardNav);
   wc.on('will-redirect', guardNav);
+  // и вложенные рамки: will-navigate видит только главную (ревью 1.13 P2-16; CSP /operator
+  // рамки и так не пускает — это запас прочности)
+  wc.on('will-frame-navigate', (e) => { if (!isAllowedNavigation(e.url, operatorOrigin)) e.preventDefault(); });
   wc.on('will-attach-webview', (e) => e.preventDefault());
   // новая загрузка страницы — новая разовая выдача сохранённых кредов
   wc.on('did-navigate', () => { operatorCredsLoaded = false; });
@@ -1988,7 +1991,8 @@ function startAgentMode() {
     }),
     // Сообщение на экран машины (R08): платформа известна здесь, текст приходит
     // из heartbeat-ответа сервера. Показ не блокирует цикл (см. deliverToast).
-    notify: (text) => showToast(process.platform, text),
+    // opts.timeoutSec — у сообщений о подключении (окно закрывается само).
+    notify: (text, opts) => showToast(process.platform, text, opts),
     // ADR 0037 (Р5): сообщение человеку за компьютером о подключении через
     // службу и о конце сеанса — тексты из словаря.
     noticeText: (kind, { operator = '', reason = '' } = {}) => (kind === 'start'
