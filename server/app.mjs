@@ -1615,6 +1615,16 @@ export function createServer(opts = {}) {
           return deny('bad_pin', 'machines.badPin', 403);
         }
       }
+      // После await проверки PIN машину могли отозвать или занять параллельным claim'ом:
+      // перепроверка и вставка сеанса — один синхронный участок без await (ревью 1.13, 24.10:
+      // два claim'а с PIN оба проходили machine_busy, claim во время отзыва получал сеанс).
+      const fresh = machinesStore.get(machine.id);
+      if (!fresh || fresh.revoked_at || !fresh.agent_token_hash) {
+        return err(res, 409, 'machine_revoked', t('machines.revoked', {}, locale));
+      }
+      if (db.prepare("SELECT count(*) c FROM sessions WHERE machine_id = ? AND state != 'ended'").get(machine.id).c > 0) {
+        return err(res, 409, 'machine_busy', t('machines.busy', {}, locale));
+      }
       // успех: host сеанса — агент с машинным токеном; согласие человека не нужно,
       // политику (причина + PIN) сервер уже проверил сам
       const sessionId = newSessionId(db);
@@ -1628,7 +1638,7 @@ export function createServer(opts = {}) {
       const password = sessionPassword(8);
       db.prepare(`INSERT INTO sessions (id, password_hash, host_token_hash, state, operator_id, claim_id, machine_id, created_at, started_at, lease_expires_at)
                   VALUES (?,?,?,?,?,?,?,?,?,?)`)
-        .run(sessionId, hashPassword(password), machine.agent_token_hash, 'pending-consent',
+        .run(sessionId, hashPassword(password), fresh.agent_token_hash, 'pending-consent',
              user.id, claimId, machine.id, nowIso, nowIso, lease);
       auditLog(db, machine.id, 'machine.claim', sessionId, { unattended: true, reason, operatorId: user.id });
       // W1: водяной знак «недавние сверху» для панели машин оператора
@@ -2121,6 +2131,11 @@ export function createServer(opts = {}) {
         const stored = Buffer.from(s.host_token_hash);
         if (!digest || digest.length !== stored.length || !crypto.timingSafeEqual(digest, stored)) {
           return ws.close(4003, 'invalid-session');
+        }
+        // машинный сеанс отозванной (или удалённой) машины хост больше не открывает (ревью 1.13)
+        if (s.machine_id) {
+          const mach = machinesStore.get(s.machine_id);
+          if (!mach || mach.revoked_at) return ws.close(4003, 'invalid-session');
         }
         const existingRt = live.get(s.id);
         // №13b (ревью GLM-5.3 v0.4.4): в approved лизинг — не судья входа, ПОКА

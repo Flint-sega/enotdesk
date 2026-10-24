@@ -581,6 +581,30 @@ test('revoke завершает живой сеанс машины и гасит
   assert.equal((await api(base, 'DELETE', `/machines/${created.machine.id}`, { token: admin.token })).status, 404);
 });
 
+// Ревью безопасности 1.13 (24.10): проверка PIN асинхронная (scrypt), и machine_busy /
+// отзыв проверялись до неё — два параллельных claim'а оба получали сеанс.
+test('claim с PIN: параллельные запросы — один сеанс, второй machine_busy; claim во время отзыва — 409', async (t) => {
+  const { base, admin } = await setup(t);
+  const { created } = await onboardAndRegister(base, admin);
+  const id = created.machine.id;
+  assert.equal((await api(base, 'POST', `/machines/${id}/pin`, { token: admin.token, body: { pin: '246813' } })).status, 200);
+  const claim = () => api(base, 'POST', `/machines/${id}/claim`, { token: admin.token, body: { reason: 'Параллельно', pin: '246813' } });
+  const both = await Promise.all([claim(), claim()]);
+  assert.deepEqual(both.map((r) => r.status).sort(), [201, 409], 'ровно один сеанс на машину');
+  assert.equal(both.find((r) => r.status === 409).json.error.code, 'machine_busy');
+
+  const second = await onboardAndRegister(base, admin, { name: 'Касса-2' });
+  const id2 = second.created.machine.id;
+  assert.equal((await api(base, 'POST', `/machines/${id2}/pin`, { token: admin.token, body: { pin: '975310' } })).status, 200);
+  const pending = api(base, 'POST', `/machines/${id2}/claim`, { token: admin.token, body: { reason: 'Во время отзыва', pin: '975310' } });
+  assert.equal((await api(base, 'POST', `/machines/${id2}/revoke`, { token: admin.token })).status, 200);
+  const late = await pending;
+  assert.equal(late.status, 409, 'отозванная машина сеанса не получает');
+  assert.equal(late.json.error.code, 'machine_revoked');
+  const live = (await api(base, 'GET', '/history', { token: admin.token })).json.items.filter((it) => it.machineId === id2 && !it.endedAt);
+  assert.equal(live.length, 0, 'живого сеанса отозванной машины нет');
+});
+
 test('инвентарь по API: heartbeat с inventory сохранён и виден в GET /machines и /machines/:id; мусор отброшен; без inventory не падает', async (t) => {
   const { base, admin } = await setup(t);
   const auditor = await makeUser(base, admin, 'auditor', 'aud-inv');
