@@ -329,7 +329,7 @@ sudo -u enotdesk /opt/node-24/bin/node /opt/enotdesk/current/server/backup.mjs \
 
 Ежедневный таймер установщика (`enotdesk-backup.timer`, 04:30) кладёт дампы **обеих** баз — `enotdesk.db` и `hub.db` (префикс `hub-`) — в `/var/lib/enotdesk/backups`, то есть на тот же диск. Если пропадёт сам сервер, пропадут и они. Минимум, который должен жить вне сервера:
 
-1. свежий дамп `enotdesk-*.db` и `hub-*.db` (раз в сутки — например, `rsync`/`rclone` на второй сервер или в объектное хранилище, шифруя копию);
+1. свежий дамп `enotdesk-*.db` и `hub-*.db` — раз в сутки и зашифрованным (готовая схема с наблюдателем — §7.3);
 2. копия `/etc/enotdesk/enotdesk.env` (отдельно от дампов, см. выше);
 3. при своём домене — ничего больше: Caddy заново получит сертификат, coturn конфиг пересоздаст установщик из env-файла.
 
@@ -361,6 +361,131 @@ sudo -u enotdesk env ENOT_DB=/var/lib/enotdesk/enotdesk.db /opt/node-24/bin/node
 ```
 
 Команда выключает 2FA, удаляет резервные коды, завершает все входы пользователя и пишет запись «2FA снята с консоли сервера» в журнал безопасности (пишется всегда). Через веб-панель снять чужую 2FA нельзя — только с консоли сервера.
+
+### 7.3. Копия вне сервера и наблюдение
+
+Нужна вторая, постоянно включённая Linux-машина в другом месте: второй сервер, домашний сервер. Назовём её наблюдателем. Она делает две вещи:
+
+- **раз в 5 минут проверяет сервер снаружи** (`scripts/watch-server.sh check`): health сервера и хаба, срок сертификата TLS, порт TURN, а по ssh — занятость диска и возраст свежих дампов;
+- **раз в сутки забирает копию** (`scripts/watch-server.sh pull`): свежие дампы обеих баз и `SHA256SUMS` одним архивом.
+
+Безопасность:
+- Копию шифрует сам сервер открытым ключом [age](https://age-encryption.org). Закрытый ключ хранится только у владельца, в менеджере паролей. Его нет ни на сервере, ни на наблюдателе.
+- Ssh-ключ наблюдателя на сервере ограничен принудительной командой (`scripts/offsite-serve.sh`). Он умеет только `status` и `fetch`, без оболочки и пробросов.
+- Без age или без файла получателей `fetch` отказывает: открытую копию сервер не отдаёт.
+- Env-файл в копию не входит. Его копия — отдельно, в менеджере паролей (§7).
+
+Оповещения идут через [Healthchecks](https://healthchecks.io) (облачный или свой экземпляр):
+- При успехе наблюдатель пингует свою проверку, при сбое — `/fail` с причиной. Канал (почта, Telegram, push) настраивается в Healthchecks.
+- Если наблюдатель замолчал (упал сам или его сеть), Healthchecks поднимет тревогу по пропущенному пингу.
+- Секрет проверки (URL пинга) не попадает в аргументы процессов: curl получает его через stdin.
+- Перед тревогой каждая проверка повторяется через 20 секунд. Поэтому один сбой сети тревогу не поднимет.
+
+**Ключ копий** — на своём компьютере:
+
+```bash
+age-keygen -o enotdesk-offsite.key   # закрытый ключ — в менеджер паролей; на сервер и наблюдатель не класть
+# строка «Public key: age1…» — открытый ключ, он нужен серверу
+```
+
+**На сервере:**
+
+```bash
+sudo apt-get install -y age
+sudo install -m 0755 scripts/offsite-serve.sh /usr/local/sbin/enotdesk-offsite
+echo 'age1…' | sudo tee /etc/enotdesk/offsite-recipients.txt
+# ключ наблюдателя — только эта команда; from= — адрес наблюдателя, если он постоянный
+echo 'restrict,from="203.0.113.7",command="/usr/local/sbin/enotdesk-offsite" ssh-ed25519 AAAA… enotdesk-watch' \
+  | sudo tee -a /root/.ssh/authorized_keys
+sudo /usr/local/sbin/enotdesk-offsite status
+```
+
+Дамп моложе минуты `status` и `fetch` не берут: `VACUUM INTO` пишет прямо в итоговый файл, и такой дамп может быть ещё недописан.
+
+**На наблюдателе:**
+
+```bash
+sudo apt-get install -y curl openssl
+sudo install -m 0755 scripts/watch-server.sh /usr/local/sbin/enotdesk-watch
+sudo ssh-keygen -t ed25519 -N '' -C enotdesk-watch -f /root/.ssh/enotdesk-watch
+# ключ сервера — в отдельный known_hosts (проверка строгая); отпечаток сверить на сервере:
+#   ssh-keygen -lf /etc/ssh/ssh_host_ed25519_key.pub
+sudo sh -c 'ssh-keyscan -t ed25519 support.example.com > /etc/enotdesk-watch.known_hosts'
+```
+
+Конфиг `/etc/enotdesk-watch.conf` (root, 0600). Формат — строки `КЛЮЧ=значение`, неизвестный ключ — ошибка:
+
+```ini
+WATCH_URL=https://support.example.com
+WATCH_HUB_URL=https://support.example.com/api/hub/health
+WATCH_TCP=support.example.com:3478
+WATCH_SSH=root@support.example.com
+WATCH_SSH_KEY=/root/.ssh/enotdesk-watch
+WATCH_KNOWN_HOSTS=/etc/enotdesk-watch.known_hosts
+WATCH_PING_CHECK=https://hc-ping.com/<uuid проверки «сервер»>
+WATCH_PING_BACKUP=https://hc-ping.com/<uuid проверки «копия»>
+WATCH_DIR=/var/lib/enotdesk-offsite
+WATCH_KEEP=30
+```
+
+Пороги по умолчанию:
+- занятость диска — до 90 %;
+- дамп — не старше 26 часов;
+- сертификат — ещё не меньше 14 дней.
+
+Остальные ключи и пороги — в начале `scripts/watch-server.sh`.
+
+В Healthchecks заведите две проверки:
+- «сервер»: период 5 минут, запас 5 минут — тревога о падении приходит не позже чем через 10 минут;
+- «копия»: период 1 сутки, запас 2 часа.
+
+Таймеры наблюдателя (systemd; время — местное время наблюдателя):
+
+```ini
+# /etc/systemd/system/enotdesk-watch.service
+[Service]
+Type=oneshot
+ExecStart=/usr/local/sbin/enotdesk-watch check
+TimeoutStartSec=4min
+
+# /etc/systemd/system/enotdesk-watch.timer
+[Timer]
+OnCalendar=*:0/5
+AccuracySec=10s
+[Install]
+WantedBy=timers.target
+
+# /etc/systemd/system/enotdesk-offsite.service
+[Service]
+Type=oneshot
+ExecStart=/usr/local/sbin/enotdesk-watch pull
+TimeoutStartSec=30min
+
+# /etc/systemd/system/enotdesk-offsite.timer — после ежедневного бэкапа сервера (04:30–05:00 по времени сервера)
+[Timer]
+OnCalendar=*-*-* 06:30:00
+RandomizedDelaySec=20m
+Persistent=true
+[Install]
+WantedBy=timers.target
+```
+
+```bash
+sudo systemctl daemon-reload
+sudo systemctl enable --now enotdesk-watch.timer enotdesk-offsite.timer
+sudo /usr/local/sbin/enotdesk-watch check   # вручную: «OK» и строка по каждой проверке
+sudo /usr/local/sbin/enotdesk-watch pull
+```
+
+**Восстановление из копии:**
+
+```bash
+mkdir restore
+age -d -i enotdesk-offsite.key enotdesk-offsite-<штамп>.tar.age | tar -x -C restore
+(cd restore && sha256sum -c SHA256SUMS)
+```
+
+Дальше — шаг 2 из §7.2. Env-файл берите из менеджера паролей.
 
 ## 8. Логи
 
