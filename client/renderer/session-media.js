@@ -181,6 +181,9 @@ function captureStartedStatus() {
   show($('connected-intro'));
   if (portalPending) {
     portalPending = false;
+    // подсказка «выберите экран в окне GNOME» отработала: не держать её рядом
+    // с «оператор видит ваш экран» (стенд 24.10)
+    text($('client-live-note'), streamPaused ? t('client.pausedNote') : '');
     enot.captureStatus('running').catch(() => {});
   }
 }
@@ -448,6 +451,9 @@ function stopAllOperators() {
 async function showSourcePicker(onChoose) {
   const srcs = await enot.sources();
   if (!srcs.items?.length) throw new Error(t('client.noSources'));
+  // Wayland: человек уже выбрал экран или окно в окне GNOME — второй список
+  // с одним «(без названия)» не показываем (стенд 24.10)
+  if (srcs.systemPicked && srcs.items.length === 1) return onChoose(srcs.items[0].id, document.createElement('div'));
   const pick = document.createElement('div');
   pick.className = 'card';
   pick.innerHTML = '<h2></h2><p class="muted"></p>';

@@ -393,6 +393,10 @@ powershell -NoProfile -ExecutionPolicy Bypass -File .\agent-setup.ps1
 autologin `enotadmin` в **X11**-сессию (AccountsService `Session=gnome-xorg`);
 переключение на **Wayland**: `Session=gnome` в `/var/lib/AccountsService/users/enotadmin`
 → `systemctl restart accounts-daemon && systemctl restart gdm3` (обратно — `gnome-xorg`).
+На Wayland `xdotool` из ssh в окна не доходит, а `scrot` видит только Xwayland. Снимок всего экрана —
+`screendump <файл>.ppm` в `qm monitor 103` (PNG в этой сборке QEMU не поддерживается). Нажатия, в том числе
+в системном окне GNOME «Поделиться экраном», — QMP `input-send-event` (абсолютные координаты планшета 0..32767)
+в `/var/run/qemu-server/103.qmp`; клавиши — `qm sendkey 103 <клавиша>` (проверка A-2w 24.10).
 Пароль enotadmin — `/root/enot-lab-secrets/linux-vms.env` (0600).
 
 **Glue `enot-xauth-sync.sh`** (`.local/lab/scripts/`, на госте `/usr/local/sbin/`; юнит
@@ -419,16 +423,18 @@ systemd-analyze 4.5 OK) и `.local/lab/scripts/vm103-ozone-dropin.sh` (`--ozone-
 
 ## Хаб на staging + комбинированный origin :8081 (05.10.2026)
 
-- Юнит `enotdesk-hub.service` (VM 100): `node /opt/enotdesk/hub/main.mjs`, 0.0.0.0:8090,
-  `ENOTDESK_URL=http://127.0.0.1:8080`, `HUB_URL=http://198.51.100.10:8081`, свой `hub.db`
-  в /var/lib/enotdesk; health `http://192.0.2.50:8090/api/hub/health`.
+- Юнит `enotdesk-hub.service` (VM 100): `node /opt/enotdesk/hub/main.mjs`, с 09.10 слушает 127.0.0.1:8090
+  (снаружи — только через :8081), окружение — `/opt/enotdesk/enotdesk.env`, свой `hub.db` в /var/lib/enotdesk.
+  **`HUB_URL=http://198.51.100.10:8081` — drop-in `enotdesk-hub.service.d/hub-url.conf`** (24.10): без него хаб
+  пишет в ссылки «Подключиться» адрес сервера по умолчанию `http://127.0.0.1:8080`, и клиент на другой машине
+  не подключается (так было с 09.10 до 24.10).
 - **Комбинированный фронт :8081** (юнит `enot-combined-caddy`, caddy из apt,
   конфиг `/etc/caddy/enot-combined.caddy` + `admin off`): `/api/hub|/hub|/widget.js|/w|/join|/ws/*`
   → 8090 (хаб), остальное → 8080 (сервер). Нужен, потому что one-click (H-J2) требует
   ОДИН origin для сервера и хаба (на проде их совмещает Caddy); NAT-форвард :8081 → .10.
 - Webhooks сервера → хаб настроены: `http://127.0.0.1:8090/hooks/enotdesk`,
   события `session.started`/`session.ended`, секрет — из консоли хаба.
-- Консоль хаба с Mac: `http://192.0.2.50:8090/hub/` (SSO admin) или `:8081/hub/`.
+- Консоль хаба с Mac: `http://192.0.2.50:8081/hub/` (SSO admin; :8090 с 09.10 снаружи закрыт).
 
 ## TURN на staging (W-U13, 05.10.2026)
 

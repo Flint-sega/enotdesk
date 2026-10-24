@@ -428,7 +428,10 @@ const nativeInput = createNativeInput({
 });
 // Единая проводка ввода: те же ворота и диспетчер, что проверяет тест шва
 const inputPipeline = createInputPipeline({ gate, nativeInput });
-let selectedSource = null; // {id, name, bounds:{width,height}, hwnd|null} физические пиксели
+let selectedSource = null; // {id, name, bounds:{width,height}, hwnd|null, source} физические пиксели
+// Wayland (GNOME): каждый desktopCapturer.getSources открывает системное окно
+// «поделиться экраном» и ждёт человека — выбранный там источник переиспользуем
+const isWaylandSession = () => process.env.XDG_SESSION_TYPE === 'wayland' || !!process.env.WAYLAND_DISPLAY;
 let windowRectAt = 0;      // момент последнего обновления rect окна-источника
 
 function loadSettings() {
@@ -640,6 +643,7 @@ function stopSignal() {
   if (gate.needInputReset()) nativeInput.end();
   signalRole = null;
   selectedSource = null; // разрешение 'media' привязано к источнику: сеанс кончился — гейт закрыт
+  listedSources = new Map();
   nativeInput.resetAdapter(); // koffi мог быть заблокирован SAC в прошлом сеансе — пробуем снова
   inputArbiter.reset(); // операторы сеанса ушли вместе с ним (W-C4)
 }
@@ -779,8 +783,12 @@ function startSignal(params) {
 }
 
 // Захват: main валидирует выбранный источник и хранит границы дисплея (R01.2/R19i)
+// Wayland: список уже выбран человеком в окне GNOME — selectSource берёт источник
+// отсюда, иначе окно открывалось второй раз (стенд 24.10, «Сменить экран»)
+let listedSources = new Map();
 async function listSources() {
   const sources = await desktopCapturer.getSources({ types: ['screen', 'window'], thumbnailSize: { width: 0, height: 0 }, fetchWindowIcons: false });
+  listedSources = new Map(isWaylandSession() ? sources.map((s) => [s.id, s]) : []);
   return sources.map((s) => ({ id: s.id, name: s.name }));
 }
 
@@ -791,7 +799,8 @@ async function listSources() {
 const coordScale = (display) => (process.platform === 'darwin' ? 1 : display.scaleFactor);
 
 async function selectSource(id) {
-  const sources = await desktopCapturer.getSources({ types: ['screen', 'window'], thumbnailSize: { width: 0, height: 0 } });
+  const listed = listedSources.get(id);
+  const sources = listed ? [listed] : await desktopCapturer.getSources({ types: ['screen', 'window'], thumbnailSize: { width: 0, height: 0 } });
   const src = sources.find((s) => s.id === id);
   if (!src) return { ok: false, error: 'Выбранный источник больше не доступен, выберите заново' };
   const displays = screen.getAllDisplays();
@@ -814,11 +823,11 @@ async function selectSource(id) {
     if (Number.isFinite(hwnd) && hwnd > 0) {
       const wr = nativeInput.windowRect(hwnd);
       if (wr) bounds = { width: wr.w, height: wr.h, originX: wr.x, originY: wr.y };
-      selectedSource = { id: src.id, displayId: String(src.display_id ?? ''), name: src.name, bounds, hwnd };
+      selectedSource = { id: src.id, displayId: String(src.display_id ?? ''), name: src.name, bounds, hwnd, source: src };
       return { ok: true, name: src.name };
     }
   }
-  selectedSource = { id: src.id, displayId: String(src.display_id ?? ''), name: src.name, bounds, hwnd: null };
+  selectedSource = { id: src.id, displayId: String(src.display_id ?? ''), name: src.name, bounds, hwnd: null, source: src };
   return { ok: true, name: src.name };
 }
 
@@ -840,12 +849,12 @@ async function selectPrimaryScreen() {
     originX: Math.round(display.bounds.x * k),
     originY: Math.round(display.bounds.y * k),
   };
-  selectedSource = { id: src.id, displayId: String(src.display_id ?? ''), name: src.name, bounds };
+  selectedSource = { id: src.id, displayId: String(src.display_id ?? ''), name: src.name, bounds, source: src };
   return { ok: true, name: src.name };
 }
 
 function permissionsReport() {
-  const wayland = process.env.XDG_SESSION_TYPE === 'wayland' || !!process.env.WAYLAND_DISPLAY;
+  const wayland = isWaylandSession();
   const report = {
     platform: process.platform,
     wayland,
@@ -1382,7 +1391,8 @@ function registerIpc() {
 
   ipcMain.handle('enot:closeSignal', (e) => { guard(e); stopSignal(); return { ok: true }; });
 
-  ipcMain.handle('enot:sources', async (e) => { guard(e); return { items: await listSources() }; });
+  // systemPicked: на Wayland список — то, что человек уже выбрал в окне GNOME
+  ipcMain.handle('enot:sources', async (e) => { guard(e); return { items: await listSources(), systemPicked: isWaylandSession() }; });
 
   ipcMain.handle('enot:selectSource', async (e, id) => {
     guard(e);
@@ -1559,6 +1569,12 @@ function createWindow() {
   session.defaultSession.setDisplayMediaRequestHandler((_opts, callback) => {
     if (!selectedSource) {
       callback({}); // рендерер получит отказ и покажет честную ошибку
+      return;
+    }
+    // Wayland (A-2w, стенд 24.10): экран уже выбран человеком в окне GNOME при
+    // selectPrimaryScreen/selectSource — новый getSources открывал окно второй раз
+    if (isWaylandSession() && selectedSource.source) {
+      callback({ video: selectedSource.source });
       return;
     }
     desktopCapturer.getSources({ types: ['screen', 'window'], thumbnailSize: { width: 0, height: 0 } }).then((sources) => {
