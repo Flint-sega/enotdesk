@@ -12,7 +12,7 @@
 - `npm run server` — сервер на `127.0.0.1:8080`, `GET /api/v1/health` → `{ok,version,activeSessions,uptimeSec}`. `npm run bootstrap` — первый админ. `node hub/main.mjs` — Hub на `127.0.0.1:8090`.
 - `npm start` — Electron-клиент. Смоук: `EDESK_SMOKE=1 npx electron@44.9.3 client/main.mjs --no-sandbox`. Второй экземпляр — `EDESK_ALLOW_MULTI=1`, профиль первого запуска — `EDESK_SMOKE_FIRSTRUN=1`.
 - `npm run pack:mac|pack:win|pack:linux` — electron-builder (`build/electron-builder.yml`). Релизы собирает `.github/workflows/release.yml` по тегу `v*`.
-- Сервер: `sudo bash scripts/quick-setup.sh` (мастер: bare-metal или `--docker`, `--update`, `--dry-run`, `--hub/--no-hub`), `scripts/install-server.sh`, `compose.yaml` (сервер + coturn + Caddy, профиль `hub`), `node server/backup.mjs <db> <dir> [keep]` (VACUUM INTO).
+- Сервер: `sudo bash scripts/quick-setup.sh` (мастер: bare-metal или `--docker`, `--update`, `--dry-run`, `--hub/--no-hub`), `scripts/install-server.sh`, `compose.yaml` (сервер + coturn + Caddy, профиль `hub`), `node server/backup.mjs <db> <dir> [keep]` (VACUUM INTO); копия вне сервера и наблюдатель — `scripts/watch-server.sh check|pull` (SERVER.md §7.3).
 - Внешний цикл против живого сервера: `ENOT_BASE_URL=… ENOT_ADMIN_LOGIN=… ENOT_ADMIN_PASSWORD=… node scripts/smoke-remote.mjs`.
 
 ## Структура
@@ -28,7 +28,7 @@ client/agent-service/  службы агента: Windows (sc.exe), Linux (syste
 web/         единственная программа оператора /operator, её же показывает desktop (operator.html, operator.mjs, input-source.mjs, team.js, records.js — контакты/история/журнал/CSV, account.js — пароль и 2FA; ADR 0033)
 helper/video/  Rust-хелпер Windows: захват DXGI/GDI и ввод в консольной сессии, named pipe (ADR 0027)
 docker/ Dockerfile compose.yaml   серверный стек
-scripts/     quick-setup.sh, install-server.sh, deploy-server.sh, smoke-local.mjs, smoke-remote.mjs, make-icons.mjs, make-mascot.mjs, make-social.mjs (картинки соцпревью)
+scripts/     quick-setup.sh, install-server.sh, deploy-server.sh, smoke-local.mjs, smoke-remote.mjs, make-icons.mjs, make-mascot.mjs, make-social.mjs (картинки соцпревью), offsite-serve.sh + watch-server.sh (копия вне сервера и наблюдатель, SERVER.md §7.3)
 site/        публичная витрина (GitHub Pages)
 docs/        guides/ (руководства людям: клиенту, оператору, админу, постоянный доступ, «если что-то не так», откат выпуска), SESSION_PROTOCOL, SERVER, AGENT, WEB-OPERATOR, BUILD, ACCEPTANCE-1.0 (определение готовности 1.0), MANUAL-QA, ROADMAP, LAB, adr/0001–0038
 ```

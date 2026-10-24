@@ -339,6 +339,25 @@ hub assets web client/{lib,renderer,locales}` → распаковка тарб�
 (`qm snapshot 100 pre-w1w2`). После апдейта 08.10: schema_version=9,
 маршруты W1 живы (favorite POST/DELETE 200, sort=recent).
 
+### Наблюдатель и копия вне сервера на хосте стенда (24.10.2026, SERVER.md §7.3)
+- Хост стенда играет наблюдателя для staging. Всё лежит в `/root/enotdesk-watch/`:
+  - `watch-server.sh` — копия `scripts/watch-server.sh`;
+  - `staging.conf`;
+  - ssh-ключ `id_ed25519` и `known_hosts`;
+  - зашифрованные копии — в `offsite-staging/`.
+- Юниты:
+  - `enotdesk-watch-staging.timer` — проверка раз в 5 минут;
+  - `enotdesk-offsite-staging.timer` — копия раз в сутки, 06:30.
+- **В простое оба таймера выключены**: настоящего канала оповещений (Healthchecks) пока нет. Учебный приёмник пингов `catcher.py` запускается только на время проверки — transient-юнитом с `RuntimeMaxSec`.
+- На staging (ВМ 100) появились:
+  - `enotdesk-backup.timer`, такой же, как ставит `install-server.sh`; дампы — в `/var/lib/enotdesk/backups`;
+  - пакет `age`;
+  - `/usr/local/sbin/enotdesk-offsite`;
+  - открытый ключ копий в `/etc/enotdesk/offsite-recipients.txt`;
+  - строка ключа наблюдателя в `/root/.ssh/authorized_keys`: `restrict,from="<адрес хоста в сети ВМ>",command=…`. Копия прежнего файла — `authorized_keys.bak-offsite`.
+- Закрытый ключ копий staging хранится только на Mac: `~/enot-lab-secrets/enotdesk-offsite-staging.key`.
+- Грабля: вложенный `ssh` внутри скрипта, который пришёл через `bash -s`, съедает остаток скрипта со stdin. Нужен `ssh -n`.
+
 ## Агенты на Windows-VM (установка/переустановка)
 
 Канон — `.local/lab/scripts/lab-finalize.sh --stage agents` (на хосте) + `.local/lab/scripts/agent-setup.ps1`

@@ -31,7 +31,7 @@ jobs:
       - name: quick-setup — синтаксис и dry-run (ubuntu only, блокирующий)
         if: runner.os == 'Linux'
         run: |
-          bash -n scripts/quick-setup.sh scripts/install-server.sh
+          bash -n scripts/quick-setup.sh scripts/install-server.sh scripts/offsite-serve.sh scripts/watch-server.sh
           PLAN="$(bash scripts/quick-setup.sh --dry-run --domain demo.example --admin-login boss --admin-name Boss --port 8080 --no-hub --no-firewall --admin-password-stdin <<< 'Passw0rd-example')"
           printf '%s\n' "$PLAN"
           printf '%s\n' "$PLAN" | grep -q 'demo.example'
