@@ -434,6 +434,9 @@ setup_turn() {
     cp -a "$TURN_CONF" "$bak"
     info "существующий $TURN_CONF сохранён как $bak"
   fi
+  # 0600 ДО записи секрета: `> файл` создавал его с umask (обычно 0644), и до chmod ниже
+  # static-auth-secret был виден всем (ревью безопасности 1.13, 24.10). Группа и 0640 — ниже.
+  install -m 0600 /dev/null "$TURN_CONF"
   {
     echo "# EnotDesk managed (ENOTDESK_MANAGED) — перезаписывается install-server.sh"
     echo "listening-port=3478"

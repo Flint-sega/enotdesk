@@ -306,3 +306,16 @@ test('smoke-artifact.mjs проверяет окно, ворота ввода, �
   }
   assert.match(mainJs, /process\.env\.EDESK_SMOKE_LOG/, 'main.mjs пишет итог смоука в файл для CI');
 });
+
+// Ревью безопасности 1.13 (24.10): имя машины уходит в EnvironmentFile/plist, адрес — в
+// settings.json через printf. Перевод строки дописывал службе переменные, кавычка ломала JSON.
+test('install-linux.sh и install-macos.sh: имя машины и SERVER_URL проходят проверку до записи', () => {
+  const macSh = readFileSync(fileURLToPath(new URL('../agent-service/install-macos.sh', import.meta.url)), 'utf8');
+  for (const [name, sh] of [['linux', installSh], ['macos', macSh]]) {
+    const check = sh.indexOf('*[[:cntrl:]]*');
+    assert.ok(check > 0, `${name}: имя машины без управляющих символов`);
+    assert.match(sh, /\[ "\$\{#AGENT_NAME\}" -gt 60 \]/, `${name}: длина имени ограничена`);
+    assert.match(sh, /\[\[ "\$SERVER_URL" =~ \^https\?:\/\//, `${name}: SERVER_URL — белым списком`);
+    assert.ok(check < sh.indexOf('settings.json"'), `${name}: проверка — раньше записи settings.json`);
+  }
+});

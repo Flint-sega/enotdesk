@@ -24,6 +24,17 @@ if [ -z "$SERVER_URL" ]; then
   echo "ошибка: задайте SERVER_URL (адрес сервера EnotDesk), например: SERVER_URL=https://... $0" >&2
   exit 1
 fi
+# Имя и адрес попадают в agent.env / settings.json / plist: перевод строки дописал бы
+# службе свои переменные, кавычка сломала бы JSON (ревью безопасности 1.13, 24.10).
+case "$AGENT_NAME" in *[[:cntrl:]]*|*[\"\'\\\<\>\&\|\$\`]*) echo "ошибка: имя машины содержит недопустимые символы" >&2; exit 1 ;; esac
+if [ -z "$AGENT_NAME" ] || [ "${#AGENT_NAME}" -gt 60 ]; then
+  echo "ошибка: имя машины — от 1 до 60 символов" >&2
+  exit 1
+fi
+if ! [[ "$SERVER_URL" =~ ^https?://[A-Za-z0-9._-]+(:[0-9]{1,5})?(/[A-Za-z0-9._~/-]*)?$ ]]; then
+  echo "ошибка: SERVER_URL — адрес вида https://сервер[:порт][/путь] без пробелов и кавычек" >&2
+  exit 1
+fi
 if [ "$(id -u)" -ne 0 ]; then
   echo "ошибка: запускайте от root" >&2
   exit 1

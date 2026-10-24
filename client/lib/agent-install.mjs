@@ -71,6 +71,18 @@ export function resolveInstallSource({
   return null;
 }
 
+// Рабочая папка установки службы. install.cmd, run.cmd и setup.exe читает cmd.exe
+// (в OEM-кодировке), а путь setup проходит белый список символов скрипта: %TEMP%
+// пользователя с кириллицей в имени (C:\Users\Иван\…) ломал и то и другое —
+// установка службы из клиента падала (ревью безопасности 1.13, 24.10). Такой путь
+// заменяется системным %SystemRoot%\Temp: он ASCII, а папку, созданную там
+// пользователем, кроме него читают только администраторы (CREATOR OWNER).
+const ASCII_WIN_PATH = /^[A-Za-z]:\\[A-Za-z0-9._\- \\]+$/;
+export function installWorkRoot({ tempDir = '', systemRoot = 'C:\\Windows' } = {}) {
+  const tmp = String(tempDir ?? '').replace(/\\+$/, '');
+  return ASCII_WIN_PATH.test(tmp) ? tmp : `${String(systemRoot || 'C:\\Windows').replace(/\\+$/, '')}\\Temp`;
+}
+
 // --- Генератор install-скрипта (.cmd). Запускается с правами администратора
 // --- (UAC-запрос показывает Windows), вывод уводится в журнал обёрткой.
 // Требует: serverUrl (валидный), code (валидный, обязателен — регистрация

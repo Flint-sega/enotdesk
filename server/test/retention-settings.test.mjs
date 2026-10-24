@@ -148,7 +148,7 @@ test('схема v10: таблица настроек создаётся и пе
 
 test('isSecurityAction: доступ и права пишутся всегда, рутина — нет', () => {
   for (const a of ['login.success', 'login.failure', 'logout', 'password.change', 'totp.enable', 'member.delete',
-    'invite.create', 'audit.purge', 'history.purge', 'retention.config', 'machine.claim', 'machine.claim.deny', 'machine.revoke']) {
+    'invite.create', 'audit.purge', 'history.purge', 'retention.config', 'machine.claim', 'machine.claim.deny', 'machine.revoke', 'machine.create', 'machine.register']) {
     assert.ok(isSecurityAction(a), a);
   }
   for (const a of ['session.create', 'session.end', 'contact.create', 'machine.wol', 'machine.toast', 'term.close']) {

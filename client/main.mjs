@@ -19,8 +19,8 @@ import { createInputArbiter } from './lib/input-arbiter.mjs';
 import { INPUT_KEYS } from './lib/protocol.mjs';
 import { normalizeServerUrl } from './lib/server-url.mjs';
 import { resolveServerUrl, DEFAULT_SERVER_URL } from './lib/first-run.mjs';
-import { safeCode, resolveInstallSource, buildInstallScript, RESULT_OK as INSTALL_RESULT_OK } from './lib/agent-install.mjs';
-import { parseJoinLink, reportJoin } from './lib/join.mjs';
+import { safeCode, resolveInstallSource, buildInstallScript, installWorkRoot, RESULT_OK as INSTALL_RESULT_OK } from './lib/agent-install.mjs';
+import { parseJoinLink, reportJoin, joinServerDecision } from './lib/join.mjs';
 import { parseInviteLink } from './lib/invite-link.mjs';
 import { createAgent, createAgentApi, createIceServersFetcher } from './lib/agent.mjs';
 import { createAgentInputSink } from './lib/agent-input.mjs';
@@ -259,6 +259,42 @@ function applyJoinLink(raw) {
   }
   const parsed = parseJoinLink(raw);
   if (!parsed) return false; // не join-ссылка (может быть invite) — молча, решает вызывающий
+  // Чужой сервер — только после явного «да» человека в системном диалоге main-процесса
+  // (рендерер и страница его не подделают); http не через loopback — только через
+  // настройки (ревью безопасности 1.13, 24.10). Тот же сервер — без вопросов.
+  const decision = joinServerDecision({ linkServer: parsed.server, currentServer: settings.serverUrl });
+  if (decision !== 'same') {
+    void confirmJoinServer(parsed, decision).then((yes) => { if (yes) startJoin(parsed); });
+    return true;
+  }
+  startJoin(parsed);
+  return true;
+}
+
+async function confirmJoinServer(parsed, decision) {
+  const host = (() => { try { return new URL(parsed.server).host; } catch { return parsed.server; } })();
+  const parent = win && !win.isDestroyed() ? win : undefined;
+  try {
+    if (decision === 'reject') {
+      await dialog.showMessageBox(parent, { type: 'warning', message: t('join.serverHttpRejected', { host }), buttons: ['OK'], noLink: true });
+      return false;
+    }
+    const r = await dialog.showMessageBox(parent, {
+      type: 'question',
+      message: t('join.serverConfirm', { host }),
+      detail: t('join.serverConfirmDetail', { host }),
+      buttons: [t('join.serverConfirmYes'), t('join.serverConfirmNo')],
+      defaultId: 1,
+      cancelId: 1,
+      noLink: true,
+    });
+    return r.response === 0;
+  } catch {
+    return false; // диалог недоступен — сервер не меняем
+  }
+}
+
+function startJoin(parsed) {
   // Сервер из ссылки заменяет текущий адрес: сохраняем и пересоздаём api, затем
   // автостарт сеанса рендерером (тот же путь, что кнопка «Получить помощь»).
   // Галочку «Разрешить HTTP» ссылка не трогает: допуск для не-loopback http живёт
@@ -285,7 +321,6 @@ function applyJoinLink(raw) {
     }
   }
   flushPendingJoin();
-  return true;
 }
 
 function flushPendingInvite() {
@@ -1201,7 +1236,9 @@ function registerIpc() {
     if (!src) return { ok: false, reason: 'unsupported' };
     // Отдельный временный каталог: предсказуемые имена в общем %TEMP% —
     // конфликт двух установок и окно TOCTOU (ревью ADR 0029 P2-1).
-    const work = fs.mkdtempSync(path.join(app.getPath('temp'), 'enot-install-'));
+    // ASCII-путь: с кириллицей в имени пользователя cmd не находил свои файлы (ревью 1.13)
+    const workRoot = installWorkRoot({ tempDir: app.getPath('temp'), systemRoot: process.env.SystemRoot });
+    const work = fs.mkdtempSync(path.join(workRoot, 'enot-install-'));
     const scriptPath = path.join(work, 'install.cmd');
     const runPath = path.join(work, 'run.cmd');
     const logPath = path.join(work, 'install.log');

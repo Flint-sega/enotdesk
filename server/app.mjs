@@ -830,7 +830,11 @@ export function createServer(opts = {}) {
       const twoFactor = !!(user && user.active && user.totp_enabled);
       const fail = () => {
         cfg.limits.loginId.take(loginKey);
-        auditLog(db, null, 'login.failure', null, { login: String(login).slice(0, 120) });
+        // вставленный в поле логина пароль не должен лечь в журнал аудитора (ревью 1.13):
+        // логин — только похожий на логин, иначе пометка
+        const loginStr = String(login);
+        const loginNote = /^[\p{L}\p{N}._@+-]{1,64}$/u.test(loginStr) ? loginStr : '<invalid>';
+        auditLog(db, null, 'login.failure', null, { login: loginNote });
         return err(res, 401, 'invalid_credentials',
           twoFactor ? t('totp.invalidCredentials', {}, locale) : 'Неверный логин или пароль');
       };
@@ -1539,7 +1543,10 @@ export function createServer(opts = {}) {
       }
       const r = webhooks.configure(url, secret, events ?? null);
       if (!r.ok) return err(res, 400, r.error, WEBHOOK_ERR_TEXT[r.error] || 'Некорректные настройки');
-      auditLog(db, user.id, 'webhooks.config', null, { url: r.url, events: r.events });
+      // в журнал — только хост: у Slack/Telegram-подобных адресов секрет в пути (ревью 1.13)
+      let hookHost;
+      try { hookHost = r.url ? new URL(r.url).host : null; } catch { hookHost = null; }
+      auditLog(db, user.id, 'webhooks.config', null, { host: hookHost, events: r.events });
       return ok(res, 200, webhooks.get());
     }
 
@@ -1615,6 +1622,16 @@ export function createServer(opts = {}) {
           return deny('bad_pin', 'machines.badPin', 403);
         }
       }
+      // После await проверки PIN машину могли отозвать или занять параллельным claim'ом:
+      // перепроверка и вставка сеанса — один синхронный участок без await (ревью 1.13, 24.10:
+      // два claim'а с PIN оба проходили machine_busy, claim во время отзыва получал сеанс).
+      const fresh = machinesStore.get(machine.id);
+      if (!fresh || fresh.revoked_at || !fresh.agent_token_hash) {
+        return err(res, 409, 'machine_revoked', t('machines.revoked', {}, locale));
+      }
+      if (db.prepare("SELECT count(*) c FROM sessions WHERE machine_id = ? AND state != 'ended'").get(machine.id).c > 0) {
+        return err(res, 409, 'machine_busy', t('machines.busy', {}, locale));
+      }
       // успех: host сеанса — агент с машинным токеном; согласие человека не нужно,
       // политику (причина + PIN) сервер уже проверил сам
       const sessionId = newSessionId(db);
@@ -1628,7 +1645,7 @@ export function createServer(opts = {}) {
       const password = sessionPassword(8);
       db.prepare(`INSERT INTO sessions (id, password_hash, host_token_hash, state, operator_id, claim_id, machine_id, created_at, started_at, lease_expires_at)
                   VALUES (?,?,?,?,?,?,?,?,?,?)`)
-        .run(sessionId, hashPassword(password), machine.agent_token_hash, 'pending-consent',
+        .run(sessionId, hashPassword(password), fresh.agent_token_hash, 'pending-consent',
              user.id, claimId, machine.id, nowIso, nowIso, lease);
       auditLog(db, machine.id, 'machine.claim', sessionId, { unattended: true, reason, operatorId: user.id });
       // W1: водяной знак «недавние сверху» для панели машин оператора
@@ -1998,8 +2015,9 @@ export function createServer(opts = {}) {
       const group = OPERATOR_ASSETS[m[1]];
       let name;
       try { name = decodeURIComponent(m[2]); } catch { name = ''; }
-      const type = group?.files[name];
-      if (!type) return err(res, 404, 'not_found', 'Файл не найден');
+      // только собственные ключи allowlist: «constructor», «__proto__» — не файлы (ревью 1.13)
+      const type = group && Object.hasOwn(group.files, name) ? group.files[name] : null;
+      if (typeof type !== 'string') return err(res, 404, 'not_found', 'Файл не найден');
       let data;
       try { data = fs.readFileSync(new URL(group.dir + name, import.meta.url)); }
       catch { return err(res, 404, 'not_found', 'Файл не найден'); }
@@ -2121,6 +2139,11 @@ export function createServer(opts = {}) {
         const stored = Buffer.from(s.host_token_hash);
         if (!digest || digest.length !== stored.length || !crypto.timingSafeEqual(digest, stored)) {
           return ws.close(4003, 'invalid-session');
+        }
+        // машинный сеанс отозванной (или удалённой) машины хост больше не открывает (ревью 1.13)
+        if (s.machine_id) {
+          const mach = machinesStore.get(s.machine_id);
+          if (!mach || mach.revoked_at) return ws.close(4003, 'invalid-session');
         }
         const existingRt = live.get(s.id);
         // №13b (ревью GLM-5.3 v0.4.4): в approved лизинг — не судья входа, ПОКА

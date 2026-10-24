@@ -35,3 +35,19 @@ test('install-server.sh и docker: диапазон ретрансляции 491
   const entry = readFileSync(path.join(import.meta.dirname, '..', '..', 'docker', 'coturn', 'entrypoint.sh'), 'utf8');
   assert.match(entry, /^max-port=49999$/m, 'docker-coturn — тот же диапазон');
 });
+
+test('install-server.sh: конфиг coturn создаётся 0600 до записи секрета (ревью 1.13, 24.10)', () => {
+  const at = script.indexOf('install -m 0600 /dev/null "$TURN_CONF"');
+  assert.ok(at > 0, 'нужен install -m 0600 до записи');
+  assert.ok(at < script.indexOf('echo "static-auth-secret=$TURN_SECRET"'), 'права выставляются раньше, чем пишется секрет');
+});
+
+test('quick-setup.sh: копия .env и скрипт сборок — во временной папке, не в корне ФС (ревью 1.13, 24.10)', () => {
+  const qs = readFileSync(path.join(import.meta.dirname, '..', '..', 'scripts', 'quick-setup.sh'), 'utf8');
+  // SETUP_TMP обнуляется только при объявлении: иначе "$SETUP_TMP/env.docker-prev" = /env.docker-prev
+  assert.equal([...qs.matchAll(/SETUP_TMP=""/g)].length, 1);
+  const prev = qs.indexOf('local prev_envf="$SETUP_TMP/env.docker-prev"');
+  const ensure = qs.lastIndexOf('SETUP_TMP="$(mktemp -d /tmp/enotdesk-setup.XXXXXX)"', prev);
+  assert.ok(ensure > 0 && ensure < prev, 'перед копией .env временная папка гарантирована (и с --tarball)');
+  assert.match(qs, /install -m 0600 "\$envf" "\$prev_envf"/, 'копия с секретами — 0600');
+});

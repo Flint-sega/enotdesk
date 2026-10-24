@@ -10,7 +10,10 @@ import {
   setupFeedUrl,
   resolveInstallSource,
   buildInstallScript,
+  installWorkRoot,
 } from '../lib/agent-install.mjs';
+import { readFileSync } from 'node:fs';
+import { fileURLToPath } from 'node:url';
 
 // Контракт генератора зеркалит client/agent-service/windows-install.bat
 // (настройки LocalSystem без BOM, sc.exe, Environment+AppEnvironment, failure
@@ -166,4 +169,22 @@ test('генератор: символы входа не ломают пакет
       assert.ok(!/[&|^<>"]/.test(line.slice('set "SERVER_URL='.length, -2)), line);
     }
   }
+});
+
+// Ревью безопасности 1.13 (24.10): %TEMP% с кириллицей в имени пользователя ломал
+// install.cmd/run.cmd (cmd читает их в OEM-кодировке) и белый список пути setup.exe.
+test('installWorkRoot: ASCII-путь %TEMP% остаётся; кириллица или пусто — %SystemRoot%\\Temp', () => {
+  assert.equal(installWorkRoot({ tempDir: 'C:\\Users\\ivan\\AppData\\Local\\Temp', systemRoot: 'C:\\Windows' }), 'C:\\Users\\ivan\\AppData\\Local\\Temp');
+  assert.equal(installWorkRoot({ tempDir: 'C:\\Users\\Иван\\AppData\\Local\\Temp', systemRoot: 'C:\\Windows' }), 'C:\\Windows\\Temp');
+  assert.equal(installWorkRoot({ tempDir: 'C:\\Users\\a&b\\Temp', systemRoot: 'D:\\WIN\\' }), 'D:\\WIN\\Temp');
+  assert.equal(installWorkRoot({ tempDir: '', systemRoot: undefined }), 'C:\\Windows\\Temp');
+  // путь setup.exe в такой папке проходит белый список скрипта
+  const setupExe = `${installWorkRoot({ tempDir: 'C:\\Users\\Пётр\\Temp' })}\\enot-install-Ab12_x\\EnotDesk-win-x64-setup.exe`;
+  assert.doesNotThrow(() => buildInstallScript({ serverUrl: 'https://e.example', code: 'CODE-123456', agentName: 'pc', setupExe }));
+});
+
+test('main.mjs: рабочая папка установки службы — через installWorkRoot', () => {
+  const mainJs = readFileSync(fileURLToPath(new URL('../main.mjs', import.meta.url)), 'utf8');
+  assert.match(mainJs, /installWorkRoot\(\{ tempDir: app\.getPath\('temp'\), systemRoot: process\.env\.SystemRoot \}\)/);
+  assert.doesNotMatch(mainJs, /mkdtempSync\(path\.join\(app\.getPath\('temp'\), 'enot-install-'\)\)/);
 });

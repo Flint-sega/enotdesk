@@ -1124,7 +1124,13 @@ docker_install() {
     fi
     verify_sha256 "$app_tgz" "$SETUP_TMP/checksums-sha256.txt" "enotdesk-server.tar.gz"
     tar -xzf "$app_tgz" -C "$DOCKER_DIR"
-    rm -rf "$SETUP_TMP"; SETUP_TMP=""
+    rm -f "$app_tgz" "$SETUP_TMP/checksums-sha256.txt"
+  fi
+  # Своя временная папка (0700, её убирает trap cleanup) — и с --tarball тоже. Раньше
+  # SETUP_TMP здесь был пуст, и копия .env с секретами ложилась в /env.docker-prev,
+  # а docker-fetch.mjs — в / (ревью безопасности 1.13, 24.10).
+  if [ -z "$SETUP_TMP" ] || [ ! -d "$SETUP_TMP" ]; then
+    SETUP_TMP="$(mktemp -d /tmp/enotdesk-setup.XXXXXX)"
   fi
 
   # .env compose читает сам (интерполяция ${VAR} в compose.yaml); права 0600
@@ -1136,7 +1142,7 @@ docker_install() {
   # раньше .env перетирался шестью ключами и ручная настройка терялась).
   local prev_envf="$SETUP_TMP/env.docker-prev"
   if [ "$UPDATE" = "1" ] && [ -f "$envf" ]; then
-    cp "$envf" "$prev_envf"
+    install -m 0600 "$envf" "$prev_envf"
   fi
   install -m 0600 /dev/null "$envf"
   {
