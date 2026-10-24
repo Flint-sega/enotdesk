@@ -731,7 +731,9 @@ fn input_thread(shared: &Shared, privacy_sleep: &AtomicBool, rx: std::sync::mpsc
     // Access Denied на ВЕСЬ SendInput, при этом инъекция без attach из того же
     // сеанса работает (пробник P0v2: schtasks-процесс, sent=1, курсор реально
     // ходит). На реальных машинах картина обратная (приёмка 02.10: без attach
-    // инъекция молча глотается) — поэтому стратегия за env, дефолт прежний:
+    // инъекция молча глотается) — поэтому стратегия за env, дефолт прежний.
+    // Причина Access Denied найдена 24.10: attach открывал десктоп без
+    // DESKTOP_JOURNALPLAYBACK (см. win::attach_input_desktop):
     //   ENOT_VIDEO_ATTACH=off — не прицепляться (инъекция с lpDesktop-десктопа);
     //   on / не задан — текущее поведение (attach + ретраи + D3).
     // Дефолт пересматривается после калибровки C2–C4 (гейт D5).
