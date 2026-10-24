@@ -90,3 +90,24 @@ test('member.delete: RBAC, self-delete, последний админ и уда�
   const lastDel = await api(base, 'DELETE', `/members/${second.user.id}`, { token: second.token });
   assert.equal(lastDel.status, 409);
 });
+
+// Учения восстановления 24.10 (staging): участника, у которого хоть раз настраивалась 2FA, удалить было
+// нельзя — резервные коды ссылаются на users(id), удаление падало с 500 (FOREIGN KEY constraint failed).
+test('member.delete: участник с настроенной 2FA удаляется вместе с резервными кодами', async (t) => {
+  const dbPath = tmpDb(t);
+  const { base, inst } = await startServer(t, { dbPath, secretKey: 'b'.repeat(64) });
+  const admin = await adminLogin(dbPath, base);
+  const op = await inviteAndLogin(base, admin.token, 'operator', 'опер-с-2fa', 'пароль-опера-2fa');
+  const setup = await api(base, 'POST', '/auth/totp/enable', { token: op.token, body: { password: 'пароль-опера-2fa' } });
+  assert.equal(setup.status, 200);
+  assert.equal(setup.json.backupCodes.length, 10);
+  const target = (await api(base, 'GET', '/members', { token: admin.token })).json.items.find((u) => u.login === 'опер-с-2fa');
+  const codesOf = () => inst.db.prepare('SELECT count(*) c FROM totp_backup_codes WHERE user_id = ?').get(target.id).c;
+  assert.equal(codesOf(), 10);
+
+  const del = await api(base, 'DELETE', `/members/${target.id}`, { token: admin.token });
+  assert.equal(del.status, 200, JSON.stringify(del.json));
+  assert.equal(codesOf(), 0);
+  const after = await api(base, 'GET', '/members', { token: admin.token });
+  assert.ok(!after.json.items.some((u) => u.id === target.id));
+});

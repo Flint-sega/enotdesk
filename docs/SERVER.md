@@ -9,7 +9,7 @@
 - Исходящий интернет: nodejs.org (tarball Node 24) и npm registry (зависимости).
 - Порт сервера: `8080` по умолчанию для тестового HTTP-режима, либо `80`/`443` при TLS через Caddy.
 - Для TURN (coturn) и TLS (Caddy), которые установщик ставит по умолчанию, нужен работающий `apt` и исходящий доступ к репозиториям Debian/Ubuntu и Caddy; флаги `--no-turn` / `--no-tls` отключают их.
-- Порты TURN: `3478` tcp/udp (сигналинг) и `49160–49999`/udp (relay) — откройте их в файрволе или группе безопасности облака (установщик умеет сам, см. `--open-firewall`). Один сеанс с одним оператором занимает около 5 портов ретрансляции (замер 22.10.2026), так что диапазон рассчитан примерно на 165 одновременных сеансов. Установки до 0.6.29 имели диапазон 49160–49200 (около 7 сеансов) — расширьте его: `install-server.sh --update --reset-turn` и откройте новые порты в файрволе.
+- Порты TURN: `3478` tcp/udp (сигналинг) и `49160–49999`/udp (relay) — откройте их в файрволе или группе безопасности облака (установщик умеет сам, см. `--open-firewall`). Один сеанс с одним оператором занимает около 5 портов ретрансляции (замер 22.10.2026), так что диапазон рассчитан примерно на 165 одновременных сеансов. Установки до 0.6.29 имели диапазон 49160–49200 (около 7 сеансов) — расширьте его: `install-server.sh --update <архив сервера> --reset-turn` и откройте новые порты в файрволе.
 - Свободное место: ~300 МБ на Node.js + релиз + `node_modules`.
 - Ресурсы: 2 vCPU и 2 ГБ памяти хватает с запасом — на такой ВМ сервер держал 1000 агентов и 60 одновременных сеансов с p95 API ≤121 мс, ~230 МБ памяти и ~34% одного ядра (нагрузочный прогон 23.10.2026, `npm run load`; без TLS и Caddy). Свою площадку можно проверить тем же скриптом: `LOAD_AGENTS=… LOAD_SESSIONS=… npm run load`.
 - Архитектура x86_64 (установщик ставит tarball `linux-x64`; на arm64 Node ставится вручную).
@@ -320,6 +320,9 @@ sudo bash /tmp/enotdesk-install/install-server.sh --backup
 ```bash
 sudo -u enotdesk /opt/node-24/bin/node /opt/enotdesk/current/server/backup.mjs \
   /var/lib/enotdesk/enotdesk.db /var/lib/enotdesk/backups 10
+# база хаба — с префиксом hub-, как у таймера (иначе дамп получит имя enotdesk-… и смешается с основным)
+sudo -u enotdesk /opt/node-24/bin/node /opt/enotdesk/current/server/backup.mjs \
+  /var/lib/enotdesk/hub.db /var/lib/enotdesk/backups 10 hub-
 ```
 
 ### 7.2. Что хранить вне сервера и как восстановиться на новом
@@ -333,20 +336,23 @@ sudo -u enotdesk /opt/node-24/bin/node /opt/enotdesk/current/server/backup.mjs \
 Восстановление на чистом сервере:
 
 ```bash
-# 1) поставить ту же или более новую версию тем же установщиком (без bootstrap)
-sudo bash install-server.sh            # отвечает на вопросы, ставит Node, coturn, Caddy
+# 0) на минимальной системе установщику нужны curl и xz
+sudo apt-get install -y curl xz-utils ca-certificates
+# 1) поставить ту же или более новую версию тем же установщиком (без bootstrap):
+#    архив сервера enotdesk-server.tar.gz — из GitHub Releases (SHA256 сверить по checksums-sha256.txt)
+sudo ENOT_PUBLIC_URL=https://ваш.домен ENOT_HUB=1 bash install-server.sh enotdesk-server.tar.gz
 # 2) вернуть env-файл со старыми секретами и базы
 sudo systemctl stop enotdesk enotdesk-hub 2>/dev/null || true
 sudo install -m 0600 -o root -g root enotdesk.env /etc/enotdesk/enotdesk.env
 sudo install -m 0640 -o enotdesk -g enotdesk enotdesk-<штамп>.db /var/lib/enotdesk/enotdesk.db
 sudo install -m 0640 -o enotdesk -g enotdesk hub-<штамп>.db /var/lib/enotdesk/hub.db   # если был хаб
 sudo rm -f /var/lib/enotdesk/*.db-wal /var/lib/enotdesk/*.db-shm
-# 3) пересоздать конфиг coturn из секрета env-файла и запустить всё
-sudo bash install-server.sh --update --reset-turn
+# 3) пересоздать конфиг coturn из секрета env-файла и запустить всё (архив — тот же, что на шаге 1)
+sudo bash install-server.sh --update enotdesk-server.tar.gz --reset-turn
 curl -fsS http://127.0.0.1:8080/api/v1/health
 ```
 
-Миграции схемы применятся сами при старте. Машины переподключатся сами (их токены в базе), если адрес сервера не изменился. Хаб поднимется, если в восстановленном env-файле есть `ENOT_HUB='1'` (так его записывает установщик).
+Миграции схемы применятся сами при старте. Машины переподключатся сами (их токены в базе), если адрес сервера не изменился. Хаб поднимется, если в восстановленном env-файле есть `ENOT_HUB='1'` (так его записывает установщик). Учения 24.10.2026 на чистом контейнере Debian 13: от пустой машины до работающего сервера с базами — 2,5 минуты; вход по 2FA, вход администратора, машины (агент вышел online по старому токену) и данные хаба — на месте.
 
 **Аварийное снятие 2FA.** Если администратор потерял телефон и резервные коды или база восстановлена без прежнего `ENOT_SECRET_KEY`, снимите 2FA с консоли сервера:
 
@@ -389,7 +395,7 @@ ss -ulnp | grep -E ':3478|4916'   # слушает coturn
 journalctl -u coturn -b | grep -i 'config file'   # пусто — конфиг прочитан
 ```
 
-Если в журнале coturn есть «Cannot find config file», служба (пользователь `turnserver`) не может прочитать `/etc/turnserver.conf` и работает на настройках по умолчанию — без секрета и realm, ретрансляция не выдаётся. Так было у установок до 0.6.29: файл получал права `root:root 0600`. Исправление: `sudo chgrp turnserver /etc/turnserver.conf && sudo chmod 0640 /etc/turnserver.conf && sudo systemctl restart coturn` (или повторный `install-server.sh --update --reset-turn`). В строках этого файла не пишите комментарии после значения (`опция  # текст`) — coturn их не понимает.
+Если в журнале coturn есть «Cannot find config file», служба (пользователь `turnserver`) не может прочитать `/etc/turnserver.conf` и работает на настройках по умолчанию — без секрета и realm, ретрансляция не выдаётся. Так было у установок до 0.6.29: файл получал права `root:root 0600`. Исправление: `sudo chgrp turnserver /etc/turnserver.conf && sudo chmod 0640 /etc/turnserver.conf && sudo systemctl restart coturn` (или повторный `install-server.sh --update <архив сервера> --reset-turn`). В строках этого файла не пишите комментарии после значения (`опция  # текст`) — coturn их не понимает.
 
 ### 9.1. Caddy вручную (fallback)
 

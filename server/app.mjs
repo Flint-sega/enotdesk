@@ -1090,6 +1090,9 @@ export function createServer(opts = {}) {
       }
       endOperatorSessions(target.id, 'operator-revoked');
       db.prepare('DELETE FROM auth_tokens WHERE user_id = ?').run(target.id);
+      // резервные коды 2FA ссылаются на users(id): без этого участник, хоть раз
+      // настраивавший 2FA, не удалялся (500, учения восстановления 24.10)
+      db.prepare('DELETE FROM totp_backup_codes WHERE user_id = ?').run(target.id);
       db.prepare('DELETE FROM users WHERE id = ?').run(target.id);
       auditLog(db, user.id, 'member.delete', target.id, { login: target.login, role: target.role });
       return ok(res, 200, { ok: true });
