@@ -282,24 +282,27 @@ test('replay: тот же TOTP-код второй раз — отказ, сос
   const secret = en.json.secret;
   await api(base, 'POST', '/auth/totp/enable', { token: admin.token, body: { password: admin.password, code: refCode(secret, Date.now() / 1000) } });
 
+  // Коды считаются от одного момента t0: повтор — это ровно та же строка, и тест не зависит
+  // от того, перешли ли часы границу 30-с шага между запросами (так он падал на гейте).
+  const t0 = Date.now() / 1000;
+  const code = refCode(secret, t0);
   const first = await api(base, 'POST', '/auth/login', {
-    body: { login: ADMIN.login, password: ADMIN.password, totp: refCode(secret, Date.now() / 1000) },
+    body: { login: ADMIN.login, password: ADMIN.password, totp: code },
   });
   assert.equal(first.status, 200);
-  // повтор того же кода (тот же 30-с шаг) — отказ
+  // повтор того же кода — отказ
   const replay = await api(base, 'POST', '/auth/login', {
-    body: { login: ADMIN.login, password: ADMIN.password, totp: refCode(secret, Date.now() / 1000) },
+    body: { login: ADMIN.login, password: ADMIN.password, totp: code },
   });
   assert.equal(replay.status, 401);
   assert.equal(replay.json.error.code, 'invalid_credentials', 'повтор кода — generic отказ');
   // код следующего шага (в окне ±1) принят и счётчик сдвинут
   const next = await api(base, 'POST', '/auth/login', {
-    body: { login: ADMIN.login, password: ADMIN.password, totp: refCode(secret, Date.now() / 1000 + 30) },
+    body: { login: ADMIN.login, password: ADMIN.password, totp: refCode(secret, t0 + 30) },
   });
   assert.equal(next.status, 200);
   const row = db.prepare('SELECT totp_last_counter FROM users WHERE id = ?').get(admin.user.id);
-  const expected = Math.floor(Date.now() / 1000 / 30) + 1;
-  assert.ok(Math.abs(row.totp_last_counter - expected) <= 1, 'счётчик последнего шага записан');
+  assert.equal(row.totp_last_counter, Math.floor(t0 / 30) + 1, 'счётчик последнего шага записан');
 });
 
 test('резервные коды старого sha256-формата — честный отказ backup_codes_legacy_reset', async (t) => {
