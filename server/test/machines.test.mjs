@@ -217,6 +217,14 @@ test('store: touch обновляет last_seen, list пагинирует и ч
   t += 120_000; // окно online ушло
   assert.equal(store.list({ limit: 100 }).items.find((m) => m.id === machine.id).online, false);
   assert.equal(store.touch('нет-такой'), false);
+
+  // отзыв: машина не online сразу, хотя heartbeat был секунду назад (W-9 на стенде 24.10)
+  assert.equal(store.touch(machine.id), true);
+  t += 1000;
+  assert.equal(store.revoke(machine.id), true);
+  const revoked = store.list({ limit: 100 }).items.find((m) => m.id === machine.id);
+  assert.equal(revoked.online, false, 'отозванная машина не показывается «в сети»');
+  assert.ok(revoked.revokedAt);
   db.close();
 });
 

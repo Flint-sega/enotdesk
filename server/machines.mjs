@@ -89,7 +89,8 @@ export function createMachinesStore(db, { nowMs = Date.now, onlineWindowMs = ONL
       // инвентарь целиком (включая массивы macs/localIps из R10): в БД попадает
       // только прошедший sanitizeInventory объект, здесь он просто читается
       inventory: storedInventory(row.inventory),
-      online: !Number.isNaN(seen) && nowMs() - seen <= onlineWindowMs,
+      // отозванная не online сразу: иначе до конца окна список показывал её «в сети» (W-9, 24.10)
+      online: !row.revoked_at && !Number.isNaN(seen) && nowMs() - seen <= onlineWindowMs,
       onboardingExpiresAt: row.onboarding_expires_at,
       onboardingUsedAt: row.onboarding_used_at,
       createdBy: row.created_by,
