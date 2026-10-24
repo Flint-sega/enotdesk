@@ -64,8 +64,8 @@ use windows::Win32::Security::{
 use windows::Win32::System::Variant::VT_R4;
 use windows::Win32::System::StationsAndDesktops::{
     CloseDesktop, GetUserObjectInformationW, GetThreadDesktop, OpenInputDesktop, SetThreadDesktop,
-    DESKTOP_ACCESS_FLAGS, DESKTOP_CONTROL_FLAGS, DESKTOP_READOBJECTS, DESKTOP_SWITCHDESKTOP,
-    DESKTOP_WRITEOBJECTS, UOI_NAME,
+    DESKTOP_ACCESS_FLAGS, DESKTOP_CONTROL_FLAGS, DESKTOP_JOURNALPLAYBACK, DESKTOP_READOBJECTS,
+    DESKTOP_SWITCHDESKTOP, DESKTOP_WRITEOBJECTS, UOI_NAME,
 };
 use windows::Win32::System::Threading::{GetCurrentProcessId, GetCurrentThreadId};
 use windows::Win32::System::IO::CancelIoEx;
@@ -1364,11 +1364,21 @@ pub fn active_console_session_id() -> u32 {
 /// 2026-10-02). A dedicated input thread re-attaches explicitly, RustDesk-style.
 pub fn attach_input_desktop() -> Result<(), String> {
     unsafe {
+        // DESKTOP_JOURNALPLAYBACK: synthesized input (SendInput, keybd_event,
+        // mouse_event) needs it on the thread's desktop -- without it every
+        // SendInput fails with ERROR_ACCESS_DENIED (gle=5) while SetCursorPos
+        // still works. This was the "attach breaks SendInput" of ADR 0027
+        // addendum 3 (keys and buttons dead, cursor moving; autorun on the
+        // Win11 VM, 24.10.2026). Same fix as in Microsoft's "SendInput doesn't
+        // work but it doesn't return an error" (winlogon desktop case).
         let h = OpenInputDesktop(
             DESKTOP_CONTROL_FLAGS(0),
             false,
             DESKTOP_ACCESS_FLAGS(
-                DESKTOP_READOBJECTS.0 | DESKTOP_WRITEOBJECTS.0 | DESKTOP_SWITCHDESKTOP.0,
+                DESKTOP_READOBJECTS.0
+                    | DESKTOP_WRITEOBJECTS.0
+                    | DESKTOP_SWITCHDESKTOP.0
+                    | DESKTOP_JOURNALPLAYBACK.0,
             ),
         )
         .map_err(|e| format!("OpenInputDesktop: {e}"))?;
