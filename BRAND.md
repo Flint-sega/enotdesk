@@ -44,4 +44,4 @@ Hero-заголовки — крупные, плотные, без засече�
 - `assets/icon.png` — растровая иконка 1024×1024 для упаковщика;
 - `assets/icon.icns`, `assets/icon.ico` — иконки macOS/Windows.
 
-Кропы: `npx electron@44.9.0 scripts/make-mascot.mjs`, иконки: `npm run icons`. Подробности — в `assets/README.md`. Товарный знак не регистрировался.
+Кропы: `npx electron@44.9.3 scripts/make-mascot.mjs`, иконки: `npm run icons`. Подробности — в `assets/README.md`. Товарный знак не регистрировался.

@@ -1,7 +1,7 @@
 // Собирает картинки для соцсетей из арта героя и токенов Neon Emerald (Electron, без зависимостей):
 //   site/assets/social-preview.png — 1280×640, превью репозитория на GitHub (английский текст);
 //   site/assets/og-neon.png        — 1200×630, og:image витрины (русский текст, сайт lang="ru").
-// Запуск: npx electron@44.9.0 scripts/make-social.mjs
+// Запуск: npx electron@44.9.3 scripts/make-social.mjs
 // Версия берётся из package.json — перед запуском убедиться, что она совпадает с последним тегом.
 import { app, BrowserWindow } from 'electron';
 import fs from 'node:fs';

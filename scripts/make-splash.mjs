@@ -2,7 +2,7 @@
 // самораспаковщик, пока приложение распаковывается во временную папку (portable.splashImage
 // в build/electron-builder.yml) — пользователь сразу видит, что программа запускается.
 // NSIS BgImage понимает только BMP, поэтому кадр рисуется через Electron и пишется
-// 24-битным BMP без зависимостей. Запуск: npx electron@44.9.0 scripts/make-splash.mjs
+// 24-битным BMP без зависимостей. Запуск: npx electron@44.9.3 scripts/make-splash.mjs
 import { app, BrowserWindow } from 'electron';
 import fs from 'node:fs';
 import os from 'node:os';
