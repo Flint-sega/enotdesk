@@ -18,3 +18,12 @@ test('main: на Linux video.start() не отвечает video-unsupported-pla
   assert.ok(start > 0 && unsupported > start, 'ветка моста (gdm) проверяется раньше честного unsupported');
   assert.match(main, /videoForward\?\.setGdm\?\.\(\{ state: payload\?\.state/, 'статус моста доходит до агента');
 });
+
+test('main: скрытое окно моста не тормозится как фоновое (кадры Linux-захвата, 25.10)', () => {
+  const main = fs.readFileSync(path.join(import.meta.dirname, '..', 'main.mjs'), 'utf8');
+  const at = main.indexOf("preload: path.join(import.meta.dirname, 'agent-bridge', 'preload.cjs')");
+  assert.ok(at > 0, 'окно моста найдено');
+  const prefs = main.slice(at, main.indexOf('});', at));
+  assert.match(prefs, /backgroundThrottling: false/);
+  assert.match(prefs, /sandbox: true/, 'песочница моста на месте');
+});

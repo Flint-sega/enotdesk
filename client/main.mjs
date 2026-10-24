@@ -1699,6 +1699,9 @@ function createAgentRtc({ fetchIceServers, videoForward = null } = {}) {
           contextIsolation: true,
           nodeIntegration: false,
           sandbox: true,
+          // окно скрыто всегда: без этого Chromium считает страницу фоновой и придерживает
+          // отрисовку — Linux-захват (getDisplayMedia → canvas, ADR 0031) терял половину кадров
+          backgroundThrottling: false,
         },
       });
     } catch (e) {
