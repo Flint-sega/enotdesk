@@ -191,6 +191,19 @@ test('packaging: customUnInstall по-прежнему удаляет служб
   assert.match(un, /sc\.exe delete EnotDeskAgent/, 'без удаления служба оставалась бы висеть на удалённом каталоге');
 });
 
+// W-10 на ВМ 102 (24.10): после удаления оставались ссылка enotdesk:// на удалённый exe и
+// кэш обновлений ~200 МБ. Убираются только при настоящем удалении, не при обновлении.
+test('packaging: настоящее удаление убирает ссылку enotdesk:// и кэш обновлений, обновление — нет', () => {
+  const un = installerNsh.slice(installerNsh.indexOf('!macro customUnInstall'));
+  const guard = un.indexOf('${ifNot} ${isUpdated}');
+  const end = un.indexOf('${endif}', guard);
+  for (const line of ['DeleteRegKey HKCU "Software\\Classes\\enotdesk"', 'RMDir /r "$PROFILE\\AppData\\Local\\enotdesk-updater"']) {
+    const at = un.indexOf(line);
+    assert.ok(at > guard && at < end, `«${line}» — только внутри \${ifNot} \${isUpdated}`);
+  }
+  assert.doesNotMatch(un, /systemprofile/, 'профиль агента (токен машины) деинсталлятор не трогает — как remove-macos.sh без --purge-data');
+});
+
 test('packaging: внешние команды установщика — только по абсолютному $SYSDIR (ревью 10.10)', () => {
   const cmds = [...installerNsh.matchAll(/nsExec::Exec (.+)$/gm)].map((m) => m[1].trim().replace(/^['"]|['"]$/g, ''));
   assert.ok(cmds.length > 0, 'в installer.nsh есть nsExec-команды');

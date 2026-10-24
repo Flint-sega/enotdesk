@@ -116,5 +116,14 @@ ed_no_agent:
   ${ifNot} ${isUpdated}
     nsExec::Exec "$SYSDIR\sc.exe delete EnotDeskAgent"
     Pop $R0
+    ; Real uninstall (live check W-10, 24.10.2026): drop leftovers of the
+    ; uninstalling user that only point at the removed program -- the
+    ; enotdesk:// handler the app registers at runtime in HKCU (links would
+    ; open a missing exe; a portable copy re-registers itself on its next
+    ; start) and the electron-updater cache (~200 MB). Settings and the agent
+    ; profile (machine token) stay, like remove-macos.sh without --purge-data;
+    ; docs/guides/unattended.md lists them and how to remove them.
+    DeleteRegKey HKCU "Software\Classes\enotdesk"
+    RMDir /r "$PROFILE\AppData\Local\enotdesk-updater"
   ${endif}
 !macroend
