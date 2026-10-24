@@ -95,6 +95,17 @@ ed_agent_start:
   nsExec::Exec "$SYSDIR\sc.exe start EnotDeskAgent"
   Pop $R1
 ed_no_agent:
+  ; enotdesk:// for every user right after install (live check A-10,
+  ; 24.10.2026): electron-builder does not register protocols on Windows,
+  ; the app did it only at its first window start (HKCU), so links from a
+  ; silent install opened nothing. HKCU set by the app still wins per user.
+  WriteRegStr HKLM "Software\Classes\enotdesk" "" "URL:EnotDesk Help"
+  WriteRegStr HKLM "Software\Classes\enotdesk" "URL Protocol" ""
+  WriteRegStr HKLM "Software\Classes\enotdesk\shell\open\command" "" '"$INSTDIR\EnotDesk.exe" "%1"'
+  ; A stale HKCU handler of the installing user (an old portable registered its
+  ; temporary unpack dir, gone after exit) would shadow HKLM: drop it, the app
+  ; re-registers HKCU with a valid path at its next window start (A-10, 24.10).
+  DeleteRegKey HKCU "Software\Classes\enotdesk"
   Pop $R1
 !macroend
 
@@ -116,5 +127,15 @@ ed_no_agent:
   ${ifNot} ${isUpdated}
     nsExec::Exec "$SYSDIR\sc.exe delete EnotDeskAgent"
     Pop $R0
+    ; Real uninstall (live check W-10, 24.10.2026): drop leftovers of the
+    ; uninstalling user that only point at the removed program -- the
+    ; enotdesk:// handlers (HKLM from customInstall, HKCU from the app; links would
+    ; open a missing exe; a portable copy re-registers itself on its next
+    ; start) and the electron-updater cache (~200 MB). Settings and the agent
+    ; profile (machine token) stay, like remove-macos.sh without --purge-data;
+    ; docs/guides/unattended.md lists them and how to remove them.
+    DeleteRegKey HKCU "Software\Classes\enotdesk"
+    DeleteRegKey HKLM "Software\Classes\enotdesk"
+    RMDir /r "$PROFILE\AppData\Local\enotdesk-updater"
   ${endif}
 !macroend

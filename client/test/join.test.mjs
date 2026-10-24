@@ -165,7 +165,9 @@ const root = path.join(import.meta.dirname, '..');
 test('main.mjs регистрирует протокол только в упакованном приложении и ведёт open-url/second-instance/argv', () => {
   const mainJs = readFileSync(path.join(root, 'main.mjs'), 'utf8');
   assert.match(mainJs, /const PROTOCOL_REGISTERED = !SMOKE && !AGENT && app\.isPackaged;/);
-  assert.match(mainJs, /if \(PROTOCOL_REGISTERED\) app\.setAsDefaultProtocolClient\('enotdesk'\)/);
+  // регистрация — только под PROTOCOL_REGISTERED; путь для портатива — protocolTarget (A-10, 24.10)
+  assert.match(mainJs, /if \(PROTOCOL_REGISTERED\) \{\s*if \(protocolExe\) app\.setAsDefaultProtocolClient\('enotdesk', protocolExe, \[\]\);\s*else app\.setAsDefaultProtocolClient\('enotdesk'\);\s*\}/);
+  assert.equal([...mainJs.matchAll(/setAsDefaultProtocolClient\(/g)].length, 2, 'вне PROTOCOL_REGISTERED протокол не регистрируется');
   // SMOKЕ-вывод вычисляет фактическое состояние, а не повторяет константу
   assert.match(mainJs, /SMOKE protocol: \$\{PROTOCOL_REGISTERED \? 'registered' : 'not registered'\}/);
   assert.match(mainJs, /'open-url'/);
