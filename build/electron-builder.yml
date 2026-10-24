@@ -95,9 +95,10 @@ artifactName: "EnotDesk-${os}-${arch}.${ext}"
 extraMetadata:
   ENOT_BAKED_SERVER_URL: ""
 # One-click (R04): протокол enotdesk://join. Регистрируется в упаковке на всех
-# трёх ОС (mac: CFBundleURLTypes в Info.plist; win: реестр; linux: MimeType
-# x-scheme-handler в .desktop). В рантайме mac дополнительно требует
-# app.setAsDefaultProtocolClient (client/main.mjs, только не-SMOKE/не-агент).
+# двух ОС (mac: CFBundleURLTypes в Info.plist; linux: MimeType x-scheme-handler
+# в .desktop). Windows: electron-builder протокол НЕ регистрирует (проверено 24.10) —
+# HKLM пишет build/installer.nsh, HKCU — app.setAsDefaultProtocolClient в
+# client/main.mjs (только не-SMOKE/не-агент; портатив — см. lib/protocol-handler.mjs).
 protocols:
   - name: EnotDesk Help
     schemes:

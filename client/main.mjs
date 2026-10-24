@@ -47,6 +47,7 @@ import { createSvcDiag, envDiagSlice, maskJoinTokens } from './lib/svc-diag.mjs'
 import { createKeepAwake } from './lib/keep-awake.mjs';
 import { createBootLog } from './lib/boot-log.mjs';
 import { linuxOzonePlatform } from './lib/ozone.mjs';
+import { protocolTarget } from './lib/protocol-handler.mjs';
 import { WEBRTC_MDNS_FEATURE, withDisabledFeature } from './lib/chromium-features.mjs';
 import { gdmVideoStatus } from './lib/gdm-status.mjs';
 import { applyDesktopEntry } from './lib/desktop-entry.mjs';
@@ -220,7 +221,12 @@ if (!gotLock) app.quit();
 // приложение. dev/SMOKE не должны мусорить в системе и перехватывать ссылки
 // у установленной сборки; агент-службе (без окна и клиентских сеансов) он не нужен.
 const PROTOCOL_REGISTERED = !SMOKE && !AGENT && app.isPackaged;
-if (PROTOCOL_REGISTERED) app.setAsDefaultProtocolClient('enotdesk');
+// Портатив не регистрирует свою временную распаковку (A-10, 24.10): см. lib/protocol-handler.mjs
+const protocolExe = protocolTarget({ platform: process.platform, env: process.env, exists: fs.existsSync });
+if (PROTOCOL_REGISTERED) {
+  if (protocolExe) app.setAsDefaultProtocolClient('enotdesk', protocolExe, []);
+  else app.setAsDefaultProtocolClient('enotdesk');
+}
 
 // Join-ссылка может прийти до готовности окна: argv на win/linux (запуск по
 // ссылке) и 'open-url' на macOS до ready. Парсим отложенно — после loadSettings,
