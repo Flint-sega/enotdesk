@@ -102,6 +102,10 @@ ed_no_agent:
   WriteRegStr HKLM "Software\Classes\enotdesk" "" "URL:EnotDesk Help"
   WriteRegStr HKLM "Software\Classes\enotdesk" "URL Protocol" ""
   WriteRegStr HKLM "Software\Classes\enotdesk\shell\open\command" "" '"$INSTDIR\EnotDesk.exe" "%1"'
+  ; A stale HKCU handler of the installing user (an old portable registered its
+  ; temporary unpack dir, gone after exit) would shadow HKLM: drop it, the app
+  ; re-registers HKCU with a valid path at its next window start (A-10, 24.10).
+  DeleteRegKey HKCU "Software\Classes\enotdesk"
   Pop $R1
 !macroend
 

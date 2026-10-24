@@ -33,6 +33,7 @@ test('main.mjs регистрирует enotdesk:// через protocolTarget; �
   const install = nsh.slice(nsh.indexOf('!macro customInstall'), nsh.indexOf('!macro customUnInstall'));
   assert.match(install, /WriteRegStr HKLM "Software\\Classes\\enotdesk\\shell\\open\\command" "" '"\$INSTDIR\\EnotDesk\.exe" "%1"'/);
   assert.match(install, /WriteRegStr HKLM "Software\\Classes\\enotdesk" "URL Protocol" ""/);
+  assert.match(install, /DeleteRegKey HKCU "Software\\Classes\\enotdesk"/, 'старая запись HKCU (временная распаковка портатива) не перекрывает HKLM');
   const un = nsh.slice(nsh.indexOf('!macro customUnInstall'));
   const guard = un.indexOf('${ifNot} ${isUpdated}');
   const del = un.indexOf('DeleteRegKey HKLM "Software\\Classes\\enotdesk"');
