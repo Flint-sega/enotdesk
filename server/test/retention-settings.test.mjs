@@ -138,7 +138,7 @@ test('схема v10: таблица настроек создаётся и пе
   raw.close();
   const db = openDb(file); // база проходит все шаги, включая v10
   assert.equal(db.prepare('SELECT version FROM schema_version').get().version, SCHEMA_VERSION);
-  assert.equal(SCHEMA_VERSION, 10);
+  assert.equal(SCHEMA_VERSION, 11);
   setSetting(db, 'audit.enabled', '0');
   db.close();
   const again = openDb(file);

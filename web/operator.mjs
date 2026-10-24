@@ -1082,16 +1082,16 @@ function sendTermLine() {
 // всё равно честно получит отказ сервера (403).
 
 const MACHINES_PAGE = 25;
-const PIN_MIN = 4;
+const PIN_MIN = 6; // новый PIN — от 6 символов (решение владельца 24.10), старые работают
 const PIN_MAX = 128;
 // Действия строки машины: и значения data-action, и хвосты словарных ключей
 // web.machines.action.* — контракт-тест проверяет, что каждое обработано.
 // favorite (W1) — звезда «избранное»: подпись зависит от состояния машины,
 // поэтому её кнопка собирается отдельно в machineActionButton.
-const MACHINE_ACTIONS = ['favorite', 'toast', 'wol', 'terminal', 'pin', 'revoke', 'deleteAction'];
+const MACHINE_ACTIONS = ['favorite', 'toast', 'wol', 'terminal', 'pin', 'pinUnlock', 'revoke', 'deleteAction'];
 // Управление машиной — только admin, как на сервере (PIN, отзыв, удаление); оператору
 // рабочие действия: ☆, сообщение, разбудить, терминал (решение владельца 24.10)
-const ADMIN_MACHINE_ACTIONS = ['pin', 'revoke', 'deleteAction'];
+const ADMIN_MACHINE_ACTIONS = ['pin', 'pinUnlock', 'revoke', 'deleteAction'];
 let machinesOffset = 0;
 let machinesTotal = 0;
 let machinesCache = []; // текущая страница: данные строк для действий по data-id
@@ -1137,7 +1137,7 @@ function machineActionButton(m, action) {
   // (PIN/отзыв/удаление) помечены как опасные. Тост и терминал требуют живого
   // зарегистрированного агента; «Разбудить» — только у офлайн-машины с MAC
   // в инвентаре (будить живую нечего, без MAC — нечем).
-  const danger = action !== 'terminal' && action !== 'toast' && action !== 'wol' && action !== 'favorite';
+  const danger = action !== 'terminal' && action !== 'toast' && action !== 'wol' && action !== 'favorite' && action !== 'pinUnlock';
   const btn = document.createElement('button');
   btn.type = 'button';
   btn.className = `btn ghost sm${danger ? ' danger' : ''}`;
@@ -1153,6 +1153,7 @@ function machineActionButton(m, action) {
   }
   if (action === 'terminal' || action === 'toast' || action === 'wol') btn.disabled = Boolean(m.revokedAt) || !m.registered;
   if (action === 'revoke') btn.disabled = Boolean(m.revokedAt);
+  if (action === 'pinUnlock' && !m.pinLocked) btn.classList.add('hidden'); // снимать нечего
   if (action === 'wol') {
     if (!m.inventory?.macs?.length) btn.disabled = true;
     if (m.online) btn.classList.add('hidden'); // смысла нет — машина и так жива
@@ -1174,8 +1175,8 @@ function renderMachineRows(items) {
     title.appendChild(machineBadge(m));
     if (m.hasPin) {
       const pin = document.createElement('span');
-      pin.className = 'badge';
-      pin.textContent = t('web.machines.badgePin');
+      pin.className = m.pinLocked ? 'badge off' : 'badge';
+      pin.textContent = t(m.pinLocked ? 'web.machines.badgePinLocked' : 'web.machines.badgePin');
       title.appendChild(pin);
     }
     grow.appendChild(title);
@@ -1234,6 +1235,13 @@ async function machinePin(m) {
   }
   if (!pin && m.hasPin && !window.confirm(t('web.machines.pinClearConfirm', { name: m.name }))) return;
   const res = await api('POST', `/machines/${encodeURIComponent(m.id)}/pin`, body);
+  if (res.status !== 200) machineActionError(res);
+  await renderMachines();
+}
+
+async function machinePinUnlock(m) {
+  if (!window.confirm(t('web.machines.pinUnlockConfirm', { name: m.name }))) return;
+  const res = await api('POST', `/machines/${encodeURIComponent(m.id)}/pin/unlock`);
   if (res.status !== 200) machineActionError(res);
   await renderMachines();
 }
@@ -1659,6 +1667,7 @@ function wire() {
     else if (action === 'favorite') void machineFavorite(m);
     else if (action === 'terminal') openMachineClaim(m);
     else if (action === 'pin') void machinePin(m);
+    else if (action === 'pinUnlock') void machinePinUnlock(m);
     else if (action === 'revoke') void machineRevoke(m);
     else if (action === 'deleteAction') void machineDelete(m);
   });

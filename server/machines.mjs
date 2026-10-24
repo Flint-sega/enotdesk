@@ -80,6 +80,8 @@ export function createMachinesStore(db, { nowMs = Date.now, onlineWindowMs = ONL
       agentVersion: row.agent_version,
       tags: JSON.parse(row.tags || '[]'),
       hasPin: row.pin_hash != null,
+      // PIN заблокирован после серии неверных попыток (снимает администратор)
+      pinLocked: row.pin_hash != null && row.pin_locked_at != null,
       registered: row.agent_token_hash != null,
       revokedAt: row.revoked_at,
       lastSeenAt: row.last_seen_at,
@@ -175,11 +177,28 @@ export function createMachinesStore(db, { nowMs = Date.now, onlineWindowMs = ONL
     },
 
     // pin === null снимает PIN; иначе хешируем как пароль.
+    // Новый или снятый PIN заодно снимает блокировку и обнуляет счётчик неверных попыток.
     setPin(id, pin) {
       if (pin == null) {
-        return db.prepare('UPDATE machines SET pin_hash=NULL WHERE id=?').run(id).changes === 1;
+        return db.prepare('UPDATE machines SET pin_hash=NULL, pin_failures=0, pin_locked_at=NULL WHERE id=?').run(id).changes === 1;
       }
-      return db.prepare('UPDATE machines SET pin_hash=? WHERE id=?').run(hashPassword(String(pin)), id).changes === 1;
+      return db.prepare('UPDATE machines SET pin_hash=?, pin_failures=0, pin_locked_at=NULL WHERE id=?')
+        .run(hashPassword(String(pin)), id).changes === 1;
+    },
+    // Неверный PIN: +1 к счётчику подряд; на пороге PIN блокируется. Один синхронный
+    // UPDATE … RETURNING — параллельные попытки не теряют инкремент.
+    pinFailed(id, lockAfter) {
+      const row = db.prepare(`UPDATE machines SET pin_failures = pin_failures + 1,
+                                pin_locked_at = CASE WHEN pin_locked_at IS NULL AND pin_failures + 1 >= ? THEN ? ELSE pin_locked_at END
+                              WHERE id = ? RETURNING pin_failures, pin_locked_at`).get(lockAfter, nowIso(), id);
+      if (!row) return { failures: 0, locked: false };
+      return { failures: row.pin_failures, locked: row.pin_locked_at != null };
+    },
+    pinSucceeded(id) {
+      db.prepare('UPDATE machines SET pin_failures=0 WHERE id=? AND pin_failures != 0').run(id);
+    },
+    unlockPin(id) {
+      return db.prepare('UPDATE machines SET pin_failures=0, pin_locked_at=NULL WHERE id=? AND pin_locked_at IS NOT NULL').run(id).changes === 1;
     },
 
     verifyPin(machineOrId, pin) {

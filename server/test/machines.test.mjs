@@ -321,9 +321,9 @@ import { RateLimiter } from '../app.mjs';
 
 async function setup(t, extra = {}) {
   const dbPath = tmpDb(t);
-  const { base, port } = await startServer(t, { dbPath, ...extra });
+  const { base, port, inst } = await startServer(t, { dbPath, ...extra });
   const admin = await adminLogin(dbPath, base);
-  return { base, port, admin, dbPath };
+  return { base, port, admin, dbPath, inst };
 }
 
 async function makeUser(base, admin, role, login) {
@@ -511,6 +511,8 @@ test('политика PIN: без PIN не войти, неверный — о�
   void reg;
 
   assert.equal((await api(base, 'POST', `/machines/${created.machine.id}/pin`, { token: admin.token, body: { pin: '12' } })).status, 400, 'слишком короткий PIN');
+  // новый PIN — от 6 символов (решение владельца 24.10, ревью 1.13 P2-10)
+  assert.equal((await api(base, 'POST', `/machines/${created.machine.id}/pin`, { token: admin.token, body: { pin: '12345' } })).status, 400, '5 символов — мало');
   assert.equal((await api(base, 'POST', `/machines/${created.machine.id}/pin`, { token: admin.token, body: { pin: '13-57-ПИН' } })).status, 200);
 
   const need = await api(base, 'POST', `/machines/${created.machine.id}/claim`, { token: operator.token, body: { reason: 'Диагностика' } });
@@ -535,13 +537,70 @@ test('политика PIN: без PIN не войти, неверный — о�
   assert.equal(list.json.items.find((x) => x.id === created.machine.id).hasPin, false);
 });
 
+test('PIN: 10 неверных подряд блокируют PIN до снятия админом; верный PIN обнуляет счётчик (P2-10)', async (t) => {
+  // лимит попыток на машину подняли, чтобы дойти до порога блокировки в одном тесте
+  const { base, admin } = await setup(t, { limits: { machineClaimId: new RateLimiter(100, 60_000), machineClaim: new RateLimiter(100, 60_000) } });
+  const operator = await makeUser(base, admin, 'operator', 'op-lock');
+  const { created } = await onboardAndRegister(base, admin);
+  const id = created.machine.id;
+  const claimUrl = `/machines/${id}/claim`;
+  const claim = (pin) => api(base, 'POST', claimUrl, { token: operator.token, body: { reason: 'Подбор', pin } });
+  assert.equal((await api(base, 'POST', `/machines/${id}/pin`, { token: admin.token, body: { pin: '482915' } })).status, 200);
+
+  // 9 промахов, затем верный — счётчик «подряд» обнуляется, блокировки нет
+  for (let i = 0; i < 9; i++) assert.equal((await claim(`00000${i}`)).json.error.code, 'bad_pin');
+  const good = await claim('482915');
+  assert.equal(good.status, 201);
+  await api(base, 'POST', `/sessions/${good.json.sessionId}/end`, { token: operator.token });
+
+  for (let i = 0; i < 9; i++) assert.equal((await claim(`11111${i}`)).status, 403);
+  const tenth = await claim('1111119');
+  assert.equal(tenth.status, 423, 'десятый промах подряд — PIN заблокирован');
+  assert.equal(tenth.json.error.code, 'pin_locked');
+  const right = await claim('482915');
+  assert.equal(right.status, 423, 'и верный PIN больше не принимается — подбор остановлен');
+  const list = await api(base, 'GET', '/machines', { token: admin.token });
+  const m = list.json.items.find((x) => x.id === id);
+  assert.equal(m.pinLocked, true);
+  assert.equal(m.hasPin, true);
+
+  // снять блокировку может только админ; запись в журнале безопасности
+  assert.equal((await api(base, 'POST', `/machines/${id}/pin/unlock`, { token: operator.token })).status, 403);
+  const unlock = await api(base, 'POST', `/machines/${id}/pin/unlock`, { token: admin.token });
+  assert.equal(unlock.status, 200);
+  assert.equal(unlock.json.unlocked, true);
+  assert.equal((await api(base, 'POST', `/machines/${id}/pin/unlock`, { token: admin.token })).json.unlocked, false, 'повторно снимать нечего');
+  assert.equal((await claim('482915')).status, 201, 'после снятия верный PIN снова впускает');
+
+  const audit = await api(base, 'GET', '/audit?limit=200', { token: admin.token });
+  const actions = audit.json.items.map((a) => a.action);
+  assert.equal(actions.filter((a) => a === 'machine.pin.locked').length, 1, 'блокировка записана один раз');
+  assert.ok(actions.includes('machine.pin.unlock'));
+  assert.ok(!JSON.stringify(audit.json).includes('482915'), 'PIN в журнал не попадает');
+});
+
+test('PIN: новый PIN снимает блокировку; журнал выключен — блокировка всё равно пишется', async (t) => {
+  const { base, admin, inst } = await setup(t, { limits: { machineClaimId: new RateLimiter(100, 60_000), machineClaim: new RateLimiter(100, 60_000) } });
+  const operator = await makeUser(base, admin, 'operator', 'op-lock2');
+  const { created } = await onboardAndRegister(base, admin);
+  const id = created.machine.id;
+  assert.equal((await api(base, 'POST', '/settings/retention', { token: admin.token, body: { auditEnabled: false } })).status, 200);
+  await api(base, 'POST', `/machines/${id}/pin`, { token: admin.token, body: { pin: '135790' } });
+  for (let i = 0; i < 10; i++) await api(base, 'POST', `/machines/${id}/claim`, { token: operator.token, body: { reason: 'x', pin: `24680${i}` } });
+  assert.ok(inst.db.prepare("SELECT count(*) c FROM audit WHERE action = 'machine.pin.locked'").get().c === 1, 'событие безопасности');
+  assert.equal((await api(base, 'POST', `/machines/${id}/pin`, { token: admin.token, body: { pin: '864200' } })).status, 200);
+  const m = (await api(base, 'GET', '/machines', { token: admin.token })).json.items.find((x) => x.id === id);
+  assert.equal(m.pinLocked, false, 'новый PIN снимает блокировку');
+  assert.equal((await api(base, 'POST', `/machines/${id}/claim`, { token: operator.token, body: { reason: 'x', pin: '864200' } })).status, 201);
+});
+
 test('лимиты: подбор PIN и подбор кода регистрации ограничены', async (t) => {
   const { base, admin } = await setup(t, {
     limits: { machineClaimId: new RateLimiter(2, 60_000), agentRegister: new RateLimiter(3, 60_000) },
   });
   const operator = await makeUser(base, admin, 'operator', 'op-limit');
   const { created } = await onboardAndRegister(base, admin);
-  await api(base, 'POST', `/machines/${created.machine.id}/pin`, { token: admin.token, body: { pin: '9999' } });
+  await api(base, 'POST', `/machines/${created.machine.id}/pin`, { token: admin.token, body: { pin: '999999' } });
 
   for (let i = 0; i < 2; i++) {
     const r = await api(base, 'POST', `/machines/${created.machine.id}/claim`, { token: operator.token, body: { reason: 'Подбор', pin: `000${i}` } });
@@ -640,7 +699,7 @@ test('отказы машинных маршрутов локализуются 
   const { base, admin } = await setup(t);
   const operator = await makeUser(base, admin, 'operator', 'op-i18n');
   const { created } = await onboardAndRegister(base, admin);
-  await api(base, 'POST', `/machines/${created.machine.id}/pin`, { token: admin.token, body: { pin: '7777' } });
+  await api(base, 'POST', `/machines/${created.machine.id}/pin`, { token: admin.token, body: { pin: '777777' } });
   const claimUrl = `/machines/${created.machine.id}/claim`;
 
   const call = async (p, extra = {}) => {
@@ -683,7 +742,7 @@ test('отказы машинных маршрутов локализуются 
   assert.equal(missing.json.error.message, 'Machine not found');
 
   // верный PIN впускает независимо от языка
-  const okEn = await call(claimUrl, { body: { reason: 'Diagnostics', pin: '7777' }, language: 'en' });
+  const okEn = await call(claimUrl, { body: { reason: 'Diagnostics', pin: '777777' }, language: 'en' });
   assert.equal(okEn.status, 201);
 });
 

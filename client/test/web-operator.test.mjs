@@ -138,7 +138,7 @@ test('web/*.mjs: панель машин — admin и operator, управлен
   // видимость разделов собрана в applyRoleUi; с 24.10 «Машины» видит и operator (как разрешает сервер)
   assert.match(operatorJs, /\['btn-nav-team', 'btn-nav-audit', 'btn-machines-add'\]\) \(role === 'admin' \? show : hide\)/, '«Команда», «Журнал» и «Добавить машину» — только admin');
   assert.match(operatorJs, /\['btn-nav-machines', 'btn-nav-contacts'[^\]]*\]\) \(staff \? show : hide\)/, '«Машины» видят admin и operator');
-  assert.match(operatorJs, /const ADMIN_MACHINE_ACTIONS = \['pin', 'revoke', 'deleteAction'\]/, 'PIN, отзыв и удаление — действия только admin');
+  assert.match(operatorJs, /const ADMIN_MACHINE_ACTIONS = \['pin', 'pinUnlock', 'revoke', 'deleteAction'\]/, 'PIN, снятие блокировки PIN, отзыв и удаление — действия только admin');
   assert.match(operatorJs, /currentRole !== 'admin' && ADMIN_MACHINE_ACTIONS\.includes\(action\)\) continue/, 'оператору кнопки управления машиной не рисуются');
   const paths = [...operatorJs.matchAll(/api\('(?:GET|POST|DELETE)',\s*(`[^`]*`|'[^']*')/g)].map((m) => m[1]);
   const machinePaths = paths.filter((p) => p.includes('/machines'));
@@ -146,7 +146,7 @@ test('web/*.mjs: панель машин — admin и operator, управлен
   const allowed = [
     /^'\/machines'$/, // «Добавить машину»: POST /machines → одноразовый код
     /^`\/machines\?[^`]*`$/, // список с пагинацией limit/offset
-    /^`\/machines\/\$\{[^`]+\}\/(claim|pin|revoke|toast|wol)`$/, // действия одной машины
+    /^`\/machines\/\$\{[^`]+\}\/(claim|pin|pin\/unlock|revoke|toast|wol)`$/, // действия одной машины
     /^`\/machines\/\$\{[^`]+\}`$/, // GET/DELETE одной машины
   ];
   for (const p of machinePaths) {
@@ -157,6 +157,16 @@ test('web/*.mjs: панель машин — admin и operator, управлен
   assert.ok(machinePaths.some((p) => /toast/.test(p)), 'toast-маршрут вызывается со страницы машин');
   assert.ok(machinePaths.some((p) => /wol/.test(p)), 'wol-маршрут вызывается со страницы машин');
   assert.ok(!machinePaths.some((p) => /inventory/.test(p)), 'отдельного inventory-маршрута на странице нет');
+});
+
+test('панель машин: заблокированный PIN — отметка и кнопка «Снять блокировку PIN» только при блокировке', () => {
+  assert.match(operatorJs, /if \(action === 'pinUnlock' && !m\.pinLocked\) btn\.classList\.add\('hidden'\);/);
+  assert.match(operatorJs, /pin\.className = m\.pinLocked \? 'badge off' : 'badge';/);
+  assert.match(operatorJs, /else if \(action === 'pinUnlock'\) void machinePinUnlock\(m\);/);
+  const fn = /async function machinePinUnlock\(m\) \{[\s\S]*?\n\}/.exec(operatorJs)?.[0] ?? '';
+  assert.match(fn, /window\.confirm\(t\('web\.machines\.pinUnlockConfirm'/, 'с подтверждением');
+  assert.match(fn, /api\('POST', `\/machines\/\$\{encodeURIComponent\(m\.id\)\}\/pin\/unlock`\)/);
+  assert.match(operatorJs, /const PIN_MIN = 6;/, 'новый PIN — от 6 символов, как требует сервер');
 });
 
 test('«Добавить машину»: POST /machines, код показывается один раз и стирается при закрытии', () => {

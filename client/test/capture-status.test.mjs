@@ -19,9 +19,24 @@ const operator = readFileSync(path.join(dir, '..', 'web', 'operator.mjs'), 'utf8
 
 test('клиент помощи: «оператор видит ваш экран» — только после старта захвата', () => {
   assert.match(html, /<p id="connected-intro" class="hidden" data-i18n-html="client\.connectedIntroHtml">/);
-  assert.match(app, /hide\(\$\('connected-intro'\)\);\s*try \{ await startHostRtc\(\);/, 'после согласия подпись спрятана');
+  assert.match(app, /updateSeenStatus\(\);\s*try \{ await startHostRtc\(\);/, 'после согласия подпись спрятана');
   assert.match(media, /state\.localStream = stream;\s*captureStartedStatus\(\);/, 'подпись — когда поток есть');
-  assert.match(media.slice(media.indexOf('function captureStartedStatus')), /show\(\$\('connected-intro'\)\)/);
+  assert.match(media.slice(media.indexOf('function captureStartedStatus')), /^function captureStartedStatus\(\) \{\s*updateSeenStatus\(\);/);
+});
+
+test('клиент помощи: «видит экран» — только когда у оператора с видео соединение установлено (one-click, 24.10)', () => {
+  // в one-click из хаба согласие и захват проходят раньше, чем оператор открыл окно сеанса
+  const fn = media.slice(media.indexOf('export function updateSeenStatus'), media.indexOf('function captureStartedStatus'));
+  assert.match(fn, /const seen = !!state\.localStream\s*&& \[\.\.\.state\.operators\.values\(\)\]\.some\(\(op\) => !op\.noVideo && op\.pc\?\.connectionState === 'connected'\);/);
+  assert.match(fn, /if \(seen\) \{ show\(\$\('connected-intro'\)\); hide\(\$\('connecting-intro'\)\); \} else \{ hide\(\$\('connected-intro'\)\); show\(\$\('connecting-intro'\)\); \}/);
+  // пересчёт — на каждую смену состояния pc оператора и на его уход
+  const pcState = media.slice(media.indexOf('pc.onconnectionstatechange = () => {'));
+  assert.match(pcState, /if \(!op \|\| op\.pc !== pc\) return;[^\n]*\n\s*updateSeenStatus\(\);/);
+  const drop = media.slice(media.indexOf('export function dropOperator'), media.indexOf('function videoOperatorCount'));
+  assert.match(drop, /state\.operators\.delete\(claimId\);\s*updateSeenStatus\(\);/);
+  assert.match(html, /<p id="connecting-intro" class="note hidden" data-i18n="client\.operatorConnecting">/);
+  assert.equal(ru['client.operatorConnecting'], 'Оператор подключается…');
+  assert.ok(en['client.operatorConnecting']);
 });
 
 test('клиент помощи: на Wayland подсказка и статус оператору — до запроса экранов', () => {

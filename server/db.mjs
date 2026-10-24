@@ -1,7 +1,7 @@
 import { DatabaseSync } from 'node:sqlite';
 
 // Последняя версия схемы; растёт с каждым версионированным шагом (A01 и далее).
-export const SCHEMA_VERSION = 10;
+export const SCHEMA_VERSION = 11;
 
 // Версионированные шаги схемы (A01): каждая база — старая или новая — проходит
 // недостающие шаги по порядку, версия хранится в таблице schema_version.
@@ -214,6 +214,15 @@ const MIGRATIONS = [
                )`);
     },
   },
+  {
+    // v11 (решение владельца 24.10, ревью 1.13 P2-10): счётчик неверных PIN подряд и
+    // блокировка PIN машины — после порога claim отклоняется до снятия администратором.
+    version: 11,
+    up: (db) => {
+      try { db.exec('ALTER TABLE machines ADD COLUMN pin_failures INTEGER NOT NULL DEFAULT 0'); } catch { /* колонка уже есть */ }
+      try { db.exec('ALTER TABLE machines ADD COLUMN pin_locked_at TEXT'); } catch { /* колонка уже есть */ }
+    },
+  },
 ];
 
 function schemaVersion(db) {
@@ -327,7 +336,8 @@ export function purgeAudit(db, olderThanDays, nowMs = Date.now()) {
 const AUDIT_ALWAYS_PREFIX = ['login.', 'totp.', 'member.', 'invite.', 'audit.', 'history.', 'security.'];
 const AUDIT_ALWAYS = new Set([
   'logout', 'password.change', 'webhooks.config', 'retention.config', 'bootstrap.admin',
-  'machine.claim', 'machine.claim.deny', 'machine.pin', 'machine.revoke', 'machine.delete',
+  'machine.claim', 'machine.claim.deny', 'machine.pin', 'machine.pin.locked', 'machine.pin.unlock',
+  'machine.revoke', 'machine.delete',
   // выпуск кода машины и регистрация агента (новый машинный токен) — тоже права (ревью 1.13)
   'machine.create', 'machine.register',
 ]);

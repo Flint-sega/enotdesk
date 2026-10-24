@@ -7,7 +7,7 @@ import { $, enot, text, show, hide, applyI18n, errorText } from './dom.js';
 import { state, endReasonText } from './state.js';
 import { initLocale, getLocale, t } from '../lib/i18n.mjs';
 import { clientShow } from './views/client-view.js';
-import { cleanupSession, startHostRtc, resetHostRtcState, attachOperator, dropOperator, rehomeOperators, routeOperatorSignal } from './session-media.js';
+import { cleanupSession, startHostRtc, resetHostRtcState, attachOperator, dropOperator, rehomeOperators, routeOperatorSignal, updateSeenStatus } from './session-media.js';
 import { listenChatWidgetOut } from './session-services.js';
 listenChatWidgetOut(); // маршрут ответов из чат-виджета в DC чата
 import { checkForUpdate, openFirstRun, updateServerChip } from './settings.js';
@@ -79,9 +79,9 @@ enot.onSignal(async (msg) => {
       if (state.localStream) { rehomeOperators(); break; }
       clientShow('connected');
       text($('connected-operator'), document.getElementById('consent-operator').textContent);
-      // «оператор видит ваш экран» — только когда захват действительно пошёл
-      // (startHostRtc); на Wayland его ещё ждёт системное окно GNOME (стенд 22.10)
-      hide($('connected-intro'));
+      // «оператор видит ваш экран» — только когда захват пошёл и оператор на связи
+      // (updateSeenStatus); на Wayland захват ещё ждёт системное окно GNOME (стенд 22.10)
+      updateSeenStatus();
       try { await startHostRtc(); } catch (e) {
         // 'ended' мог прийти во время await: не затираем экран завершения
         if (state.session) {

@@ -91,6 +91,7 @@ test('operator-window: контракт закалки окна в main.mjs и �
   for (const must of [
     'partition: OPERATOR_PARTITION', 'contextIsolation: true', 'nodeIntegration: false', 'sandbox: true', 'webviewTag: false',
     "setWindowOpenHandler(() => ({ action: 'deny' }))", "'will-navigate'", "'will-redirect'", "'will-attach-webview'",
+    "wc.on('will-frame-navigate', (e) => { if (!isAllowedNavigation(e.url, operatorOrigin)) e.preventDefault(); });",
     'probeOperatorServer(', "'operator-preload.cjs'",
   ]) assert.ok(body.includes(must), `окно оператора: ${must}`);
   assert.match(main, /const OPERATOR_PARTITION = 'enot-operator';/, 'сессия в памяти (без persist:) — модель SEC-008');

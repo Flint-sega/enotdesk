@@ -84,6 +84,21 @@ test('showToast win32: sessionId берётся из WTSGetActiveConsoleSessionI
   assert.equal(a[4].toString('utf16le'), 'Перезагрузите кассу\u0000', 'сообщение — UTF-16LE с терминатором');
 });
 
+test('showToast win32: timeoutSec — окно закрывается само (сообщение о подключении, X-2)', async () => {
+  let m = mockKoffi();
+  await showToast('win32', 'К компьютеру подключился оператор', { koffi: m.koffi, timeoutSec: 60 });
+  assert.equal(m.calls.sendArgs[7], 60, 'Timeout WTSSendMessageW — секунды до автозакрытия');
+  assert.equal(m.calls.sendArgs[9], true, 'bWait: вызов кончается по нажатию или по таймауту');
+  for (const bad of [-5, 1.5, '60', NaN, null]) {
+    m = mockKoffi();
+    await showToast('win32', 'текст', { koffi: m.koffi, timeoutSec: bad });
+    assert.equal(m.calls.sendArgs[7], 0, `timeoutSec=${bad} — не число секунд, окно ждёт нажатия`);
+  }
+  m = mockKoffi();
+  await showToast('win32', 'текст', { koffi: m.koffi, timeoutSec: 999999 });
+  assert.equal(m.calls.sendArgs[7], 3600, 'не дольше часа');
+});
+
 test('showToast win32: нет активной консольной сессии (экран входа) — честный отказ без отправки', async () => {
   // 0xFFFFFFFF — документированный возврат WTSGetActiveConsoleSessionId без
   // активной консоли (0 в реальном WinAPI в этом сценарии не возвращается,
@@ -184,6 +199,14 @@ test('showToast linux: консольный пользователь из getent
   assert.equal(send.file, 'sudo');
   assert.deepEqual(send.args.slice(0, 4), ['-u', 'kassa', 'notify-send', 'EnotDesk'], 'от консольного пользователя');
   assert.equal(send.args[4], 'Проверьте терминал', 'текст сообщения');
+});
+
+test('showToast linux: timeoutSec — notify-send -t в миллисекундах', async () => {
+  const spawnSync = mockSpawnSync((file) => (file === 'getent'
+    ? { status: 0, stdout: 'kassa:x:1000:1000::/home/kassa:/bin/bash\n' }
+    : { status: 0 }));
+  await showToast('linux', 'Подключился оператор', { spawnSync, title: 'EnotDesk', timeoutSec: 60 });
+  assert.deepEqual(spawnSync.calls[1].args, ['-u', 'kassa', 'notify-send', '-t', '60000', 'EnotDesk', 'Подключился оператор']);
 });
 
 test('showToast linux: нет консольного пользователя / сбой notify-send — честный отказ', async () => {

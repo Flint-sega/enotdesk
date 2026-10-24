@@ -89,6 +89,8 @@ export function createIceServersFetcher({ api, tokenLoad, timeoutMs = 5000 }) {
   };
 }
 
+export const NOTICE_TIMEOUT_SEC = 60;
+
 export function createAgent({ api, signal, native, policy, termHost, rtc, notify, services, video, inputSink, noticeText }) {
   const missing = !api || typeof api.register !== 'function' || typeof api.session !== 'function'
     || typeof api.heartbeat !== 'function' || typeof api.decision !== 'function' ? 'api (register/session/heartbeat/decision)'
@@ -123,13 +125,15 @@ export function createAgent({ api, signal, native, policy, termHost, rtc, notify
   // ADR 0037 (Р5): человек за компьютером видит, что к машине подключились, и
   // когда сеанс закончился. noticeText(kind, {operator, reason}) — строка из
   // словаря main; нет показчика или текста — честно молчим (сеанс не зависит).
+  // Окно сообщения закрывается само через NOTICE_TIMEOUT_SEC: иначе на Windows оно висит
+  // посреди экрана и забирает первый клик оператора (решение владельца 24.10, X-2).
   const noticed = new Set(); // sessionId, о котором уже сообщили (повторный claim после обрыва — без дубля)
   const notice = (kind, data) => {
     if (!showToast || typeof noticeText !== 'function') return;
     let text;
     try { text = noticeText(kind, data); } catch { text = null; }
     if (typeof text !== 'string' || !text) return;
-    Promise.resolve(showToast(text)).catch(() => { /* сообщение не критично для сеанса */ });
+    Promise.resolve(showToast(text, { timeoutSec: NOTICE_TIMEOUT_SEC })).catch(() => { /* сообщение не критично для сеанса */ });
   };
 
   let running = false;
