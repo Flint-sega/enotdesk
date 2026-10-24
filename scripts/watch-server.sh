@@ -64,7 +64,8 @@ ping_hc() { # $1 URL проверки, $2 '' или /fail, $3 текст
 }
 
 ssh_server() { # $1 — команда сервера: status | fetch
-  local o=(-o BatchMode=yes -o IdentitiesOnly=yes -o ConnectTimeout=15 -o ServerAliveInterval=10
+  # -n: stdin серверу не нужен; без него ssh съедает остаток скрипта, пришедшего на stdin (bash -s)
+  local o=(-n -o BatchMode=yes -o IdentitiesOnly=yes -o ConnectTimeout=15 -o ServerAliveInterval=10
     -o ServerAliveCountMax=3 -p "$WATCH_SSH_PORT")
   [ -n "$WATCH_SSH_KEY" ] && o+=(-i "$WATCH_SSH_KEY")
   [ -n "$WATCH_KNOWN_HOSTS" ] && o+=(-o "UserKnownHostsFile=$WATCH_KNOWN_HOSTS" -o StrictHostKeyChecking=yes)
