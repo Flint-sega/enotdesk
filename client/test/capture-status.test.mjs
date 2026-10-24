@@ -58,7 +58,7 @@ test('клиент помощи: «Сменить экран» на Wayland — 
   assert.match(main, /ipcMain\.handle\('enot:sources', async \(e\) => \{ guard\(e\); return \{ items: await listSources\(\), systemPicked: isWaylandSession\(\) \}; \}\);/);
   const picker = media.slice(media.indexOf('async function showSourcePicker'), media.indexOf('async function acquireStream'));
   assert.match(picker, /if \(srcs\.systemPicked && srcs\.items\.length === 1\) return onChoose\(srcs\.items\[0\]\.id, document\.createElement\('div'\)\);/);
-  assert.ok(picker.indexOf('srcs.systemPicked') < picker.indexOf("document.createElement('div');\n  pick.className"), 'до показа своего списка');
+  assert.ok(picker.indexOf('srcs.systemPicked') < picker.indexOf("pick.className = 'card'"), 'до показа своего списка');
 });
 
 test('клиент помощи: подсказка про окно GNOME уходит, когда захват пошёл', () => {
