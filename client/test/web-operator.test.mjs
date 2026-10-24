@@ -134,9 +134,12 @@ test('web/operator.html: панель машин скрыта для не-admin 
   assert.match(html, /id="machines-claim-pin"[^>]*type="password"|type="password"[^>]*id="machines-claim-pin"/, 'PIN вводится закрытым полем');
 });
 
-test('web/*.mjs: панель машин показывается только admin и ходит в machines API (включая toast R08)', () => {
-  // B6 этап 1: видимость разделов собрана в applyRoleUi — «Машины» только admin
-  assert.match(operatorJs, /\['btn-nav-machines', 'btn-nav-team', 'btn-nav-audit'\]\) \(role === 'admin' \? show : hide\)/, 'кнопку «Машины» показывает только роль admin');
+test('web/*.mjs: панель машин — admin и operator, управление машиной — только admin; ходит в machines API (включая toast R08)', () => {
+  // видимость разделов собрана в applyRoleUi; с 24.10 «Машины» видит и operator (как разрешает сервер)
+  assert.match(operatorJs, /\['btn-nav-team', 'btn-nav-audit', 'btn-machines-add'\]\) \(role === 'admin' \? show : hide\)/, '«Команда», «Журнал» и «Добавить машину» — только admin');
+  assert.match(operatorJs, /\['btn-nav-machines', 'btn-nav-contacts'[^\]]*\]\) \(staff \? show : hide\)/, '«Машины» видят admin и operator');
+  assert.match(operatorJs, /const ADMIN_MACHINE_ACTIONS = \['pin', 'revoke', 'deleteAction'\]/, 'PIN, отзыв и удаление — действия только admin');
+  assert.match(operatorJs, /currentRole !== 'admin' && ADMIN_MACHINE_ACTIONS\.includes\(action\)\) continue/, 'оператору кнопки управления машиной не рисуются');
   const paths = [...operatorJs.matchAll(/api\('(?:GET|POST|DELETE)',\s*(`[^`]*`|'[^']*')/g)].map((m) => m[1]);
   const machinePaths = paths.filter((p) => p.includes('/machines'));
   assert.ok(machinePaths.length >= 5, 'панель машин должна использовать machines API (список, claim, pin, revoke, delete, toast)');
@@ -276,11 +279,12 @@ test('B6: разделы адресной книги, истории и журн
   assert.match(html, /<select id="conn-contact"><\/select>/, 'выбор контакта в форме подключения (как desktop)');
 });
 
-test('B6: права разделов — как у сервера (контакты admin/operator, журнал admin/auditor, машины/команда admin)', () => {
+test('B6: права разделов — как у сервера (контакты и машины admin/operator, журнал admin/auditor, команда admin)', () => {
   const code = operatorJs.replace(/\/\/[^\n]*/g, '');
   assert.match(code, /const ALLOWED_ROLES = \['admin', 'operator', 'auditor'\]/, 'аудитор допускается на страницу');
   assert.match(code, /const CONNECT_ROLES = \['admin', 'operator'\]/, 'подключаются только admin/operator');
-  assert.match(code, /\['btn-nav-machines', 'btn-nav-team', 'btn-nav-audit'\]\) \(role === 'admin' \? show : hide\)/, 'машины/команда/журнал из подключения — только admin');
+  assert.match(code, /\['btn-nav-team', 'btn-nav-audit', 'btn-machines-add'\]\) \(role === 'admin' \? show : hide\)/, 'команда, журнал из подключения и добавление машины — только admin');
+  assert.match(code, /\['btn-nav-machines', 'btn-nav-contacts', 'btn-nav-history'/, 'машины — тем, кто подключается (admin и operator)');
   assert.match(code, /'btn-nav-contacts', 'btn-nav-history', 'conn-contact-field'/, 'адресная книга/история/выбор контакта — тем, кто подключается');
   assert.match(code, /\(role === 'admin' \|\| role === 'auditor' \? show : hide\)\(\$\('btn-history-audit'\)\)/, 'переход в журнал — admin и auditor');
   assert.match(code, /records\.showHistory\(\); \/?/, 'стартовый экран аудитора — история');
