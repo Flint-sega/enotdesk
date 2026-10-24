@@ -64,6 +64,7 @@ ed_unlocked:
 
 !macro customInstall
   Push $R1
+  Push $R2
   ; ADR 0029: the service is created by the client UI, not by the installer,
   ; so on a fresh install it does not exist (sc query returns 1060) -- skip.
   ; But an UPDATE over an enrolled machine arrives here AFTER the previous
@@ -80,14 +81,16 @@ ed_unlocked:
   Pop $R1
   IntCmp $R1 0 ed_agent_start ed_agent_recreate ed_agent_recreate
 ed_agent_recreate:
-  ReadRegStr $R1 HKLM "SYSTEM\CurrentControlSet\Control\ComputerName\ComputerName" "ComputerName"
+  ; machine name goes to $R2: every nsExec below pops its exit code into $R1, which used
+  ; to overwrite the name -- the service got EDESK_AGENT_NAME=0 (live check, VM, 24.10.2026)
+  ReadRegStr $R2 HKLM "SYSTEM\CurrentControlSet\Control\ComputerName\ComputerName" "ComputerName"
   nsExec::Exec "$SYSDIR\sc.exe create EnotDeskAgent binPath= $\"$INSTDIR\EnotDesk.exe$\" start= delayed-auto obj= LocalSystem DisplayName= $\"EnotDesk Agent$\""
   Pop $R1
   nsExec::Exec "$SYSDIR\sc.exe description EnotDeskAgent $\"EnotDesk: unattended agent. Auto-registers on the EnotDesk server, waits for operator claims. No window by design; managed via this service (see docs/AGENT.md).$\""
   Pop $R1
-  nsExec::Exec '$SYSDIR\reg.exe add "HKLM\SYSTEM\CurrentControlSet\Services\EnotDeskAgent" /v Environment /t REG_MULTI_SZ /d "EDESK_AGENT=1\0EDESK_AGENT_NAME=$R1\0EDESK_AGENT_SVC=1" /f'
+  nsExec::Exec '$SYSDIR\reg.exe add "HKLM\SYSTEM\CurrentControlSet\Services\EnotDeskAgent" /v Environment /t REG_MULTI_SZ /d "EDESK_AGENT=1\0EDESK_AGENT_NAME=$R2\0EDESK_AGENT_SVC=1" /f'
   Pop $R1
-  nsExec::Exec '$SYSDIR\reg.exe add "HKLM\SYSTEM\CurrentControlSet\Services\EnotDeskAgent" /v AppEnvironment /t REG_MULTI_SZ /d "EDESK_AGENT=1\0EDESK_AGENT_NAME=$R1\0EDESK_AGENT_SVC=1" /f'
+  nsExec::Exec '$SYSDIR\reg.exe add "HKLM\SYSTEM\CurrentControlSet\Services\EnotDeskAgent" /v AppEnvironment /t REG_MULTI_SZ /d "EDESK_AGENT=1\0EDESK_AGENT_NAME=$R2\0EDESK_AGENT_SVC=1" /f'
   Pop $R1
   nsExec::Exec "$SYSDIR\sc.exe failure EnotDeskAgent reset= 86400 actions= restart/5000/restart/10000/restart/30000"
   Pop $R1
@@ -106,6 +109,7 @@ ed_no_agent:
   ; temporary unpack dir, gone after exit) would shadow HKLM: drop it, the app
   ; re-registers HKCU with a valid path at its next window start (A-10, 24.10).
   DeleteRegKey HKCU "Software\Classes\enotdesk"
+  Pop $R2
   Pop $R1
 !macroend
 
