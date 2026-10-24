@@ -352,6 +352,8 @@ hub assets web client/{lib,renderer,locales}` → распаковка тарб�
   в конфиге нет URL пингов Healthchecks, итоги проверок видны только в журнале: `journalctl -u enotdesk-watch-prod`.
 - **Таймеры staging в простое выключены.** Учебный приёмник пингов `catcher.py` запускается только на время проверки — transient-юнитом с `RuntimeMaxSec`.
 - Остановить наблюдение: `systemctl disable --now enotdesk-watch-prod.timer enotdesk-offsite-prod.timer`.
+- Проверка рабочего сервера со стенда идёт около 30 с: AAAA-запросы DNS хоста отвечают через 5 с на каждое
+  подключение (A-запросы — мгновенно). На результат не влияет, лимит юнита — 4 мин. Сеть хоста не трогаем.
 - На staging (ВМ 100) появились:
   - `enotdesk-backup.timer`, такой же, как ставит `install-server.sh`; дампы — в `/var/lib/enotdesk/backups`;
   - пакет `age`;
