@@ -324,6 +324,8 @@ sudo systemctl start enotdesk-server`.
 релиза (/opt/enotdesk/releases/<stamp> + симлинк current) и
 `sudo systemctl restart enotdesk-server`, БЕЗ install-server.sh. Флаг
 `--unit-name` в установщике — отдельное решение.
+Копию баз перед обновлением делать от root (`sudo cp -a` в отдельной папке) и проверять её размер: каталог
+`/var/lib/enotdesk` — `0750 enotdesk`, проверка `[ -e … ]` от enotadmin файлов не видит (24.10 копия вышла пустой).
 
 **Нюанс (проверен живым апдейтом 08.10):** лабовый юнит исполняет код
 ТОП-ЛЕВЕЛА — `ExecStart=/usr/local/bin/node /opt/enotdesk/server/main.mjs`,

@@ -204,6 +204,19 @@ test('packaging: customInstall восстанавливает службу за�
   assert.match(installerNsh, /sc\.exe failure EnotDeskAgent reset= 86400 actions= restart\/5000\/restart\/10000\/restart\/30000/, 'failure-действия 5/10/30 с обязаны вернуться после пересоздания');
 });
 
+// ВМ 102 (24.10): после переустановки служба получила EDESK_AGENT_NAME=0 — имя компьютера
+// лежало в $R1, а Pop $R1 после sc.exe затирал его кодом возврата. Имя — в своём регистре.
+test('packaging: пересоздание службы пишет имя компьютера, а не код возврата sc.exe', () => {
+  const inst = installerNsh.slice(installerNsh.indexOf('!macro customInstall'), installerNsh.indexOf('!macro customUnInstall'));
+  assert.match(inst, /!macro customInstall\s+Push \$R1\s+Push \$R2/);
+  assert.match(inst, /Pop \$R2\s+Pop \$R1\s+!macroend/, 'регистры восстанавливаются в обратном порядке');
+  const recreate = inst.slice(inst.indexOf('ed_agent_recreate:'), inst.indexOf('ed_agent_start:'));
+  assert.match(recreate, /ReadRegStr \$R2 HKLM "SYSTEM\\CurrentControlSet\\Control\\ComputerName\\ComputerName" "ComputerName"/);
+  assert.equal((recreate.match(/EDESK_AGENT_NAME=\$R2\\0/g) ?? []).length, 2, 'Environment и AppEnvironment');
+  assert.doesNotMatch(recreate, /EDESK_AGENT_NAME=\$R1/);
+  assert.doesNotMatch(recreate, /Pop \$R2/, 'коды возврата — только в $R1');
+});
+
 test('packaging: customUnInstall по-прежнему удаляет службу (настоящая деинсталляция)', () => {
   const un = installerNsh.slice(installerNsh.indexOf('!macro customUnInstall'));
   assert.match(un, /sc\.exe delete EnotDeskAgent/, 'без удаления служба оставалась бы висеть на удалённом каталоге');
