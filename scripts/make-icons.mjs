@@ -15,7 +15,7 @@ if (process.platform !== 'darwin') {
   process.exit(1);
 }
 if (!fs.existsSync(src)) {
-  console.error('Нет assets/icon-source.png — сначала сгенерируйте его: npx electron@44.9.0 scripts/make-mascot.mjs');
+  console.error('Нет assets/icon-source.png — сначала сгенерируйте его: npx electron@44.9.3 scripts/make-mascot.mjs');
   process.exit(1);
 }
 
