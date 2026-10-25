@@ -443,9 +443,10 @@ test('волна D: gdm-захват в мосту — приоритет хел
   const bridge = fs.readFileSync(path.join(dir, '..', 'agent-bridge', 'bridge.mjs'), 'utf8');
   const main = fs.readFileSync(path.join(dir, '..', 'main.mjs'), 'utf8');
   const preload = fs.readFileSync(path.join(dir, '..', 'agent-bridge', 'preload.cjs'), 'utf8');
-  // мост: захват тем же canvas-конвейером, приоритет кадров хелпера
+  // мост: трек захвата идёт в pc напрямую (доп. 25.10), приоритет кадров хелпера
   assert.match(bridge, /getDisplayMedia\(\{ video: true, audio: false \}\)/, 'gdm-захват запрашивается');
-  assert.match(bridge, /requestVideoFrameCallback/, 'кадры качаются через rVFC в общий canvas');
+  assert.match(bridge, /videoTrack = gdmTrack/, 'трек захвата — общий трек pc, без canvas');
+  assert.doesNotMatch(bridge, /requestVideoFrameCallback/, 'захват больше не перерисовывается в canvas');
   assert.match(bridge, /helperLive/, 'живой флаг приоритета хелпера');
   assert.match(bridge, /stopGdm\('helper'\)/, 'кадры хелпера останавливают gdm');
   assert.match(bridge, /gdmStatus\?\.\('unavailable'/, 'отказ захвата честно репортится');

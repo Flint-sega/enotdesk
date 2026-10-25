@@ -10,7 +10,8 @@
 // в одном окне; адресация сообщений — полем op в payload (отсутствие op =
 // 'primary', легаси). Видео: JPEG-кадры хелпера рисуются на ОДИН canvas, один
 // canvas.captureStream-track расшаривается replaceTrack'ом в видеотрансивер
-// каждого pc (аналог одного localStream в N pc attended-хоста). Смерть pc
+// каждого pc (аналог одного localStream в N pc attended-хоста); захват
+// getDisplayMedia (Linux/mac, ADR 0031) идёт в pc своим треком, без canvas. Смерть pc
 // оператора (обрыв/уход — main шлёт DC_TO {op, close:true}) не трогает остальных.
 // Cap видеослотов (W-C5): сверх MULTIOP_VIDEO_CAP новый pc получает
 // видеотрансивер inactive и честный session-info по input-каналу.
@@ -149,6 +150,11 @@ if (!api) {
       ensureAdaptive();
     } catch (e) {
       console.warn(`agent-bridge: replaceTrack отказал (${e?.message ?? e}) — повторим`);
+      // у трека захвата нет кадрового насоса — повторяем сами, не дольше ~5 с
+      if (gdmTrack && videoTrack === gdmTrack) {
+        peer.attachRetries = (peer.attachRetries ?? 0) + 1;
+        if (peer.attachRetries <= 10) setTimeout(() => { void attachVideoTrack(op); }, 500);
+      }
     }
   }
 
@@ -168,15 +174,16 @@ if (!api) {
 
   api.onVideoFrame?.((jpeg) => { void drawVideoFrame(jpeg); });
 
-  // ADR 0031: Linux-захват без хелпера — getDisplayMedia в тот же canvas
-  // (конвейер один: canvas-track → replaceTrack каждому pc). Main включает
-  // режим посылкой video-mode (только linux, env EDESK_AGENT_VIDEO≠off);
-  // кадры Windows-хелпера всегда приоритетнее.
+  // ADR 0031: Linux-захват без хелпера — трек getDisplayMedia сам становится
+  // общим videoTrack (replaceTrack каждому pc). Через canvas он больше не
+  // идёт (доп. 25.10): перерисовка каждого кадра на ВМ без GPU держала видео
+  // на 12–17 к/с. Main включает режим посылкой video-mode (linux и macOS,
+  // env EDESK_AGENT_VIDEO≠off); кадры Windows-хелпера всегда приоритетнее.
   let helperLive = false;
   let gdmStarted = false;
   let gdmStopped = false;
-  let gdmEl = null;
   let gdmStream = null;
+  let gdmTrack = null;
   function ensureCanvas(w, h) {
     if (!videoCanvas) {
       videoCanvas = document.createElement('canvas');
@@ -194,13 +201,19 @@ if (!api) {
       videoCanvas.height = h;
     }
   }
-  function stopGdm(reason) {
+  // state 'stopped' — захват уступил место хелперу; 'unavailable' — трек
+  // умер сам (X-сервер перезапущен, экран отключён): оператор видит статус.
+  function stopGdm(reason, state = 'stopped') {
     if (!gdmStarted || gdmStopped) return;
     gdmStopped = true;
     try { gdmStream?.getTracks().forEach((t) => t.stop()); } catch { /* уже мёртв */ }
-    try { gdmEl?.pause(); } catch { /* уже мёртв */ }
-    gdmEl = null; gdmStream = null;
-    api.gdmStatus?.('stopped', reason);
+    if (gdmTrack && videoTrack === gdmTrack) {
+      // pc держат остановленный трек — следующий трек (canvas хелпера) цепляем заново
+      videoTrack = null;
+      for (const peer of peers.values()) peer.videoAttached = false;
+    }
+    gdmStream = null; gdmTrack = null;
+    api.gdmStatus?.(state, reason);
   }
   async function startGdm() {
     if (gdmStarted || helperLive || gdmStopped) return;
@@ -208,22 +221,14 @@ if (!api) {
     try {
       gdmStream = await navigator.mediaDevices.getDisplayMedia({ video: true, audio: false });
       if (helperLive) { stopGdm('helper'); return; }
-      gdmEl = document.createElement('video');
-      gdmEl.srcObject = gdmStream;
-      gdmEl.muted = true;
-      await gdmEl.play();
-      const pump = () => {
-        if (gdmStopped) return;
-        if (helperLive) { stopGdm('helper'); return; }
-        const w = gdmEl.videoWidth || 0, h = gdmEl.videoHeight || 0;
-        if (w && h) {
-          ensureCanvas(w, h);
-          videoCtx.drawImage(gdmEl, 0, 0);
-          for (const op of peers.keys()) void attachVideoTrack(op);
-        }
-        gdmEl.requestVideoFrameCallback(pump);
-      };
-      gdmEl.requestVideoFrameCallback(pump);
+      gdmTrack = gdmStream.getVideoTracks()[0] ?? null;
+      if (!gdmTrack) throw new Error('no-video-track');
+      // экранный контент: держать разрешение, жертвовать fps (как canvas-трек выше)
+      gdmTrack.contentHint = 'detail';
+      gdmTrack.addEventListener?.('ended', () => stopGdm('capture-ended', 'unavailable'));
+      videoTrack = gdmTrack;
+      // pc, уже согласованные до старта захвата; новые цепляются после своего answer
+      for (const op of peers.keys()) void attachVideoTrack(op);
       api.gdmStatus?.('running', '');
     } catch (e) {
       gdmStopped = true;
@@ -255,7 +260,7 @@ if (!api) {
             vt.direction = 'sendonly';
             // attachVideoTrack НЕ зовём: здесь signalingState 'have-remote-offer'
             // (до setLocalDescription) — гейт волны G его отверг бы; трек цепляет
-            // ближайший кадр (helper ≤40 мс / gdm rVFC) уже на стабильном pc.
+            // ближайший кадр хелпера (≤40 мс) или вызов после answer ниже.
           } else {
             peer.videoDenied = true;
             vt.direction = 'inactive';
@@ -264,7 +269,12 @@ if (!api) {
         return pc.createAnswer();
       })
       .then((answer) => pc.setLocalDescription(answer))
-      .then(() => api.sendAnswer(pc.localDescription.sdp, op))
+      .then(() => {
+        api.sendAnswer(pc.localDescription.sdp, op);
+        // pc стабилен: трек захвата (у него нет кадрового насоса моста) цепляем
+        // сразу; у хелпера это же сделает следующий кадр
+        void attachVideoTrack(op);
+      })
       .catch((err) => {
         // Ревью 16.10 P2-1: ошибка ОДНОГО offer'а (мусорный SDP оператора)
         // закрывает только ЕГО пира — глобальный FAIL (мост → все каналы всех
