@@ -982,7 +982,7 @@ async function sendFile(file) {
     createFileSender({
       file, dc, id,
       onProgress: (sent) => text($('file-op-status'), t('files.sendingProgress', { name: file.name, pct: Math.round((sent / file.size) * 100) })),
-      onSent: () => text($('file-op-status'), t('files.sentWaiting', { name: file.name })),
+      onSent: () => text($('file-op-status'), t('files.sent', { name: file.name })), // получатель уже нажал «Принять»
     }).start();
   });
   text($('file-op-status'), t('files.waitingAccept', { name: file.name }));
