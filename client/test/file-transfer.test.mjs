@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {
-  parseFileControl, createFileReceiver, createFileSender,
+  parseFileControl, createFileReceiver, createFileSender, createAcceptGate,
   fileMeta, fileAccept, fileReject, fileDone, sanitizeFileName, FILE_MAX,
 } from '../lib/file-transfer.mjs';
 
@@ -51,6 +51,41 @@ test('приёмник: incomplete до всех байтов — complete() в�
   const rx = createFileReceiver({ kind: 'meta', id: 'f-2', name: 'x', size: 5 });
   rx.push(new Uint8Array(2));
   assert.equal(rx.complete(), null);
+});
+
+test('приёмник с requireAccept: до «Принять» куски не берутся, после — как обычно (решение 25.10)', () => {
+  const rx = createFileReceiver({ kind: 'meta', id: 'f-3', name: 'x.bin', size: 4 }, { requireAccept: true });
+  assert.equal(rx.accepted, false);
+  assert.equal(rx.push(new Uint8Array(4)), false, 'кусок до «Принять» отброшен');
+  assert.equal(rx.received, 0, 'в памяти ничего не осталось');
+  rx.accept();
+  assert.equal(rx.accepted, true);
+  assert.equal(rx.push(new Uint8Array(4)), true);
+  assert.ok(rx.complete(), 'после «Принять» файл собирается целиком');
+  assert.equal(createFileReceiver({ id: 'f-4', name: 'y', size: 1 }).accepted, true, 'без опции — как раньше');
+});
+
+test('ожидание «Принять»: отправка стартует только по accept того же id; reject и чужой id не стартуют', () => {
+  const gate = createAcceptGate();
+  let started = 0;
+  gate.wait('f-a', () => { started++; });
+  assert.equal(gate.pendingId, 'f-a');
+  assert.equal(gate.onControl({ kind: 'accept', id: 'f-other' }), null, 'чужой id');
+  assert.equal(gate.onControl({ kind: 'done', id: 'f-a' }), null, 'done ожидание не снимает');
+  assert.equal(started, 0);
+  assert.equal(gate.onControl({ kind: 'accept', id: 'f-a' }), 'started');
+  assert.equal(started, 1);
+  assert.equal(gate.onControl({ kind: 'accept', id: 'f-a' }), null, 'повторный accept не запускает второй раз');
+  assert.equal(started, 1);
+  gate.wait('f-b', () => { started++; });
+  assert.equal(gate.onControl({ kind: 'reject', id: 'f-b' }), 'rejected');
+  assert.equal(gate.onControl({ kind: 'accept', id: 'f-b' }), null, 'после отказа accept не запускает');
+  gate.wait('f-c', () => { started++; });
+  gate.wait('f-d', () => { started++; });
+  assert.equal(gate.onControl({ kind: 'accept', id: 'f-c' }), null, 'новый файл снял ожидание прошлого');
+  gate.cancel();
+  assert.equal(gate.onControl({ kind: 'accept', id: 'f-d' }), null, 'cancel снимает ожидание');
+  assert.equal(started, 1);
 });
 
 test('отправитель: файл уходит чанками и завершается file-done (мок DC)', async () => {

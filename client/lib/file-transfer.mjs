@@ -1,6 +1,8 @@
 // Протокол передачи файлов поверх DataChannel (ADR 0014).
 // Управление — JSON-строки, полезная нагрузка — бинарные чанки тем же каналом.
-// Оператор→клиент только после явного «Принять»; лимиты жёсткие, имя — basename.
+// Оператор→клиент только после явного «Принять»: отправитель шлёт куски после
+// file-accept, приёмник клиента до «Принять» кусков не берёт (решение владельца
+// 25.10); лимиты жёсткие, имя — basename.
 
 export const FILE_CHUNK = 64 * 1024;
 export const FILE_MAX = 200 * 1024 * 1024; // потолок одного файла
@@ -48,12 +50,18 @@ export const fileDone = (id) => JSON.stringify({ type: 'file-done', id });
 
 // Приёмник: копит чанки по порядку, выдаёт Blob строго заявленного размера.
 // Лишние байты — ошибка протокола, приёмник сбрасывается.
-export function createFileReceiver(meta) {
+// requireAccept: куски до accept() отбрасываются — файл от оператора не ложится
+// в память клиента, пока тот не нажал «Принять».
+export function createFileReceiver(meta, { requireAccept = false } = {}) {
   let received = 0;
+  let accepted = !requireAccept;
   const parts = [];
   return {
     meta,
+    accept() { accepted = true; },
+    get accepted() { return accepted; },
     push(chunk) {
+      if (!accepted) return false;
       const bytes = chunk instanceof ArrayBuffer ? new Uint8Array(chunk) : chunk;
       if (!bytes || received + bytes.byteLength > meta.size) return false;
       parts.push(bytes);
@@ -64,6 +72,24 @@ export function createFileReceiver(meta) {
     complete() {
       if (received !== meta.size) return null;
       return new Blob(parts, { type: 'application/octet-stream' });
+    },
+  };
+}
+
+// Ожидание «Принять» у отправителя: meta уходит сразу, start() — только по file-accept
+// с тем же id; file-reject или новый файл снимают ожидание. Один файл за раз.
+// onControl(ctl) → 'started' | 'rejected' | null (чужой id или ожидания нет).
+export function createAcceptGate() {
+  let pending = null;
+  return {
+    wait(id, start) { pending = { id, start }; },
+    get pendingId() { return pending?.id ?? null; },
+    cancel() { pending = null; },
+    onControl(ctl) {
+      if (!pending || !ctl || ctl.id !== pending.id) return null;
+      if (ctl.kind === 'accept') { const { start } = pending; pending = null; start(); return 'started'; }
+      if (ctl.kind === 'reject') { pending = null; return 'rejected'; }
+      return null;
     },
   };
 }

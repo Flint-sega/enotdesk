@@ -216,13 +216,15 @@ function saveReceivedBlob(blob, name, box) {
 }
 
 // Клиент: оператор отправляет файл — явное «Принять/Отклонить» обязательно.
+// До «Принять» куски не берутся (решение владельца 25.10): новый оператор и не
+// шлёт их раньше, старый — получит «передача прервана».
 // Приём per-оператор (key = claimId): файловые каналы независимы.
 function hostFileMessage(ch, data, opKey) {
   if (typeof data === 'string') {
     const ctl = parseFileControl(data);
     if (!ctl) return;
     if (ctl.kind === 'meta') {
-      const rx = createFileReceiver(ctl);
+      const rx = createFileReceiver(ctl, { requireAccept: true });
       const prog = document.createElement('p');
       prog.className = 'note';
       fileRxs.set(opKey, { rx, dc: ch, prog });
@@ -234,6 +236,7 @@ function hostFileMessage(ch, data, opKey) {
       accept.className = 'btn';
       accept.textContent = t('files.accept');
       accept.addEventListener('click', () => {
+        rx.accept();
         try { ch.send(fileAccept(ctl.id)); } catch { /* канал закрыт */ }
         box.textContent = '';
         box.appendChild(prog);
@@ -254,7 +257,11 @@ function hostFileMessage(ch, data, opKey) {
       const blob = rx.complete();
       const name = rx.meta.name;
       fileRxs.delete(opKey);
-      if (!blob) { appendChat('client-chat-log', 'system', t('files.broken')); return; }
+      if (!blob) {
+        if (!rx.accepted) $('client-file-prompt').textContent = ''; // кнопки «Принять» больше не к чему
+        appendChat('client-chat-log', 'system', t('files.broken'));
+        return;
+      }
       saveReceivedBlob(blob, name, $('client-file-prompt'));
     }
     return;
