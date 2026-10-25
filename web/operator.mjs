@@ -11,7 +11,7 @@ import { INPUT_KEYS, validateOutgoingSignal } from '../client/lib/protocol.mjs';
 import { parseChatMessage, chatMessage } from '../client/lib/chat.mjs';
 import { parseClipMessage, clipMessage } from '../client/lib/clipboard-sync.mjs';
 import {
-  parseFileControl, createFileReceiver, createFileSender,
+  parseFileControl, createFileReceiver, createFileSender, createAcceptGate,
   fileMeta, fileAccept, makeFileId,
 } from '../client/lib/file-transfer.mjs';
 import { summarizeStats, formatQuality } from '../client/lib/rtc-stats.mjs';
@@ -19,6 +19,10 @@ import { wireBrowserInput } from './input-source.mjs';
 import { bindTeam, teamRoute } from './team.js';
 import { bindRecords } from './records.js';
 import { bindAccount } from './account.js';
+
+// Свой файл клиенту уходит только после его «Принять» (решение владельца 25.10):
+// meta — сразу, куски — по file-accept; агент машины принимает сам и отвечает сразу.
+const fileTx = createAcceptGate();
 
 const COOKIE = 'enot_op';
 // Роли страницы (B6 этап 1): аудитор входит в режим «только журнал» — история и
@@ -331,7 +335,7 @@ function stopMedia() {
   try { state.dc?.close(); } catch { /* уже закрыт */ }
   for (const ch of Object.values(state.dcs ?? {})) { try { ch.close(); } catch { /* уже закрыт */ } }
   try { state.pc?.close(); } catch { /* уже закрыт */ }
-  state.pc = null; state.dc = null; state.dcs = null; state.fileRx = null;
+  state.pc = null; state.dc = null; state.dcs = null; state.fileRx = null; fileTx.cancel();
   state.iceQueue = [];
   $('remote-video').srcObject = null;
   clearRtcHold(); // сеанс закрыт — hold №15 не должен переживать его
@@ -459,6 +463,7 @@ async function doOperatorAnswer(offerSdp) {
   state.dc = null;
   state.dcs = {};
   state.fileRx = null;
+  fileTx.cancel();
   const cfg = await api('GET', '/rtc-config');
   const pc = makePc(cfg.body?.iceServers ?? []);
   // epoch-guard: сеанс мог завершиться во время await — не воскрешаем pc
@@ -930,8 +935,9 @@ function fileMessage(ch, data) {
       text($('file-op-status'), '');
       if (!blob) { text($('file-op-status'), t('files.brokenShort')); return; }
       saveReceivedBlob(blob, name);
-    } else if (ctl.kind === 'reject') {
-      text($('file-op-status'), t('files.clientRejected'));
+    } else if (ctl.kind === 'accept' || ctl.kind === 'reject') {
+      // ответ на наш файл: «Принять» запускает передачу, «Отклонить» снимает ожидание
+      if (fileTx.onControl(ctl) === 'rejected') text($('file-op-status'), t('files.clientRejected'));
     }
     return;
   }
@@ -970,15 +976,16 @@ async function sendFile(file) {
     return;
   }
   const id = makeFileId();
-  try {
-    dc.send(fileMeta(id, file.name, file.size));
+  try { dc.send(fileMeta(id, file.name, file.size)); } catch { return; }
+  fileTx.wait(id, () => {
+    text($('file-op-status'), t('files.sending', { name: file.name }));
     createFileSender({
       file, dc, id,
       onProgress: (sent) => text($('file-op-status'), t('files.sendingProgress', { name: file.name, pct: Math.round((sent / file.size) * 100) })),
       onSent: () => text($('file-op-status'), t('files.sentWaiting', { name: file.name })),
     }).start();
-  } catch { return; }
-  text($('file-op-status'), t('files.sending', { name: file.name }));
+  });
+  text($('file-op-status'), t('files.waitingAccept', { name: file.name }));
 }
 
 // ---- терминал машины (R09): DC-канал `term`, только внутри сеанса с машиной ----
