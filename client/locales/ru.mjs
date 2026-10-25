@@ -217,7 +217,7 @@ export default {
   "files.sending": "Отправляем «{name}»…",
   "files.sendingProgress": "Отправляем «{name}» — {pct}%",
   "files.relayLink": "Файл «{name}» — скачать (ссылка живёт 3 суток)",
-  "files.sentWaiting": "«{name}» отправлен — ждём подтверждение получателя",
+  "files.sent": "«{name}» отправлен",
   "files.waitingAccept": "«{name}»: ждём, пока получатель примет файл…",
   "files.noChannel": "Канал передачи недоступен",
   "chat.you": "Вы",

@@ -217,7 +217,7 @@ export default {
   "files.sending": "Sending “{name}”…",
   "files.sendingProgress": "Sending «{name}» — {pct}%",
   "files.relayLink": "File «{name}» — download (link valid for 3 days)",
-  "files.sentWaiting": "«{name}» sent — waiting for the receiver to confirm",
+  "files.sent": "«{name}» sent",
   "files.waitingAccept": "«{name}»: waiting for the recipient to accept the file…",
   "files.noChannel": "Transfer channel is unavailable",
   "chat.you": "You",
