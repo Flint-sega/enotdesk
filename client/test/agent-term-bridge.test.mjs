@@ -299,7 +299,8 @@ function makeFakeDc(sentLog) {
 // ADR 0027); { deferNegotiation } — createAnswer/setLocalDescription в макротаске
 // (окно гонки «кадр до setLocalDescription», волна G баг-1). Возвращает pcs —
 // все созданные фейк-pc (onicecandidate тест дёргает руками) и delivered —
-// лог payload'ов main→мост.
+// лог payload'ов main→мост. { gdm } — фейк getDisplayMedia (захват Linux/mac,
+// ADR 0031): page.videoMode({gdm:true}) запускает его, page.gdmTrack — трек.
 async function loadRealBridgePage(relay, opts = {}) {
   // операторская сторона: каналы, «пришедшие» из оффера, и всё, что мост в них отправил
   const operatorChannels = [];
@@ -309,6 +310,14 @@ async function loadRealBridgePage(relay, opts = {}) {
   const statsByPc = new Map(); // pcIndex → массив RTCStats-подобных записей
   const pcs = [];
   const delivered = [];
+  const gdmStatusCalls = []; // {state, reason} — мост → main (enot:bridge-gdm)
+  let canvasCount = 0;
+  const gdmTrack = {
+    kind: 'video', contentHint: '', stopped: false, _ended: [],
+    stop() { this.stopped = true; },
+    addEventListener(type, cb) { if (type === 'ended') this._ended.push(cb); },
+    end() { for (const cb of this._ended) cb(); }, // источник умер сам (не stop())
+  };
   class FakePc {
     constructor() {
       this.onicecandidate = null;
@@ -402,10 +411,10 @@ async function loadRealBridgePage(relay, opts = {}) {
     onIceConfig: (cb) => { subs[BRIDGE_IPC.ICE_CONFIG] = cb; },
     onToDc: (cb) => { subs[BRIDGE_IPC.DC_TO] = cb; },
     onVideoFrame: (cb) => { subs[BRIDGE_IPC.VIDEO_FRAME] = cb; },
-    onVideoMode: () => {},
+    onVideoMode: (cb) => { subs.videoMode = cb; },
     ...(opts.abrIntervalMs ? { abrIntervalMs: opts.abrIntervalMs } : {}),
     sendAnswer: (sdp, op) => relay.handleMessage(BRIDGE_IPC.ANSWER, op ? { op, sdp } : sdp),
-    gdmStatus: () => {},
+    gdmStatus: (state, reason) => gdmStatusCalls.push({ state, reason }),
     sendIce: (candidate, op) => relay.handleMessage(BRIDGE_IPC.ICE, op ? { op, candidate } : candidate),
     dcOpened: (label, op) => relay.handleMessage(BRIDGE_IPC.DC_OPEN, op ? { op, label } : label),
     dcFrom: (label, data, op) => relay.handleMessage(BRIDGE_IPC.DC_FROM, { op: op || 'primary', label, data }),
@@ -421,6 +430,7 @@ async function loadRealBridgePage(relay, opts = {}) {
   globalThis.document = {
     createElement(tag) {
       if (tag !== 'canvas') throw new Error(`fake document: unexpected <${tag}>`);
+      canvasCount += 1;
       const canvas = {
         width: 0, height: 0,
         getContext: () => ({ drawImage() {} }),
@@ -431,6 +441,13 @@ async function loadRealBridgePage(relay, opts = {}) {
   };
   let prevBitmap = globalThis.createImageBitmap;
   globalThis.createImageBitmap = async (_blob) => ({ width: 64, height: 48, close() {} });
+  const prevNavigator = Object.getOwnPropertyDescriptor(globalThis, 'navigator');
+  if (opts.gdm) {
+    Object.defineProperty(globalThis, 'navigator', {
+      configurable: true,
+      value: { mediaDevices: { getDisplayMedia: async () => ({ getVideoTracks: () => [gdmTrack], getTracks: () => [gdmTrack] }) } },
+    });
+  }
 
   const bridgeUrl = pathToFileURL(path.join(path.dirname(fileURLToPath(import.meta.url)), '..', 'agent-bridge', 'bridge.mjs'));
   bridgeUrl.search = `?repro=${Date.now()}-${Math.random().toString(36).slice(2)}`; // свежий экземпляр на тест
@@ -442,6 +459,10 @@ async function loadRealBridgePage(relay, opts = {}) {
     pcs,
     replaceTrackCalls,
     bitrateCalls,
+    gdmTrack,
+    gdmStatusCalls,
+    canvasCount: () => canvasCount,
+    videoMode: (cfg) => subs.videoMode?.(cfg),
     setStats: (pcIndex, stats) => statsByPc.set(pcIndex, stats),
     delivered,
     // main → мост (webContents.send): раздаём подписчикам preload
@@ -453,6 +474,7 @@ async function loadRealBridgePage(relay, opts = {}) {
     restoreGlobals() {
       globalThis.document = prevDocument;
       globalThis.createImageBitmap = prevBitmap;
+      if (opts.gdm && prevNavigator) Object.defineProperty(globalThis, 'navigator', prevNavigator);
     },
   };
 }
@@ -662,6 +684,73 @@ test('ВОЛНА G (баг-1, гипотеза c): исходящие ICE вто
 });
 
 // ---- 19.10: адаптивный битрейт машинного видео (решение владельца «умная подстройка») ----
+// ADR 0031, дополнение 25.10: захват getDisplayMedia (Linux/mac) идёт в pc
+// своим треком — без перерисовки в canvas и без кадрового насоса моста.
+const waitUntil = async (cond, ms = 5000) => {
+  for (const deadline = Date.now() + ms; !cond() && Date.now() < deadline;) await sleep(5);
+};
+
+test('ADR 0031 (25.10): трек getDisplayMedia уходит в pc операторов напрямую, без canvas', async () => {
+  const env = await makeRealBridgeEnv({ video: true, gdm: true, deferNegotiation: true });
+  try {
+    const calls = env.page.replaceTrackCalls;
+    await env.offerOf('cl-op1', 'term'); // pc первого оператора согласован до старта захвата
+    env.page.videoMode({ gdm: true });
+    await waitUntil(() => calls.some((c) => c.pcIndex === 0));
+    // второй оператор: кадров хелпера нет, трек цепляется сразу после его answer
+    env.sig.emit({ type: 'signal', from: 'cl-op2', data: { description: { type: 'offer', sdp: 'v=0 labels=term' } } });
+    await waitUntil(() => calls.some((c) => c.pcIndex === 1));
+
+    assert.deepEqual([...new Set(calls.map((c) => c.pcIndex))].sort(), [0, 1], 'трек у обоих операторов');
+    assert.ok(calls.every((c) => c.track === env.page.gdmTrack), 'в pc ушёл сам трек захвата');
+    assert.equal(env.page.canvasCount(), 0, 'canvas для захвата не создаётся');
+    assert.equal(env.page.gdmTrack.contentHint, 'detail', 'кодер держит разрешение');
+    assert.deepEqual(calls.filter((c) => c.signalingState !== 'stable').map((c) => c.signalingState), [],
+      'инвариант волны G: только согласованные pc');
+    assert.deepEqual(env.page.gdmStatusCalls, [{ state: 'running', reason: '' }]);
+  } finally {
+    await env.teardown();
+  }
+});
+
+test('ADR 0031 (25.10): кадры хелпера вытесняют захват — трек остановлен, pc получают canvas-трек', async () => {
+  const env = await makeRealBridgeEnv({ video: true, gdm: true });
+  try {
+    const calls = env.page.replaceTrackCalls;
+    await env.offerOf('cl-op1', 'term');
+    env.page.videoMode({ gdm: true });
+    await waitUntil(() => calls.some((c) => c.track === env.page.gdmTrack));
+
+    env.page.deliver(BRIDGE_IPC.VIDEO_FRAME, new Uint8Array([1, 2, 3]));
+    await waitUntil(() => calls.some((c) => c.track !== env.page.gdmTrack));
+
+    assert.equal(env.page.gdmTrack.stopped, true, 'захват остановлен');
+    assert.deepEqual(env.page.gdmStatusCalls.at(-1), { state: 'stopped', reason: 'helper' });
+    assert.equal(env.page.canvasCount(), 1, 'кадры хелпера рисуются в canvas');
+    const last = calls.at(-1);
+    assert.equal(last.pcIndex, 0);
+    assert.notEqual(last.track, env.page.gdmTrack, 'pc переключён на canvas-трек');
+    assert.equal(last.track.contentHint, 'detail');
+  } finally {
+    await env.teardown();
+  }
+});
+
+test('ADR 0031 (25.10): захват умер сам — мост честно сообщает unavailable', async () => {
+  const env = await makeRealBridgeEnv({ video: true, gdm: true });
+  try {
+    env.page.videoMode({ gdm: true });
+    await waitUntil(() => env.page.gdmStatusCalls.length > 0);
+    env.page.gdmTrack.end();
+    assert.deepEqual(env.page.gdmStatusCalls, [
+      { state: 'running', reason: '' },
+      { state: 'unavailable', reason: 'capture-ended' },
+    ]);
+  } finally {
+    await env.teardown();
+  }
+});
+
 test('мост: per-viewer адаптивный битрейт — старт 2.5 Мбит/с, плохая сеть одного оператора снижает только его', async () => {
   const env = await makeRealBridgeEnv({ video: true, abrIntervalMs: 20 });
   const poor = [
