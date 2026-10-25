@@ -308,6 +308,16 @@ test('крест: revoke сеанса — ДО app.quit, не внутри befor
   assert.match(mainJs, /session\.end[\s\S]{0,60}asHost: true/, 'revoke гасит сеанс как хост');
 });
 
+test('A-6 (25.10): revoke сеанса стартует по close главного окна, один запрос на сеанс', () => {
+  // На ВМ Windows разбор окон до window-all-closed занимал 0,6–1,3 с — сеанс жил это время
+  assert.match(mainJs, /win\.on\('close', \(\) => \{ void startHostRevoke\(\); \}\)/, 'close окна запускает revoke сразу');
+  assert.match(mainJs, /if \(hostRevoke\?\.sessionId === api\.hostSessionId\) return hostRevoke\.promise/,
+    'повторный вызов ждёт тот же запрос, а не шлёт второй');
+  assert.match(mainJs, /Promise\.race\(\[startHostRevoke\(\), new Promise/, 'window-all-closed ждёт тот же revoke (бюджет 1.2 с)');
+  const ends = [...mainJs.matchAll(/api\.request\('session\.end', \{ sessionId: api\.hostSessionId, asHost: true \}\)/g)].length;
+  assert.equal(ends, 1, 'revoke при закрытии отправляется из одного места — startHostRevoke');
+});
+
 // ---- Волна C (мультиоператор: арбитраж ввода W-C4 + видеокап W-C5) ----
 
 test('W-C4: события ввода уходят в main с opKey; claim/release перехватываются до валидации', () => {

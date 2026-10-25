@@ -1610,6 +1610,8 @@ function createWindow() {
   win.on('minimize', () => { svcDiag.write('win', 'minimize'); });
   win.on('restore', () => { svcDiag.write('win', 'restore'); });
   win.on('closed', () => { win = null; winLoaded = false; closeOperatorWindow(); });
+  // A-6: сервер узнаёт о закрытии сразу, не дожидаясь разбора окон (startHostRevoke)
+  win.on('close', () => { void startHostRevoke(); });
   // «Окно не молчит» (лаба 05.10): packaged-отказ рендерера раньше был немым —
   // пустое окно без единой строки в логах, дефект искали неделю. Все жизненные
   // события главного окна идут в svc-diag; краш рендерера — один честный
@@ -2040,15 +2042,25 @@ function startAgentMode() {
   }
 }
 
+// A-6 (автопрогон 25.10): revoke сеанса стартует по 'close' главного окна, до
+// разбора окон. На ВМ Windows разбор главного окна, виджета чата и окна
+// оператора до window-all-closed занимал 0,6–1,3 с, и всё это время сеанс жил.
+// Один запрос на сеанс: window-all-closed и before-quit ждут тот же промис.
+let hostRevoke = null; // { sessionId, promise }
+function startHostRevoke() {
+  if (!api.hostSessionId || !api.hostToken) return Promise.resolve();
+  if (hostRevoke?.sessionId === api.hostSessionId) return hostRevoke.promise;
+  const promise = api.request('session.end', { sessionId: api.hostSessionId, asHost: true }).catch(() => {});
+  hostRevoke = { sessionId: api.hostSessionId, promise };
+  return promise;
+}
+
 // Закрытие окна = реальный выход, без фонового процесса (R16.1)
 function cleanupAndQuit() {
   bootLog.write('main', 'выход: окно закрыто');
   keepAwake.release();
-  // Best-effort revoke: не ждём сервер дольше ~1с, локальное завершение от него не зависит
-  if (api.hostSessionId && api.hostToken) {
-    const revoke = api.request('session.end', { sessionId: api.hostSessionId, asHost: true }).catch(() => {});
-    void Promise.race([revoke, new Promise((resolve) => setTimeout(resolve, 1000))]);
-  }
+  // Best-effort revoke (обычно уже в пути с 'close' окна): локальное завершение от сервера не зависит
+  void startHostRevoke();
   stopSignal();
   nativeInput.end();
   api.clearSessionTokens();
@@ -2082,10 +2094,7 @@ app.on('window-all-closed', () => {
   // 'ended' — оператор 30 с смотрел «переподключается» на намеренное закрытие.
   // Ждём revoke до 1.2 с, только потом quit (+5с страховка от зависшего выхода).
   const revokeDone = (api.hostSessionId && api.hostToken)
-    ? Promise.race([
-        api.request('session.end', { sessionId: api.hostSessionId, asHost: true }).catch(() => {}),
-        new Promise((resolve) => setTimeout(resolve, 1200)),
-      ])
+    ? Promise.race([startHostRevoke(), new Promise((resolve) => setTimeout(resolve, 1200))])
     : Promise.resolve();
   revokeDone.then(() => {
     app.quit();
