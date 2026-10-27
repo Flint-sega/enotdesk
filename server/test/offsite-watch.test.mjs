@@ -49,7 +49,9 @@ function stand(t) {
   const ssh = path.join(dir, 'fake-ssh');
   // как sshd с принудительной командой: последний аргумент — SSH_ORIGINAL_COMMAND
   fs.writeFileSync(ssh, `#!/bin/bash\nprintf '%s\\n' "$*" > "${dir}/ssh-args"\nSSH_ORIGINAL_COMMAND="\${@: -1}" exec bash "${SERVE}"\n`, { mode: 0o755 });
-  const env = { ENOT_OFFSITE_BACKUPS: backups, ENOT_OFFSITE_DATA: dir, ENOT_OFFSITE_RECIPIENTS: recipients, ENOT_OFFSITE_AGE: age };
+  // файл настроек — свой, иначе тест прочитал бы /etc/enotdesk/offsite.conf машины
+  const env = { ENOT_OFFSITE_BACKUPS: backups, ENOT_OFFSITE_DATA: dir, ENOT_OFFSITE_RECIPIENTS: recipients, ENOT_OFFSITE_AGE: age,
+    ENOT_OFFSITE_CONF: path.join(dir, 'offsite.conf') };
   return { dir, backups, recipients, age, ssh, env };
 }
 
@@ -91,6 +93,10 @@ test('offsite-serve status: свежие дампы обеих баз, их во
   assert.equal(js.hubBackup, hub);
   assert.equal(js.hubBackupAgeH, 5);
   assert.ok(js.diskUsedPct >= 0 && js.diskUsedPct <= 100);
+  // дополнительные базы не настроены — пустой список, а не пропажа
+  assert.deepEqual(js.extraBackups, []);
+  assert.equal(js.extraBackupAgeH, null);
+  assert.equal(js.extraMissing, 0);
 });
 
 test('offsite-serve status без дампов: ok=false и null, а не падение', { skip }, async (t) => {
@@ -147,6 +153,107 @@ test('offsite-serve fetch: tar свежих дампов + SHA256SUMS, шифр�
   const sums = fs.readFileSync(path.join(out, 'SHA256SUMS'), 'utf8');
   assert.match(sums, new RegExp(`^[0-9a-f]{64}  ${main}$`, 'm'));
   assert.match(sums, new RegExp(`^[0-9a-f]{64}  ${hub}$`, 'm'));
+});
+
+// папка дополнительной базы: свой таймер кладёт туда дампы с тем же форматом имён
+function extraDir(s, name = 'extra') {
+  const d = path.join(s.dir, name);
+  fs.mkdirSync(d);
+  return d;
+}
+
+test('offsite-serve: дополнительные базы — возраст в status, дамп и сумма в копии, пропажа не срывает fetch', { skip }, async (t) => {
+  const s = stand(t);
+  const main = dump(s.backups, 'enotdesk-', 2, 'MAIN-DB');
+  const ex = extraDir(s);
+  dump(ex, 'tk-', 30, 'OLD-TK');
+  const tk = dump(ex, 'tk-', 6, 'TK-DB');
+  // ссылка с именем свежего дампа может вести на чужой файл — root её не берёт
+  const foreign = path.join(s.dir, 'foreign');
+  fs.writeFileSync(foreign, 'FOREIGN');
+  const old = new Date(Date.now() - 2 * 3600e3);
+  fs.utimesSync(foreign, old, old);
+  fs.symlinkSync(foreign, path.join(ex, `tk-${stamp(1)}.db`));
+  const env = { ...s.env, ENOT_OFFSITE_EXTRA: `${ex}/tk- ${path.join(s.dir, 'none')}/nx-` };
+
+  let r = await run('bash', [SERVE, 'status'], env);
+  assert.equal(r.code, 0, r.stderr);
+  const js = JSON.parse(r.stdout.toString());
+  assert.equal(js.mainBackup, main);
+  assert.deepEqual(js.extraBackups, [tk]);
+  assert.equal(js.extraBackupAgeH, 6);
+  assert.equal(js.extraMissing, 1, 'база без дампа видна наблюдателю');
+
+  r = await run('bash', [SERVE, 'fetch'], env);
+  assert.equal(r.code, 0, r.stderr);
+  const head = 'age-encryption.org/v1\n';
+  const tarFile = path.join(s.dir, 'copy.tar');
+  fs.writeFileSync(tarFile, r.stdout.subarray(head.length));
+  const out = path.join(s.dir, 'out');
+  fs.mkdirSync(out);
+  assert.equal((await run('tar', ['-xf', tarFile, '-C', out])).code, 0);
+  assert.deepEqual(fs.readdirSync(out).sort(), ['SHA256SUMS', main, tk].sort());
+  assert.equal(fs.readFileSync(path.join(out, tk), 'utf8'), 'TK-DB');
+  assert.match(fs.readFileSync(path.join(out, 'SHA256SUMS'), 'utf8'), new RegExp(`^[0-9a-f]{64}  ${tk}$`, 'm'));
+});
+
+test('offsite-serve: файл настроек — строка ENOT_OFFSITE_EXTRA; чужая запись, мусор и плохие пути — отказ', { skip }, async (t) => {
+  const s = stand(t);
+  dump(s.backups, 'enotdesk-', 2);
+  const ex = extraDir(s);
+  const tk = dump(ex, 'tk-', 3);
+  const cf = s.env.ENOT_OFFSITE_CONF;
+  fs.writeFileSync(cf, `# дополнительные базы\nENOT_OFFSITE_EXTRA="${ex}/tk-"\n`, { mode: 0o600 });
+  let r = await run('bash', [SERVE, 'status'], s.env);
+  assert.equal(r.code, 0, r.stderr);
+  assert.deepEqual(JSON.parse(r.stdout.toString()).extraBackups, [tk]);
+
+  fs.chmodSync(cf, 0o620);
+  r = await run('bash', [SERVE, 'status'], s.env);
+  assert.equal(r.code, 5);
+  assert.equal(r.stdout.length, 0);
+  assert.match(r.stderr, /запись доступна не только владельцу/);
+  fs.chmodSync(cf, 0o600);
+
+  const bad = ['ENOT_OFFSITE_EXTRA=relative/tk-', `ENOT_OFFSITE_EXTRA=/tk-`, `ENOT_OFFSITE_EXTRA=${ex}/../tk-`,
+    `ENOT_OFFSITE_EXTRA=${ex}/`, `ENOT_OFFSITE_EXTRA=${ex}/enotdesk-`, `ENOT_OFFSITE_EXTRA=${ex}/a;id`,
+    `ENOT_OFFSITE_EXTRA=${ex}/*`, `ENOT_OFFSITE_EXTRA=${ex}/tk- ${ex}/tk-`, 'RM_RF=/'];
+  for (const line of bad) {
+    fs.writeFileSync(cf, `${line}\n`);
+    for (const cmd of ['status', 'fetch']) {
+      r = await run('bash', [SERVE, cmd], s.env);
+      assert.equal(r.code, 5, `«${line}» → ${cmd}: ${r.stderr}`);
+      assert.match(r.stderr, /^offsite: /);
+      assert.equal(r.stdout.length, 0);
+    }
+  }
+});
+
+test('watch-server check: дополнительная база — возраст в итоге; старый дамп или пропажа — тревога', { skip }, async (t) => {
+  const s = stand(t);
+  const h = await fakeHttp(t);
+  dump(s.backups, 'enotdesk-', 4);
+  const fresh = extraDir(s, 'fresh');
+  dump(fresh, 'tk-', 5);
+  const stale = extraDir(s, 'stale');
+  dump(stale, 'tk-', 30);
+  const cfg = conf(s.dir, [`WATCH_URL=${h.base}`, 'WATCH_SSH=root@server', `WATCH_SSH_BIN=${s.ssh}`,
+    `WATCH_PING_CHECK=${h.base}/ping/c`, 'WATCH_RETRY_SEC=0']);
+
+  let r = await run('bash', [WATCH, 'check', cfg], { ...s.env, ENOT_OFFSITE_EXTRA: `${fresh}/tk-` });
+  assert.equal(r.code, 0, r.stdout.toString() + r.stderr);
+  assert.equal(h.pings.at(-1).url, '/ping/c');
+  assert.match(h.pings.at(-1).body, /на сервере: диск \d+%, дамп 4 ч, доп\. 5 ч/);
+
+  r = await run('bash', [WATCH, 'check', cfg], { ...s.env, ENOT_OFFSITE_EXTRA: `${stale}/tk-` });
+  assert.equal(r.code, 1);
+  assert.equal(h.pings.at(-1).url, '/ping/c/fail');
+  assert.match(h.pings.at(-1).body, /дампу доп\. базы 30 ч/);
+
+  r = await run('bash', [WATCH, 'check', cfg], { ...s.env, ENOT_OFFSITE_EXTRA: `${path.join(s.dir, 'none')}/tk-` });
+  assert.equal(r.code, 1);
+  assert.equal(h.pings.at(-1).url, '/ping/c/fail');
+  assert.match(h.pings.at(-1).body, /нет готового дампа доп\. базы: 1/);
 });
 
 test('watch-server check: всё в порядке — пинг успеха; health упал — пинг /fail с причиной', { skip }, async (t) => {
