@@ -245,7 +245,7 @@ ENOT_DEPLOY_HOST=<server-ip> ./scripts/deploy-server.sh
 bash /tmp/enotdesk-install/install-server.sh --update /tmp/enotdesk-install/app.tar.gz
 ```
 
-Откат: в `/opt/enotdesk/releases/` остаются прежние релизы. Переключите symlink на нужный и перезапустите сервис:
+Откат: в `/opt/enotdesk/releases/` остаются текущий релиз и три предыдущих — более старые установщик удаляет сам после удачного обновления (когда сервер и хаб ответили на health). Переключите symlink на нужный и перезапустите сервис:
 
 ```bash
 ln -sfn /opt/enotdesk/releases/<старый-штамп> /opt/enotdesk/current
