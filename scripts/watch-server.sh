@@ -1,7 +1,8 @@
 #!/usr/bin/env bash
 # EnotDesk: наблюдатель сервера с другой машины (docs/SERVER.md §7.3).
 #   watch-server.sh check [конфиг] — раз в 5 минут (таймер): health сервера и хаба, срок TLS,
-#       TCP-порты (TURN), диск и свежесть бэкапов на сервере (ssh status). Итог — пинг
+#       TCP-порты (TURN), диск и свежесть бэкапов на сервере, в том числе дополнительных баз
+#       (ssh status). Итог — пинг
 #       Healthchecks-совместимого сервиса: успех или /fail с причиной. Молчание наблюдателя
 #       (упала сама эта машина или её сеть) сервис замечает сам — по пропущенному пингу.
 #   watch-server.sh pull [конфиг] — раз в сутки: зашифрованная копия бэкапов с сервера
@@ -112,23 +113,28 @@ c_tcp() { # $1 — хост:порт
 }
 
 c_remote() { # ssh status: диск и возраст дампов
-  local js used main hub bad=()
+  local js used main hub extra missing bad=()
   js=$(ssh_server status) || { echo "ssh status не удался"; return 1; }
   num() { printf '%s' "$js" | sed -n "s/.*\"$1\":\([0-9][0-9]*\).*/\1/p"; }
   used=$(num diskUsedPct)
   main=$(num mainBackupAgeH)
   hub=$(num hubBackupAgeH)
+  # дополнительные базы сервера (ENOT_OFFSITE_EXTRA); у старого сервера этих полей нет — проверки нет
+  extra=$(num extraBackupAgeH)
+  missing=$(num extraMissing)
   [ -n "$used" ] || { echo "ответ status не разобран"; return 1; }
   [ "$used" -le "$WATCH_DISK_MAX" ] || bad+=("диск занят на $used%")
   if [ -z "$main" ]; then bad+=("нет готового дампа основной базы")
   elif [ "$main" -gt "$WATCH_BACKUP_MAX_H" ]; then bad+=("дампу основной базы $main ч"); fi
   [ -n "$hub" ] && [ "$hub" -gt "$WATCH_BACKUP_MAX_H" ] && bad+=("дампу базы хаба $hub ч")
+  [ -n "$extra" ] && [ "$extra" -gt "$WATCH_BACKUP_MAX_H" ] && bad+=("дампу доп. базы $extra ч")
+  [ -n "$missing" ] && [ "$missing" -gt 0 ] && bad+=("нет готового дампа доп. базы: $missing")
   if [ ${#bad[@]} -gt 0 ]; then
     local IFS=';'
     echo "${bad[*]}" | sed 's/;/; /g'
     return 1
   fi
-  echo "диск $used%, дамп $main ч${hub:+, хаб $hub ч}"
+  echo "диск $used%, дамп $main ч${hub:+, хаб $hub ч}${extra:+, доп. $extra ч}"
 }
 
 report() { # $1 — URL пинга
