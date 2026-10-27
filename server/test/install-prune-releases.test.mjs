@@ -8,7 +8,8 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 
-const SCRIPT = fs.readFileSync(path.join(import.meta.dirname, '..', '..', 'scripts', 'install-server.sh'), 'utf8');
+// на Windows checkout отдаёт \r\n — контракт текста сверяем по \n
+const SCRIPT = fs.readFileSync(path.join(import.meta.dirname, '..', '..', 'scripts', 'install-server.sh'), 'utf8').replace(/\r\n/g, '\n');
 const skip = process.platform === 'win32' ? 'установщик сервера — bash, Linux/macOS' : false;
 const start = SCRIPT.indexOf('prune_releases() {');
 const FN = SCRIPT.slice(start, SCRIPT.indexOf('\n}\n', start) + 3);
