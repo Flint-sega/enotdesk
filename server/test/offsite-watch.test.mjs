@@ -222,7 +222,8 @@ test('offsite-serve: файл настроек — строка ENOT_OFFSITE_EXT
     fs.writeFileSync(cf, `${line}\n`);
     for (const cmd of ['status', 'fetch']) {
       r = await run('bash', [SERVE, cmd], s.env);
-      assert.equal(r.code, 5, `«${line}» → ${cmd}`);
+      assert.equal(r.code, 5, `«${line}» → ${cmd}: ${r.stderr}`);
+      assert.match(r.stderr, /^offsite: /);
       assert.equal(r.stdout.length, 0);
     }
   }

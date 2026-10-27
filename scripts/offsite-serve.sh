@@ -48,13 +48,14 @@ load_extra() {
     done < "$CONF"
   fi
   case "$extra" in \"*\" | \'*\') extra=${extra:1:${#extra}-2} ;; esac
-  # read -a, а не for … in $extra: без раскрытия * и ? в именах
+  # read -a, а не for … in $extra: без раскрытия * и ? в именах.
+  # ${e} в скобках: bash 3.2 (macOS) в UTF-8 читает байт «»» после $e как часть имени переменной
   read -r -a list <<< "$extra" || true
   for e in ${list[@]+"${list[@]}"}; do
-    case "$e" in /?*/?*) ;; *) die "ENOT_OFFSITE_EXTRA: нужен абсолютный путь «/папка/префикс», а не «$e»" 5 ;; esac
-    case "$e" in *[!A-Za-z0-9._/-]* | *..* | */) die "ENOT_OFFSITE_EXTRA: недопустимые символы в «$e»" 5 ;; esac
+    case "$e" in /?*/?*) ;; *) die "ENOT_OFFSITE_EXTRA: нужен абсолютный путь «/папка/префикс», а не «${e}»" 5 ;; esac
+    case "$e" in *[!A-Za-z0-9._/-]* | *..* | */) die "ENOT_OFFSITE_EXTRA: недопустимые символы в «${e}»" 5 ;; esac
     p=${e##*/}
-    case " enotdesk- hub- ${EXTRA_PREFIXES[*]:-} " in *" $p "*) die "ENOT_OFFSITE_EXTRA: префикс «$p» уже занят" 5 ;; esac
+    case " enotdesk- hub- ${EXTRA_PREFIXES[*]:-} " in *" $p "*) die "ENOT_OFFSITE_EXTRA: префикс «${p}» уже занят" 5 ;; esac
     EXTRA_DIRS[EXTRA_N]=${e%/*}
     EXTRA_PREFIXES[EXTRA_N]=$p
     EXTRA_N=$((EXTRA_N + 1))
