@@ -58,7 +58,8 @@ tcp и udp (TURN), `49160–49999` udp (ретрансляция видео). Б
 curl -fsSL https://raw.githubusercontent.com/Flint-sega/enotdesk/main/scripts/quick-setup.sh | sudo bash -s -- --update
 ```
 
-Прежние версии остаются в `/opt/enotdesk/releases/`. Откат кода: переключите ссылку `current` на
+Прежние версии остаются в `/opt/enotdesk/releases/` — три последних, более старые установщик
+убирает сам. Откат кода: переключите ссылку `current` на
 прежний каталог и перезапустите сервис (`systemctl restart enotdesk`). Если новая версия успела
 изменить схему базы, старый код с ней не заработает — тогда восстановите базу из копии, сделанной
 перед обновлением. Порядок отката выпуска целиком — [release-rollback.md](release-rollback.md).

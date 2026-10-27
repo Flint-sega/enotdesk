@@ -22,6 +22,8 @@ ENOT_USER="enotdesk"
 OPT_DIR="/opt/enotdesk"
 RELEASES_DIR="$OPT_DIR/releases"
 CURRENT_LINK="$OPT_DIR/current"
+# после удачного обновления остаются текущий релиз и столько предыдущих (для отката)
+KEEP_PREV_RELEASES=3
 DATA_DIR="/var/lib/enotdesk"
 ENV_DIR="/etc/enotdesk"
 ENV_FILE="$ENV_DIR/enotdesk.env"
@@ -608,6 +610,27 @@ find_or_name_release() {
   fi
 }
 
+# Старые релизы копятся с каждым обновлением (~25 МБ): оставляем текущий и
+# KEEP_PREV_RELEASES самых свежих других, по штампу в имени (<штамп>-<hash>, legacy-<штамп>).
+# Если current не симлинк на каталог внутри RELEASES_DIR — ничего не трогаем.
+prune_releases() {
+  local cur cur_name d name stamp kept=0 removed=0
+  cur="$(readlink -f "$CURRENT_LINK" 2>/dev/null || true)"
+  [ -L "$CURRENT_LINK" ] && [ -n "$cur" ] && [ -d "$cur" ] || return 0
+  [ "$(cd "$cur/.." && pwd -P)" = "$(cd "$RELEASES_DIR" && pwd -P)" ] || return 0
+  cur_name="$(basename "$cur")"
+  while read -r stamp name; do
+    [ "$name" != "$cur_name" ] || continue
+    if [ "$kept" -lt "$KEEP_PREV_RELEASES" ]; then kept=$((kept + 1)); continue; fi
+    if rm -rf -- "${RELEASES_DIR:?}/$name"; then removed=$((removed + 1)); else info "не удалось удалить релиз $name"; fi
+  done < <(for d in "$RELEASES_DIR"/*/; do
+    [ -d "$d" ] || continue
+    name="$(basename "$d")"; stamp="${name#legacy-}"
+    printf '%s %s\n' "${stamp%%-*}" "$name"
+  done | sort -r)
+  if [ "$removed" -gt 0 ]; then info "старые релизы: удалено $removed, оставлены текущий и $kept предыдущих"; fi
+}
+
 read_env_value() {
   local key="$1" v=""
   [ -f "$ENV_FILE" ] || { echo ""; return 0; }
@@ -1037,6 +1060,8 @@ if [ "$healthy" != "1" ]; then
   die "сервис не ответил на health за 30 секунд"
 fi
 info "health: ok"
+# только после ответа обеих служб: при сбое старые релизы нужны для отката
+prune_releases
 
 if [ "$FETCH_BUILDS" = "1" ]; then
   fetch_builds
