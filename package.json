@@ -25,7 +25,7 @@
   "dependencies": {
     "electron-updater": "6.8.9",
     "imapflow": "2.5.8",
-    "koffi": "3.3.3",
+    "koffi": "3.3.4",
     "nodemailer": "10.1.7",
     "ws": "8.22.0"
   },
