@@ -117,6 +117,10 @@ EnotDesk — установщик сервера.
   ENOT_TURN_TLS_CERT    — PEM-сертификат coturn (fullchain)
   ENOT_TURN_TLS_KEY     — PEM-ключ coturn
   ENOT_TURN_TLS_LISTEN_IP — отдельный IP для TLS, если 443 занят Caddy
+                            (listening-ip в coturn глобален — переезжает и 3478;
+                            для «TLS на отдельном IP» нужны DNS и ENOT_TURN_URLS
+                            на этот второй IP, иначе дефолтный turn:<хост>:3478
+                            на основном IP перестанет отвечать)
   ENOT_SECRET_KEY    ключ шифрования 2FA-секретов и секретов webhooks (AES-256-GCM);
                      пусто — их включение честно отказывает (secret_key_missing)
   ENOT_TRUSTED_PROXY доверенные обратные прокси: IP или IPv4-CIDR через запятую
@@ -802,6 +806,9 @@ print_plan() {
     if [ "$TLS_ACTIVE" = "1" ]; then fw_ports="80,443/tcp, 443/udp (HTTP/3)"; else fw_ports="$PORT/tcp"; fi
     if [ "$SETUP_TURN" = "1" ]; then fw_ports="$fw_ports, 3478 tcp/udp, 49160:49999/udp"; fi
     echo "  ufw:                открыть $fw_ports, если ufw активен"
+    if [ "$SETUP_TURN" = "1" ] && [ -n "$TURN_TLS_PORT" ] && { [ "$TLS_ACTIVE" != "1" ] || [ "$TURN_TLS_PORT" != "443" ]; }; then
+      echo "  ufw:                напоминание: TURN/TLS порт $TURN_TLS_PORT/tcp установщик не открывает — откройте вручную"
+    fi
   else
     echo "  ufw:                не трогать"
   fi
@@ -936,6 +943,12 @@ elif [ "$SETUP_TLS" = "1" ]; then
   info "ВНИМАНИЕ: в ENOT_PUBLIC_URL нет домена — TLS не настроен, работает локальный http-режим"
   info "  пароли, токены и сигналинг идут по сети открытым текстом; для продакшена задайте"
   info "  ENOT_PUBLIC_URL=https://<домен> (A-запись на этот сервер) и перезапустите установщик"
+fi
+
+if [ "$SETUP_TURN" = "1" ] && [ -n "$TURN_TLS_PORT" ] && [ -n "$TURN_TLS_LISTEN_IP" ]; then
+  info "учтите: listening-ip в coturn задаётся глобально — TURN_TLS_LISTEN_IP переопределяет"
+  info "  и дефолтный 3478, а не только TLS; клиенты должны попадать на этот второй IP"
+  info "  (DNS TURN-хоста и ENOT_TURN_URLS), иначе дефолтный turn:<хост>:3478 перестанет отвечать"
 fi
 
 if [ "$SETUP_TURN" = "1" ]; then
@@ -1080,6 +1093,9 @@ if [ "$OPEN_FIREWALL" = "1" ]; then
       ufw allow 3478/udp >/dev/null
       ufw allow 49160:49999/udp >/dev/null
       info "ufw: открыты 3478 tcp/udp и 49160:49999/udp (TURN)"
+    fi
+    if [ "$SETUP_TURN" = "1" ] && [ -n "$TURN_TLS_PORT" ] && { [ "$TLS_ACTIVE" != "1" ] || [ "$TURN_TLS_PORT" != "443" ]; }; then
+      info "ufw: TURN/TLS порт $TURN_TLS_PORT/tcp установщик не открывает — добавьте вручную (ufw allow $TURN_TLS_PORT/tcp)"
     fi
   else
     info "ufw не установлен или неактивен — правила не добавлены; откройте порты вручную (см. docs/SERVER.md)"
