@@ -38,7 +38,7 @@ TURN/TLS на 443 через `ENOT_TURN_TLS_*`; если Caddy уже заним
 
 Страница `/downloads` показывает только реально загруженные файлы. Положите сборки нужной версии с
 [GitHub Releases](https://github.com/Flint-sega/enotdesk/releases) в каталог `/var/lib/enotdesk/dist`
-(имена `EnotDesk*.exe`, `EnotDesk*.zip`, `EnotDesk*.AppImage`) и сверьте их с `checksums-sha256.txt`
+(имена `EnotDesk*.exe`, `EnotDesk*.zip`, `EnotDesk*.dmg`, `EnotDesk*.AppImage`) и сверьте их с `checksums-sha256.txt`
 релиза. Если нужно заставить клиентов обновиться, задайте в `/etc/enotdesk/enotdesk.env`
 `ENOT_MIN_CLIENT_VERSION=x.y.z` и перезапустите сервер — старые клиенты покажут «обновите программу».
 
@@ -49,7 +49,7 @@ TURN/TLS на 443 через `ENOT_TURN_TLS_*`; если Caddy уже заним
 - **Отдельно** от копий баз храните `/etc/enotdesk/enotdesk.env` (например, в менеджере паролей):
   без ключа `ENOT_SECRET_KEY` из него пользователи с 2FA не войдут на восстановленную базу.
 - Раз в квартал проверяйте восстановление на чистой машине — порядок в [SERVER.md §7.2](../SERVER.md).
-  Учения 22.10.2026 на стенде заняли меньше минуты.
+  Учения 24.10.2026 на чистом контейнере Debian 13 заняли 2,5 минуты.
 - Перед каждым обновлением сделайте ручную копию обеих баз (команды — [SERVER.md §7.1](../SERVER.md)):
   миграции схемы базы необратимы.
 

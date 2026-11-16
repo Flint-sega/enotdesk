@@ -4,7 +4,7 @@ English | [Русский](README.ru.md)
 
 [![tests](https://github.com/Flint-sega/enotdesk/actions/workflows/test.yml/badge.svg)](https://github.com/Flint-sega/enotdesk/actions/workflows/test.yml)
 
-EnotDesk is a self-hosted remote-support application for Windows, macOS and Linux, licensed under **AGPL-3.0**. In the default **attended** mode the person receiving help runs a portable app with no installation, gets a one-time ID and password, and passes them to the operator through their usual chat; closing the app immediately ends access — no services, no autostart, no background processes. Optionally, **unattended access** (agent): an admin creates the machine in the operator app (“Machines” → “Add machine”) and gets a one-time code; on Windows the service is installed with that code right from the app (Settings → “Machine”), on Linux and macOS with the scripts in `client/agent-service/` (on macOS the agent runs in the user's session, with video and input — ADR 0038); the operator claims the machine with a mandatory reason and an optional PIN. Operators can work from the desktop client or a plain browser, and the optional EnotDesk Hub adds a ticket desk with a chat widget, one-click join and an email channel.
+EnotDesk is a self-hosted remote-support application for Windows, macOS and Linux, licensed under **AGPL-3.0**. In the default **attended** mode the person receiving help runs a portable app with no installation, gets an ID and a one-time password, and passes them to the operator through their usual chat; closing the app immediately ends access — no services, no autostart, no background processes. Optionally, **unattended access** (agent): an admin creates the machine in the operator app (“Machines” → “Add machine”) and gets a one-time code; on Windows the service is installed with that code right from the app (Settings → “Machine (unattended access)”), on Linux and macOS with the scripts in `client/agent-service/` (on macOS the agent runs in the user's session, with video and input — ADR 0038); the operator claims the machine with a mandatory reason and an optional PIN. Operators can work from the desktop client or a plain browser, and the optional EnotDesk Hub adds a ticket desk with a chat widget, one-click join and an email channel.
 
 ## Screenshots
 
@@ -12,7 +12,7 @@ Landing page (GitHub Pages) — the same look as the server download page:
 
 ![EnotDesk landing page](docs/screenshot-site.webp)
 
-Main window — the client side: one button gets a one-time ID and password for the operator (smoke screenshot of the app):
+Main window — the client side: one button gets an ID and a one-time password for the operator (smoke screenshot of the app):
 
 ![Main window of EnotDesk](docs/screenshot-main.png)
 
@@ -30,7 +30,7 @@ An interactive version of this diagram (pan, path and lens views) is published o
 
 ## How it works
 
-- **Client (receives help):** runs the portable app → “Get help” → shares the one-time ID and password with the operator via their own chat → approves the specific operator’s connection → chats, can hide the screen with one button (pause streaming) and switch the shared screen on the fly → closes the window when done. Access exists only while the app is open.
+- **Client (receives help):** runs the portable app → “Get help” → shares the ID and the one-time password with the operator via their own chat → approves the specific operator’s connection → chats, can hide the screen with one button (pause streaming) and switch the shared screen on the fly → closes the window when done. Access exists only while the app is open.
 - **Operator (provides help):** signs in on the EnotDesk server → takes the ID/password from the chat (paste the whole message — fields fill themselves) → connects → after the client’s consent sees the screen and controls input (keyboard works on any layout). During the session: chat, two-way clipboard sync, file transfer, session timer and connection-quality indicator; session history and audit log with CSV export.
 - **Transport:** video — WebRTC (DTLS/SRTP) peer-to-peer; signaling — through your EnotDesk server; input, chat, clipboard and files — over DataChannels with strict allowlists and size limits. A short network drop does not kill the session: 30 seconds (configurable) to reconnect with the same tokens; before consent the session ends immediately.
 
@@ -65,7 +65,7 @@ One command brings up the EnotDesk server, [coturn](https://github.com/coturn/co
 Requires Node.js ≥ 24.12. Full server installation guide (Ubuntu/Debian install script, systemd, updates, backups, HTTPS): [`docs/SERVER.md`](docs/SERVER.md).
 
 ```bash
-npm install          # koffi, ws; electron and electron-builder are exact-pinned in the lockfile
+npm install          # koffi, ws, electron-updater; electron and electron-builder are exact-pinned in the lockfile
 npm run server       # control plane on 127.0.0.1:8080 (SQLite)
 npm run bootstrap    # first admin (interactive; never overwrites an existing one)
 npm start            # EnotDesk desktop app (Electron)
@@ -121,7 +121,7 @@ Artifacts are branded EnotDesk (`assets/icon.icns` / `icon.ico` / `icon.png`).
 
 Pushing a tag `v…` runs [.github/workflows/release.yml](.github/workflows/release.yml): the three platforms are packed on GitHub runners, lint and tests gate the build, and the artifacts are attached to a GitHub Release together with `checksums-sha256.txt` (verify with `sha256sum -c`) and the auto-update feed files (`latest.yml`, `latest-linux.yml`). The unsigned macOS build cannot install updates by itself, so it has no install feed: it reads the version from `latest.yml` and only notifies.
 
-The packaged client checks that feed once a day (electron-updater, generic provider). The installed Windows build (`setup.exe`) and the Linux AppImage download the update in the background and install it after a person confirms — never in the middle of a session. The portable Windows `.exe` and the macOS build cannot replace themselves: the client shows a notification about the new version with a link to the downloads page. The updater is disabled in development (`npm start`), smoke runs (`EDESK_SMOKE=1`) and the headless agent.
+The packaged client checks that feed once a day (electron-updater, generic provider). The installed Windows build (`setup.exe`) and the Linux AppImage download the update in the background and install it after a person confirms — never in the middle of a session. The unattended agent updates itself the same way in installed Windows builds and the Linux AppImage, even without an open window: the install waits until no session is active. The portable Windows `.exe` and the macOS build cannot replace themselves: the client shows a notification about the new version with a link to the downloads page. The updater is disabled in development (`npm start`) and smoke runs (`EDESK_SMOKE=1`).
 
 ## Unsigned builds
 
@@ -134,12 +134,12 @@ Paid Apple and Windows certificates are not used (ADR 0037); the macOS build is 
 ## Development
 
 ```bash
-npm test          # ~770 node:test tests: server + hub HTTP/WS + client lib shims + renderer contract
+npm test          # ~890 node:test tests: server + hub HTTP/WS + client lib shims + renderer contract
 npm run lint      # ESLint
 npm run smoke:local
 ```
 
-CI runs lint + tests on an ubuntu/windows/macos matrix (smoke on ubuntu); Windows/macOS jobs are non-blocking while those adapters are verified manually (see the Platforms table). Stack: Node 24 ESM, no frameworks — `ws` + `koffi` only, Electron 44 (exact pins — do not bump casually), `node:test`, ESLint. Native input goes through koffi adapters: Windows SendInput, macOS CoreGraphics, Linux X11/XTest.
+CI runs lint + tests on an ubuntu/windows/macos matrix (smoke on ubuntu); all three OS jobs are blocking since 24.10 — the live koffi and Electron adapters of Windows/macOS are still verified manually (see the Platforms table). Stack: Node 24 ESM, no frameworks — `ws` + `koffi` + `electron-updater` (the hub additionally uses `imapflow` and `nodemailer`), Electron 44 (exact pins — do not bump casually), `node:test`, ESLint. Native input goes through koffi adapters: Windows SendInput, macOS CoreGraphics, Linux X11/XTest.
 
 Architectural decisions live in [`docs/adr/`](docs/adr/) (in Russian); project conventions for agents/maintainers in [AGENTS.md](AGENTS.md).
 

@@ -78,7 +78,7 @@ export ENOT_DEPLOY_PROTO=http
 ./scripts/deploy-server.sh
 ```
 
-Скрипт собирает tar.gz (`server/`, `client/lib/i18n.mjs`, `client/locales/`, `assets/`, `package.json`, `package-lock.json`, `scripts/install-server.sh`), копирует его в `/tmp/enotdesk-install/` на сервере и запускает установку под `nohup` (лог — `/tmp/enotdesk-install/install.log` на сервере): обрыв SSH установку не прерывает. Локально скрипт опрашивает лог каждые 5 секунд (до 10 минут) и ждёт health. В конце печатает health-URL и следующую команду — создание администратора (шаг 4).
+Скрипт собирает tar.gz (`server/`, `hub/`, `assets/`, `web/`, `client/lib/`, `client/renderer/`, `client/locales/`, `package.json`, `package-lock.json`, `scripts/install-server.sh`), копирует его в `/tmp/enotdesk-install/` на сервере и запускает установку под `nohup` (лог — `/tmp/enotdesk-install/install.log` на сервере): обрыв SSH установку не прерывает. Локально скрипт опрашивает лог каждые 5 секунд (до 10 минут) и ждёт health. В конце печатает health-URL и следующую команду — создание администратора (шаг 4).
 
 Установщик по умолчанию сам ставит TURN (coturn) и TLS (Caddy, авто-HTTPS) — раздел 9. Отключить: `--no-turn` / `--no-tls`; посмотреть план без изменений: `--dry-run`.
 
@@ -117,10 +117,10 @@ install -d -m 0755 /etc/enotdesk
 
 ### 2.3. Релиз
 
-На локальной машине из корня репозитория:
+На локальной машине из корня репозитория — состав тот же, что собирает `scripts/deploy-server.sh` (без `client/lib/` сервер не стартует: он импортирует `client/lib/i18n.mjs` и `client/lib/file-transfer.mjs`):
 
 ```bash
-tar czf /tmp/enotdesk-app.tar.gz server package.json package-lock.json
+tar czf /tmp/enotdesk-app.tar.gz server hub assets web package.json package-lock.json scripts/install-server.sh client/lib client/renderer client/locales
 scp /tmp/enotdesk-app.tar.gz root@<server-ip>:/tmp/
 ```
 
@@ -154,7 +154,7 @@ chmod 0600 /etc/enotdesk/enotdesk.env
 
 `ENOT_PUBLIC_URL` подставляется в ссылки на страницах `/invite` и `/downloads`. TURN обычно настраивает установщик (раздел 9); если TURN внешний, допишите `ENOT_TURN_URLS`, `ENOT_TURN_USERNAME`, `ENOT_TURN_PASSWORD` (имена — в `.env.example`) и перезапустите сервис.
 
-Сборки для `/downloads` лежат в каталоге `ENOT_DIST_DIR` (установщик по умолчанию задаёт `/var/lib/enotdesk/dist` и сохраняет это значение при обновлениях; при ручном запуске `<рабочий каталог>/dist`) — загрузите их, например: `scp dist/EnotDesk-* root@<server>:/var/lib/enotdesk/dist/`. Страница и API показывают только реально загруженные файлы из allowlist (`EnotDesk*.exe`, `EnotDesk*.zip`, `EnotDesk*.AppImage`); отсутствующие платформы отмечаются как «сборка ещё не готова».
+Сборки для `/downloads` лежат в каталоге `ENOT_DIST_DIR` (установщик по умолчанию задаёт `/var/lib/enotdesk/dist` и сохраняет это значение при обновлениях; при ручном запуске `<рабочий каталог>/dist`) — загрузите их, например: `scp dist/EnotDesk-* root@<server>:/var/lib/enotdesk/dist/`. Страница и API показывают только реально загруженные файлы из allowlist (`EnotDesk*.exe`, `EnotDesk*.zip`, `EnotDesk*.dmg`, `EnotDesk*.AppImage`); отсутствующие платформы отмечаются как «сборка ещё не готова».
 
 ### 2.6. systemd
 
@@ -523,7 +523,7 @@ journalctl -u enotdesk -p err              # только ошибки
 - Домен берётся из `ENOT_PUBLIC_URL` (например, `ENOT_PUBLIC_URL=https://example.com`). Если домена нет — TLS честно пропускается с предупреждением в логе установки (незащищённый локальный http-режим), TURN при этом ставится (realm = IP).
 - Отказ: `--no-turn` и/или `--no-tls`; план без изменений: `--dry-run`.
 
-Безопасность значений: `ENOT_PUBLIC_URL` проверяется на формат `[https?://]host[:port][/]` (только буквы, цифры, точка, дефис) до любой записи в `Caddyfile`/`turnserver.conf` — значения с посторонними символами установщик честно отклоняет. Значения env-файла пишутся в одинарных кавычках с экранированием (`KEY='value'`, `'` → `'\''`): содержимое переменной не может «выехать» за пределы своей строки (systemd раскрывает кавычки сам). Tarball перед распаковкой валидируется: допускаются только пути из сборки `deploy-server.sh` (`server/`, `assets/`, `client/lib/i18n.mjs`, `client/locales/`, `package.json`, `package-lock.json`, `scripts/install-server.sh`); абсолютные пути, `..` и symlink/hardlink-записи отклоняются с честной ошибкой. Дампы `--backup` складываются в `/var/lib/enotdesk/backups` с правами 0700.
+Безопасность значений: `ENOT_PUBLIC_URL` проверяется на формат `[https?://]host[:port][/]` (только буквы, цифры, точка, дефис) до любой записи в `Caddyfile`/`turnserver.conf` — значения с посторонними символами установщик честно отклоняет. Значения env-файла пишутся в одинарных кавычках с экранированием (`KEY='value'`, `'` → `'\''`): содержимое переменной не может «выехать» за пределы своей строки (systemd раскрывает кавычки сам). Tarball перед распаковкой валидируется: допускаются только пути из сборки `deploy-server.sh` (`server/`, `hub/`, `assets/`, `web/`, `client/lib/`, `client/renderer/`, `client/locales/`, `package.json`, `package-lock.json`, `scripts/install-server.sh`); абсолютные пути, `..` и symlink/hardlink-записи отклоняются с честной ошибкой. Дампы `--backup` складываются в `/var/lib/enotdesk/backups` с правами 0700.
 
 Проверка после установки:
 
