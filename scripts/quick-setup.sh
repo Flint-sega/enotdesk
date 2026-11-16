@@ -62,6 +62,14 @@ FETCH_BUILDS=1            # 1 = скачать клиентские сборки
 FETCH_SET=0               # флаг --fetch-builds/--no-fetch-builds задан
 PASS_STDIN=0
 
+# Опциональный TURN/TLS-канал (обычно 443/tcp). Значения можно передать
+# окружением; для --docker они также сохраняются при --update.
+TURN_TLS_PORT="${TURN_TLS_PORT:-}"
+TURN_TLS_HOST="${TURN_TLS_HOST:-}"
+TURN_TLS_CERT="${TURN_TLS_CERT:-}"
+TURN_TLS_KEY="${TURN_TLS_KEY:-}"
+TURN_TLS_LISTEN_IP="${TURN_TLS_LISTEN_IP:-}"
+
 SETUP_TMP=""
 DOCKER_DIR=""
 
@@ -684,6 +692,11 @@ make_secrets() {
   elif [ "$MODE" = "docker" ] && [ -f "./enotdesk-docker/.env" ]; then
     prev_key="$(env_value ENOT_SECRET_KEY ./enotdesk-docker/.env)"
     prev_turn="$(env_value TURN_SECRET ./enotdesk-docker/.env)"
+    [ -n "$TURN_TLS_PORT" ] || TURN_TLS_PORT="$(env_value TURN_TLS_PORT ./enotdesk-docker/.env)"
+    [ -n "$TURN_TLS_HOST" ] || TURN_TLS_HOST="$(env_value TURN_TLS_HOST ./enotdesk-docker/.env)"
+    [ -n "$TURN_TLS_CERT" ] || TURN_TLS_CERT="$(env_value TURN_TLS_CERT ./enotdesk-docker/.env)"
+    [ -n "$TURN_TLS_KEY" ] || TURN_TLS_KEY="$(env_value TURN_TLS_KEY ./enotdesk-docker/.env)"
+    [ -n "$TURN_TLS_LISTEN_IP" ] || TURN_TLS_LISTEN_IP="$(env_value TURN_TLS_LISTEN_IP ./enotdesk-docker/.env)"
   fi
   if [ -n "$prev_key" ]; then
     SECRET_KEY=$prev_key
@@ -950,6 +963,11 @@ baremetal_install() {
       kv ENOT_TURN_SECRET "$TURN_SECRET"
       kv ENOT_TRUSTED_PROXY "$TRUSTED_PROXY"
     fi
+    [ -n "$TURN_TLS_PORT" ] && kv ENOT_TURN_TLS_PORT "$TURN_TLS_PORT"
+    [ -n "$TURN_TLS_HOST" ] && kv ENOT_TURN_TLS_HOST "$TURN_TLS_HOST"
+    [ -n "$TURN_TLS_CERT" ] && kv ENOT_TURN_TLS_CERT "$TURN_TLS_CERT"
+    [ -n "$TURN_TLS_KEY" ] && kv ENOT_TURN_TLS_KEY "$TURN_TLS_KEY"
+    [ -n "$TURN_TLS_LISTEN_IP" ] && kv ENOT_TURN_TLS_LISTEN_IP "$TURN_TLS_LISTEN_IP"
   } >> "$run_env"
 
   info "$(M "запускаю scripts/install-server.sh (значения — окружением из run.env 0600)" "running scripts/install-server.sh (values via the environment from run.env 0600)")"
@@ -1150,6 +1168,11 @@ docker_install() {
     printf 'TURN_SECRET=%s\n' "$TURN_SECRET"
     printf 'ENOT_SECRET_KEY=%s\n' "$SECRET_KEY"
     printf 'ENOT_PUBLIC_URL=%s\n' "$PUBLIC_URL"
+    printf 'TURN_TLS_PORT=%s\n' "$TURN_TLS_PORT"
+    printf 'TURN_TLS_HOST=%s\n' "$TURN_TLS_HOST"
+    printf 'TURN_TLS_CERT=%s\n' "$TURN_TLS_CERT"
+    printf 'TURN_TLS_KEY=%s\n' "$TURN_TLS_KEY"
+    printf 'TURN_TLS_LISTEN_IP=%s\n' "$TURN_TLS_LISTEN_IP"
     # Hub: сервис в compose под профилем hub; Caddy получает HUB и добавляет маршруты
     printf 'HUB=%s\n' "$HUB"
     if [ "$HUB" = "1" ]; then printf 'COMPOSE_PROFILES=hub\n'; fi
@@ -1157,7 +1180,9 @@ docker_install() {
       printf '# --- сохранено из прежнего .env (обновление) ---\n'
       awk -F= '
         BEGIN { managed["DOMAIN"]=1; managed["TURN_SECRET"]=1; managed["ENOT_SECRET_KEY"]=1;
-                managed["ENOT_PUBLIC_URL"]=1; managed["HUB"]=1; managed["COMPOSE_PROFILES"]=1 }
+                managed["ENOT_PUBLIC_URL"]=1; managed["TURN_TLS_PORT"]=1; managed["TURN_TLS_HOST"]=1;
+                managed["TURN_TLS_CERT"]=1; managed["TURN_TLS_KEY"]=1; managed["TURN_TLS_LISTEN_IP"]=1;
+                managed["HUB"]=1; managed["COMPOSE_PROFILES"]=1 }
         # неуправляемые ключи: последнее вхождение побеждает (дубли не копим)
         /^[A-Za-z_][A-Za-z0-9_]*=/ { if (!($1 in managed)) line[$1]=$0; next }
         /^#/ { print }

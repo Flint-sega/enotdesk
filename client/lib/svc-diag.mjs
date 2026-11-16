@@ -11,6 +11,7 @@
 
 import fs from 'node:fs';
 import path from 'node:path';
+import { isPlainFile } from './programdata-acl.mjs';
 
 // Ключи с этими подстроками маскируются: значение секретно, важен факт доставки
 const SECRET_HINTS = /CODE|TOKEN|PASSWORD|SECRET|KEY/i;
@@ -59,6 +60,9 @@ export function createSvcDiag({ programData } = {}) {
     try {
       if (!enabled()) return false;
       fs.mkdirSync(enotDir, { recursive: true });
+      // P2-5: пишем от SYSTEM — ни папка, ни журнал не должны быть ссылкой
+      if (fs.lstatSync(enotDir).isSymbolicLink()) return false;
+      if (!isPlainFile(logFile) || !isPlainFile(`${logFile}.1`)) return false;
       try {
         if (fs.existsSync(logFile) && fs.statSync(logFile).size > MAX_LOG_BYTES) {
           fs.rmSync(`${logFile}.1`, { force: true });

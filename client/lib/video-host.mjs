@@ -158,6 +158,9 @@ export function createVideoHost({
         return;
       }
       pid = r.pid;
+      // ADR 0036 (ревью 22.10, P2-4): фактический токен хелпера в журнал службы —
+      // откат SYSTEM → пользователь иначе молча отрезал бы экран входа и UAC.
+      if (r.token) log.warn?.(`video-host: helper token=${r.token}`);
       connectPipe(0);
     },
     // Команда хелперу (input/wake/sleep/quality); не-running — false, не фейк.

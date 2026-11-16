@@ -57,8 +57,30 @@ docker compose up -d
 
 Смена пароля админа — тем же `bootstrap` (перезапись отклоняется; см. `docs/SERVER.md` для остальных операций). Бэкап БД: `docker compose exec enotdesk node -e "..."` не нужен — достаточно остановить запись и скопировать том, либо использовать `server/backup.mjs` (`VACUUM INTO`) по `docs/SERVER.md`.
 
+## TURN over TLS и сеть «только 443»
+
+Для сети, где наружу разрешён только TCP 443, включите TURN/TLS:
+
+```sh
+mkdir -p turn-certs
+# положите сюда сертификат и ключ для TURN_TLS_HOST
+TURN_TLS_PORT=443 TURN_TLS_HOST=turn.example.com docker compose up -d
+```
+
+`TURN_TLS_CERT` и `TURN_TLS_KEY` по умолчанию указывают на
+`/run/turn-certs/fullchain.pem` и `/run/turn-certs/privkey.pem`; каталог
+`./turn-certs` монтируется в coturn только для чтения. Сервер добавляет URL
+`turns:<host>:<port>?transport=tcp` в `/rtc-config`, а coturn проверяет наличие
+сертификата до запуска. `TURN_TLS_LISTEN_IP` позволяет привязать TLS к отдельному
+публичному IP.
+
+В стандартном compose Caddy уже занимает TCP 443. Поэтому для `443` на том же
+IP нужен внешний TCP/SNI edge, который отправляет отдельное имя TURN на coturn,
+либо отдельный публичный IP для TURN; конфликт намеренно не скрывается.
+
 ## Известные границы v1
 
-- TURN over TLS (5349) не настроен — видео идёт через `turn:$DOMAIN:3478` (udp/tcp).
+- TURN over TLS включается явно через `TURN_TLS_PORT` и сертификат; по умолчанию видео
+  идёт через `turn:$DOMAIN:3478` (udp/tcp).
 - coturn в host-сети: порты 3478 и 49160-49999 заняты на хосте напрямую.
 - Сборки клиента для `/downloads` кладутся в том `enotdesk-dist`: `docker cp путь/к/файлу enotdesk-enotdesk-1:/data/dist/` (имена файлов — по allowlist сервера).

@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { updateFeedUrl, platformFeedName, notifyFeedName, updateDecision, updateInstallDecision } from '../lib/updater.mjs';
+import { updateFeedUrl, platformFeedName, notifyFeedName, updateDecision, updateInstallDecision, agentUpdatePolicy } from '../lib/updater.mjs';
 
 // Фид — то, что release.yml прикладывает к релизу рядом с артефактами:
 // минимальный формат latest*.yml от electron-builder. Ожидания разобраны вручную
@@ -136,6 +136,30 @@ test('mac с самообновлением (подписанная сборка
     updateInstallDecision({ platform: 'darwin', macSelfUpdate: true, confirmed: true }),
     { autoDownload: true, autoInstallOnAppQuit: true, askConfirm: false },
   );
+});
+
+test('W-11: headless-агент Windows NSIS обновляется сам, portable — только вручную', () => {
+  assert.deepEqual(
+    agentUpdatePolicy({ platform: 'win32', packaged: true, winInstalled: true }),
+    { enabled: true, reason: null, installWhenIdle: true },
+  );
+  assert.deepEqual(
+    agentUpdatePolicy({ platform: 'win32', packaged: true, winInstalled: false }),
+    { enabled: false, reason: 'windows-portable' },
+  );
+});
+
+test('W-11: Linux headless-агент обновляется только из AppImage', () => {
+  assert.equal(agentUpdatePolicy({ platform: 'linux', packaged: true, appImage: true }).enabled, true);
+  assert.deepEqual(
+    agentUpdatePolicy({ platform: 'linux', packaged: true, appImage: false }),
+    { enabled: false, reason: 'linux-extracted-agent' },
+  );
+});
+
+test('W-11: dev и неподписанный mac не получают скрытый автоинсталлер', () => {
+  assert.equal(agentUpdatePolicy({ platform: 'darwin', packaged: true, macSelfUpdate: false }).reason, 'mac-unsigned');
+  assert.equal(agentUpdatePolicy({ platform: 'darwin', packaged: false, macSelfUpdate: true }).reason, 'not-packaged');
 });
 
 test('фид уведомлений: mac без подписи читает latest.yml, остальные — свой', () => {

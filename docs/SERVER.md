@@ -9,7 +9,7 @@
 - Исходящий интернет: nodejs.org (tarball Node 24) и npm registry (зависимости).
 - Порт сервера: `8080` по умолчанию для тестового HTTP-режима, либо `80`/`443` при TLS через Caddy.
 - Для TURN (coturn) и TLS (Caddy), которые установщик ставит по умолчанию, нужен работающий `apt` и исходящий доступ к репозиториям Debian/Ubuntu и Caddy; флаги `--no-turn` / `--no-tls` отключают их.
-- Порты TURN: `3478` tcp/udp (сигналинг) и `49160–49999`/udp (relay) — откройте их в файрволе или группе безопасности облака (установщик умеет сам, см. `--open-firewall`). Один сеанс с одним оператором занимает около 5 портов ретрансляции (замер 22.10.2026), так что диапазон рассчитан примерно на 165 одновременных сеансов. Установки до 0.6.29 имели диапазон 49160–49200 (около 7 сеансов) — расширьте его: `install-server.sh --update <архив сервера> --reset-turn` и откройте новые порты в файрволе.
+- Порты TURN: `3478` tcp/udp (сигналинг) и `49160–49999`/udp (relay) — откройте их в файрволе или группе безопасности облака (установщик умеет сам, см. `--open-firewall`). Для сетей, где разрешён только TCP 443, TURN/TLS можно включить отдельным `turns:`-входом; для него нужны сертификат coturn и отдельный TCP/SNI edge или отдельный IP, если на том же адресе Caddy уже занимает 443. Один сеанс с одним оператором занимает около 5 портов ретрансляции (замер 22.10.2026), так что диапазон рассчитан примерно на 165 одновременных сеансов. Установки до 0.6.29 имели диапазон 49160–49200 (около 7 сеансов) — расширьте его: `install-server.sh --update <архив сервера> --reset-turn` и откройте новые порты в файрволе.
 - Свободное место: ~300 МБ на Node.js + релиз + `node_modules`.
 - Ресурсы: 2 vCPU и 2 ГБ памяти хватает с запасом — на такой ВМ сервер держал 1000 агентов и 60 одновременных сеансов с p95 API ≤121 мс, ~230 МБ памяти и ~34% одного ядра (нагрузочный прогон 23.10.2026, `npm run load`; без TLS и Caddy). Свою площадку можно проверить тем же скриптом: `LOAD_AGENTS=… LOAD_SESSIONS=… npm run load`.
 - Архитектура x86_64 (установщик ставит tarball `linux-x64`; на arm64 Node ставится вручную).
@@ -518,7 +518,7 @@ journalctl -u enotdesk -p err              # только ошибки
 
 Установщик `install-server.sh` по умолчанию сам разворачивает TURN и TLS — вручную ставить ничего не нужно:
 
-- **TURN (coturn)**: apt-пакет; `/etc/turnserver.conf` с `use-auth-secret` и `static-auth-secret` (секрет генерируется один раз и хранится в env-файле `/etc/enotdesk/enotdesk.env`, 0600, как `ENOT_TURN_SECRET` — повторные запуски дают те же креды); realm и `external-ip` берутся из `ENOT_PUBLIC_URL`; креды для клиентов (`ENOT_TURN_URLS`, `ENOT_TURN_USERNAME`, `ENOT_TURN_PASSWORD`) пишутся в тот же env-файл. Порты: `3478` tcp/udp, relay `49160–49999`/udp. Существующий `/etc/turnserver.conf` без пометки EnotDesk сохраняется как `*.bak-<штамп>`. Повторные запуски и `--update` уже настроенный стек не пересоздают (только обновляют env-файл), внешний TURN с `ENOT_TURN_URLS` в env не трогают; принудительная перенастройка — `--reset-turn`.
+- **TURN (coturn)**: apt-пакет; `/etc/turnserver.conf` с `use-auth-secret` и `static-auth-secret` (секрет генерируется один раз и хранится в env-файле `/etc/enotdesk/enotdesk.env`, 0600, как `ENOT_TURN_SECRET` — повторные запуски дают те же креды); realm и `external-ip` берутся из `ENOT_PUBLIC_URL`; креды для клиентов (`ENOT_TURN_URLS`, `ENOT_TURN_USERNAME`, `ENOT_TURN_PASSWORD`) пишутся в тот же env-файл. Порты: `3478` tcp/udp, relay `49160–49999`/udp. При явном `ENOT_TURN_TLS_PORT` установщик добавляет `turns:<host>:<port>?transport=tcp`, включает TLS в coturn и сохраняет `ENOT_TURN_TLS_HOST`, `ENOT_TURN_TLS_CERT`, `ENOT_TURN_TLS_KEY`, `ENOT_TURN_TLS_LISTEN_IP`; сертификат и ключ должны быть доступны coturn. `443` на том же IP, где Caddy принимает HTTPS, отклоняется без отдельного IP или внешнего TCP/SNI edge. Существующий `/etc/turnserver.conf` без пометки EnotDesk сохраняется как `*.bak-<штамп>`. Повторные запуски и `--update` уже настроенный стек не пересоздают (только обновляют env-файл), внешний TURN с `ENOT_TURN_URLS` в env не трогают; принудительная перенастройка — `--reset-turn`.
 - **TLS (Caddy)**: apt-пакет из официального репозитория; `/etc/caddy/Caddyfile` — `домен → reverse_proxy 127.0.0.1:PORT`, сертификат Let's Encrypt автоматически; сервер переводится на `ENOT_HOST=127.0.0.1`, публичный URL — `https://<домен>`. Существующий `Caddyfile` без пометки EnotDesk сохраняется как `*.bak-<штамп>`. Управляемый `Caddyfile` перезаписывается при каждом `--update`/деплое, поэтому другие сайты на этом же Caddy кладите отдельными файлами `/etc/caddy/sites.d/<имя>.caddy` — последней строкой он делает `import /etc/caddy/sites.d/*.caddy`, и они переживают деплой.
 - Домен берётся из `ENOT_PUBLIC_URL` (например, `ENOT_PUBLIC_URL=https://example.com`). Если домена нет — TLS честно пропускается с предупреждением в логе установки (незащищённый локальный http-режим), TURN при этом ставится (realm = IP).
 - Отказ: `--no-turn` и/или `--no-tls`; план без изменений: `--dry-run`.
@@ -622,6 +622,12 @@ TURN_PASSWORD="$(printf '%s' "$TURN_USERNAME" | openssl dgst -sha1 -hmac "$TURN_
 # ENOT_TURN_URLS=stun:example.com:3478,turn:example.com:3478?transport=udp,turn:example.com:3478?transport=tcp
 # ENOT_TURN_USERNAME=$TURN_USERNAME
 # ENOT_TURN_PASSWORD=$TURN_PASSWORD
+# Для TCP-only сетей добавьте TURN/TLS (сертификат должен быть fullchain PEM):
+# ENOT_TURN_TLS_PORT=443
+# ENOT_TURN_TLS_HOST=turn.example.com
+# ENOT_TURN_TLS_CERT=/etc/letsencrypt/live/turn.example.com/fullchain.pem
+# ENOT_TURN_TLS_KEY=/etc/letsencrypt/live/turn.example.com/privkey.pem
+# ENOT_TURN_TLS_LISTEN_IP=203.0.113.20  # отдельный IP, если Caddy уже слушает 443
 ```
 
 Порты в файрволе: `ufw allow 3478/tcp`, `ufw allow 3478/udp`, `ufw allow 49160:49999/udp`.

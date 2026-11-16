@@ -53,6 +53,10 @@ if [ -n "${DOMAIN:-}" ]; then
       '
     )"
   fi
+  if [ -n "${TURN_TLS_PORT:-}" ]; then
+    ENOT_TURN_TLS_HOST="${TURN_TLS_HOST:-$DOMAIN}"
+    ENOT_TURN_TLS_PORT="$TURN_TLS_PORT"
+  fi
 elif [ -n "${ENOT_TURN_SECRET:-}" ]; then
   # Волна A (100%): без домена TURN тоже отдаём — по публичному IP из
   # ENOT_PUBLIC_URL (quick-setup вычисляет его при установке без домена) —
@@ -77,6 +81,10 @@ elif [ -n "${ENOT_TURN_SECRET:-}" ]; then
         '
       )"
     fi
+    if [ -n "${TURN_TLS_PORT:-}" ]; then
+      ENOT_TURN_TLS_HOST="${TURN_TLS_HOST:-$TURN_HOST}"
+      ENOT_TURN_TLS_PORT="$TURN_TLS_PORT"
+    fi
   else
     echo "ENOTDESK: ни DOMAIN, ни адрес в ENOT_PUBLIC_URL не заданы — TURN клиенту не отдан (нужен публичный адрес); coturn запущен, но простаивает." >&2
   fi
@@ -85,4 +93,5 @@ fi
 # ENOT_TURN_SECRET пробрасывается серверу как есть (эфемерные TURN-креды):
 # compose кладёт его в окружение контейнера, здесь — только явный export.
 export ENOT_PUBLIC_URL ENOT_TURN_URLS ENOT_TURN_USERNAME ENOT_TURN_PASSWORD ENOT_TURN_SECRET
+export ENOT_TURN_TLS_PORT ENOT_TURN_TLS_HOST
 exec "$@"

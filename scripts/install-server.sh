@@ -9,7 +9,9 @@
 #   bash scripts/install-server.sh --help
 #
 # Env (имена, значения задаются снаружи): ENOT_PORT, ENOT_BIND, ENOT_PUBLIC_URL,
-# ENOT_DB, ENOT_TURN_URLS, ENOT_TURN_USERNAME, ENOT_TURN_PASSWORD, NODE_VERSION.
+# ENOT_DB, ENOT_TURN_URLS, ENOT_TURN_USERNAME, ENOT_TURN_PASSWORD,
+# ENOT_TURN_TLS_PORT, ENOT_TURN_TLS_HOST, ENOT_TURN_TLS_CERT, ENOT_TURN_TLS_KEY,
+# NODE_VERSION.
 # ENOT_TURN_SECRET управляется установщиком (secret coturn, хранится в env-файле 0600).
 # ENOT_SECRET_KEY и ENOT_TRUSTED_PROXY опциональны: заданы — уходят в env-файл
 # (сервер читает их из окружения, не из argv), пустые — в env-файл не пишутся.
@@ -46,6 +48,11 @@ PUBLIC_URL=""
 TURN_URLS="${ENOT_TURN_URLS:-}"
 TURN_USERNAME="${ENOT_TURN_USERNAME:-}"
 TURN_PASSWORD="${ENOT_TURN_PASSWORD:-}"
+TURN_TLS_PORT="${ENOT_TURN_TLS_PORT:-}"
+TURN_TLS_HOST="${ENOT_TURN_TLS_HOST:-}"
+TURN_TLS_CERT="${ENOT_TURN_TLS_CERT:-}"
+TURN_TLS_KEY="${ENOT_TURN_TLS_KEY:-}"
+TURN_TLS_LISTEN_IP="${ENOT_TURN_TLS_LISTEN_IP:-}"
 TURN_SECRET=""
 TURN_CONF="/etc/turnserver.conf"
 CADDYFILE="/etc/caddy/Caddyfile"
@@ -105,6 +112,11 @@ EnotDesk — установщик сервера.
   ENOT_DB            путь к БД (по умолчанию /var/lib/enotdesk/enotdesk.db)
   NODE_VERSION       версия Node.js из tarball nodejs.org (по умолчанию 24.22.1)
   ENOT_TURN_URLS, ENOT_TURN_USERNAME, ENOT_TURN_PASSWORD — внешний TURN (--no-turn)
+  ENOT_TURN_TLS_PORT    — порт TURN/TLS (например 443; нужен сертификат)
+  ENOT_TURN_TLS_HOST    — имя TURN/TLS (по умолчанию домен ENOT_PUBLIC_URL)
+  ENOT_TURN_TLS_CERT    — PEM-сертификат coturn (fullchain)
+  ENOT_TURN_TLS_KEY     — PEM-ключ coturn
+  ENOT_TURN_TLS_LISTEN_IP — отдельный IP для TLS, если 443 занят Caddy
   ENOT_SECRET_KEY    ключ шифрования 2FA-секретов и секретов webhooks (AES-256-GCM);
                      пусто — их включение честно отказывает (secret_key_missing)
   ENOT_TRUSTED_PROXY доверенные обратные прокси: IP или IPv4-CIDR через запятую
@@ -113,7 +125,9 @@ EnotDesk — установщик сервера.
 По умолчанию установщик сам ставит TURN (coturn: порт 3478 tcp/udp, relay 49160–49999/udp,
 static-auth-secret генерируется в env-файл 0600, realm — из ENOT_PUBLIC_URL) и TLS
 (Caddy из официального репозитория: авто-HTTPS на 80/443 tcp+udp, домен из ENOT_PUBLIC_URL
-→ 127.0.0.1:PORT). Уже настроенный внешний TURN из env-файла не перезаписывается;
+→ 127.0.0.1:PORT). TURN/TLS включается только при явном ENOT_TURN_TLS_PORT и
+читаемых PEM-файлах; при 443 на одном IP с Caddy нужен внешний TCP/SNI edge или
+отдельный IP. Уже настроенный внешний TURN из env-файла не перезаписывается;
 принудительная перенастройка встроенного coturn — --reset-turn. Для Caddy и coturn нужен
 работающий apt; без домена в ENOT_PUBLIC_URL TLS честно пропускается с предупреждением
 (локальный http-режим).
@@ -371,6 +385,9 @@ derive_edge() {
   else
     TLS_ACTIVE=0
   fi
+  if [ "$TLS_ACTIVE" = "1" ] && [ "$TURN_TLS_PORT" = "443" ] && [ -z "$TURN_TLS_LISTEN_IP" ]; then
+    die "TURN/TLS 443 конфликтует с Caddy на этом IP — задайте ENOT_TURN_TLS_LISTEN_IP для отдельного IP или вынесите TURN на внешний edge"
+  fi
 }
 
 apt_ready() {
@@ -387,6 +404,15 @@ compute_turn_creds() {
   TURN_PASSWORD=$(TURN_USERNAME="$TURN_USERNAME" TURN_SECRET="$TURN_SECRET" "$NODE_BIN" \
     -e 'const c=require("crypto");const u=process.env.TURN_USERNAME,s=process.env.TURN_SECRET;console.log(c.createHmac("sha1",s).update(u).digest("base64"))')
   TURN_URLS="stun:$REALM:3478,turn:$REALM:3478?transport=udp,turn:$REALM:3478?transport=tcp"
+  if [ -n "$TURN_TLS_PORT" ]; then
+    case "$TURN_TLS_PORT" in ''|*[!0-9]*) die "ENOT_TURN_TLS_PORT должен быть числом 1..65535" ;; esac
+    [ "$TURN_TLS_PORT" -ge 1 ] && [ "$TURN_TLS_PORT" -le 65535 ] || die "ENOT_TURN_TLS_PORT вне диапазона 1..65535"
+    [ -n "$TURN_TLS_CERT" ] && [ -r "$TURN_TLS_CERT" ] || die "ENOT_TURN_TLS_CERT не читается: $TURN_TLS_CERT"
+    [ -n "$TURN_TLS_KEY" ] && [ -r "$TURN_TLS_KEY" ] || die "ENOT_TURN_TLS_KEY не читается: $TURN_TLS_KEY"
+    [ -n "$TURN_TLS_HOST" ] || TURN_TLS_HOST="$REALM"
+    valid_host "$TURN_TLS_HOST" || die "ENOT_TURN_TLS_HOST содержит недопустимые символы"
+    TURN_URLS="$TURN_URLS,turns:$TURN_TLS_HOST:$TURN_TLS_PORT?transport=tcp"
+  fi
 }
 
 # coturn: apt-пакет + static-auth-secret (секрет живёт в env-файле 0600, чтобы
@@ -452,6 +478,12 @@ setup_turn() {
     echo "no-cli"
     echo "no-multicast-peers"
     [ -n "$external_ip" ] && echo "external-ip=$external_ip"
+    if [ -n "$TURN_TLS_PORT" ]; then
+      echo "tls-listening-port=$TURN_TLS_PORT"
+      echo "cert=$TURN_TLS_CERT"
+      echo "pkey=$TURN_TLS_KEY"
+      [ -n "$TURN_TLS_LISTEN_IP" ] && echo "listening-ip=$TURN_TLS_LISTEN_IP"
+    fi
   } > "$TURN_CONF"
   # Debian-юнит coturn работает от User=turnserver: конфиг root:root 0600 он не
   # прочитает и молча стартует на дефолтах — без realm и static-auth-secret, то есть
@@ -468,7 +500,11 @@ setup_turn() {
   fi
   systemctl enable --now coturn >/dev/null 2>&1 || die "не удалось включить службу coturn (journalctl -u coturn)"
   systemctl restart coturn || die "coturn не запустился — смотрите journalctl -u coturn"
-  info "coturn настроен: 3478 tcp/udp, relay 49160–49999/udp, креды TURN — в env-файле"
+  if [ -n "$TURN_TLS_PORT" ]; then
+    info "coturn настроен: 3478 tcp/udp + TLS $TURN_TLS_PORT, relay 49160–49999/udp, креды TURN — в env-файле"
+  else
+    info "coturn настроен: 3478 tcp/udp, relay 49160–49999/udp, креды TURN — в env-файле"
+  fi
 }
 
 # Волна A (100%): клиентские сборки из последнего GitHub-релиза → $DIST_DIR,
@@ -669,6 +705,11 @@ merge_env_file() {
   if [ -z "$TURN_URLS" ]; then TURN_URLS="$(read_env_value ENOT_TURN_URLS)"; fi
   if [ -z "$TURN_USERNAME" ]; then TURN_USERNAME=$(read_env_value ENOT_TURN_USERNAME); fi
   if [ -z "$TURN_PASSWORD" ]; then TURN_PASSWORD=$(read_env_value ENOT_TURN_PASSWORD); fi
+  if [ -z "$TURN_TLS_PORT" ]; then TURN_TLS_PORT=$(read_env_value ENOT_TURN_TLS_PORT); fi
+  if [ -z "$TURN_TLS_HOST" ]; then TURN_TLS_HOST=$(read_env_value ENOT_TURN_TLS_HOST); fi
+  if [ -z "$TURN_TLS_CERT" ]; then TURN_TLS_CERT=$(read_env_value ENOT_TURN_TLS_CERT); fi
+  if [ -z "$TURN_TLS_KEY" ]; then TURN_TLS_KEY=$(read_env_value ENOT_TURN_TLS_KEY); fi
+  if [ -z "$TURN_TLS_LISTEN_IP" ]; then TURN_TLS_LISTEN_IP=$(read_env_value ENOT_TURN_TLS_LISTEN_IP); fi
   if [ -z "$TURN_SECRET" ]; then TURN_SECRET=$(read_env_value ENOT_TURN_SECRET); fi
   if [ -z "${ENOT_GRACE_MS:-}" ]; then GRACE_MS="$(read_env_value ENOT_GRACE_MS)"; else GRACE_MS="$ENOT_GRACE_MS"; fi
   if [ -z "${ENOT_RETENTION_DAYS:-}" ]; then RETENTION_DAYS="$(read_env_value ENOT_RETENTION_DAYS)"; else RETENTION_DAYS="$ENOT_RETENTION_DAYS"; fi
@@ -730,6 +771,9 @@ print_plan() {
     else
       echo "  TURN (coturn):      поставить apt-пакет; realm $REALM; static-auth-secret — в env-файл (0600)"
       echo "                      порты: 3478 tcp/udp, relay 49160–49999/udp"
+      if [ -n "$TURN_TLS_PORT" ]; then
+        echo "                      TLS: $TURN_TLS_PORT (host ${TURN_TLS_HOST:-$REALM})"
+      fi
     fi
   else
     echo "  TURN (coturn):      пропущен (--no-turn)"
@@ -910,6 +954,11 @@ install -m 0600 /dev/null "$ENV_FILE"
   if [ -n "$TURN_URLS" ]; then env_kv ENOT_TURN_URLS "$TURN_URLS"; fi
   if [ -n "$TURN_USERNAME" ]; then env_kv ENOT_TURN_USERNAME "$TURN_USERNAME"; fi
   if [ -n "$TURN_PASSWORD" ]; then env_kv ENOT_TURN_PASSWORD "$TURN_PASSWORD"; fi
+  if [ -n "$TURN_TLS_PORT" ]; then env_kv ENOT_TURN_TLS_PORT "$TURN_TLS_PORT"; fi
+  if [ -n "$TURN_TLS_HOST" ]; then env_kv ENOT_TURN_TLS_HOST "$TURN_TLS_HOST"; fi
+  if [ -n "$TURN_TLS_CERT" ]; then env_kv ENOT_TURN_TLS_CERT "$TURN_TLS_CERT"; fi
+  if [ -n "$TURN_TLS_KEY" ]; then env_kv ENOT_TURN_TLS_KEY "$TURN_TLS_KEY"; fi
+  if [ -n "$TURN_TLS_LISTEN_IP" ]; then env_kv ENOT_TURN_TLS_LISTEN_IP "$TURN_TLS_LISTEN_IP"; fi
   if [ -n "$GRACE_MS" ]; then env_kv ENOT_GRACE_MS "$GRACE_MS"; fi
   if [ -n "$RETENTION_DAYS" ]; then env_kv ENOT_RETENTION_DAYS "$RETENTION_DAYS"; fi
   if [ -n "$MAX_SESSIONS" ]; then env_kv ENOT_MAX_SESSIONS "$MAX_SESSIONS"; fi

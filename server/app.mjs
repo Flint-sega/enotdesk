@@ -310,6 +310,33 @@ async function turnUrlVariants(url) {
   }
 }
 
+function publicHost(publicUrl) {
+  try {
+    const raw = String(publicUrl ?? '').trim();
+    if (!raw) return '';
+    const u = new URL(/^[a-z]+:\/\//i.test(raw) ? raw : `https://${raw}`);
+    return u.hostname;
+  } catch {
+    return '';
+  }
+}
+
+function turnTlsUrl(host, port) {
+  const h = String(host ?? '').trim();
+  const p = Number(port);
+  if (!h || !Number.isInteger(p) || p < 1 || p > 65535) return null;
+  const wireHost = h.includes(':') && !h.startsWith('[') ? `[${h}]` : h;
+  return `turns:${wireHost}:${p}?transport=tcp`;
+}
+
+function withTurnTlsUrl(urls, { host, port } = {}) {
+  const extra = turnTlsUrl(host, port);
+  if (!extra) return String(urls ?? '');
+  const current = String(urls ?? '').split(',').map((x) => x.trim()).filter(Boolean);
+  if (!current.some((x) => x.toLowerCase() === extra.toLowerCase())) current.push(extra);
+  return current.join(',');
+}
+
 const CONTACT_LIMITS = { name: 120, notes: 2000, tags: 10, tag: 30 };
 const MACHINE_LIMITS = { name: 120, group: 60, reason: 500, pin: 128, toast: 500 };
 // PIN машины (решение владельца 24.10, ревью 1.13 P2-10): новый — не короче 6 символов
@@ -340,14 +367,24 @@ function bearer(req) {
 }
 
 export function createServer(opts = {}) {
+  const publicUrl = opts.publicUrl ?? '';
+  const turnTlsPort = opts.turnTlsPort ?? process.env.ENOT_TURN_TLS_PORT ?? '';
+  const turnTlsHost = opts.turnTlsHost ?? process.env.ENOT_TURN_TLS_HOST ?? publicHost(publicUrl);
+  if (String(turnTlsPort).trim() && !turnTlsUrl(turnTlsHost, turnTlsPort)) {
+    throw new Error('ENOT_TURN_TLS_PORT/ENOT_TURN_TLS_HOST: нужен порт 1..65535 и имя хоста');
+  }
   const cfg = {
     dbPath: opts.dbPath ?? ':memory:',
     host: opts.host ?? '127.0.0.1',
     port: opts.port ?? 0,
     version: opts.version ?? '0.0.0',
     distDir: opts.distDir || process.env.ENOT_DIST_DIR || path.join(process.cwd(), 'dist'),
-    publicUrl: opts.publicUrl ?? '',
-    turnUrls: opts.turnUrls ?? '',
+    publicUrl,
+    // N-5: явный TURN over TLS URL. Сервер не угадывает сертификаты и не
+    // меняет внешний edge: coturn/edge должны быть настроены отдельно.
+    // При порте 443 это позволяет клиенту работать из сети, где разрешён
+    // только TCP 443; без заданного порта старый 3478-контур не меняется.
+    turnUrls: withTurnTlsUrl(opts.turnUrls ?? '', { host: turnTlsHost, port: turnTlsPort }),
     turnUsername: opts.turnUsername ?? '',
     turnPassword: opts.turnPassword ?? '',
     // секрет TURN (coturn use-auth-secret): задан — /rtc-config раздаёт
@@ -2331,6 +2368,32 @@ export function createServer(opts = {}) {
       }
     });
 
+    function secureDesktopAudit(rt, s, msg) {
+      const base = { unattended: true, machineId: s.machine_id };
+      const count = Number.isSafeInteger(msg.secureInputs) && msg.secureInputs >= 0 ? msg.secureInputs : null;
+      const prev = rt.secureInputs ?? 0;
+      let left = false; // ввод этого heartbeat'а уже учтён записью выхода
+      if (typeof msg.secureDesktop === 'boolean' && msg.secureDesktop !== (rt.secureDesktop ?? false)) {
+        rt.secureDesktop = msg.secureDesktop;
+        if (msg.secureDesktop) {
+          rt.secureEnterInputs = prev;
+          rt.secureInputLogged = false;
+          auditLog(db, s.machine_id, 'security.desktop.enter', s.id, base);
+        } else {
+          const inputs = Math.max(0, (count ?? prev) - (rt.secureEnterInputs ?? prev));
+          auditLog(db, s.machine_id, 'security.desktop.leave', s.id, { ...base, inputs });
+          left = true;
+        }
+      }
+      if (count !== null && count > prev && !left) {
+        if (!rt.secureDesktop || !rt.secureInputLogged) {
+          auditLog(db, s.machine_id, 'security.input', s.id, { ...base, inputs: count - prev });
+        }
+        if (rt.secureDesktop) rt.secureInputLogged = true;
+      }
+      if (count !== null) rt.secureInputs = Math.max(prev, count);
+    }
+
     function handleMessage(ws, raw) {
       let msg;
       try { msg = JSON.parse(raw.toString('utf8')); } catch { return send(ws, { type: 'error', code: 'bad_message', message: 'Некорректное сообщение' }); }
@@ -2358,6 +2421,12 @@ export function createServer(opts = {}) {
             host: !s.machine_id, unattended: !!s.machine_id, ...(s.machine_id ? { machineId: s.machine_id } : {}),
           });
         }
+        // P2-8 (ревью 22.10): защищённый рабочий стол машины (экран входа и
+        // блокировки, UAC). Пишутся переходы и первый ввод за период, не каждый
+        // heartbeat; события security.* пишутся всегда (ADR 0034). Ввод мог
+        // пройти между двумя heartbeat'ами (короткое окно UAC) — тогда рост
+        // счётчика пишется и без перехода.
+        if (rtBeat && s.machine_id) secureDesktopAudit(rtBeat, s, msg);
         // частый стук не нагружает БД: lease пишем не чаще половины интервала
         if (rtBeat && rtBeat.lastBeat && nowMs - rtBeat.lastBeat < cfg.heartbeatMs / 2) {
           return send(ws, { type: 'heartbeat' });

@@ -36,7 +36,7 @@
 
 | ОС | Где смотреть |
 |---|---|
-| Windows | `C:\Windows\System32\config\systemprofile\AppData\Roaming\EnotDesk\agent\enotdesk-boot.log` (запуск агента), `C:\ProgramData\EnotDesk\enotdesk-video.log` (экран и ввод), состояние: `sc query EnotDeskAgent`. Подробная диагностика службы: создайте пустой файл `C:\ProgramData\EnotDesk\svc-diag.enabled`, перезапустите службу — появится `svc-diag.log` (потом файл-маркер удалите). |
+| Windows | `C:\Windows\System32\config\systemprofile\AppData\Roaming\EnotDesk\agent\enotdesk-boot.log` (запуск агента), `C:\ProgramData\EnotDesk\enotdesk-video.log` (экран и ввод; папку `C:\ProgramData\EnotDesk` открывает только администратор), состояние: `sc query EnotDeskAgent`. Подробная диагностика службы: от администратора создайте пустой файл `C:\ProgramData\EnotDesk\svc-diag.enabled`, перезапустите службу — появится `svc-diag.log` (потом файл-маркер удалите). |
 | Linux | `journalctl -u enotdesk-agent -n 200 --no-pager`, `systemctl status enotdesk-agent` |
 | macOS | `~/Library/Logs/enotdesk-agent.log`, `launchctl print gui/$(id -u)/com.enotdesk.agent` |
 

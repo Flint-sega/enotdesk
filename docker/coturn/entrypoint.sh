@@ -22,6 +22,22 @@ if [ -n "${DOMAIN:-}" ]; then
   REALM="$DOMAIN"
 fi
 
+TLS_PORT="${TURN_TLS_PORT:-}"
+TLS_CERT="${TURN_TLS_CERT:-}"
+TLS_KEY="${TURN_TLS_KEY:-}"
+LISTEN_IP="${TURN_TLS_LISTEN_IP:-}"
+if [ -n "$TLS_PORT" ]; then
+  case "$TLS_PORT" in *[!0-9]*) echo "ENOTDESK coturn: TURN_TLS_PORT должен быть числом" >&2; exit 1 ;; esac
+  [ "$TLS_PORT" -ge 1 ] && [ "$TLS_PORT" -le 65535 ] || {
+    echo "ENOTDESK coturn: TURN_TLS_PORT вне диапазона 1..65535" >&2
+    exit 1
+  }
+  [ -n "$TLS_CERT" ] && [ -n "$TLS_KEY" ] && [ -r "$TLS_CERT" ] && [ -r "$TLS_KEY" ] || {
+    echo "ENOTDESK coturn: для TURN_TLS_PORT нужны читаемые TURN_TLS_CERT и TURN_TLS_KEY" >&2
+    exit 1
+  }
+fi
+
 umask 077
 cat > /run/turnserver.conf <<EOF
 listening-port=3478
@@ -36,6 +52,12 @@ no-dtls
 no-multicast-peers
 no-cli
 EOF
+if [ -n "$TLS_PORT" ]; then
+  printf 'tls-listening-port=%s\ncert=%s\npkey=%s\n' "$TLS_PORT" "$TLS_CERT" "$TLS_KEY" >> /run/turnserver.conf
+fi
+if [ -n "$LISTEN_IP" ]; then
+  printf 'listening-ip=%s\n' "$LISTEN_IP" >> /run/turnserver.conf
+fi
 chmod 0600 /run/turnserver.conf
 
 # -c: только этот конфиг (как раньше -c /dev/null + флаги argv).

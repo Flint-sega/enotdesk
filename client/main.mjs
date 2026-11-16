@@ -36,14 +36,15 @@ import {
   onExpand as chatWidgetOnExpand,
   shouldNotify as chatWidgetShouldNotify,
 } from './lib/chat-widget.mjs';
-import { createSessionSpawner } from './lib/session-spawn.mjs';
+import { createSessionSpawner, helperLaunchPlan } from './lib/session-spawn.mjs';
 import { createVideoHost } from './lib/video-host.mjs';
 import { inputEventToCommands } from './lib/input-translate.mjs';
 import { resolveConsoleUser, noNewPrivs } from './lib/console-user.mjs';
-import { UPDATE_REPO, updateFeedUrl, notifyFeedName, updateDecision, updateInstallDecision } from './lib/updater.mjs';
+import { UPDATE_REPO, updateFeedUrl, notifyFeedName, updateDecision, updateInstallDecision, agentUpdatePolicy } from './lib/updater.mjs';
 import { isNewerVersion } from './lib/version-check.mjs';
 import { t, setLocale } from './lib/i18n.mjs';
 import { createSvcDiag, envDiagSlice, maskJoinTokens } from './lib/svc-diag.mjs';
+import { secureProgramDataDir } from './lib/programdata-acl.mjs';
 import { createKeepAwake } from './lib/keep-awake.mjs';
 import { createBootLog } from './lib/boot-log.mjs';
 import { linuxOzonePlatform } from './lib/ozone.mjs';
@@ -108,7 +109,10 @@ try {
 // exe с EDESK_AGENT=1). Без StartServiceCtrlDispatcher SCM убивает процесс
 // по 1053 (живой сеанс 28.09, W-U2). Ветка стоит ДО любого обращения к app.
 if (process.env.EDESK_AGENT_SVC === '1' && process.platform === 'win32') {
+  // P2-5 (ревью 22.10): до первой записи от SYSTEM — права на ProgramData\EnotDesk
+  const acl = secureProgramDataDir();
   svcDiag.write('svc', 'svc-ветка вошла (EDESK_AGENT_SVC=1 доставлен)');
+  svcDiag.write('svc', `ProgramData\\EnotDesk: ${acl.ok ? 'права выставлены' : `права НЕ выставлены (шаг ${acl.step}: ${acl.error})`}${acl.moved ? `; подменённая папка отодвинута в ${acl.moved}` : ''}${acl.removed.length ? `; удалены ссылки: ${acl.removed.join(', ')}` : ''}`);
   try {
     const { runAsScmParent } = await import('./lib/win-service.mjs');
     await runAsScmParent({
@@ -630,6 +634,94 @@ function startUpdater() {
   }, 10_000);
   if (firstUpdateCheck.unref) firstUpdateCheck.unref();
   setInterval(() => { autoUpdater.checkForUpdates().catch(() => { /* ошибки приходят в 'error' */ }); }, UPDATE_CHECK_MS);
+}
+
+// Headless updater агента (W-11): служба не открывает окно и не может спросить
+// человека, поэтому скачивает обновление автоматически, а устанавливает его
+// только в момент, когда текущего machine-сеанса нет. Для Windows NSIS
+// `quitAndInstall` запускает тот же установщик с хуками остановки/лечения SCM;
+// для Linux работает только настоящий AppImage, а не распакованное дерево.
+function startAgentUpdater(agent) {
+  if (SMOKE || !AGENT || !app.isPackaged) return () => {};
+  const policy = agentUpdatePolicy({
+    platform: process.platform,
+    packaged: app.isPackaged,
+    winInstalled: WIN_INSTALLED,
+    appImage: Boolean(process.env.APPIMAGE),
+    macSelfUpdate: pkg.ENOT_MAC_SELF_UPDATE === true || pkg.ENOT_MAC_SELF_UPDATE === 'true',
+  });
+  if (!policy.enabled) {
+    bootLog.write('update', `агент: фоновое обновление отключено (${policy.reason})`);
+    return () => {};
+  }
+  const feedUrl = updateFeedUrl(UPDATE_REPO);
+  let autoUpdater;
+  try { autoUpdater = createRequire(import.meta.url)('electron-updater').autoUpdater; } catch { autoUpdater = null; }
+  if (!autoUpdater) {
+    bootLog.write('update', 'агент: electron-updater недоступен — обновление вручную');
+    return () => {};
+  }
+  autoUpdater.autoDownload = true;
+  autoUpdater.autoInstallOnAppQuit = false;
+  autoUpdater.logger = {
+    info: (m) => bootLog.write('update', String(m)),
+    warn: (m) => bootLog.write('update', String(m)),
+    error: (m) => bootLog.write('update', String(m)),
+    debug: () => {},
+  };
+  try {
+    autoUpdater.setFeedURL({ provider: 'generic', url: feedUrl });
+  } catch (e) {
+    bootLog.write('update', `агент: не удалось задать фид (${e?.message ?? e})`);
+    return () => {};
+  }
+
+  let downloaded = null;
+  let installing = false;
+  let idleTimer = null;
+  const installWhenIdle = () => {
+    if (!downloaded || installing) return;
+    const state = agent?.status?.();
+    if (state?.session) {
+      bootLog.write('update', `агент: версия ${downloaded} скачана, установка ждёт завершения сеанса`);
+      return;
+    }
+    installing = true;
+    bootLog.write('update', `агент: версия ${downloaded} скачана, активных сеансов нет — запускаю установку`);
+    try {
+      autoUpdater.quitAndInstall(true, true);
+    } catch (e) {
+      installing = false;
+      bootLog.write('update', `агент: quitAndInstall ошибка (${e?.message ?? e})`);
+    }
+  };
+  const onAvailable = (info) => {
+    const version = String(info?.version ?? '');
+    if (version) bootLog.write('update', `агент: доступна версия ${version}`);
+  };
+  const onDownloaded = (info) => {
+    downloaded = String(info?.version ?? '');
+    bootLog.write('update', `агент: обновление ${downloaded || '?'} скачано`);
+    installWhenIdle();
+    if (!idleTimer) idleTimer = setInterval(installWhenIdle, 15_000);
+  };
+  const onError = (e) => bootLog.write('update', `агент: ошибка updater (${e?.message ?? e})`);
+  autoUpdater.on('update-available', onAvailable);
+  autoUpdater.on('update-downloaded', onDownloaded);
+  autoUpdater.on('error', onError);
+  const check = () => { autoUpdater.checkForUpdates().catch((e) => onError(e)); };
+  const first = setTimeout(check, 10_000);
+  if (first.unref) first.unref();
+  const daily = setInterval(check, UPDATE_CHECK_MS);
+  if (daily.unref) daily.unref();
+  return () => {
+    clearTimeout(first);
+    clearInterval(daily);
+    if (idleTimer) clearInterval(idleTimer);
+    autoUpdater.removeListener?.('update-available', onAvailable);
+    autoUpdater.removeListener?.('update-downloaded', onDownloaded);
+    autoUpdater.removeListener?.('error', onError);
+  };
 }
 
 function stopSignal() {
@@ -1850,7 +1942,17 @@ function startAgentMode() {
   // оттуда. При установке NSIS (Program Files) путь уже доступен — копия не
   // нужна. Копия не удалась — честно отдаём исходный путь: спавн отчитает отказ.
   let helperExe = app.isPackaged ? path.join(process.resourcesPath, 'enotdesk-video.exe') : '';
-  if (process.platform === 'win32' && helperExe) {
+  // ADR 0036: от SYSTEM — только из Program Files (защищённая папка), без копии;
+  // иначе прежний путь — токен пользователя и копия в ProgramData.
+  const launchPlan = helperLaunchPlan({
+    platform: process.platform,
+    helperExe,
+    programFiles: process.env.ProgramW6432 || process.env.ProgramFiles,
+    envToken: process.env.ENOT_VIDEO_TOKEN,
+    pathApi: path.win32,
+  });
+  svcDiag.write('video', `helper token: ${launchPlan.tokenMode}`);
+  if (process.platform === 'win32' && helperExe && launchPlan.copyToProgramData) {
     try {
       const helperDir = path.join(process.env.PROGRAMDATA || 'C:\\ProgramData', 'EnotDesk', 'helper');
       fs.mkdirSync(helperDir, { recursive: true });
@@ -1882,6 +1984,10 @@ function startAgentMode() {
       // командная строка видна только процессам того же пользователя.
       spawner: createSessionSpawner({
         koffi: spawnKoffi,
+        // ADR 0036: хелпер — от SYSTEM в консольном сеансе (видит экран входа и
+        // блокировки, работает без вошедшего пользователя), если exe в Program
+        // Files; ENOT_VIDEO_TOKEN=user — прежний токен пользователя (выключатель)
+        tokenMode: launchPlan.tokenMode,
         log: { warn: (...a) => { console.warn(...a); svcDiag.write('video', a.map(String).join(' ')); } },
       }),
       netFactory: (p) => net.connect(p),
@@ -2031,7 +2137,8 @@ function startAgentMode() {
       },
     },
   });
-  app.on('before-quit', () => agent.stop());
+  const stopAgentUpdater = startAgentUpdater(agent);
+  app.on('before-quit', () => { stopAgentUpdater(); agent.stop(); });
   const code = process.env.EDESK_AGENT_CODE;
   const started = agent.start(code ? { code } : {});
   svcDiag.write('agent', `start: ok=${started.ok}${started.error ? ` error=${started.error}` : ''} server=${settings.serverUrl}${code ? ' (по onboarding-коду)' : ' (по сохранённому токену)'}`);

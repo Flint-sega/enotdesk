@@ -82,3 +82,24 @@ export function updateInstallDecision({ platform = process.platform, confirmed =
     askConfirm: confirmed !== true,
   };
 }
+
+// Политика headless-агента (W-11). У службы нет окна, поэтому подтверждение
+// человека невозможно и не должно имитироваться. Автоустановка разрешена
+// только для каналов, где electron-updater действительно может заменить
+// запущенный пакет: установленный Windows NSIS и AppImage, запущенный как
+// AppImage. Распакованный Linux-agent, portable Windows и неподписанный macOS
+// получают честную причину ручного обновления.
+export function agentUpdatePolicy({
+  platform = process.platform,
+  packaged = false,
+  winInstalled = false,
+  appImage = false,
+  macSelfUpdate = false,
+} = {}) {
+  if (packaged !== true) return { enabled: false, reason: 'not-packaged' };
+  if (platform === 'win32' && winInstalled !== true) return { enabled: false, reason: 'windows-portable' };
+  if (platform === 'linux' && appImage !== true) return { enabled: false, reason: 'linux-extracted-agent' };
+  if (platform === 'darwin' && macSelfUpdate !== true) return { enabled: false, reason: 'mac-unsigned' };
+  if (!['win32', 'linux', 'darwin'].includes(platform)) return { enabled: false, reason: 'unsupported-platform' };
+  return { enabled: true, reason: null, installWhenIdle: true };
+}

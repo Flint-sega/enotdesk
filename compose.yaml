@@ -40,6 +40,10 @@ services:
       # Секрет уходит и серверу (эфемерные TURN-креды из ENOT_TURN_SECRET, server/),
       # и контейнеру coturn — оба через окружение контейнера, не через argv.
       ENOT_TURN_SECRET: ${TURN_SECRET:?Задай TURN_SECRET в .env — секрет TURN-сервера, см. .env.example}
+      # Опциональный TURN over TLS. На одном IP TURN_TLS_PORT=443 конфликтует
+      # с Caddy; нужен внешний TCP/SNI edge или отдельный публичный IP.
+      ENOT_TURN_TLS_PORT: ${TURN_TLS_PORT:-}
+      ENOT_TURN_TLS_HOST: ${TURN_TLS_HOST:-}
       # Ключ шифрования 2FA/webhook-секретов и доверенные обратные прокси: пустые =
       # прежнее поведение (шифрование недоступно / X-Forwarded-For не доверяется);
       # читаются app.mjs и main.mjs из окружения процесса, не из argv.
@@ -115,8 +119,13 @@ services:
     environment:
       TURN_SECRET: ${TURN_SECRET:?Задай TURN_SECRET в .env — секрет TURN-сервера, см. .env.example}
       DOMAIN: ${DOMAIN:-}
+      TURN_TLS_PORT: ${TURN_TLS_PORT:-}
+      TURN_TLS_CERT: ${TURN_TLS_CERT:-/run/turn-certs/fullchain.pem}
+      TURN_TLS_KEY: ${TURN_TLS_KEY:-/run/turn-certs/privkey.pem}
+      TURN_TLS_LISTEN_IP: ${TURN_TLS_LISTEN_IP:-}
     volumes:
       - ./docker/coturn/entrypoint.sh:/entrypoint.sh:ro
+      - ./turn-certs:/run/turn-certs:ro
     entrypoint: ["sh", "/entrypoint.sh"]
 
   caddy:

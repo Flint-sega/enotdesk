@@ -206,16 +206,16 @@ fn log_line(line: &str) {
     // the tick/err lines are the only helper-side telemetry (v0.6.0 приёмка).
     // TEMP is absent in the service-built environment — ProgramData is the
     // directory the rest of EnotDesk already uses (svc-diag).
-    if let Some(dir) = std::env::var("ProgramData")
-        .ok()
-        .or_else(|| std::env::var("TEMP").ok())
-    {
-        if let Ok(mut f) = std::fs::OpenOptions::new()
-            .create(true)
-            .append(true)
-            .open(format!("{dir}\\EnotDesk\\enotdesk-video.log"))
-        {
+    // Links in place of the folder or the file mean no file log (P2-5,
+    // win::open_journal). The service closes %ProgramData%\EnotDesk to SYSTEM
+    // and Administrators, so a helper on the user token (fallback path) logs
+    // to its own TEMP instead.
+    let primary = std::env::var("ProgramData").ok().map(|d| format!("{d}\\EnotDesk"));
+    let fallback = std::env::var("TEMP").ok();
+    for dir in primary.into_iter().chain(fallback) {
+        if let Some(mut f) = win::open_journal(&dir, "enotdesk-video.log") {
             let _ = writeln!(f, "{line}");
+            break;
         }
     }
 }
@@ -1071,6 +1071,14 @@ fn capture_session(
     // which runs once per pipe connection).
     let mut black_streak: u32 = 0;
     let mut other_err_streak: u32 = 0;
+    // ADR 0036: перед каждым созданием дубликата поток захвата прицепляется к
+    // ТЕКУЩЕМУ рабочему столу ввода — после блокировки/UAC дубликат
+    // пересоздаётся уже на Winlogon (процессу от SYSTEM это разрешено; у
+    // процесса пользователя OpenInputDesktop там честно отказывает — прежнее
+    // поведение). ENOT_VIDEO_FOLLOW=off — аварийный выключатель. Лог — только
+    // при смене исхода (ok/failed), без шума на каждом пересоздании.
+    let follow_desktop = std::env::var("ENOT_VIDEO_FOLLOW").map_or(true, |v| v != "off");
+    let mut capture_desk_ok: Option<bool> = None;
     // Стартовый кадр (21.10, Win11 + virtio-gpu DOD в лабе): на статичном экране
     // DXGI не отдаёт ни одного кадра, и оператор видит чёрное, пока на машине
     // что-то не изменится. Если после создания дубликата за SEED_AFTER кадров
@@ -1154,6 +1162,18 @@ fn capture_session(
                 // consecutive failures -> Fatal, lock-screen/UAC failures
                 // never silently downgrade the capture path.
                 if dup.is_none() {
+                    if follow_desktop {
+                        let r = win::attach_input_desktop();
+                        let ok = r.is_ok();
+                        if capture_desk_ok != Some(ok) {
+                            capture_desk_ok = Some(ok);
+                            let name = ascii(&win::thread_desktop_name()).replace(['"', '\\'], "'");
+                            match r {
+                                Ok(()) => log_line(&format!("{{\"ev\":\"capture-desktop\",\"attach\":\"ok\",\"desktop\":\"{name}\"}}")),
+                                Err(e) => log_line(&format!("{{\"ev\":\"capture-desktop\",\"attach\":\"failed\",\"desktop\":\"{name}\",\"err\":\"{}\"}}", ascii(&e).replace(['"', '\\'], "'"))),
+                            }
+                        }
+                    }
                     match cap.make_dup() {
                         Ok(d) => {
                             dup_fail_streak = 0;

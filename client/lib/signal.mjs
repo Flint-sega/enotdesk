@@ -145,13 +145,16 @@ export function createSignalClient({ url, wsFactory = (u) => new WebSocket(u), a
       }));
     },
 
-    // extra — allowlist-расширение heartbeat (R09): только termActive boolean,
-    // прочие поля не уходят; без аргумента сообщение как раньше.
+    // extra — allowlist-расширение heartbeat: termActive (R09) и защищённый
+    // рабочий стол машины (P2-8: secureDesktop boolean, secureInputs — счётчик
+    // ввода на нём за сеанс); прочие поля не уходят; без аргумента — как раньше.
     heartbeat(extra) {
       if (!ws || ws.readyState !== 1) return;
       const payload = { type: 'heartbeat' };
-      if (extra && typeof extra === 'object' && typeof extra.termActive === 'boolean') {
-        payload.termActive = extra.termActive;
+      if (extra && typeof extra === 'object') {
+        if (typeof extra.termActive === 'boolean') payload.termActive = extra.termActive;
+        if (typeof extra.secureDesktop === 'boolean') payload.secureDesktop = extra.secureDesktop;
+        if (Number.isSafeInteger(extra.secureInputs) && extra.secureInputs >= 0) payload.secureInputs = extra.secureInputs;
       }
       ws.send(JSON.stringify(payload));
     },

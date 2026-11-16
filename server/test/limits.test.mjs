@@ -4,7 +4,7 @@ import crypto from 'node:crypto';
 import fs from 'node:fs';
 import path from 'node:path';
 import { startServer, api, adminLogin, tmpDb, wsConnect } from './util.mjs';
-import { RateLimiter } from '../app.mjs';
+import { RateLimiter, createServer } from '../app.mjs';
 
 async function setup(t) {
   const dbPath = tmpDb(t);
@@ -174,6 +174,31 @@ test('rtc-config: без токена 401; с hostToken и TURN-конфигом
   // turn.example не резолвится: graceful-фолбэк — оригинал без IP-варианта
   assert.deepEqual(cfg.json.iceServers, [{ urls: ['turn:turn.example:3478'], username: 'enot', credential: 'secret-кред' }]);
   await inst.close();
+});
+
+test('rtc-config: N-5 добавляет TURN/TLS URL для TCP 443 и сохраняет старые transport-ы', async (t) => {
+  const dbPath = tmpDb(t);
+  const { inst, base } = await startServer(t, {
+    dbPath,
+    publicUrl: 'https://support.example.com',
+    turnUrls: 'stun:support.example.com:3478,turn:support.example.com:3478?transport=tcp',
+    turnTlsPort: 443,
+    turnSecret: 'turn-secret-443',
+  });
+  const reg = await api(base, 'POST', '/sessions');
+  const cfg = await api(base, 'GET', '/rtc-config', { token: reg.json.hostToken });
+  assert.equal(cfg.status, 200);
+  const urls = cfg.json.iceServers[0].urls;
+  assert.ok(urls.includes('turns:support.example.com:443?transport=tcp'));
+  assert.ok(urls.includes('turn:support.example.com:3478?transport=tcp'));
+  await inst.close();
+});
+
+test('rtc-config: ошибочный TURN/TLS порт отклоняется при старте, не отдаёт поломанную конфигурацию', () => {
+  assert.throws(
+    () => createServer({ publicUrl: 'https://support.example.com', turnTlsPort: 0 }),
+    /ENOT_TURN_TLS_PORT/,
+  );
 });
 
 test('rtc-config: резолвящийся hostname получает IP-вариант рядом с оригиналом', async (t) => {
