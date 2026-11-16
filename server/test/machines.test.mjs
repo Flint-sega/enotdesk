@@ -1277,3 +1277,64 @@ test('heartbeat машины: экран входа/UAC и ввод на нег�
     assert.equal(a.detail.unattended, true);
   }
 });
+
+// Ревью 16.11: счётчик secureInputs у агента накопительный за весь процесс
+// (client/lib/agent.mjs), а rt сервера пересоздаётся на каждый сеанс. Без
+// базовой линии первый heartbeat нового сеанса видел count > prev(=0) и писал
+// security.input со всей дельтой старых сеансов — фантомное событие о вводе,
+// которого в этом сеансе не было.
+test('heartbeat машины: второй сеанс подряд без ввода — базовая линия, фантомного security.input нет', async (t) => {
+  const { base, port, admin } = await setup(t);
+  const { created, reg } = await onboardAndRegister(base, admin);
+  const mkBeat = (host) => {
+    let beats = 0;
+    const replies = () => host.log.filter((m) => m?.type === 'heartbeat').length;
+    return async (extra) => {
+      beats += 1;
+      const want = beats;
+      host.send(JSON.stringify({ type: 'heartbeat', ...extra }));
+      if (replies() < want) await host.wait(() => replies() >= want);
+    };
+  };
+  const openSession = async (reason) => {
+    const claimed = await api(base, 'POST', `/machines/${created.machine.id}/claim`, { token: admin.token, body: { reason } });
+    const { sessionId, claimId } = claimed.json;
+    const host = wsConnect(port);
+    await wsAuth(host, { type: 'auth', role: 'host', sessionId, token: reg.token });
+    await host.wait((m) => m.type === 'claim');
+    await api(base, 'POST', `/sessions/${sessionId}/decision`, { token: reg.token, body: { claimId, allow: true } });
+    await host.wait((m) => m.type === 'approved');
+    return { sessionId, beat: mkBeat(host) };
+  };
+  const secFor = async (sessionId) => {
+    const audit = await api(base, 'GET', '/audit?limit=100', { token: admin.token });
+    return audit.json.items.filter((a) => a.action.startsWith('security.') && a.targetId === sessionId).reverse();
+  };
+
+  // сеанс 1: реальный ввод на экране входа — счётчик агента накопился до 5
+  const s1 = await openSession('Сеанс 1: ввод на экране входа');
+  await s1.beat({ secureDesktop: true, secureInputs: 0 });
+  await s1.beat({ secureDesktop: true, secureInputs: 4 });
+  await s1.beat({ secureDesktop: false, secureInputs: 5 });
+  assert.deepEqual((await secFor(s1.sessionId)).map((a) => a.action),
+    ['security.desktop.enter', 'security.input', 'security.desktop.leave']);
+  assert.equal((await api(base, 'POST', `/sessions/${s1.sessionId}/end`, { token: admin.token })).status, 200);
+
+  // сеанс 2: ввода на защищённом столе не было, но первый heartbeat несёт
+  // накопленную величину 5 — сервер фиксирует базовую линию БЕЗ записи
+  const s2 = await openSession('Сеанс 2: без ввода');
+  await s2.beat({ secureDesktop: false, secureInputs: 5 });
+  await s2.beat({ secureDesktop: false, secureInputs: 5 });
+  assert.deepEqual((await secFor(s2.sessionId)).map((a) => a.action), [],
+    'в новом сеансе без ввода нет ни одной записи security.input');
+
+  // ввод в новом сеансе считается от базовой линии, а не от нуля
+  await s2.beat({ secureDesktop: true, secureInputs: 5 });
+  await s2.beat({ secureDesktop: true, secureInputs: 6 });
+  await s2.beat({ secureDesktop: false, secureInputs: 7 });
+  const sec2 = await secFor(s2.sessionId);
+  assert.deepEqual(sec2.map((a) => a.action),
+    ['security.desktop.enter', 'security.input', 'security.desktop.leave']);
+  assert.equal(sec2[1].detail.inputs, 1, 'дельта от базовой линии');
+  assert.equal(sec2[2].detail.inputs, 2, 'выход: ввод за период нового сеанса');
+});

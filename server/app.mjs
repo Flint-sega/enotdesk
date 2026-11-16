@@ -2371,6 +2371,13 @@ export function createServer(opts = {}) {
     function secureDesktopAudit(rt, s, msg) {
       const base = { unattended: true, machineId: s.machine_id };
       const count = Number.isSafeInteger(msg.secureInputs) && msg.secureInputs >= 0 ? msg.secureInputs : null;
+      // Счётчик secureInputs у агента накопительный за весь процесс
+      // (client/lib/agent.mjs), а rt пересоздаётся на каждый сеанс: первый
+      // heartbeat сеанса с валидным счётчиком — базовая линия, дельта со старых
+      // сеансов в журнал не пишется (ревью 16.11: иначе фантомное security.input
+      // о вводе, которого в этом сеансе не было; ниже count > prev на базовой
+      // линии ложно, т.к. prev === count).
+      if (count !== null && rt.secureInputs === undefined) rt.secureInputs = count;
       const prev = rt.secureInputs ?? 0;
       let left = false; // ввод этого heartbeat'а уже учтён записью выхода
       if (typeof msg.secureDesktop === 'boolean' && msg.secureDesktop !== (rt.secureDesktop ?? false)) {
