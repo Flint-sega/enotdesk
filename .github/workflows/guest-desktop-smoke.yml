@@ -1,0 +1,90 @@
+name: Windows and macOS Guest Pilot
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [guest-edition]
+    paths:
+      - .github/workflows/guest-desktop-smoke.yml
+      - build/**
+      - client/**
+      - assets/**
+      - package.json
+      - package-lock.json
+      - scripts/smoke-artifact.mjs
+
+permissions:
+  contents: read
+
+jobs:
+  windows:
+    runs-on: windows-2025
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@v6
+        with:
+          node-version: 24
+          cache: npm
+      - run: npm ci --ignore-scripts
+      - name: Pack Windows x64 portable
+        run: npm run pack:win -- portable --x64 --publish never
+      - name: Smoke test the portable executable
+        shell: pwsh
+        run: |
+          $packages = @(Get-ChildItem dist -File -Filter 'EnotDesk-Guest-Pilot-*-win-x64.exe')
+          if ($packages.Count -ne 1) { throw 'Expected one Windows x64 portable executable' }
+          $nativeInput = 'dist/win-unpacked/resources/app.asar.unpacked/node_modules/@koromix/koffi-win32-x64/win32_x64/koffi.node'
+          if (!(Test-Path $nativeInput -PathType Leaf)) { throw 'Missing Windows x64 native input library' }
+          $env:SMOKE_TIMEOUT_MS = '160000'
+          node scripts/smoke-artifact.mjs $packages[0].FullName "--user-data-dir=$env:RUNNER_TEMP/guest-profile" --disable-gpu
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          $hash = (Get-FileHash $packages[0].FullName -Algorithm SHA256).Hash.ToLowerInvariant()
+          Set-Content -Encoding ascii "$($packages[0].FullName).sha256" "$hash  $($packages[0].Name)"
+      - uses: actions/upload-artifact@v6
+        with:
+          name: EnotDesk-Guest-Pilot-windows-x64
+          path: dist/EnotDesk-Guest-Pilot-*-win-x64.exe*
+          if-no-files-found: error
+          retention-days: 14
+
+  macos:
+    runs-on: macos-26
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@v6
+        with:
+          node-version: 24
+          cache: npm
+      - run: npm ci --ignore-scripts
+      - name: Pack macOS Apple Silicon
+        run: |
+          test "$(uname -m)" = arm64
+          npm run pack:mac -- zip --arm64 --publish never -c.mac.identity=- \
+            -c.mac.entitlements=build/entitlements.mac.plist \
+            -c.mac.entitlementsInherit=build/entitlements.mac.plist
+      - name: Smoke test the application from the ZIP
+        run: |
+          set -euo pipefail
+          version="$(node -p "require('./package.json').version")"
+          archive="EnotDesk-Guest-Pilot-$version-mac-arm64.zip"
+          unpacked="$RUNNER_TEMP/guest-archive"
+          ditto -x -k "dist/$archive" "$unpacked"
+          app="$unpacked/EnotDesk Guest Pilot.app"
+          codesign --verify --deep --strict "$app"
+          executable="$(/usr/libexec/PlistBuddy -c 'Print :CFBundleExecutable' "$app/Contents/Info.plist")"
+          test -f "$app/Contents/Resources/app.asar.unpacked/node_modules/@koromix/koffi-darwin-arm64/darwin_arm64/koffi.node"
+          node scripts/smoke-artifact.mjs "$app/Contents/MacOS/$executable" "--user-data-dir=$RUNNER_TEMP/guest-profile" --disable-gpu
+          cd dist
+          shasum -a 256 "$archive" > "$archive.sha256"
+      - uses: actions/upload-artifact@v6
+        with:
+          name: EnotDesk-Guest-Pilot-macos-arm64
+          path: dist/EnotDesk-Guest-Pilot-*-mac-arm64.zip*
+          if-no-files-found: error
+          retention-days: 14
