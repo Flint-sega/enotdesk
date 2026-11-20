@@ -261,7 +261,8 @@ test('G1: машинный claim показывает карточку «Под�
     assert.ok(new RegExp(`id="${id}"`).test(html), `нет id «${id}» в web/operator.html`);
   }
   assert.match(operatorJs, /showJoinCard\(sessionId, password\)/, 'карточка наполняется паролем из claim-ответа');
-  assert.match(operatorJs, /function showConnectForm\(\)[\s\S]{0,400}hideJoinCard\(\)/, 'карточка гасится при разборе сеанса (пароль не переживает сеанс)');
+  const cleanup = operatorJs.match(/function showConnectForm\([^)]*\) \{([\s\S]*?)\n\}/)?.[1] ?? '';
+  assert.match(cleanup, /hideJoinCard\(\)/, 'карточка гасится при разборе сеанса (пароль не переживает сеанс)');
   // копирование без clipboard-API (SEC-002: writeText на странице ровно один):
   // клик выделяет значение целиком — user-select:all + Range
   assert.match(operatorJs, /selectNodeContents/, 'выделение кликом вместо clipboard-API');

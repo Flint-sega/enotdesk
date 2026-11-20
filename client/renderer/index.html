@@ -34,7 +34,7 @@
           <circle cx="12" cy="7.8" r="3.6"/>
           <path d="M5.2 19.6a6.8 6.8 0 0 1 13.6 0"/>
         </svg>
-        <span data-i18n="app.tabOperator">Оператор</span>
+        <span data-i18n="app.tabOperator" data-pilot-i18n="pilot.help">Оператор</span>
       </button>
       <button id="btn-settings" class="icon-btn" data-i18n-aria-label="app.aria.settings" data-i18n-title="app.aria.settings" aria-label="Настройки" title="Настройки">
         <svg class="icon" viewBox="0 0 24 24" aria-hidden="true" focusable="false">
@@ -66,7 +66,7 @@
                 <span class="step-n" aria-hidden="true">1</span>
                 <div class="step-body">
                   <b data-i18n="client.step1Title">Нажмите «Получить помощь»</b>
-                  <span class="step-sub" data-i18n="client.step1Sub">Программа выдаст временные ID и пароль</span>
+                  <span class="step-sub" data-i18n="client.step1Sub" data-pilot-i18n="pilot.step1">Программа выдаст временные ID и пароль</span>
                   <div id="client-idle" class="step-act">
                     <button id="btn-start" class="cta cta-get" data-i18n="client.start">Получить помощь</button>
                   </div>
@@ -79,7 +79,7 @@
               <li class="step step-2">
                 <span class="step-n" aria-hidden="true">2</span>
                 <div class="step-body">
-                  <b data-i18n="client.step2Title">Передайте ID и пароль специалисту</b>
+                  <b data-i18n="client.step2Title" data-pilot-i18n="pilot.step2">Передайте ID и пароль специалисту</b>
                   <span class="step-sub" data-i18n="client.step2Sub">В чате, письме или по телефону</span>
                   <div class="step-act creds-act">
                     <div class="cred-grid">
@@ -104,6 +104,7 @@
                     </div>
                     <div class="copy-row">
                       <button id="btn-copy-both" class="btn btn-sm" data-i18n="client.copyBoth">Копировать ID и пароль</button>
+                      <button id="btn-copy-guest" class="btn btn-sm hidden" data-i18n="guest.copy">Скопировать ссылку для гостя</button>
                       <p id="copy-status" class="note" role="status"></p>
                     </div>
                     <p id="join-status" class="note" role="status"></p>
@@ -116,7 +117,7 @@
                   <b data-i18n="client.step3Title">Дождитесь подключения и подтвердите</b>
                   <span class="step-sub" data-i18n="client.step3Sub">Появится запрос — нажмите «Разрешить»</span>
                   <div id="client-waiting" class="step-act hidden" aria-live="polite">
-                    <p class="wait-line"><span class="wait-dot" aria-hidden="true"></span><span data-i18n="client.waitNote">Ожидаем подключения оператора… Пароль действует один раз и до завершения сеанса.</span></p>
+                    <p class="wait-line"><span class="wait-dot" aria-hidden="true"></span><span data-i18n="client.waitNote" data-pilot-i18n="pilot.wait">Ожидаем подключения оператора… Пароль действует один раз и до завершения сеанса.</span></p>
                     <button id="btn-cancel-wait" class="btn btn-sm danger-ghost" data-i18n="common.cancel">Отменить</button>
                   </div>
                   <div id="client-consent" class="step-act consent hidden" aria-live="assertive">
@@ -189,9 +190,9 @@
       <!-- Программа оператора (ADR 0033, этап 2): отдельное окно со страницей сервера -->
       <div id="op-window" class="card narrow center">
         <img class="mascot-mini" src="../../assets/mascot-mini.webp" alt="" aria-hidden="true">
-        <h2 data-i18n="opwin.title">Программа оператора</h2>
-        <p class="muted" data-i18n="opwin.intro">Программа оператора открывается в отдельном окне прямо с вашего сервера: подключение к клиентам и машинам, контакты, история, команда.</p>
-        <button type="button" id="btn-op-window" class="cta wide" data-i18n="opwin.open">Открыть программу оператора</button>
+        <h2 data-i18n="opwin.title" data-pilot-i18n="pilot.help">Программа оператора</h2>
+        <p class="muted" data-i18n="opwin.intro" data-pilot-i18n="pilot.operatorIntro">Программа оператора открывается в отдельном окне прямо с вашего сервера: подключение к клиентам и машинам, контакты, история, команда.</p>
+        <button type="button" id="btn-op-window" class="cta wide" data-i18n="opwin.open" data-pilot-i18n="pilot.open">Открыть программу оператора</button>
         <p id="op-window-status" class="note" role="status"></p>
         <p id="op-window-error" class="err-text" role="alert"></p>
       </div>

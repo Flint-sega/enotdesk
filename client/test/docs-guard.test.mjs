@@ -53,7 +53,7 @@ test('AGENTS.md: пути в бэктиках существуют в репоз
 // Файл инструкций агента живёт только локально (в git не хранится с 22.10): если он
 // лежит рядом — проверяем, что ссылается лишь на файлы репозитория, а приватное
 // тянет отдельный локальный файл; в CI его нет — проверять нечего.
-const AGENT_FILE = 'CLAUDE.md';
+const AGENT_FILE = 'CONTRIBUTOR.local.md';
 test('файл инструкций агента (локальный) ссылается только на файлы из репозитория', (t) => {
   if (!existsSync(path.join(root, AGENT_FILE))) return t.skip('файла инструкций агента нет — он только локальный');
   const text = read(AGENT_FILE);
@@ -65,5 +65,5 @@ test('файл инструкций агента (локальный) ссыла
 
 test('файл инструкций агента не хранится в git', () => {
   const tracked = execFileSync('git', ['ls-files', '--', AGENT_FILE], { cwd: root, encoding: 'utf8' }).trim();
-  assert.equal(tracked, '', `${AGENT_FILE} снова попал в git — он только локальный (.git/info/exclude)`);
+  assert.equal(tracked, '', `${AGENT_FILE} снова попал в git — он только локальный (.gitignore)`);
 });

@@ -23,10 +23,18 @@
 |---|---|---|
 | `POST /sessions` | клиент (без входа) | Создаёт сеанс: `{hostId?, password?}` → `{sessionId, password, hostToken, expiresAt}`. 9-значный `hostId` — закреплённый ID ПК; прежний живой сеанс этого ID завершается (`superseded`). Лимит: 3 ждущих сеанса с адреса. |
 | `POST /sessions/:id/claim` | оператор | `{password, contactId?}` по `sessionId` или `hostId` → `{sessionId, claimId, operator, state}`. Сеанс уже занят — присоединение вторым оператором (`joined: true`, свой `claimId`). |
+| `POST /sessions/:id/guest-invite` | хост (`hostToken`) | Одноразовое приглашение на ожидающий сеанс при `ENOT_GUEST_HELP=1`. Новый выпуск заменяет прежний. Срок действия пять минут. |
+| `POST /guest/claim` | гость с приглашением | Меняет `{invite}` на `{sessionId, claimId, token, operator, state}`. Сеанс переходит к запросу согласия хоста. |
 | `GET /sessions/:id/connect` | оператор | Свой `claimId` для сеанса, закреплённого за оператором (one-click хаба, ADR 0024). |
 | `POST /sessions/:id/decision` | хост (`hostToken`) | `{claimId, allow}` — согласие или отказ (`denied`). |
-| `POST /sessions/:id/end` | хост или оператор | Завершить (`ended`; хост может передать `reason: "idle"`). |
-| `GET /rtc-config` | хост или оператор | ICE-серверы: STUN/TURN с эфемерными кредами (HMAC от `ENOT_TURN_SECRET`, срок 1 ч). |
+| `POST /sessions/:id/end` | хост, оператор или гость этого сеанса | Завершить (`ended`; хост может передать `reason: "idle"`). |
+| `GET /rtc-config` | хост, оператор или гость подтверждённого сеанса | ICE-серверы: STUN/TURN с эфемерными кредами (HMAC от `ENOT_TURN_SECRET`, срок 1 ч). Статические TURN-креды гостю не выдаются. |
+
+Гостевой токен действует только для выдавшего его сеанса. В `/signal` он используется с ролью
+`operator` и своим `claimId`. Получатель видит запрос после установления сигнального соединения.
+Если гость не подключился за десять секунд, получатель может создать новую ссылку. После согласия
+сервер начинает пересылать сигналинг. С окончанием сеанса
+гостевой токен перестаёт действовать. Гостевой сеанс рассчитан на одного помогающего.
 
 **Unattended:** `POST /machines/:id/claim` `{reason, pin?}` (оператор) создаёт сеанс сразу в
 `pending-consent` и отдаёт `{sessionId, claimId, machineId, password}` — пароль нужен коллеге для

@@ -41,18 +41,19 @@ export function isAllowedNavigation(url, origin) {
 // Вердикт по ответу /api/v1/health. reason — код без локализации:
 // server-unreachable (нет ответа / не наш сервер), server-outdated (старая
 // страница оператора; version — что сообщил сервер, для текста пользователю).
-export function evaluateHealth(status, body) {
+export function evaluateHealth(status, body, { guestOnly = false } = {}) {
   if (status !== 200 || !body || typeof body !== 'object' || body.ok !== true) {
     return { ok: false, reason: 'server-unreachable' };
   }
   const version = typeof body.version === 'string' ? body.version.slice(0, 40) : null;
   const level = Number.isInteger(body.operatorUi) ? body.operatorUi : 0;
   if (level < OPERATOR_UI_LEVEL) return { ok: false, reason: 'server-outdated', version };
+  if (guestOnly && body.guestOnly !== true) return { ok: false, reason: 'pilot-server-required', version };
   return { ok: true, version };
 }
 
 // Проба сервера перед открытием окна. fetchImpl — инъекцией (тесты без сети).
-export async function probeOperatorServer(serverUrl, fetchImpl = fetch, timeoutMs = HEALTH_TIMEOUT_MS) {
+export async function probeOperatorServer(serverUrl, fetchImpl = fetch, timeoutMs = HEALTH_TIMEOUT_MS, requirements) {
   const urls = operatorWindowUrls(serverUrl);
   if (!urls) return { ok: false, reason: 'server-unreachable' };
   let res;
@@ -63,7 +64,7 @@ export async function probeOperatorServer(serverUrl, fetchImpl = fetch, timeoutM
   }
   let body = null;
   try { body = await res.json(); } catch { /* не JSON — не наш сервер */ }
-  return evaluateHealth(res.status, body);
+  return evaluateHealth(res.status, body, requirements);
 }
 
 // «Запомнить меня» — только для https или loopback: страницу, пришедшую по

@@ -22,6 +22,8 @@ const inst = createServer({
   host: process.env.ENOT_HOST || '127.0.0.1',
   port: process.env.ENOT_PORT ? parseInt(process.env.ENOT_PORT, 10) : 8080,
   publicUrl: process.env.ENOT_PUBLIC_URL || '',
+  guestHelp: process.env.ENOT_GUEST_HELP === '1',
+  guestOnly: process.env.ENOT_GUEST_ONLY === '1',
   turnUrls: process.env.ENOT_TURN_URLS || '',
   turnUsername: process.env.ENOT_TURN_USERNAME || '',
   turnPassword: process.env.ENOT_TURN_PASSWORD || '',

@@ -359,19 +359,25 @@ function inviteHtml(version, locale, insecure = false) {
 // статикой app.mjs (/web, /client/lib, /client/renderer, /client/locales — allowlist).
 let operatorHtmlCache = null;
 
-function operatorHtml(title, locale, version) {
+function operatorHtml(title, locale, version, guestHelp, guestOnly) {
   if (!operatorHtmlCache) {
     operatorHtmlCache = readFileSync(new URL('../web/operator.html', import.meta.url), 'utf8');
   }
-  return operatorHtmlCache
+  const template = guestOnly
+    ? operatorHtmlCache.replace(/<!-- account-login-start -->[\s\S]*?<!-- account-login-end -->/, '')
+    : operatorHtmlCache;
+  return template
     .replace('__TITLE__', esc(title))
     .replace('__VERSION__', esc(version))
-    .replace('__LOCALE__', esc(locale));
+    .replace('__LOCALE__', esc(locale))
+    .replace('__GUEST_HELP__', guestHelp ? '1' : '0')
+    .replace('__GUEST_ONLY__', guestOnly ? '1' : '0')
+    .replace('__OPERATOR_HOME__', guestOnly ? '/operator' : '/downloads');
 }
 
 // CSP повторяет desktop (никакого inline-кода), но странице нужны свои ES-модули,
 // same-origin fetch/WS и blob: для сохранения принятых файлов.
-function operatorPage(res, status, locale, title, version) {
+function operatorPage(res, status, locale, title, version, guestHelp = false, guestOnly = false) {
   res.writeHead(status, {
     'Content-Type': 'text/html; charset=utf-8',
     'Content-Security-Policy': "default-src 'none'; script-src 'self'; style-src 'self' 'unsafe-inline'; font-src 'self'; img-src 'self'; connect-src 'self'; media-src blob:",
@@ -379,7 +385,7 @@ function operatorPage(res, status, locale, title, version) {
     'X-Frame-Options': 'DENY',
     'Cache-Control': 'no-store',
   });
-  res.end(operatorHtml(title, locale, version));
+  res.end(operatorHtml(title, locale, version, guestHelp, guestOnly));
 }
 
 export { esc, page, downloadsHtml, inviteHtml, operatorPage };

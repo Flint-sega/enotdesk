@@ -2,6 +2,13 @@
 // fetch, поэтому CSP рендерера обходится без connect-src file: (SEC-005).
 // Ключи 1:1 с прежним en.json; паритет с ru проверяет контракт-тест.
 export default {
+  "pilot.help": "Help someone",
+  "pilot.step1": "The app will prepare a help session",
+  "pilot.step2": "Send the link to the person helping you",
+  "pilot.wait": "Waiting for a connection. The link expires after five minutes and opens this session only.",
+  "pilot.operatorIntro": "Paste the link from the person you are helping and wait for them to approve the connection.",
+  "pilot.open": "Open connection form",
+  "pilot.serverRequired": "Enter the EnotDesk Guest Pilot server address in settings.",
   "app.tabHelp": "Get help",
   "app.tabOperator": "Operator",
   "app.codename": "Crumb",
@@ -42,6 +49,14 @@ export default {
   "client.copyId": "Copy ID",
   "client.copyPass": "Copy password",
   "client.copyBoth": "Copy ID and password",
+  "guest.copy": "Copy guest link",
+  "guest.copied": "Link copied. It is valid for one request within five minutes.",
+  "guest.copyError": "Could not copy an invitation. Check that the session is still waiting.",
+  "guest.name": "Guest without an account",
+  "guest.title": "Help without an account",
+  "guest.invitation": "Link from the person you are helping",
+  "guest.request": "Request to connect",
+  "guest.invalid": "This invitation is invalid or expired. Ask for a new link.",
   "client.waitNote": "Waiting for the operator to connect… The password works once and only until the session ends.",
   "client.idCopied": "ID copied",
   "client.passCopied": "Password copied",

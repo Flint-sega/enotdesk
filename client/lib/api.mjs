@@ -8,6 +8,7 @@
 const OPERATIONS = {
   health: { method: 'GET', path: '/health' },
   'session.create': { method: 'POST', path: '/sessions' },
+  'session.guest-invite': { method: 'POST', path: (p) => `/sessions/${encodeURIComponent(p.sessionId)}/guest-invite`, auth: 'host' },
   'session.decision': { method: 'POST', path: (p) => `/sessions/${p.sessionId}/decision`, auth: 'host' },
   'session.end': { method: 'POST', path: (p) => `/sessions/${p.sessionId}/end`, auth: 'host' },
   'rtc.config': { method: 'GET', path: '/rtc-config', auth: 'host' },

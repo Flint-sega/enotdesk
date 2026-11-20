@@ -350,7 +350,8 @@ function scheduleReattach(claimId) {
 async function attachOperatorNow(claimId, name) {
   const cfg = await enot.request('rtc.config', { asHost: true });
   if (!state.localStream || !state.session || state.operators.has(claimId)) return;
-  const pc = makePcOperator(claimId, cfg.body?.iceServers ?? []);
+  if (cfg.status !== 200) throw new Error('rtc-config');
+  const pc = makePcOperator(claimId, cfg.body?.iceServers ?? [], cfg.body?.iceTransportPolicy);
   // Cap видеослотов (W-C5): сверх MULTIOP_VIDEO_CAP pc строится БЕЗ видео —
   // чат/файлы/терминал работают, оператор получит честный session-info.
   const grantVideo = videoAllowed(videoOperatorCount());
@@ -373,8 +374,8 @@ async function attachOperatorNow(claimId, name) {
   await enot.sendSignal({ type: 'signal', to: claimId, data: { description: { type: 'offer', sdp: pc.localDescription.sdp } } });
 }
 
-function makePcOperator(claimId, iceServers) {
-  const pc = new RTCPeerConnection({ iceServers });
+function makePcOperator(claimId, iceServers, iceTransportPolicy = 'all') {
+  const pc = new RTCPeerConnection({ iceServers, iceTransportPolicy });
   pc.onicecandidate = (e) => {
     if (e.candidate) {
       enot.sendSignal({ type: 'signal', to: claimId, data: { candidate: e.candidate.toJSON() } }).catch(() => {});

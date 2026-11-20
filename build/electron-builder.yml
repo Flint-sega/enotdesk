@@ -1,5 +1,7 @@
-appId: com.enotdesk.app
-productName: EnotDesk
+appId: com.enotdesk.guestpilot
+productName: EnotDesk Guest Pilot
+npmRebuild: false
+publish: null
 compression: maximum
 electronLanguages:
   # ВНИМАНИЕ (лаба 05.10): только полные теги. «en» не матчится ни с одним
@@ -69,6 +71,7 @@ files:
   - "!node_modules/@pinojs/**"
 asarUnpack:
   - node_modules/koffi/**
+  - node_modules/@koromix/**
 # Видео-хелпер (ADR 0027, v0.6): нативный exe собирается отдельно (helper/video,
 # cargo build --release на Windows; release-воркфлоу делает это перед упаковкой)
 # и кладётся в resources — его запускает служба в консольном сеансе, asar не нужен.
@@ -80,7 +83,7 @@ extraResources:
     to: .
     filter:
       - enotdesk-video.exe
-artifactName: "EnotDesk-${os}-${arch}.${ext}"
+artifactName: "EnotDesk-Guest-Pilot-${version}-${os}-${arch}.${ext}"
 # Вшитый адрес сервера (R03): значение попадает в package.json внутри app.asar,
 # клиент читает его как baked (client/lib/first-run.mjs: pkg → process.env →
 # порядок saved → файл → baked → дефолт). ВАЖНО: макрос ${env.*} electron-builder
@@ -94,15 +97,7 @@ artifactName: "EnotDesk-${os}-${arch}.${ext}"
 # источник резолва.
 extraMetadata:
   ENOT_BAKED_SERVER_URL: ""
-# One-click (R04): протокол enotdesk://join. Регистрируется в упаковке на всех
-# двух ОС (mac: CFBundleURLTypes в Info.plist; linux: MimeType x-scheme-handler
-# в .desktop). Windows: electron-builder протокол НЕ регистрирует (проверено 24.10) —
-# HKLM пишет build/installer.nsh, HKCU — app.setAsDefaultProtocolClient в
-# client/main.mjs (только не-SMOKE/не-агент; портатив — см. lib/protocol-handler.mjs).
-protocols:
-  - name: EnotDesk Help
-    schemes:
-      - enotdesk
+# У гостевого пилота отдельный профиль и нет обработчика enotdesk://.
 mac:
   # zip — портативная версия (latest-mac.yml в релиз не публикуется: неподписанный mac не самообновляется, см. release.yml);
   # dmg — установщик «перетащите в Программы» (запрос владельца 20.10)
@@ -121,6 +116,7 @@ win:
   target:
     - portable
   icon: assets/icon.ico
+  signAndEditExecutable: false
 portable:
   # Скорость запуска (21.10, ветка startup-speed): портативка при КАЖДОМ запуске
   # распаковывает всё приложение (~330 МБ, 41 файл) во временную папку — это

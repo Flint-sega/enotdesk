@@ -36,6 +36,21 @@ const CONNECT_ROLES = ['admin', 'operator'];
 // подделанная роль даёт только вид страницы, не доступ. Перезагрузка страницы
 // честно требует повторного входа.
 let token = null;
+let guestToken = null;
+const guestHelp = document.body.dataset.guestHelp === '1';
+const guestOnly = document.body.dataset.guestOnly === '1';
+
+function parseGuestInvite(input) {
+  let code = input.trim();
+  if (!/^\d{9}\.[A-Za-z0-9_-]{43}$/.test(code)) {
+    try {
+      const url = new URL(code);
+      if (url.origin !== location.origin || url.pathname !== '/operator') return null;
+      code = new URLSearchParams(url.hash.slice(1)).get('guest') ?? '';
+    } catch { return null; }
+  }
+  return /^\d{9}\.[A-Za-z0-9_-]{43}$/.test(code) ? code : null;
+}
 
 function readRoleCookie() {
   const m = new RegExp(`(?:^|;\\s*)${COOKIE}=([^;]+)`).exec(document.cookie ?? '');
@@ -60,11 +75,13 @@ function forgetSession() {
 
 async function api(method, path, body) {
   const hadToken = Boolean(token);
+  const guestPath = path === '/rtc-config' || (method === 'POST' && path === `/sessions/${state.connect?.sessionId}/end`);
+  const credential = guestPath && state.connect?.guest ? guestToken : token;
   const res = await fetch(`/api/v1${path}`, {
     method,
     headers: {
       'Content-Type': 'application/json',
-      ...(token ? { Authorization: `Bearer ${token}` } : {}),
+      ...(credential ? { Authorization: `Bearer ${credential}` } : {}),
     },
     body: body !== undefined ? JSON.stringify(body) : undefined,
   });
@@ -156,11 +173,10 @@ function reconnectWindowMs() {
 
 function signalExpired() {
   stopSignalReconnect();
-  showConnectForm();
   // Честный текст: «истёк грейс» — только если грейс существовал и сеанс дошёл
   // до согласия; ENOT_GRACE_MS=0 — сеанс погашен сразу, без всякого грейса
   // (ревью v0.4.3: единая семантика для таймерной и 4003-веток)
-  text($('conn-error'), reconnectEndMessage());
+  showConnectForm(reconnectEndMessage());
 }
 
 function reconnectEndMessage() {
@@ -191,12 +207,15 @@ function openSignal() {
   const sock = new WebSocket(url);
   ws = sock;
   sock.onopen = () => {
+    if (ws !== sock || !state.connect) return;
     sock.send(JSON.stringify({
       type: 'auth', role: 'operator',
-      sessionId: state.connect.sessionId, claimId: state.connect.claimId, token,
+      sessionId: state.connect.sessionId, claimId: state.connect.claimId,
+      token: state.connect.guest ? guestToken : token,
     }));
   };
   sock.onmessage = (e) => {
+    if (ws !== sock) return;
     let msg;
     try { msg = JSON.parse(e.data); } catch { return; }
     if (msg) onSignal(msg);
@@ -208,8 +227,7 @@ function openSignal() {
     // 4003 — сервер знает, что сеанса нет: ретраиться бессмысленно, честный конец
     if (e?.code === 4003) {
       stopSignalReconnect();
-      showConnectForm();
-      text($('conn-error'), reconnectEndMessage());
+      showConnectForm(reconnectEndMessage());
       return;
     }
     if (graceEligible) {
@@ -221,8 +239,7 @@ function openSignal() {
     } else {
       // обрыв до согласия: сервер гасит сеанс мгновенно (fail-closed, ADR 0013) —
       // честное сообщение вместо 30 с ретраев в гарантированно убитый сеанс
-      showConnectForm();
-      text($('conn-error'), t('web.reconnect.noGrace'));
+      showConnectForm(t('web.reconnect.noGrace'));
     }
   };
 }
@@ -309,7 +326,12 @@ function openDefaultPanel() {
   else if (target === 'view-team') showTeam();
 }
 
-function showConnectForm() {
+function showConnectForm(message) {
+  const wasGuest = state.connect?.guest === true;
+  if (wasGuest) {
+    guestToken = null;
+    if (!guestOnly) show($('btn-logout'));
+  }
   stopSignalReconnect(); // страница покидает сеанс — авто-переподключение не нужно
   graceEligible = false; // новый сеанс: право на грейс считается заново
   stopMedia();
@@ -317,13 +339,25 @@ function showConnectForm() {
   pendingClip = null;
   hide($('btn-op-clip-paste')); // текст сеанса не переживает сеанс
   hideJoinCard(); // G1: пароль сеанса для коллег не переживает сеанс
-  showOnly('view-connect');
+  showOnly(wasGuest ? 'view-login' : 'view-connect');
+  if (message) text($(wasGuest ? 'guest-error' : 'conn-error'), message);
   hide($('op-term')); // панель терминала живёт только внутри сеанса
   hide($('btn-term-retry'));
   text($('op-term-out'), '');
   text($('op-term-status'), '');
   text($('remote-status'), '');
   text($('session-timer'), '');
+}
+
+function leaveSession(reason, message) {
+  const { sessionId } = state.connect ?? {};
+  const guest = state.connect?.guest === true;
+  const closingSocket = ws;
+  const ending = sessionId ? api('POST', `/sessions/${encodeURIComponent(sessionId)}/end`).catch(() => {}) : null;
+  ws = null;
+  showConnectForm(message);
+  if (ending && !guest) void ending.finally(() => closingSocket?.close(1000, reason));
+  else closingSocket?.close(1000, reason);
 }
 
 function stopMedia() {
@@ -396,8 +430,8 @@ function stopQualityTimer() {
 
 // ---- WebRTC: оператор отвечает на оффер клиента (host — offerer, как в desktop) ----
 
-function makePc(iceServers) {
-  const pc = new RTCPeerConnection({ iceServers });
+function makePc(iceServers, iceTransportPolicy = 'all') {
+  const pc = new RTCPeerConnection({ iceServers, iceTransportPolicy });
   pc.onicecandidate = (e) => { if (e.candidate) sendSignal({ candidate: e.candidate.toJSON() }); };
   // краткое дрожание сети самовосстанавливается — 10с грейс, 'failed' рвёт сразу.
   // Гвард `state.pc !== pc`: pc заменён новым оффером — его события и осиротевший
@@ -433,8 +467,9 @@ function makePc(iceServers) {
 
 function rtcLinkLost() {
   if (!state.connect) return;
-  showConnectForm();
-  text($('conn-error'), endReasonText('rtc'));
+  const message = endReasonText('rtc');
+  if (state.connect.guest) leaveSession('rtc', message);
+  else showConnectForm(message);
 }
 
 function drainIce(pc) {
@@ -453,6 +488,8 @@ function operatorAnswer(offerSdp) {
 }
 
 async function doOperatorAnswer(offerSdp) {
+  const connection = state.connect;
+  if (!connection) return;
   // Чистку старого pc/каналов делаем ДО await (ревью v0.4.3): в окне
   // await rtc-config кандидаты нового оффера уходили в СТАРЫЙ pc и терялись.
   // Очередь кандидатов НЕ чистим: чужая генерация отбрасывается новым pc
@@ -465,9 +502,9 @@ async function doOperatorAnswer(offerSdp) {
   state.fileRx = null;
   fileTx.cancel();
   const cfg = await api('GET', '/rtc-config');
-  const pc = makePc(cfg.body?.iceServers ?? []);
-  // epoch-guard: сеанс мог завершиться во время await — не воскрешаем pc
-  if (!state.connect) { try { pc.close(); } catch { /* уже закрыт */ } return; }
+  if (state.connect !== connection) return;
+  if (guestOnly && cfg.status !== 200) throw new Error('rtc-config');
+  const pc = makePc(cfg.body?.iceServers ?? [], cfg.body?.iceTransportPolicy);
   state.pc = pc;
   // Каналы данных приходят от клиента-офферера (ADR 0014): answer не может
   // добавлять новые m=секции — созданные здесь каналы не согласуются никогда
@@ -735,7 +772,8 @@ async function onSignal(msg) {
         list.appendChild(a);
       }
       break;
-    case 'signal':
+    case 'signal': {
+      const connection = state.connect;
       try {
         if (msg.data?.description && msg.data.description.type === 'offer') {
           // Гвард адресации (мультиоператор: offer адресован по claimId;
@@ -744,7 +782,7 @@ async function onSignal(msg) {
           await operatorAnswer(msg.data.description.sdp);
           // 'ended'/rtcLinkLost могли прийти во время await — не показываем
           // экран живого сеанса поверх честной формы (ревью v0.4.3)
-          if (!state.connect) return;
+          if (!connection || state.connect !== connection) return;
           showOnly('op-remote');
           showStatus(t('status.connected'));
         } else if (msg.data?.description && msg.data.description.type === 'answer'
@@ -771,11 +809,12 @@ async function onSignal(msg) {
           else state.iceQueue.push(c); // кандидаты в очередь до remote description
         }
       } catch {
-        // ошибка ответа (некорректный оффер, нет доступа к rtc-config) — честный откат
-        showConnectForm();
-        text($('conn-error'), t('common.serverError'));
+        if (state.connect !== connection) break;
+        if (connection?.guest) leaveSession('rtc', t('common.serverError'));
+        else showConnectForm(t('common.serverError'));
       }
       break;
+    }
     case 'idle-warning':
       // клиент-хост предупреждает: нет ввода — сеанс скоро закроется. Баннер —
       // отдельный элемент: remote-status таймер качества перезаписывает каждые 2 с
@@ -828,11 +867,11 @@ async function onSignal(msg) {
       showStatus(state.pc?.connectionState === 'connected' ? t('status.connected') : t('op.clientReconnecting'));
       break;
     case 'ended': {
+      if (!state.connect) break;
       stopSignalReconnect(); // сеанс завершён сервером — стучаться больше нечего
       hide($('op-idle-note')); // баннер простоя не протекает в следующий сеанс
       const reason = endReasonText(msg.reason);
-      showConnectForm();
-      text($('conn-error'), reason);
+      showConnectForm(reason);
       break;
     }
     case 'error':
@@ -954,6 +993,10 @@ async function sendFile(file) {
   if (!file) return;
   const dc = state.dcs?.file;
   if (!dc || dc.readyState !== 'open') {
+    if (state.connect?.guest) {
+      text($('file-op-status'), t('files.noChannel'));
+      return;
+    }
     // фолбэк: резервный релей сервера (TTL 3 суток), ссылка уходит хосту file-link'ом
     try {
       const buf = new Uint8Array(await file.arrayBuffer());
@@ -1501,9 +1544,42 @@ function rememberAfterLogin() {
 // ---- действия страницы ----
 
 function wire() {
+  $('guest-form').addEventListener('submit', async (e) => {
+    e.preventDefault();
+    const button = $('btn-guest');
+    if (!guestHelp || token || state.connect || button.disabled || $('btn-login')?.disabled) return;
+    const input = $('guest-link');
+    const invite = parseGuestInvite(input.value);
+    if (!invite) {
+      text($('guest-error'), t('guest.invalid'));
+      return;
+    }
+    setBusy(button, true);
+    try {
+      const result = await api('POST', '/guest/claim', { invite });
+      if (result.status !== 201) {
+        text($('guest-error'), result.status === 404 ? t('guest.invalid') : (result.body?.error?.message ?? t('common.serverError')));
+        return;
+      }
+      input.value = '';
+      text($('guest-error'), '');
+      text($('op-chat-log'), '');
+      guestToken = result.body.token;
+      state.connect = { sessionId: result.body.sessionId, claimId: result.body.claimId, guest: true, machineId: null };
+      hide($('btn-logout'));
+      showOnly('op-waiting');
+      openSignal();
+    } catch {
+      if (state.connect?.guest) showConnectForm(t('common.serverError'));
+      else text($('guest-error'), t('common.serverError'));
+    } finally {
+      setBusy(button, false);
+    }
+  });
   $('login-form')?.addEventListener('submit', async (e) => {
     e.preventDefault();
     const btn = $('btn-login');
+    if (guestToken || $('btn-guest').disabled || btn.disabled) return;
     setBusy(btn, true, t('web.login.busy'));
     try {
       // 2FA: код уходит, только когда поле уже показано (сервер ответил
@@ -1582,21 +1658,8 @@ function wire() {
     }
   });
 
-  $('btn-cancel')?.addEventListener('click', async () => {
-    const { sessionId } = state.connect ?? {};
-    showConnectForm();
-    if (sessionId) await api('POST', `/sessions/${encodeURIComponent(sessionId)}/end`).catch(() => {});
-    ws?.close(1000, 'cancel');
-    ws = null;
-  });
-
-  $('btn-end')?.addEventListener('click', async () => {
-    const { sessionId } = state.connect ?? {};
-    showConnectForm();
-    if (sessionId) await api('POST', `/sessions/${encodeURIComponent(sessionId)}/end`).catch(() => {});
-    ws?.close(1000, 'end');
-    ws = null;
-  });
+  $('btn-cancel')?.addEventListener('click', () => leaveSession('cancel'));
+  $('btn-end')?.addEventListener('click', () => leaveSession('end'));
 
   // Privacy MVP (v0.6, ADR 0027): погасить/вернуть экран машины через канал
   // input (хелпер выполняет SC_MONITORPOWER). Кнопка появляется при открытии
@@ -1800,6 +1863,23 @@ function wire() {
   const lang = $('lang-select');
   if (lang) lang.value = getLocale();
   wire();
+  const urlInvite = new URLSearchParams(location.hash.slice(1)).get('guest');
+  if (urlInvite !== null) history.replaceState(null, '', location.pathname + location.search);
+  if (guestHelp) {
+    show($('guest-form'));
+    if (urlInvite !== null) {
+      const invite = parseGuestInvite(urlInvite);
+      if (invite) $('guest-link').value = invite;
+      else text($('guest-error'), t('guest.invalid'));
+    }
+  }
+
+  if (guestOnly) {
+    hide($('btn-logout'));
+    showOnly('view-login');
+    if ($('guest-link').value) $('btn-guest').focus();
+    return;
+  }
 
   // Страница отдаётся сервером по роли из cookie; bearer в памяти мог не
   // дожить до перезагрузки — сверяемся с /auth/me и показываем честное состояние.
@@ -1827,6 +1907,7 @@ function wire() {
   const hadRole = Boolean(readRoleCookie());
   forgetSession();
   showOnly('view-login');
+  if (guestHelp && $('guest-link').value) $('btn-guest').focus();
   if (hadRole) text($('login-error'), t('web.session.expired'));
   void initRemember();
 })();

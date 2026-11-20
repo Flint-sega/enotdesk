@@ -162,9 +162,9 @@ test('reportJoin невалидные входные отклоняются бе
 
 const root = path.join(import.meta.dirname, '..');
 
-test('main.mjs регистрирует протокол только в упакованном приложении и ведёт open-url/second-instance/argv', () => {
+test('main.mjs не регистрирует штатный протокол в гостевом пилоте', () => {
   const mainJs = readFileSync(path.join(root, 'main.mjs'), 'utf8');
-  assert.match(mainJs, /const PROTOCOL_REGISTERED = !SMOKE && !AGENT && app\.isPackaged;/);
+  assert.match(mainJs, /const PROTOCOL_REGISTERED = !GUEST_PILOT && !SMOKE && !AGENT && app\.isPackaged;/);
   // регистрация — только под PROTOCOL_REGISTERED; путь для портатива — protocolTarget (A-10, 24.10)
   assert.match(mainJs, /if \(PROTOCOL_REGISTERED\) \{\s*if \(protocolExe\) app\.setAsDefaultProtocolClient\('enotdesk', protocolExe, \[\]\);\s*else app\.setAsDefaultProtocolClient\('enotdesk'\);\s*\}/);
   assert.equal([...mainJs.matchAll(/setAsDefaultProtocolClient\(/g)].length, 2, 'вне PROTOCOL_REGISTERED протокол не регистрируется');
@@ -198,9 +198,9 @@ test('client-view реагирует на join-старт и репортит ч
   assert.match(view, /joinReport/);
 });
 
-test('electron-builder прописывает протокол enotdesk', () => {
+test('пакет гостевого пилота не регистрирует протокол enotdesk', () => {
   const yml = readFileSync(path.join(root, '..', 'build', 'electron-builder.yml'), 'utf8');
-  assert.match(yml, /schemes:\s*\n\s*-\s*enotdesk/);
+  assert.doesNotMatch(yml, /schemes:\s*\n\s*-\s*enotdesk/);
 });
 
 test('ключи join.* есть в обоих словарях (импорт модулей, не grep)', () => {

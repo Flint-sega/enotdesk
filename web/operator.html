@@ -271,9 +271,9 @@ video.fit-cover{object-fit:cover}
 }
 </style>
 </head>
-<body class="aurora-bg" data-locale="__LOCALE__">
+<body class="aurora-bg" data-locale="__LOCALE__" data-guest-help="__GUEST_HELP__" data-guest-only="__GUEST_ONLY__">
 <header class="op-head">
-  <a class="brand" href="/downloads"><img src="/brand/enot-brand-72.png" alt="" width="42" height="42"><span>Enot<span class="grad">Desk</span></span></a>
+  <a class="brand" href="__OPERATOR_HOME__"><img src="/brand/enot-brand-72.png" alt="" width="42" height="42"><span>Enot<span class="grad">Desk</span></span></a>
   <div class="op-user">
     <span class="name" id="op-user-name"></span>
     <span class="badge" id="op-user-role"></span>
@@ -289,6 +289,7 @@ video.fit-cover{object-fit:cover}
 <main>
   <section id="view-login" class="card auth-card hidden">
     <img class="auth-avatar" src="/brand/enot-avatar.webp" alt="" width="96" height="96">
+    <!-- account-login-start -->
     <h1 data-i18n="web.login.title">Вход для оператора</h1>
     <p class="lead" data-i18n="web.login.lead">Тот же аккаунт, что и в desktop-приложении.</p>
     <form class="form-stack" id="login-form">
@@ -311,6 +312,16 @@ video.fit-cover{object-fit:cover}
       <button id="btn-login" class="btn wide" type="submit" data-i18n="web.login.submit">Войти</button>
     </form>
     <p class="form-error" id="login-error" aria-live="polite"></p>
+    <!-- account-login-end -->
+    <form class="form-stack hidden" id="guest-form">
+      <h2 data-i18n="guest.title">Помочь без аккаунта</h2>
+      <div class="field">
+        <label for="guest-link" data-i18n="guest.invitation">Ссылка от человека, которому вы помогаете</label>
+        <input id="guest-link" type="password" autocomplete="off" maxlength="2048" required>
+      </div>
+      <button id="btn-guest" class="btn wide" type="submit" data-i18n="guest.request">Запросить подключение</button>
+      <p class="form-error" id="guest-error" aria-live="polite"></p>
+    </form>
   </section>
 
   <section id="view-denied" class="card center-card hidden">

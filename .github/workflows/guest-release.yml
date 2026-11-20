@@ -1,0 +1,64 @@
+name: Publish EnotDesk Guest Pilot
+
+on:
+  push:
+    tags: [guest-pilot-0.6.30-2]
+
+permissions:
+  actions: read
+  contents: write
+
+concurrency:
+  group: guest-release-${{ github.ref }}
+
+jobs:
+  publish:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+      - name: Check that the new branch replaced the old pilot branch
+        run: |
+          old_ref="$(git ls-remote --heads "$GITHUB_SERVER_URL/$GITHUB_REPOSITORY.git" refs/heads/guest-pilot)"
+          if [ -n "$old_ref" ]; then
+            printf '%s\n' 'The old pilot branch is still present.'
+            exit 1
+          fi
+      - name: Verify accepted Linux archives
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          mkdir -p "$RUNNER_TEMP/guest-release"
+          cd "$RUNNER_TEMP/guest-release"
+          gh run download 44625126775 --repo "$GITHUB_REPOSITORY" \
+            --name 'EnotDesk-Guest-Pilot-linux-x64' --name 'EnotDesk-Guest-Pilot-linux-arm64' \
+            --dir archives
+          version=0.6.30-guest-pilot.2
+          mv "archives/EnotDesk-Guest-Pilot-linux-x64/EnotDesk-Guest-Pilot-$version-linux-x64.tar.gz" .
+          mv "archives/EnotDesk-Guest-Pilot-linux-arm64/EnotDesk-Guest-Pilot-$version-linux-arm64.tar.gz" .
+          cat > SHA256SUMS.txt <<'SUMS'
+          f52e5dec8e5a8806fc1bd617323e861db057f8b572379b03f6951c323c208a31  EnotDesk-Guest-Pilot-0.6.30-guest-pilot.2-linux-x64.tar.gz
+          f40dc01942f7aa801b9489eceb2b9d21ed91306c71aec14db26f09154e824f66  EnotDesk-Guest-Pilot-0.6.30-guest-pilot.2-linux-arm64.tar.gz
+          SUMS
+          sha256sum -c SHA256SUMS.txt
+      - name: Publish the separate Linux prerelease
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          cd "$RUNNER_TEMP/guest-release"
+          assets=(EnotDesk-Guest-Pilot-*.tar.gz SHA256SUMS.txt)
+          title="EnotDesk Guest Pilot 0.6.30.2 (Linux)"
+          notes="$GITHUB_WORKSPACE/docs/GUEST-PILOT-RELEASE.md"
+          if gh release view "$GITHUB_REF_NAME" --repo "$GITHUB_REPOSITORY" --json isDraft,isPrerelease > release.json; then
+            jq -e '.isDraft and .isPrerelease' release.json
+            gh release upload "$GITHUB_REF_NAME" --repo "$GITHUB_REPOSITORY" "${assets[@]}" --clobber
+          else
+            gh release create "$GITHUB_REF_NAME" --repo "$GITHUB_REPOSITORY" --verify-tag \
+              --draft --prerelease --latest=false --title "$title" --notes-file "$notes" "${assets[@]}"
+          fi
+          gh release view "$GITHUB_REF_NAME" --repo "$GITHUB_REPOSITORY" --json isDraft,isPrerelease,assets \
+            --jq '.isDraft and .isPrerelease and (.assets | length == 3)' | grep -Fx true
+          gh release edit "$GITHUB_REF_NAME" --repo "$GITHUB_REPOSITORY" --draft=false --prerelease --latest=false \
+            --title "$title" --notes-file "$notes"

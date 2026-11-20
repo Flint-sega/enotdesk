@@ -36,6 +36,10 @@ async function showOperatorWindowState(st) {
   else if (st.state === 'closed') text($('op-window-status'), t('opwin.closed'));
   else if (st.state === 'error') {
     const server = (await enot.getSettings().catch(() => null))?.serverUrl ?? '';
+    if (st.reason === 'pilot-server-required') {
+      text($('op-window-error'), t('pilot.serverRequired'));
+      return;
+    }
     text($('op-window-error'), st.reason === 'server-outdated'
       ? t('opwin.outdated', { server, version: st.version ?? '?' })
       : t('opwin.unreachable', { server }));
@@ -65,8 +69,8 @@ enot.onSignal(async (msg) => {
       break;
     case 'claim':
       // Клиент подтверждает видимое имя авторизованного оператора (R15/R15.3)
-      state.pendingClaim = { sessionId: state.session?.sessionId, claimId: msg.claimId };
-      text($('consent-operator'), msg.operator?.name ?? t('client.noOperator'));
+      state.pendingClaim = { sessionId: state.session?.sessionId, claimId: msg.claimId, guest: msg.operator?.guest === true };
+      text($('consent-operator'), msg.operator?.guest === true ? t('guest.name') : (msg.operator?.name ?? t('client.noOperator')));
       clientShow('consent');
       break;
     case 'approved':
@@ -92,7 +96,8 @@ enot.onSignal(async (msg) => {
       // креды для других операторов: закреплённый ID ПК (hostId, не меняется
       // между сеансами — просьба владельца 02.10) + пароль этого запуска
       if (state.session) {
-        text($('client-access-note'), t('client.accessNote', { id: state.session.hostId ?? state.session.sessionId, password: state.session.password }));
+        text($('client-access-note'), state.pendingClaim?.guest ? '' :
+          t('client.accessNote', { id: state.session.hostId ?? state.session.sessionId, password: state.session.password }));
       }
       break;
     case 'signal':
@@ -120,8 +125,9 @@ enot.onSignal(async (msg) => {
     case 'operator-joined': {
       // Мультиоператор: хост поднимает ПЕРСОНАЛЬНЫЙ pc этому оператору
       const op = msg.operator ?? {};
-      attachOperator(msg.claimId, op.name ?? '', { rejoin: true }).catch(() => {});
-      text($('client-operators'), t('client.operatorJoined', { name: op.name ?? '', login: op.login ?? '' }));
+      const name = op.guest === true ? t('guest.name') : (op.name ?? '');
+      attachOperator(msg.claimId, name, { rejoin: true }).catch(() => {});
+      if (op.guest !== true) text($('client-operators'), t('client.operatorJoined', { name, login: op.login ?? '' }));
       break;
     }
     case 'operator-left':
@@ -167,6 +173,12 @@ enot.onSignal(async (msg) => {
   const s = await enot.getSettings();
   initLocale(s.locale); // сохранённый выбор, иначе системная локаль, фолбэк en
   document.documentElement.lang = getLocale();
+  if (s.guestPilot) {
+    document.body.classList.add('guest-pilot');
+    for (const el of document.querySelectorAll('[data-pilot-i18n]')) el.dataset.i18n = el.dataset.pilotI18n;
+    $('tab-operator').dataset.i18nAriaLabel = 'pilot.help';
+    $('view-operator').dataset.i18nAriaLabel = 'pilot.help';
+  }
   applyI18n(); // статическая разметка переводится после выбора языка
   if (s.version) { // футер только с фактической версией — без выдуманных чисел
     text($('app-version'), s.version);

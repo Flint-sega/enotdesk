@@ -1,6 +1,8 @@
 {
-  "name": "enotdesk",
-  "version": "0.6.30",
+  "name": "enotdesk-guest-pilot",
+  "version": "0.6.30-guest-pilot.2",
+  "productName": "EnotDesk Guest Pilot",
+  "ENOT_GUEST_PILOT": true,
   "description": "EnotDesk — portable удалённая поддержка (клиент запускается без установки)",
   "private": true,
   "type": "module",
@@ -10,9 +12,8 @@
     "node": ">=24.12"
   },
   "scripts": {
-    "server": "node server/main.mjs",
+    "server": "node pilot/server.mjs",
     "start": "electron client/main.mjs",
-    "bootstrap": "node server/main.mjs bootstrap",
     "test": "node --test \"server/test/*.test.mjs\" \"client/test/*.test.mjs\" \"hub/test/*.test.mjs\"",
     "lint": "eslint .",
     "smoke:local": "node scripts/smoke-local.mjs",

@@ -1,8 +1,27 @@
-# EnotDesk
+# EnotDesk Guest Pilot
 
 English | [Русский](README.ru.md)
 
+## Guest Pilot for Linux
+
+This branch provides a separate edition for one-time help without accounts. The same app can share the screen or help someone using an invitation. The person sharing their screen approves the session and can end access at any time.
+
+Start the standalone pilot server with Node.js 24.12 or newer:
+
+```sh
+npm ci --omit=dev --ignore-scripts
+npm run server
+```
+
+Download the Linux x64 or ARM64 client from the [guest pilot release](https://github.com/Flint-sega/enotdesk/releases/tag/guest-pilot-0.6.30-2).
+
+See the [pilot guide](docs/GUEST-PILOT.md) for client builds and an isolated HTTPS/WSS and TURN deployment.
+
 [![tests](https://github.com/Flint-sega/enotdesk/actions/workflows/test.yml/badge.svg)](https://github.com/Flint-sega/enotdesk/actions/workflows/test.yml)
+
+## Standard EnotDesk edition
+
+The [standard edition on main](https://github.com/Flint-sega/enotdesk/tree/main) provides operator accounts, the administration panel and the optional support hub. Download it from the [standard releases](https://github.com/Flint-sega/enotdesk/releases/latest). The following overview and screenshots describe the standard edition.
 
 EnotDesk is a self-hosted remote-support application for Windows, macOS and Linux, licensed under **AGPL-3.0**. In the default **attended** mode the person receiving help runs a portable app with no installation, gets a one-time ID and password, and passes them to the operator through their usual chat; closing the app immediately ends access — no services, no autostart, no background processes. Optionally, **unattended access** (agent): an admin creates the machine in the operator app (“Machines” → “Add machine”) and gets a one-time code; on Windows the service is installed with that code right from the app (Settings → “Machine”), on Linux and macOS with the scripts in `client/agent-service/` (on macOS the agent runs in the user's session, with video and input — ADR 0038); the operator claims the machine with a mandatory reason and an optional PIN. Operators can work from the desktop client or a plain browser, and the optional EnotDesk Hub adds a ticket desk with a chat widget, one-click join and an email channel.
 

@@ -40,7 +40,8 @@ document.addEventListener('keydown', (e) => {
 
 // Секция только для Windows: на других платформах остаётся скрытой.
 enot.permissions().then((perms) => {
-  if (perms?.platform === 'win32') show($('agent-install-box'));
+  if (perms?.platform === 'win32' && !perms.guestPilot) show($('agent-install-box'));
+  if (perms?.guestPilot) $('settings-url').placeholder = 'http://127.0.0.1:17880';
 }).catch(() => { /* платформа неизвестна — секция скрыта, это честно */ });
 
 // Причина отказа main -> ключ словаря; install-failed раскрывается хвостом журнала.
@@ -87,7 +88,9 @@ function setChip(cls, key, vars) {
 async function checkHealth() {
   try {
     const health = await enot.request('health', {});
-    const ok = health?.status === 200;
+    const needsPilot = document.body.classList.contains('guest-pilot') && health?.status === 200
+      && health.body?.guestOnly !== true;
+    const ok = health?.status === 200 && !needsPilot;
     const version = ok ? (health.body?.version ?? '—') : '—';
     setChip(ok ? 'server-chip--ok' : 'server-chip--down', ok ? 'server.statusOk' : 'server.statusDown', { version });
     // ADR 0037: сервер называет минимальную поддерживаемую версию клиента —
@@ -100,7 +103,7 @@ async function checkHealth() {
         show($('update-banner'));
       }
     }
-    return { ok, version, error: ok ? null : t('settings.serverBad') };
+    return { ok, version, error: ok ? null : t(needsPilot ? 'pilot.serverRequired' : 'settings.serverBad') };
   } catch (e) {
     setChip('server-chip--down', 'server.statusDown');
     return { ok: false, version: null, error: e.message };

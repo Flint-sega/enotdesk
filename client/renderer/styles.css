@@ -82,6 +82,8 @@ body {
 h2[tabindex="-1"]:focus { outline: none; }
 
 .hidden { display: none !important; }
+.guest-pilot .cred-grid,
+.guest-pilot #btn-copy-both { display: none; }
 
 .icon {
   display: block; flex: none;

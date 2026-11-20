@@ -85,7 +85,7 @@ test('app.js: сигналинг главного окна — только host
     'answer/ICE роутятся в персональный pc оператора по сеансу клиента');
   assert.match(src, /case 'operator-joined':[\s\S]{0,300}attachOperator\(msg\.claimId/,
     'operator-joined поднимает персональный pc по claimId');
-  assert.match(src, /attachOperator\(msg\.claimId, op\.name \?\? '', \{ rejoin: true \}\)\.catch/,
+  assert.match(src, /attachOperator\(msg\.claimId, name, \{ rejoin: true \}\)\.catch/,
     'attachOperator вызывается с .catch — не роняет approved-ветку; operator-joined — как rejoin');
   assert.match(src, /case 'operator-left':[\s\S]{0,200}dropOperator\(msg\.claimId\)/,
     'operator-left снимает персональный pc, сеанс живёт');

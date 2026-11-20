@@ -224,8 +224,8 @@ ssh … enotadmin@198.51.100.11 "powershell -NoProfile -ExecutionPolicy Bypass -
   новым профилям не возвращается): Solitaire Collection, Feedback Hub, Get Started,
   Xbox-набор (XboxApp, GameOverlay, GamingOverlay, SpeechToTextOverlay, GamingApp,
   XboxIdentityProvider, Xbox.TCUI), Cortana, Office Hub, News (Win11).
-  Clipchamp/King.*/Copilot отсутствовали на этих сборках — скрипт снимает их,
-  если появятся.
+  Clipchamp, пакеты King.* и часть записей списка очистки отсутствовали на этих
+  сборках. Скрипт удаляет их, если они появятся.
 - **AppX, удалённые решением владельца** (G02): Камера (WindowsCamera), Запись
   звука (WindowsSoundRecorder), Техподдержка Windows (GetHelp), Будильники и часы
   (AlarmsClock), 3D-набор (Microsoft3DViewer, Print3D, MixedReality.Portal),

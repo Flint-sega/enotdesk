@@ -56,6 +56,14 @@ import { applyDesktopEntry } from './lib/desktop-entry.mjs';
 // SMOKE timing — замер «до/после» оптимизаций запуска без внешних инструментов.
 const bootMarks = { imports: Math.round(performance.now()) };
 
+// The packaged profile is selected before opening logs or taking the instance lock.
+const pkg = createRequire(import.meta.url)('../package.json');
+const GUEST_PILOT = pkg.ENOT_GUEST_PILOT === true;
+const initialServer = GUEST_PILOT ? 'http://127.0.0.1:17880' : DEFAULT_SERVER_URL;
+if (GUEST_PILOT && !app.commandLine.hasSwitch('user-data-dir')) {
+  app.setPath('userData', path.join(app.getPath('appData'), 'EnotDesk Guest Pilot'));
+}
+
 // Диагностика Windows-службы (W-U2): первый маркер каждого запуска процесса —
 // ДО ветки службы. Если svc-ветка НЕ вошла, а эта строка в логе есть —
 // Environment REG_MULTI_SZ не доставлен процессу (гипотеза №1) либо диспетчер
@@ -107,7 +115,7 @@ try {
 // SCM-обёрткой (win-service.mjs), которая держит живым дочерний агент (тот же
 // exe с EDESK_AGENT=1). Без StartServiceCtrlDispatcher SCM убивает процесс
 // по 1053 (живой сеанс 28.09, W-U2). Ветка стоит ДО любого обращения к app.
-if (process.env.EDESK_AGENT_SVC === '1' && process.platform === 'win32') {
+if (!GUEST_PILOT && process.env.EDESK_AGENT_SVC === '1' && process.platform === 'win32') {
   svcDiag.write('svc', 'svc-ветка вошла (EDESK_AGENT_SVC=1 доставлен)');
   try {
     const { runAsScmParent } = await import('./lib/win-service.mjs');
@@ -137,7 +145,7 @@ const SMOKE = process.env.EDESK_SMOKE === '1';
 // Режим агента-службы (EDESK_AGENT=1): без окна, логи честные в stdout.
 // Отдельный userData-профиль даёт агенту свой single-instance-замок, поэтому
 // служба и обычный клиент работают на одной машине одновременно.
-const AGENT = process.env.EDESK_AGENT === '1';
+const AGENT = !GUEST_PILOT && process.env.EDESK_AGENT === '1';
 if (AGENT) app.setPath('userData', path.join(app.getPath('userData'), 'agent'));
 // Установленная (NSIS в Program Files) Windows-сборка против портативной:
 // electron-builder portable выставляет PORTABLE_EXECUTABLE_FILE, установочная —
@@ -150,18 +158,6 @@ if (SMOKE && process.env.EDESK_SMOKE_FIRSTRUN === '1') {
   app.setPath('userData', path.join(app.getPath('userData'), 'smoke-firstrun'));
 }
 
-// Версия продукта: в упаковке — app.getVersion(); в dev Electron отдаёт свою версию,
-// поэтому один раз при старте читаем фактическую из корневого package.json.
-const pkg = (() => {
-  try {
-    return createRequire(import.meta.url)('../package.json');
-  } catch (e) {
-    // не выдумываем версию: футер просто не покажется, но сбой виден в логе
-    console.error('Не удалось прочитать версию из корневого package.json (футер останется без версии):', e.message);
-    return {};
-  }
-})();
-
 // Boot-лог окна (v0.6.4, приём RustDesk): always-on файловый журнал жизни
 // окна/приложения — «окно не молчит» не должно требовать маркера или живого
 // stdout. svc-diag остаётся расширенной Windows-диагностикой по маркеру.
@@ -173,7 +169,7 @@ for (const note of earlyNotes.splice(0)) bootLog.write('main', note);
 // Вшитый при сборке адрес сервера (R03): electron-builder extraMetadata кладёт
 // ключ в package.json внутри app.asar (build/electron-builder.yml), dev-прогон
 // может задать его переменной окружения. Пустая строка = «не задано».
-const BAKED_SERVER_URL = pkg.ENOT_BAKED_SERVER_URL || process.env.ENOT_BAKED_SERVER_URL || null;
+const BAKED_SERVER_URL = pkg.ENOT_BAKED_SERVER_URL || (!GUEST_PILOT && process.env.ENOT_BAKED_SERVER_URL) || null;
 
 // ТЕСТОВЫЕ флаги (только сборки для живой приёмки, в prod-релизах отсутствуют):
 // ENOT_AUTO_SESSION=1 — клиент сам создаёт сеанс при старте (ID/пароль стабильны,
@@ -191,7 +187,7 @@ const BRIDGE_CAPTURE = (process.platform === 'linux' || process.platform === 'da
 
 let win = null;
 let settingsPath = null;
-let settings = { serverUrl: DEFAULT_SERVER_URL, allowInsecureHttp: false, locale: null, hostId: null };
+let settings = { serverUrl: initialServer, allowInsecureHttp: false, locale: null, hostId: null };
 
 // Закреплённый ID ПК (просьба владельца, приёмка 02.10): 9 цифр, генерируется
 // один раз и живёт в settings.json — переустановка/снос профиля меняет его,
@@ -220,7 +216,7 @@ if (!gotLock) app.quit();
 // One-click (R04): протокол enotdesk://join регистрирует только упакованное
 // приложение. dev/SMOKE не должны мусорить в системе и перехватывать ссылки
 // у установленной сборки; агент-службе (без окна и клиентских сеансов) он не нужен.
-const PROTOCOL_REGISTERED = !SMOKE && !AGENT && app.isPackaged;
+const PROTOCOL_REGISTERED = !GUEST_PILOT && !SMOKE && !AGENT && app.isPackaged;
 // Портатив не регистрирует свою временную распаковку (A-10, 24.10): см. lib/protocol-handler.mjs
 const protocolExe = protocolTarget({ platform: process.platform, env: process.env, exists: fs.existsSync });
 if (PROTOCOL_REGISTERED) {
@@ -362,6 +358,7 @@ app.on('second-instance', (_event, argv) => {
     }
   }
   // Повторный запуск с join/invite-ссылкой (win/linux) доставляется первому инстансу
+  if (GUEST_PILOT) return;
   const link = (argv ?? []).find((a) => typeof a === 'string' && (parseJoinLink(a) || parseInviteLink(a)));
   if (link && !applyJoinLink(link) && !applyInviteLink(link)) {
     console.log('[enotdesk] получена некорректная ссылка — проигнорирована');
@@ -372,13 +369,14 @@ app.on('second-instance', (_event, argv) => {
 // и в живом приложении (обрабатываем сразу)
 app.on('open-url', (event, url) => {
   event.preventDefault();
+  if (GUEST_PILOT) return;
   pendingRawJoin = url;
   processPendingJoinLink();
 });
 
 // win/linux: ссылка в argv первого запуска (применяется после ready)
-const STARTUP_JOIN_LINK = process.argv.slice(1).find((a) => typeof a === 'string' && parseJoinLink(a)) ?? null;
-const STARTUP_INVITE_LINK = process.argv.slice(1).find((a) => typeof a === 'string' && parseInviteLink(a)) ?? null;
+const STARTUP_JOIN_LINK = GUEST_PILOT ? null : (process.argv.slice(1).find((a) => typeof a === 'string' && parseJoinLink(a)) ?? null);
+const STARTUP_INVITE_LINK = GUEST_PILOT ? null : (process.argv.slice(1).find((a) => typeof a === 'string' && parseInviteLink(a)) ?? null);
 
 // Токены живут только здесь (main). Рендереру не возвращаются.
 const hostCredentials = () => ({ hostId: settings.hostId, password: helpPassword });
@@ -460,8 +458,9 @@ function loadSettings() {
   const resolvedServer = resolveServerUrl({
     saved: savedUrl,
     savedAllowInsecureHttp: settings.allowInsecureHttp,
-    execPath: process.execPath,
+    execPath: GUEST_PILOT ? null : process.execPath,
     baked: BAKED_SERVER_URL,
+    defaultUrl: initialServer,
   });
   settings.serverUrl = resolvedServer.url;
   bootLog.write('config', `serverUrl=${resolvedServer.url} (источник: ${resolvedServer.source})`);
@@ -502,7 +501,7 @@ let activeUpdater = null;
 let updateOnQuitVersion = null;
 
 function startUpdater() {
-  if (SMOKE || AGENT || !app.isPackaged) return;
+  if (GUEST_PILOT || SMOKE || AGENT || !app.isPackaged) return;
   const feedUrl = updateFeedUrl(UPDATE_REPO);
   const notify = (payload) => sendToRenderer('enot:update', payload);
   // mac без подписи (флаг сборки ENOT_MAC_SELF_UPDATE не вшит) — только
@@ -857,6 +856,7 @@ function permissionsReport() {
   const wayland = isWaylandSession();
   const report = {
     platform: process.platform,
+    guestPilot: GUEST_PILOT,
     wayland,
     nativeInput: nativeInput.status(),
     inputKeys: [...INPUT_KEYS], // единый источник истины: рендерер не дублирует allowlist
@@ -1021,7 +1021,7 @@ async function openOperatorWindow({ inviteToken } = {}) {
   }
   closeOperatorWindow(); // адрес сервера сменился — старое окно не держим
   operatorStatus({ state: 'checking' });
-  const probe = await probeOperatorServer(settings.serverUrl);
+  const probe = await probeOperatorServer(settings.serverUrl, fetch, undefined, { guestOnly: GUEST_PILOT });
   bootLog.write('operator', `проба сервера: ${probe.ok ? 'ok' : probe.reason}${probe.version ? ` (версия ${probe.version})` : ''}`);
   if (!probe.ok) {
     operatorStatus({ state: 'error', ...probe });
@@ -1042,7 +1042,7 @@ async function openOperatorWindow({ inviteToken } = {}) {
     backgroundColor: '#0B1020',
     autoHideMenuBar: true,
     webPreferences: {
-      preload: path.join(import.meta.dirname, 'operator-preload.cjs'),
+      ...(GUEST_PILOT ? {} : { preload: path.join(import.meta.dirname, 'operator-preload.cjs') }),
       partition: OPERATOR_PARTITION,
       contextIsolation: true,
       nodeIntegration: false,
@@ -1136,7 +1136,7 @@ function registerIpc() {
     destroyChatWidget();
   });
 
-  ipcMain.handle('enot:getSettings', (e) => { guard(e); return { serverUrl: settings.serverUrl, allowInsecureHttp: settings.allowInsecureHttp, locale: settings.locale, firstRun: !fs.existsSync(settingsPath), version: app.isPackaged ? app.getVersion() : pkg.version }; });
+  ipcMain.handle('enot:getSettings', (e) => { guard(e); return { serverUrl: settings.serverUrl, allowInsecureHttp: settings.allowInsecureHttp, locale: settings.locale, firstRun: !fs.existsSync(settingsPath), guestPilot: GUEST_PILOT, version: app.isPackaged ? app.getVersion() : pkg.version }; });
 
   // «Запомнить меня» на входе оператора: пароль хранится ТОЛЬКО шифротекстом
   // safeStorage (DPAPI/Keychain/keyring; Linux basic_text = как «нет») в файле
@@ -1241,7 +1241,7 @@ function registerIpc() {
   // приложение, только Windows.
   ipcMain.handle('enot:installAgentService', async (e, payload = {}) => {
     guard(e);
-    if (process.platform !== 'win32' || !app.isPackaged) return { ok: false, reason: 'unsupported' };
+    if (GUEST_PILOT || process.platform !== 'win32' || !app.isPackaged) return { ok: false, reason: 'unsupported' };
     const code = safeCode(payload?.code);
     if (!code) return { ok: false, reason: 'bad-code' };
     const src = resolveInstallSource({ execPath: process.execPath, portableFile: process.env.PORTABLE_EXECUTABLE_FILE ?? '' });
@@ -1313,7 +1313,24 @@ function registerIpc() {
     guard(e);
     if (typeof operation !== 'string') throw new Error('Некорректная операция');
     if (payload !== undefined && (payload === null || typeof payload !== 'object')) throw new Error('Некорректные данные запроса');
-    const result = await api.request(operation, payload ?? {});
+    const currentApi = api;
+    if (GUEST_PILOT && operation === 'session.create') {
+      const probe = await probeOperatorServer(settings.serverUrl, fetch, undefined, { guestOnly: true });
+      if (!probe.ok || api !== currentApi) {
+        return { status: 503, body: { error: { message: t('pilot.serverRequired') } } };
+      }
+    }
+    const result = await currentApi.request(operation, payload ?? {});
+    if (operation === 'session.guest-invite' && result.status === 201) {
+      if (api !== currentApi || currentApi.hostSessionId !== payload?.sessionId) return { status: 409 };
+      const { invite, expiresAt } = result.body;
+      const urls = operatorWindowUrls(settings.serverUrl);
+      if (!urls || typeof invite !== 'string' || !/^\d{9}\.[A-Za-z0-9_-]{43}$/.test(invite)) {
+        throw new Error('Invalid guest invitation');
+      }
+      clipboard.writeText(`${urls.operator}#guest=${encodeURIComponent(invite)}`);
+      return { status: 201, body: { expiresAt } };
+    }
     // Keep-awake на время помощи (тёмный экран/замороженный ввод на ночной
     // машине — приёмка 02.10): дисплей и система бодрствуют от создания сеанса
     // до его завершения; на не-Windows/без koffi — no-op внутри либы.
@@ -2117,7 +2134,7 @@ app.whenReady().then(() => {
         const p = path.join(app.getPath('userData'), 'settings.json');
         if (!fs.existsSync(p)) {
           fs.mkdirSync(path.dirname(p), { recursive: true });
-          fs.writeFileSync(p, JSON.stringify({ serverUrl: DEFAULT_SERVER_URL }));
+          fs.writeFileSync(p, JSON.stringify({ serverUrl: initialServer }));
         }
       } catch { /* smoke: честный скриншот first-run, если записать не вышло */ }
     }
@@ -2126,7 +2143,7 @@ app.whenReady().then(() => {
   // Linux: ярлык приложения в меню (находка 10.10: на ВМ ярлыка не было, запуск
   // только из терминала). Только упакованный десктоп-режим; AppImage-обновление
   // меняет файл по тому же пути, при смене пути Exec перезапишется сам.
-  if (process.platform === 'linux' && !AGENT && !SMOKE && app.isPackaged) {
+  if (process.platform === 'linux' && !GUEST_PILOT && !AGENT && !SMOKE && app.isPackaged) {
     try {
       const r = applyDesktopEntry({
         home: os.homedir(),

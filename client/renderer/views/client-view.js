@@ -49,6 +49,7 @@ async function startHelp() {
     text($('client-id'), state.session.hostId);
     text($('client-password'), res.body.password);
     await enot.openSignal({ role: 'host', sessionId: res.body.sessionId });
+    (res.body.guestHelp === true ? show : hide)($('btn-copy-guest'));
     clientShow('waiting');
     return state.session;
   } catch (e) {
@@ -99,6 +100,22 @@ async function copyText(btn, value, okMsg) {
 $('btn-copy-id').addEventListener('click', (e) => copyText(e.currentTarget, state.session?.hostId ?? state.session?.sessionId ?? '', t('client.idCopied')));
 $('btn-copy-password').addEventListener('click', (e) => copyText(e.currentTarget, state.session?.password ?? '', t('client.passCopied')));
 $('btn-copy-both').addEventListener('click', (e) => copyText(e.currentTarget, `ID: ${state.session?.hostId ?? state.session?.sessionId}\n${t('client.passLabel')}: ${state.session?.password}`, t('client.bothCopied')));
+$('btn-copy-guest').addEventListener('click', async (e) => {
+  const button = e.currentTarget;
+  const sessionId = state.session?.sessionId;
+  if (!sessionId) return;
+  setBusy(button, true);
+  try {
+    const result = await enot.request('session.guest-invite', { sessionId });
+    if (state.session?.sessionId === sessionId) {
+      text($('copy-status'), t(result.status === 201 ? 'guest.copied' : 'guest.copyError'));
+    }
+  } catch {
+    if (state.session?.sessionId === sessionId) text($('copy-status'), t('guest.copyError'));
+  } finally {
+    setBusy(button, false);
+  }
+});
 
 $('btn-allow').addEventListener('click', () => decide(true));
 $('btn-deny').addEventListener('click', () => decide(false));

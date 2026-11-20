@@ -41,6 +41,9 @@ test('operator-window: вердикт health — уровень страницы
   assert.deepEqual(evaluateHealth(200, { ok: true, version: '0.6.22', operatorUi: 2 }), { ok: true, version: '0.6.22' }, 'уровень выше — тоже годится');
   assert.deepEqual(evaluateHealth(200, { ok: true, version: '0.6.21' }), { ok: false, reason: 'server-outdated', version: '0.6.21' }, 'старый сервер без поля — «обновите сервер»');
   assert.deepEqual(evaluateHealth(200, { ok: true, version: '0.6.21', operatorUi: '1' }), { ok: false, reason: 'server-outdated', version: '0.6.21' }, 'строка вместо числа — не доверяем');
+  const regular = { ok: true, version: '0.6.23', operatorUi: 1 };
+  assert.equal(evaluateHealth(200, regular, { guestOnly: true }).reason, 'pilot-server-required');
+  assert.equal(evaluateHealth(200, { ...regular, guestOnly: true }, { guestOnly: true }).ok, true);
   assert.deepEqual(evaluateHealth(503, { ok: true, operatorUi: 1 }), { ok: false, reason: 'server-unreachable' });
   assert.deepEqual(evaluateHealth(200, null), { ok: false, reason: 'server-unreachable' }, 'не JSON — не наш сервер');
   assert.deepEqual(evaluateHealth(200, { status: 'up' }), { ok: false, reason: 'server-unreachable' }, 'чужой health — не наш сервер');

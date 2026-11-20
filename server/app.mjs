@@ -339,6 +339,18 @@ function bearer(req) {
   return scheme === 'Bearer' ? token || null : null;
 }
 
+function pilotRoute(method, pathname) {
+  if (method === 'GET') {
+    return ['/', '/operator', '/api/v1/health', '/api/v1/rtc-config'].includes(pathname)
+      || /^\/(?:brand|web|client\/(?:lib|renderer|locales))\/[^/]+$/.test(pathname);
+  }
+  if (method === 'POST') {
+    return ['/api/v1/sessions', '/api/v1/guest/claim'].includes(pathname)
+      || /^\/api\/v1\/sessions\/\d{9}\/(?:guest-invite|decision|end)$/.test(pathname);
+  }
+  return false;
+}
+
 export function createServer(opts = {}) {
   const cfg = {
     dbPath: opts.dbPath ?? ':memory:',
@@ -347,6 +359,8 @@ export function createServer(opts = {}) {
     version: opts.version ?? '0.0.0',
     distDir: opts.distDir || process.env.ENOT_DIST_DIR || path.join(process.cwd(), 'dist'),
     publicUrl: opts.publicUrl ?? '',
+    guestHelp: opts.guestHelp === true || opts.guestOnly === true,
+    guestOnly: opts.guestOnly === true,
     turnUrls: opts.turnUrls ?? '',
     turnUsername: opts.turnUsername ?? '',
     turnPassword: opts.turnPassword ?? '',
@@ -395,6 +409,7 @@ export function createServer(opts = {}) {
       sessions: opts.limits?.sessions ?? new RateLimiter(10, 60_000),
       claim: opts.limits?.claim ?? new RateLimiter(10, 60_000),
       claimId: opts.limits?.claimId ?? new RateLimiter(20, 60_000),
+      guestClaim: opts.limits?.guestClaim ?? new RateLimiter(12, 60_000),
       // файловый релей (v0.4.0): загрузки и скачивания по ссылкам
       relayUpload: opts.limits?.relayUpload ?? new RateLimiter(10, 60_000),
       relayDownload: opts.limits?.relayDownload ?? new RateLimiter(30, 60_000),
@@ -437,6 +452,12 @@ export function createServer(opts = {}) {
   };
 
   const live = new Map(); // sessionId -> {hostWs, opSockets:Map(ws->{userId,claimId}), operatorUserId, sigCount, sigReset, hostLostAt, opLostAt, lastBeat, termActive, hostPingAt, hostPingCount}
+  // Session lifetime owns both entries. Only hashes persist in memory.
+  const guestInvites = new Map();
+  const guestGrants = new Map();
+  const guestInviteTtlMs = 5 * 60_000;
+  const guestAttachWindowMs = 10_000;
+  const guestOperator = (claimId) => ({ id: `guest:${claimId}`, name: 'Guest', guest: true });
   let closed = false;
 
   // Toast на экран машины (R08): память процесса, не БД — состояние одноразовое.
@@ -569,6 +590,8 @@ export function createServer(opts = {}) {
       "UPDATE sessions SET state='ended', ended_at=?, end_reason=? WHERE id=? AND state!='ended'"
     ).run(now, reason, sessionId);
     if (r.changes === 0) return false;
+    guestInvites.delete(sessionId);
+    guestGrants.delete(sessionId);
     // доставка события асинхронная: сеанс не ждёт webhook
     webhooks.emit('session.ended', { sessionId, reason });
     const rt = live.get(sessionId);
@@ -632,7 +655,7 @@ export function createServer(opts = {}) {
   function closeRevokedOperators() {
     for (const rt of live.values()) {
       for (const [opWs, meta] of rt.opSockets) {
-        if (!meta.tokenHash || opSocketAuthorized(meta)) continue;
+        if (meta.guest || !meta.tokenHash || opSocketAuthorized(meta)) continue;
         try { opWs.close(4003, 'auth-revoked'); } catch { /* уже закрыт */ }
       }
     }
@@ -641,6 +664,16 @@ export function createServer(opts = {}) {
 
   const sweeper = setInterval(() => {
     const nowMs = Date.now();
+    if (guestGrants.size) {
+      const guestNow = cfg.nowMs();
+      for (const [id, grant] of guestGrants) {
+        if (grant.attachBy === null || grant.attachBy > guestNow) continue;
+        db.prepare(
+          "UPDATE sessions SET state='waiting', claim_id=NULL, started_at=NULL WHERE id=? AND state='pending-consent' AND claim_id=?",
+        ).run(id, grant.claimId);
+        guestGrants.delete(id);
+      }
+    }
     if (nowMs - opAuthCheckedAt >= cfg.opAuthCheckMs) {
       opAuthCheckedAt = nowMs;
       closeRevokedOperators();
@@ -727,6 +760,7 @@ export function createServer(opts = {}) {
   housekeeper.unref();
 
   function authUser(req) {
+    if (cfg.guestOnly) return null;
     const token = bearer(req);
     if (!token) return null;
     const now = new Date().toISOString();
@@ -743,9 +777,23 @@ export function createServer(opts = {}) {
   function hostTokenSession(req) {
     const token = bearer(req);
     if (!token) return null;
-    return db.prepare(
+    const session = db.prepare(
       "SELECT * FROM sessions WHERE host_token_hash = ? AND state != 'ended'"
-    ).get(sha256(token)) || null;
+    ).get(sha256(token));
+    if (cfg.guestOnly && (session?.machine_id || session?.operator_id)) return null;
+    return session ?? null;
+  }
+
+  function guestSession(token, session = null) {
+    if (!cfg.guestHelp || typeof token !== 'string') return null;
+    const match = /^g\.(\d{9})\.[A-Za-z0-9_-]{43}$/.exec(token);
+    if (!match || (session && session.id !== match[1])) return null;
+    const grant = guestGrants.get(match[1]);
+    if (!grant || grant.hash !== sha256(token) || (grant.attachBy !== null && grant.attachBy <= cfg.nowMs())) return null;
+    const s = session ?? db.prepare('SELECT * FROM sessions WHERE id = ?').get(match[1]);
+    if (!s || s.machine_id || s.claim_id !== grant.claimId || s.operator_id
+      || !['pending-consent', 'approved'].includes(s.state)) return null;
+    return s;
   }
 
   // Доверенные прокси парсятся один раз на сервер; пустой список — не доверять никому
@@ -785,6 +833,9 @@ export function createServer(opts = {}) {
   async function handle(req, res) {
     let m; // общий скан-маршрутизатор: объявлен до relay-вставок (TDZ)
     const url = new URL(req.url, `http://${req.headers.host || 'localhost'}`);
+    if (cfg.guestOnly && !pilotRoute(req.method, url.pathname)) {
+      return err(res, 404, 'not_found', 'Маршрут не найден');
+    }
     const p = url.pathname.replace(/^\/api\/v1/, '');
     // CORS deny unknown origins: заголовки не выставляются вообще
     const origin = req.headers.origin;
@@ -839,7 +890,9 @@ export function createServer(opts = {}) {
         // оператора с сервера, только если уровень не ниже своего; 1 — паритет
         // с desktop (контакты, история, журнал, CSV, аудитор «только журнал»)
         operatorUi: 1,
+        ...(cfg.guestHelp ? { guestHelp: true } : {}),
         ...(cfg.minClientVersion ? { minClientVersion: cfg.minClientVersion } : {}),
+        ...(cfg.guestOnly ? { guestOnly: true } : {}),
         activeSessions: live.size,
         uptimeSec: Math.round(process.uptime()),
       });
@@ -1396,7 +1449,7 @@ export function createServer(opts = {}) {
       // генерирует 9-значный hostId (settings.json) и шлёт его с каждым сеансом;
       // пароль клиент тоже генерирует сам — на запуск приложения (ротация при
       // перезапуске). Без hostId — прежнее поведение (серверные генерации).
-      const hostIdRaw = typeof body?.hostId === 'string' ? body.hostId.trim() : '';
+      const hostIdRaw = !cfg.guestOnly && typeof body?.hostId === 'string' ? body.hostId.trim() : '';
       const hostId = /^\d{9}$/.test(hostIdRaw) ? hostIdRaw : null;
       if (hostIdRaw && !hostId) return err(res, 400, 'bad_host_id', 'hostId должен быть 9-значным числом');
       const clientPassword = typeof body?.password === 'string' ? body.password : '';
@@ -1416,7 +1469,42 @@ export function createServer(opts = {}) {
                   VALUES (?,?,?,'waiting',?,?,?,?)`)
         .run(id, hashPassword(password), sha256(hostToken), now, lease, clientIp, hostId);
       auditLog(db, null, 'session.create', id, hostId ? { hostId } : {});
-      return ok(res, 201, { sessionId: id, password, hostToken, expiresAt: lease, ...(hostId ? { hostId } : {}) });
+      return ok(res, 201, {
+        sessionId: id, password, hostToken, expiresAt: lease,
+        ...(hostId ? { hostId } : {}),
+        ...(cfg.guestHelp ? { guestHelp: true } : {}),
+      });
+    }
+    m = p.match(/^\/sessions\/(\d{9})\/guest-invite$/);
+    if (cfg.guestHelp && m && req.method === 'POST') {
+      const s = hostTokenSession(req);
+      if (!s || s.id !== m[1] || s.machine_id) return err(res, 403, 'forbidden', 'Приглашение может создать только владелец сеанса');
+      if (s.state !== 'waiting') return err(res, 409, 'session_busy', 'Сеанс уже занят');
+      const invite = `${s.id}.${newToken()}`;
+      const expiresAt = cfg.nowMs() + guestInviteTtlMs;
+      guestInvites.set(s.id, { hash: sha256(invite), expiresAt });
+      return ok(res, 201, { invite, expiresAt: new Date(expiresAt).toISOString() });
+    }
+    if (cfg.guestHelp && p === '/guest/claim' && req.method === 'POST') {
+      if (!cfg.limits.guestClaim.take(ip(req))) return err(res, 429, 'rate_limited', 'Слишком много попыток подключения');
+      const invalid = () => err(res, 404, 'guest_invite_unavailable', 'Приглашение недействительно или истекло');
+      const invite = body?.invite;
+      const match = typeof invite === 'string' ? /^(\d{9})\.[A-Za-z0-9_-]{43}$/.exec(invite) : null;
+      if (!match) return invalid();
+      const id = match[1];
+      const pending = guestInvites.get(id);
+      if (!pending || pending.expiresAt <= cfg.nowMs() || pending.hash !== sha256(invite)) return invalid();
+      const claimId = newClaimId();
+      const now = new Date().toISOString();
+      const lease = new Date(Date.now() + cfg.leaseMs).toISOString();
+      const changed = db.prepare(
+        "UPDATE sessions SET claim_id=?, state='pending-consent', started_at=?, lease_expires_at=? WHERE id=? AND state='waiting' AND machine_id IS NULL AND lease_expires_at > ?",
+      ).run(claimId, now, lease, id, now);
+      guestInvites.delete(id);
+      if (changed.changes !== 1) return invalid();
+      const token = `g.${id}.${newToken()}`;
+      guestGrants.set(id, { claimId, hash: sha256(token), attachBy: cfg.nowMs() + guestAttachWindowMs });
+      return ok(res, 201, { sessionId: id, claimId, token, operator: guestOperator(claimId), state: 'pending-consent' });
     }
     m = p.match(/^\/sessions\/([^/]+)\/claim$/);
     if (m && req.method === 'POST') {
@@ -1434,6 +1522,9 @@ export function createServer(opts = {}) {
         ?? db.prepare("SELECT * FROM sessions WHERE host_id = ? AND state != 'ended' ORDER BY created_at DESC LIMIT 1")
           .get(/^\d{9}$/.test(m[1]) ? m[1] : '\u0000');
       if (!s || !(await verifyPasswordAsync(String(body?.password ?? ''), s.password_hash))) return generic();
+      // A guest session has exactly one approved viewer. Regular account
+      // claims can still compete for an unclaimed session.
+      if (guestGrants.has(s.id)) return generic();
       const op = { id: user.id, login: user.login, name: user.name };
       // multi-operator (v0.4.0): сеанс уже занят другим оператором → ПРИСОЕДИНЕНИЕ
       // с тем же доступом (ID+пароль = авторизация); новый claimId на оператора
@@ -1504,6 +1595,10 @@ export function createServer(opts = {}) {
       if (claimId !== s.claim_id || typeof allow !== 'boolean') {
         return err(res, 400, 'bad_request', 'Некорректный запрос решения');
       }
+      const guest = guestGrants.get(s.id);
+      if ((cfg.guestOnly && !guest) || (guest && guest.attachBy !== null)) {
+        return err(res, 409, 'guest_connecting', 'Гость ещё не подключился');
+      }
       if (allow) {
         // повторный allow — no-op: approved уходит один раз, при переподключении
         // его разыгрывает WS-аутентификация (replay)
@@ -1531,23 +1626,28 @@ export function createServer(opts = {}) {
       const isHost = token && s.host_token_hash === sha256(token);
       const operator = authUser(req);
       const isOperator = operator && s.operator_id === operator.id;
-      if (!isHost && !isOperator) return err(res, 403, 'forbidden', 'Недостаточно прав для этого сеанса');
+      const isGuest = Boolean(guestSession(token, s));
+      if (!isHost && !isOperator && !isGuest) return err(res, 403, 'forbidden', 'Недостаточно прав для этого сеанса');
       // reason idle — только хосту (таймаут бездействия v0.4.0); остальным 'ended'
       const reason = isHost && body?.reason === 'idle' ? 'idle' : 'ended';
       const changed = endSession(s.id, reason);
-      if (changed) auditLog(db, isHost ? null : operator.id, 'session.end', s.id, isHost ? { host: true, reason } : {});
+      if (changed) auditLog(db, isOperator ? operator.id : null, 'session.end', s.id,
+        isHost ? { host: true, reason } : isGuest ? { guest: true } : {});
       return ok(res, 200, { ok: true });
     }
     if (p === '/rtc-config' && req.method === 'GET') {
-      const s = hostTokenSession(req);
+      const host = hostTokenSession(req);
+      const s = host && (!cfg.guestOnly || (host.state === 'approved' && guestGrants.has(host.id))) ? host : null;
       const u = s ? null : authUser(req);
-      if (!s && !u) return err(res, 401, 'unauthorized', 'Требуется авторизация');
+      const guest = !s && !u && guestSession(bearer(req))?.state === 'approved';
+      if (!s && !u && !guest) return err(res, 401, 'unauthorized', 'Требуется авторизация');
       // Аудитор — наблюдатель журналов, в WebRTC-сеансах не участвует; отказ 403
       // консистентен с прочими «поддерживающими» маршрутами (claim, machines),
       // куда auditor тоже не допущен, и не раздаёт ему TURN-креденшелы.
       if (u && u.role === 'auditor') return err(res, 403, 'forbidden', 'Недостаточно прав');
       const iceServers = [];
-      if (cfg.turnUrls) {
+      // Guests only receive ephemeral TURN credentials.
+      if (cfg.turnUrls && (!guest || cfg.turnSecret)) {
         // + IP-вариант каждого hostname-адреса (см. turnUrlVariants): клиентский
         // DNS при старте WebRTC флапает — ICE не должен зависеть от резолва
         const urls = (await Promise.all(
@@ -1566,7 +1666,10 @@ export function createServer(opts = {}) {
           iceServers.push({ urls, username: cfg.turnUsername, credential: cfg.turnPassword });
         }
       }
-      return ok(res, 200, { iceServers });
+      return ok(res, 200, {
+        iceServers,
+        ...(cfg.guestOnly && iceServers.length ? { iceTransportPolicy: 'relay' } : {}),
+      });
     }
 
     // ---- webhooks (D1): настройка доставки событий, только админ ----
@@ -1998,7 +2101,7 @@ export function createServer(opts = {}) {
 
     // ---- pages / brand / downloads ----
     if (p === '/' && req.method === 'GET' && !req.url.startsWith('/api')) {
-      res.writeHead(302, { Location: '/downloads' });
+      res.writeHead(302, { Location: cfg.guestOnly ? '/operator' : '/downloads' });
       res.end();
       return;
     }
@@ -2090,6 +2193,7 @@ export function createServer(opts = {}) {
     }
     if (p === '/operator' && req.method === 'GET' && !req.url.startsWith('/api')) {
       const locale = pickLocale(req.headers['accept-language']);
+      if (cfg.guestOnly) return operatorPage(res, 200, locale, t('guest.title', {}, locale), cfg.version, true, true);
       // Навигация браузера не шлёт Authorization: cookie выбирает только вариант
       // страницы и хранит РОЛЬ, не токен (SEC-008) — bearer живёт в памяти страницы,
       // а каждый /api и WS всё равно за RBAC.
@@ -2100,7 +2204,7 @@ export function createServer(opts = {}) {
       // B6 этап 1: аудитор получает страницу (режим «только журнал»); данных
       // страница не несёт, а /history и /audit проверяют роль сами.
       const status = opRole === 'admin' || opRole === 'operator' || opRole === 'auditor' ? 200 : 401;
-      return operatorPage(res, status, locale, t('web.title', {}, locale), cfg.version);
+      return operatorPage(res, status, locale, t('web.title', {}, locale), cfg.version, cfg.guestHelp);
     }
 
     return err(res, 404, 'not_found', 'Маршрут не найден');
@@ -2196,7 +2300,9 @@ export function createServer(opts = {}) {
       if (!msg || msg.type !== 'auth') return ws.close(4002, 'auth-first');
       const now = new Date().toISOString();
       const s = db.prepare('SELECT * FROM sessions WHERE id = ?').get(String(msg.sessionId ?? ''));
-      if (!s || s.state === 'ended') return ws.close(4003, 'invalid-session');
+      if (!s || s.state === 'ended' || (cfg.guestOnly && (s.machine_id || s.operator_id))) {
+        return ws.close(4003, 'invalid-session');
+      }
       if (msg.role === 'host') {
         // оба — hex-дайджесты sha256 равной длины; timingSafe как в релее (замечание 10.10)
         const digest = typeof msg.token === 'string' ? Buffer.from(sha256(msg.token)) : null;
@@ -2223,19 +2329,24 @@ export function createServer(opts = {}) {
         if (s.lease_expires_at <= now && !inGrace) return ws.close(4003, 'invalid-session');
         role = 'host';
       } else if (msg.role === 'operator') {
-        const u = authUser({ headers: { authorization: `Bearer ${msg.token}` }, socket: { remoteAddress: '' } });
-        if (!u || !['admin', 'operator'].includes(u.role)) return ws.close(4003, 'invalid-session');
-        // как и REST (totp_setup_required): админ без 2FA при обязательной 2FA сеанс не открывает
-        if (adminTotpBlocked(u)) return ws.close(4003, 'totp-setup-required');
-        // multi-operator (v0.4.0): основной оператор ИЛИ присоединённый (session_operators)
-        const joinedOp = db.prepare(
-          'SELECT 1 FROM session_operators WHERE session_id = ? AND user_id = ? AND claim_id = ?'
-        ).get(s.id, u.id, String(msg.claimId ?? ''));
-        const isPrimaryOp = msg.claimId === s.claim_id && s.operator_id === u.id;
-        if (!isPrimaryOp && !joinedOp) return ws.close(4003, 'invalid-session');
-        if (!['pending-consent', 'approved'].includes(s.state)) return ws.close(4003, 'invalid-session');
-        role = 'operator';
-        userId = u.id;
+        const guest = guestSession(msg.token, s);
+        if (guest) {
+          if (msg.claimId !== s.claim_id) return ws.close(4003, 'invalid-session');
+          role = 'operator';
+          userId = guestOperator(s.claim_id).id;
+        } else {
+          const u = authUser({ headers: { authorization: `Bearer ${msg.token}` }, socket: { remoteAddress: '' } });
+          if (!u || !['admin', 'operator'].includes(u.role)) return ws.close(4003, 'invalid-session');
+          if (adminTotpBlocked(u)) return ws.close(4003, 'totp-setup-required');
+          const joinedOp = db.prepare(
+            'SELECT 1 FROM session_operators WHERE session_id = ? AND user_id = ? AND claim_id = ?'
+          ).get(s.id, u.id, String(msg.claimId ?? ''));
+          const isPrimaryOp = msg.claimId === s.claim_id && s.operator_id === u.id;
+          if (!isPrimaryOp && !joinedOp) return ws.close(4003, 'invalid-session');
+          if (!['pending-consent', 'approved'].includes(s.state)) return ws.close(4003, 'invalid-session');
+          role = 'operator';
+          userId = u.id;
+        }
       } else {
         return ws.close(4002, 'auth-first');
       }
@@ -2276,12 +2387,19 @@ export function createServer(opts = {}) {
         // «вернувшимся» без реплея offer — видео у B не появлялось никогда)
         resumed = rt.opLostAt != null && rt.opLostUser === userId;
         rt.opLostAt = null;
-        rt.opSockets.set(ws, { userId, claimId: msg.claimId, tokenHash: sha256(String(msg.token)) });
+        const grant = guestGrants.get(s.id);
+        const guest = Boolean(grant && grant.claimId === msg.claimId);
+        rt.opSockets.set(ws, { userId, claimId: msg.claimId, tokenHash: sha256(String(msg.token)), guest });
+        if (guest && grant.attachBy !== null) {
+          grant.attachBy = null;
+          auditLog(db, null, 'session.claim', s.id, { guest: true });
+          send(rt.hostWs, { type: 'claim', claimId: s.claim_id, operator: guestOperator(s.claim_id) });
+        }
         // Мультиоператор: хост поднимает ПЕРСОНАЛЬНЫЙ pc на каждое присоединение
         // (offer адресуется по claimId). Сообщаем и при WS-(пере)подключении, не
         // только при claim-approve: reconnect оператора = новый attach.
         if (rt.hostWs) {
-          const op = db.prepare('SELECT id, name, login FROM users WHERE id = ?').get(userId);
+          const op = guest ? guestOperator(msg.claimId) : db.prepare('SELECT id, name, login FROM users WHERE id = ?').get(userId);
           if (op) send(rt.hostWs, { type: 'operator-joined', claimId: msg.claimId, operator: op });
         }
       }
@@ -2292,8 +2410,9 @@ export function createServer(opts = {}) {
       // graceMs наружу: клиенты держат своё грейс-окно равным серверному
       // (ENOT_GRACE_MS), вместо захардкоженных 30 с (ревью 28.09)
       send(ws, { type: 'ready', sessionId: s.id, role, state: fresh.state, graceMs: cfg.graceMs });
-      if (role === 'host' && fresh.state === 'pending-consent' && s.claim_id) {
-        const op = db.prepare('SELECT id, name FROM users WHERE id = ?').get(s.operator_id);
+      const pendingGuest = guestGrants.get(s.id);
+      if (role === 'host' && fresh.state === 'pending-consent' && s.claim_id && (!pendingGuest || pendingGuest.attachBy === null)) {
+        const op = pendingGuest ? guestOperator(s.claim_id) : db.prepare('SELECT id, name FROM users WHERE id = ?').get(s.operator_id);
         // ADR 0037 (Р5): машине — причина подключения для сообщения человеку за
         // компьютером. Берётся из записи machine.claim (пишется всегда, ADR 0034).
         let reason;
@@ -2311,7 +2430,7 @@ export function createServer(opts = {}) {
         // (offer адресуется). Без этого оператор, зацепившийся в окно обрыва,
         // оставался бы без видео навсегда.
         for (const ent of rt.opSockets.values()) {
-          const op = db.prepare('SELECT id, name, login FROM users WHERE id = ?').get(ent.userId);
+          const op = ent.guest ? guestOperator(ent.claimId) : db.prepare('SELECT id, name, login FROM users WHERE id = ?').get(ent.userId);
           if (op) send(ws, { type: 'operator-joined', claimId: ent.claimId, operator: op });
         }
       }
@@ -2379,6 +2498,7 @@ export function createServer(opts = {}) {
         if (rt.sigCount > SIGNAL_MAX) return ws.close(1008, 'slow-consumer');
         const isHost = role === 'host' && rt.hostWs === ws;
         if (!isHost && !rt.opSockets?.has(ws)) return ws.close(4002, 'bad-message');
+        if (guestGrants.has(s.id) && (s.state !== 'approved' || !isHost)) return;
         const name = typeof msg.name === 'string' ? msg.name.slice(0, 120) : '';
         const size = Number.isInteger(msg.size) && msg.size > 0 && msg.size <= 200 * 1024 * 1024 ? msg.size : 0;
         const url = typeof msg.url === 'string' && msg.url.startsWith('/api/v1/relay/') && msg.url.length <= 500 ? msg.url : '';
