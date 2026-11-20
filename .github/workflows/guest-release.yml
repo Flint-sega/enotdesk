@@ -2,7 +2,7 @@ name: Publish EnotDesk Guest Pilot
 
 on:
   push:
-    tags: [guest-pilot-0.6.30-2]
+    tags: [guest-pilot-0.6.30-2-linux]
 
 permissions:
   actions: read
@@ -32,16 +32,24 @@ jobs:
         run: |
           mkdir -p "$RUNNER_TEMP/guest-release"
           cd "$RUNNER_TEMP/guest-release"
-          gh run download 44625126775 --repo "$GITHUB_REPOSITORY" \
-            --name 'EnotDesk-Guest-Pilot-linux-x64' --name 'EnotDesk-Guest-Pilot-linux-arm64' \
-            --dir archives
           version=0.6.30-guest-pilot.2
-          mv "archives/EnotDesk-Guest-Pilot-linux-x64/EnotDesk-Guest-Pilot-$version-linux-x64.tar.gz" .
-          mv "archives/EnotDesk-Guest-Pilot-linux-arm64/EnotDesk-Guest-Pilot-$version-linux-arm64.tar.gz" .
-          cat > SHA256SUMS.txt <<'SUMS'
-          f52e5dec8e5a8806fc1bd617323e861db057f8b572379b03f6951c323c208a31  EnotDesk-Guest-Pilot-0.6.30-guest-pilot.2-linux-x64.tar.gz
-          f40dc01942f7aa801b9489eceb2b9d21ed91306c71aec14db26f09154e824f66  EnotDesk-Guest-Pilot-0.6.30-guest-pilot.2-linux-arm64.tar.gz
-          SUMS
+          : > SHA256SUMS.txt
+          download() {
+            local arch="$1" artifact_id="$2" zip_digest="$3" archive line
+            archive="EnotDesk-Guest-Pilot-$version-linux-$arch.tar.gz"
+            gh api "repos/$GITHUB_REPOSITORY/actions/artifacts/$artifact_id/zip" > "$arch.zip"
+            printf '%s  %s\n' "$zip_digest" "$arch.zip" | sha256sum -c -
+            unzip -p "$arch.zip" "$archive" > "$archive"
+            line="$(unzip -p "$arch.zip" "$archive.sha256")"
+            if [[ ! "$line" =~ ^[0-9a-f]{64}[[:blank:]]{2}EnotDesk-Guest-Pilot- ]] ||
+              [ "${line:66}" != "$archive" ]; then
+              printf '%s\n' "The checksum entry does not match $archive."
+              return 1
+            fi
+            printf '%s\n' "$line" >> SHA256SUMS.txt
+          }
+          download x64 14579236726 ccdbb85c78ee87f5b3c46839644ec1562f9daa070c7dd837de90b90bcdb5fa07
+          download arm64 14578403763 c7878a153748b4b270966fdc79c9d0ec87573c187e52c4648617a9730f42a1ac
           sha256sum -c SHA256SUMS.txt
       - name: Publish the separate Linux prerelease
         env:

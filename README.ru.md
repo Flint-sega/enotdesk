@@ -13,7 +13,7 @@ npm ci --omit=dev --ignore-scripts
 npm run server
 ```
 
-Архивы Linux x64 и ARM64 доступны в [гостевом выпуске](https://github.com/Flint-sega/enotdesk/releases/tag/guest-pilot-0.6.30-2).
+Архивы Linux x64 и ARM64 доступны в [гостевом выпуске](https://github.com/Flint-sega/enotdesk/releases/tag/guest-pilot-0.6.30-2-linux).
 
 Сборка клиента и размещение с отдельными HTTPS/WSS и TURN описаны в [руководстве пилота](docs/GUEST-PILOT.md).
 

@@ -13,7 +13,7 @@ npm ci --omit=dev --ignore-scripts
 npm run server
 ```
 
-Download the Linux x64 or ARM64 client from the [guest pilot release](https://github.com/Flint-sega/enotdesk/releases/tag/guest-pilot-0.6.30-2).
+Download the Linux x64 or ARM64 client from the [guest pilot release](https://github.com/Flint-sega/enotdesk/releases/tag/guest-pilot-0.6.30-2-linux).
 
 See the [pilot guide](docs/GUEST-PILOT.md) for client builds and an isolated HTTPS/WSS and TURN deployment.
 
